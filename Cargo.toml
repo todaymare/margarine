@@ -1,0 +1,10 @@
+[workspace]
+members = [
+  "butter", # The engine
+
+  "margarine", # The Language
+  "margarine/common",
+  "margarine/lexer",
+  "margarine/parser",
+  "margarine/errors",
+]

@@ -1,0 +1,150 @@
+// This is a line comment
+// We do not have block comments
+
+// A component can be attached to
+// entities and queried by systems
+component Position {
+	x: float,
+	y: float,
+}
+
+
+component Velocity {
+	x: float,
+	y: float,
+}
+
+
+// A resource is a global data
+// source that can be quired by
+// systems
+resource Time {
+	delta: float
+}
+
+
+// The `impl` block works the same
+// for all of the following
+// - `resource` values
+// - `component` values
+// - `struct` values
+impl Time {
+	fn delta(self): float {
+		self.delta
+	}
+}
+
+
+// A new namespace
+mod std {
+	// FFI function declarations
+	// This will query the corresponding
+	// dynamic library file at runtime
+	// and fetch the functions. 
+	//
+	// [!] The functions aren't checked at
+	//     runtime so it is crucial to give
+	//     them a correct signature here.
+	extern "std" {
+		fn delta(): float
+		fn println(msg: str)
+	}
+}
+
+
+// A system which specifies no components
+// is assumed to be ran at once every frame
+// These systems can still take resources
+//
+// Optionally you can add the `@perframe`
+// attribute to ensure statically that you
+// don't specify any components
+@perframe
+system fn(
+	// The `mut` keyword specifies that the said
+	// value should be borrowed mutably. This might
+	// prevent the engine from running this system
+	// in parallel with other systems to prevent
+	// data-races.
+	// 
+	// If the `mut` keyword isn't specifies it is
+	// assumed to be immutable.
+	mut time: Time
+) {
+	time.delta = std::delta()
+}
+
+
+// Systems/Functions may have a name, although
+// this is optional but a function with no name
+// will emit a function as it will be uncallable.
+system fn move_player(mut pos: Position, time: Time) {
+	pos.x += 50 * time.delta()
+}
+
+
+
+// While there are no generics there is
+// the `any` type. Any value of any type
+// can be coerced into this type implicitly.
+// You can't do anything with an `any` type itself
+// the type can be converted to it's original type
+// at runtime. Here's an example of a suggested
+// safe pattern that won't cause runtime errors
+//
+// The `int?` syntax is also a new thing, it implies
+// an optional value which is an annonymous enum
+fn add_int(val: any, rhs: int): int? {
+	// `any::cast_to` will return a value of type
+	// `<type> ~ CastError` which we will have to handle
+	//
+	// The `<type> ~ <type>` syntax is new and it implies
+	// one of two options, this is also an annonymous enum
+	//
+	// The `any::cast_to` function does involve *some*
+	// compiler black magic as it requires you to pass
+	// in a type and not a value.
+	var value = val.cast_to(int)
+	
+	var int_value = match value {
+		// The "left" and "right" values
+		// here are identifiers for the value
+		// type, this plays into the fact that 
+		// these are annonymous enums
+		left: val => { val },
+
+		// The `as <identifier>` part is optional
+		// if you don't need the value in the branch
+		right => { return }
+	}
+
+
+	int_value + rhs
+}
+
+
+// An example of how `<type>?` could
+// be implemented manually, granted
+// the above type does inclued some
+// compiler magic to avoid using any
+enum Option {
+	some: any,
+
+	// No types automatically assigns
+	// the value to be of type unit
+	none,
+}
+
+
+// Let's test the option enum above
+@test
+fn test_option() {
+	var option = Option::some(50)
+
+	match option {
+		some: val => {
+			assert(val.cast_to(int), 50)
+		},
+		none => { assert(false, "unexpected") }
+	}
+}
