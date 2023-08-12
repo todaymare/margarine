@@ -1,4 +1,4 @@
-use std::{path::Path, ops::{Deref, DerefMut}, sync::OnceLock};
+use std::{path::Path, ops::{Deref, DerefMut}, sync::{OnceLock, RwLock, Mutex}, collections::HashMap};
 use istd::index_map;
 
 
@@ -6,11 +6,11 @@ index_map!(SymbolMap, SymbolIndex, String);
 
 
 impl SymbolMap {
-    pub fn underscore(&mut self) -> SymbolIndex {
-        static UNDERSCORE_ID: OnceLock<SymbolIndex> = OnceLock::new();
-        *UNDERSCORE_ID.get_or_init(|| {
-            self.insert(String::from('_'))
-        })
+    pub fn const_str(&mut self, str: &'static str) -> SymbolIndex {    
+        static MAP: OnceLock<Mutex<HashMap<&'static str, SymbolIndex>>> = OnceLock::new();
+
+        let mut lock = MAP.get_or_init(|| Mutex::new(HashMap::with_capacity(1))).lock().unwrap();
+        *lock.entry(str).or_insert(self.insert(str.to_string()))
     }
 }
 

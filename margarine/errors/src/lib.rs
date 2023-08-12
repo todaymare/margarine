@@ -30,6 +30,7 @@ pub enum ErrorCode {
     STypeDoesntExist   = 302,
     SFieldDefEarlier   = 303,
     SVariantDefEarlier = 304,
+    SArgDefEarlier     = 305,
     
 }
 

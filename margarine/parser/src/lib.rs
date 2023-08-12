@@ -103,7 +103,6 @@ pub fn parse(tokens: TokenList, symbol_map: &mut SymbolMap) -> Result<Block, Err
         index: 0,
         file: tokens.file(),
         symbol_map,
-        anonymous_function_counter: 0,
     };
 
 
@@ -137,7 +136,6 @@ struct Parser<'a> {
     file: SymbolIndex,
 
     symbol_map: &'a mut SymbolMap,
-    anonymous_function_counter: usize,
 }
 
 
@@ -475,8 +473,7 @@ impl Parser<'_> {
             self.advance();
             (v, false)
         } else {
-            let ident = self.symbol_map.insert(format!("<anonymous-{}>", self.anonymous_function_counter));
-            self.anonymous_function_counter += 1;
+            let ident = self.symbol_map.const_str("anonymous");
             (ident, true)
         };
 
@@ -507,8 +504,8 @@ impl Parser<'_> {
             }
 
 
-            let is_mut = {
-                if self.current_is(TokenKind::Keyword(Keyword::Mut)) {
+            let is_inout = {
+                if self.current_is(TokenKind::Ampersand) {
                     self.advance();
                     true
                 } else {
@@ -516,6 +513,7 @@ impl Parser<'_> {
                 }
             };
             
+            let start = self.current_range().start();
             let name = self.expect_identifier()?;
             self.advance();
 
@@ -527,7 +525,8 @@ impl Parser<'_> {
                         arguments.push(FunctionArgument::new(
                             name,
                             settings,
-                            is_mut,
+                            is_inout,
+                            self.current_range(),
                         ));
 
                         continue
@@ -540,12 +539,14 @@ impl Parser<'_> {
             self.advance();
 
             let data_type = self.expect_type()?;
+            let end = self.current_range().end();
             self.advance();
             
             let argument = FunctionArgument::new(
                 name,
                 data_type,
-                is_mut,
+                is_inout,
+                SourceRange::new(start, end, self.file)
             );
 
             arguments.push(argument);
@@ -555,24 +556,17 @@ impl Parser<'_> {
         self.expect(TokenKind::RightParenthesis)?;
         self.advance();
 
-        let (return_type, return_mutable) = {
+        let return_type = {
             if self.current_is(TokenKind::Colon) {
                 self.advance();
-                let return_mutable = if self.current_is(TokenKind::Keyword(Keyword::Mut)) {
-                    self.advance();
-                    true
-                } else { false };
 
                 let typ = self.expect_type()?;
                 self.advance();
-                (typ, return_mutable)
+                typ
             } else {
-                (
-                    DataType::new(
-                        SourceRange::new(start, self.current_range().end(), self.file), 
-                        DataTypeKind::Unit
-                    ), 
-                    true
+                DataType::new(
+                    SourceRange::new(start, self.current_range().end(), self.file), 
+                    DataTypeKind::Unit
                 )
             }
         };
@@ -591,7 +585,6 @@ impl Parser<'_> {
                 name,
                 arguments, 
                 return_type, 
-                return_mutable,
                 body,
             }),
 
@@ -1071,7 +1064,7 @@ impl Parser<'_> {
         self.binary_operation(
             Self::bitshifts, 
             Self::bitshifts, 
-            &[TokenKind::BitwiseAnd], 
+            &[TokenKind::Ampersand], 
             settings,
         )
         
@@ -1272,7 +1265,7 @@ impl Parser<'_> {
 
                 TokenKind::BitshiftLeft => BinaryOperator::BitshiftLeft,
                 TokenKind::BitshiftRight => BinaryOperator::BitshiftRight,
-                TokenKind::BitwiseAnd => BinaryOperator::BitwiseAnd, 
+                TokenKind::Ampersand => BinaryOperator::BitwiseAnd, 
                 TokenKind::BitwiseOr => BinaryOperator::BitwiseOr,
                 TokenKind::BitwiseXor => BinaryOperator::BitwiseXor,
 
@@ -1362,7 +1355,7 @@ impl Parser<'_> {
                     self.advance();
                     name
                 } else {
-                    self.symbol_map.underscore()
+                    self.symbol_map.const_str("_")
                 };
 
             self.expect(TokenKind::Arrow)?;

@@ -121,6 +121,8 @@ pub enum TokenKind {
     At,
     /// '?'
     QuestionMark,
+    /// '&'
+    Ampersand,
 
     Literal(Literal),
     Keyword(Keyword),
@@ -152,8 +154,6 @@ pub enum TokenKind {
     BitshiftLeft,
     /// '>>'
     BitshiftRight,
-    /// '&'
-    BitwiseAnd,
     /// '|'
     BitwiseOr,
     /// '^'
@@ -300,9 +300,9 @@ pub fn lex(
             '>' if lexer.peek_is('>') => TokenKind::BitshiftRight,
             '>' => TokenKind::RightAngle,
             '&' if lexer.peek_is('&') => TokenKind::LogicalAnd,
-            '&' => TokenKind::BitwiseAnd,
+            '&' => TokenKind::Ampersand,
             '|' if lexer.peek_is('|') => TokenKind::LogicalOr,
-            '|' => TokenKind::BitwiseAnd,
+            '|' => TokenKind::Ampersand,
             '{' => TokenKind::LeftBracket,
             '}' => TokenKind::RightBracket,
             '[' => TokenKind::LeftSquare,

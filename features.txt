@@ -4,26 +4,10 @@
 // A component can be attached to
 // entities and queried by systems
 component Position {
-	x: float,
-	y: float,
+	x: Position,
 }
 
 
-component Velocity {
-	x: float,
-	y: float,
-}
-
-
-// A resource is a global data
-// source that can be quired by
-// systems
-resource Time {
-	delta: float
-}
-
-
-enum Option {
-	some: any,
-	none,
-}
+fn hello(val: Position): Position {}
+system fn(val: Position): Position {}
+fn(val: Position): Position {}

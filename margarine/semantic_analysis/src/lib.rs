@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, convert::identity};
 use common::{SymbolMap, SourceRange, SymbolIndex};
 use errors::{Error, CombineIntoError, CompilerError, ErrorCode, ErrorBuilder};
 use istd::index_vec;
-use parser::{nodes::{Node, NodeKind, Declaration, StructKind}, DataType, Block, DataTypeKind};
+use parser::{nodes::{Node, NodeKind, Declaration, StructKind, FunctionArgument}, DataType, Block, DataTypeKind};
 
 
 index_vec!(SymbolList, SymbolId, Symbol);
@@ -98,6 +98,18 @@ struct ScopeId(usize);
 pub enum Symbol {
     Structure(Structure),
     Enum(Enum),
+    Function(Function),
+}
+
+
+impl Symbol {
+    pub fn full_name(&self) -> SymbolIndex {
+        match self {
+            Symbol::Structure(v) => v.full_name,
+            Symbol::Enum(v) => v.full_name,
+            Symbol::Function(v) => v.full_name,
+        }
+    }
 }
 
 
@@ -115,6 +127,17 @@ pub struct Enum {
     name: SymbolIndex,
     full_name: SymbolIndex,
     mappings: Vec<(SymbolIndex, DataType, SourceRange)>,
+}
+
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Function {
+    name: SymbolIndex,
+    full_name: SymbolIndex,
+    args: Vec<FunctionArgument>,
+    is_system: bool,
+    is_anonymous: bool,
+    return_type: DataType,
 }
 
 
@@ -165,6 +188,20 @@ impl<'a, 'b> Scope<'a, 'b> {
     }
 
 
+    ///
+    /// Validates that a type exists and then
+    /// replaces the type with its fully-qualified
+    /// version. If the type doesn't exist it will
+    /// replace the type with `DataTypeKind::Unknown`
+    ///
+    /// This function will do nothing for built-in
+    /// types.
+    ///
+    /// # Errors
+    /// If the type doesn't exist in the current scope
+    /// or any of the parent scopes it will return a
+    /// "type doesn't exist or inaccessible" error.
+    ///
     fn validate_data_type(&self, data_type: &mut DataType) -> Result<(), Error> {
         match data_type.kind_mut() {
             DataTypeKind::Int   => Ok(()),
@@ -175,7 +212,10 @@ impl<'a, 'b> Scope<'a, 'b> {
             DataTypeKind::Unknown => Ok(()),
             DataTypeKind::Option(v) => self.validate_data_type(v),
             DataTypeKind::CustomType(v) => {
-                if self.metadata.symbols.contains_key(v) {
+                if let Some(new) = self.metadata.symbols.get(v) {
+                    let name = &self.global.inner.borrow().symbols[*new];
+                    let name = name.full_name();
+                    *v = name;
                     return Ok(())
                 }
 
@@ -185,6 +225,7 @@ impl<'a, 'b> Scope<'a, 'b> {
                 }
 
 
+                *data_type.kind_mut() = DataTypeKind::Unknown;
                 Err(CompilerError::new(self.metadata.file, ErrorCode::STypeDoesntExist, "type doesn't exist or inaccessible")
                                         .highlight(data_type.range())
                                         .build())
@@ -193,8 +234,34 @@ impl<'a, 'b> Scope<'a, 'b> {
     }
 
 
+    ///
+    /// Adds a `Symbol` to the global namespace
+    ///
+    /// It will **NOT** add the symbol to the local
+    /// namespace if the symbol is an anonymous function
+    ///
+    /// # Errors
+    /// This function will return a "name already defined"
+    /// error if the identifier is defined in the current
+    /// scope.
+    ///
+    /// # Important
+    /// This function will add the symbol to the global
+    /// namespace regardless of whether it errored or not
+    ///
+    /// But it will **NOT** add it to the local namespace if
+    /// it returns an error
+    ///
     fn create_symbol(&mut self, symbol: Symbol, identifier: SymbolIndex, source: SourceRange) -> Result<(), Error> {
+        let is_anonymous_function = matches!(symbol, Symbol::Function(Function { is_anonymous: true, .. }));
         let id = self.global.add_symbol(symbol);
+        
+        // Anonymous functions are meant to be
+        // unreachable and thus there's no need
+        // to add them to the local namespace
+        if is_anonymous_function {
+            return Ok(())
+        }
         
         if self.metadata.symbols.contains_key(&identifier) {
             return Err(CompilerError::new(
@@ -305,11 +372,34 @@ impl Scope<'_, '_> {
                         let enum_val = Enum {
                             name: identifier,
                             full_name: *name,
-                            mappings: vec![],
+                            mappings: vec![], // will be initialised later
                         };
 
                         
                         let result = self.create_symbol(Symbol::Enum(enum_val), identifier, source);
+                        if let Err(e) = result {
+                            errors.push(e);
+                        }
+                    },
+
+
+                    Declaration::Function { is_system, is_anonymous, name, arguments: _, return_type, body: _ } => {
+                        let identifier = *name;
+                        *name = self.mangle(*name, source);
+
+                        let function = Function {
+                            name: identifier,
+                            full_name: *name,
+                            args: vec![], // will be initialised later
+                            is_system: *is_system,
+                            is_anonymous: *is_anonymous,
+                            // IMPORTANT: This should be updated before any block of body
+                            //            is ran.
+                            return_type: return_type.clone(),
+                        };
+
+                        
+                        let result = self.create_symbol(Symbol::Function(function), identifier, source);
                         if let Err(e) = result {
                             errors.push(e);
                         }
@@ -341,7 +431,6 @@ impl Scope<'_, '_> {
                             let result = self.validate_data_type(&mut f.1);
 
                             if let Err(e) = result {
-                                *f.1.kind_mut() = DataTypeKind::Unknown;
                                 errors.push(e);
                             }
 
@@ -388,7 +477,6 @@ impl Scope<'_, '_> {
                             let result = self.validate_data_type(&mut f.1);
 
                             if let Err(e) = result {
-                                *f.1.kind_mut() = DataTypeKind::Unknown;
                                 errors.push(e);
                             }
 
@@ -428,6 +516,60 @@ impl Scope<'_, '_> {
                     }
 
 
+                    Declaration::Function { is_system: _, is_anonymous: _, name, arguments, return_type, body: _ } => {                        
+                        for i in 0..arguments.len() {
+                            let f = arguments.get_mut(i).unwrap();
+                            let result = self.validate_data_type(f.data_type_mut());
+
+                            if let Err(e) = result {
+                                errors.push(e);
+                            }
+
+                            let f = arguments.get(i).unwrap();
+                            if let Some(v) = arguments[0..i].iter().find(|x| x.name() == f.name()) {
+                                errors.push(CompilerError::new(
+                                    self.metadata.file, 
+                                    ErrorCode::SArgDefEarlier, 
+                                    "argument is already defined"
+                                )
+                                .highlight(v.range())
+                                    .note("argument is defined earlier here".to_string())
+                                .highlight(f.range())
+                                    .note("..but it's defined again here".to_string())
+                                .build())
+                            }
+                        }
+
+
+                        {
+                            let result = self.validate_data_type(return_type);
+                            if let Err(e) = result {
+                                errors.push(e);
+                            }
+                        }
+
+
+                        {
+                            let mut borrow = self.global.inner.borrow_mut();
+                            let id = borrow
+                                .symbols.vec.iter_mut()
+                                .rev()
+                                .filter_map(|x| {
+                                    match x {
+                                        Symbol::Function(v) => Some(v),
+                                        _ => None
+                                    }
+                                })
+                                .find(|x| x.full_name == *name).unwrap();
+
+                            // TODO: Might be able to remove the clone here 
+                            //       depending on how the rest of this goes
+                            id.args = arguments.clone();
+                            id.return_type = return_type.clone();
+                        }
+                    }
+
+
                     _ => todo!()
                 }
             
@@ -449,3 +591,5 @@ impl Drop for Scope<'_, '_> {
         self.global.add_scope_metadata(std::mem::take(&mut self.metadata))
     }
 }
+
+

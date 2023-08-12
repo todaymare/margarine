@@ -73,7 +73,6 @@ pub enum Declaration {
         name: SymbolIndex,
         arguments: Vec<FunctionArgument>,
         return_type: DataType,
-        return_mutable: bool,
         body: Block,
     },
     
@@ -198,14 +197,27 @@ impl ExternFunction {
 pub struct FunctionArgument {
     name: SymbolIndex,
     data_type: DataType,
-    is_mut: bool,
+    is_inout: bool,
+    source_range: SourceRange,
 }
 
 
 impl FunctionArgument {
-    pub(crate) fn new(name: SymbolIndex, data_type: DataType, is_mut: bool) -> Self { 
-        Self { name, data_type, is_mut } 
+    pub(crate) fn new(name: SymbolIndex, data_type: DataType, is_inout: bool, source_range: SourceRange) -> Self { 
+        Self { name, data_type, is_inout, source_range } 
     }
+
+
+    #[inline(always)]
+    pub fn data_type(&self) -> &DataType { &self.data_type }
+    #[inline(always)]
+    pub fn data_type_mut(&mut self) -> &mut DataType { &mut self.data_type }
+    #[inline(always)]
+    pub fn name(&self) -> SymbolIndex { self.name }
+    #[inline(always)]
+    pub fn is_inout(&self) -> bool { self.is_inout }
+    #[inline(always)]
+    pub fn range(&self) -> SourceRange { self.source_range }
 }
 
 
