@@ -24,8 +24,12 @@ pub enum ErrorCode {
 
 
     PUnexpectedToken   = 201,
-    
 
+
+    SNameAlrDefined    = 301,
+    STypeDoesntExist   = 302,
+    SFieldDefEarlier   = 303,
+    SVariantDefEarlier = 304,
     
 }
 
@@ -155,7 +159,7 @@ impl ErrorOption {
                 let file_name = symbol_map.get(file_name);
 
                 let start_line = line_at_index(source, range.start()).unwrap().1;
-                let end_line   = line_at_index(source, range.end() - 1).unwrap().1;
+                let end_line   = line_at_index(source, range.end()).unwrap().1;
                 let line_size  = end_line.to_string().len();
 
                 
@@ -179,15 +183,15 @@ impl ErrorOption {
 
                     let _ = writeln!(string, "{:>w$} {} {}", (line_number + 1).to_string().color(ORANGE), "|".color(ORANGE), line, w = line_size);
 
+                    let _ = write!(string, "{:>w$} {} ",
+                        " ".repeat(line_number.to_string().len()),
+                        "|".color(ORANGE),
+
+                        w = line_size,
+                    );
+
                     if line_number == start_line {
                         let start_of_line = start_of_line(source, line_number);
-
-                        let _ = write!(string, "{:>w$} {} ",
-                            " ".repeat(line_number.to_string().len()),
-                            "|".color(ORANGE),
-
-                            w = line_size,
-                        );
 
                         let _ = write!(string, "{}{}",
                             " ".repeat({
@@ -216,7 +220,7 @@ impl ErrorOption {
                         let _ = write!(string, "{}",
                             "^".repeat({
                                 let start_of_end = start_of_line(source, end_line);
-                                range.end() - start_of_end
+                                range.end() - start_of_end + 1
                             }).color(colour),
                         );
 

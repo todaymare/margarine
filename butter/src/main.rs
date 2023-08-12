@@ -20,7 +20,7 @@ fn main() -> Result<(), &'static str> {
 
 
     let instructions = margarine::parse(tokens, &mut symbol_map);
-    let instructions = match instructions {
+    let mut instructions = match instructions {
         Ok(v)  => v,
         Err(e) => {
             let report = e.build(&HashMap::from([(file.name(), file)]), &symbol_map);
@@ -31,6 +31,17 @@ fn main() -> Result<(), &'static str> {
 
     println!("{instructions:#?}");
 
+    let state = margarine::semantic_analysis(&mut symbol_map, &mut instructions);
+    let state = match state {
+        Ok(v)  => v,
+        Err(e) => {
+            let report = e.build(&HashMap::from([(file.name(), file)]), &symbol_map);
+            println!("{report}");
+            return Err("failed to compile because of the previous errors")
+        },
+    };
+
+    println!("{state:#?}");
     println!("{symbol_map:?}");
     Ok(())
 }

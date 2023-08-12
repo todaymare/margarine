@@ -11,12 +11,43 @@ use crate::nodes::MatchMapping;
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum DataType {
+pub struct DataType {
+    source_range: SourceRange,
+    kind: DataTypeKind, 
+}
+
+
+impl DataType {
+    #[inline(always)]
+    pub fn range(&self) -> SourceRange { self.source_range }
+
+    
+    #[inline(always)]
+    pub fn kind(&self) -> &DataTypeKind { &self.kind }
+
+    
+    #[inline(always)]
+    pub fn kind_mut(&mut self) -> &mut DataTypeKind { &mut self.kind}
+
+}
+
+impl DataType {
+    pub fn new(source_range: SourceRange, kind: DataTypeKind) -> Self { Self { source_range, kind } }
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DataTypeKind {
     Int,
     Bool,
     Float,
     Unit,
     Any,
+    /// This basically means an error
+    /// occurred while trying to find the
+    /// type of a node. It bypasses all
+    /// type checks for error tolerance reasons.
+    Unknown,
     Option(Box<DataType>),
     CustomType(SymbolIndex),
 }
@@ -118,12 +149,6 @@ impl Parser<'_> {
 
 
     #[inline(always)]
-    fn retreat(&mut self) {
-        self.index -= 1;
-    }
-
-
-    #[inline(always)]
     fn current(&self) -> &Token {
         &self.tokens[self.index]
     }
@@ -150,12 +175,6 @@ impl Parser<'_> {
     #[inline(always)]
     fn peek_kind(&self) -> Option<TokenKind> {
         self.peek().map(|x| x.kind())
-    }
-
-
-    #[inline(always)]
-    fn peek_range(&self) -> Option<SourceRange> {
-        self.peek().map(|x| x.range())
     }
 
 
@@ -221,19 +240,32 @@ impl Parser<'_> {
 
 
     fn expect_type(&mut self) -> Result<DataType, Error> {
+        let start = self.current_range().start();
         let identifier = self.expect_identifier()?;
 
         let result = match self.symbol_map.get(identifier).as_str() {
-            "int" => DataType::Int,
-            "float" => DataType::Float,
-            "bool" => DataType::Bool,
-            "any" => DataType::Any,
-            _ => DataType::CustomType(identifier),
+            "int" => DataTypeKind::Int,
+            "float" => DataTypeKind::Float,
+            "bool" => DataTypeKind::Bool,
+            "any" => DataTypeKind::Any,
+            _ => DataTypeKind::CustomType(identifier),
         };
+
+        let result = DataType::new(
+            SourceRange::new(start, self.current_range().end(), self.file), 
+            result
+        );
 
         if self.peek_kind() == Some(TokenKind::QuestionMark) {
             self.advance();
-            return Ok(DataType::Option(Box::new(result)))
+            let end = self.current_range().end();
+            let result = DataTypeKind::Option(Box::new(result));
+            let result = DataType::new(
+                SourceRange::new(start, end, self.file),
+                result,
+            );
+            
+            return Ok(result)
         }
 
         Ok(result)
@@ -408,6 +440,7 @@ impl Parser<'_> {
             }
 
 
+            let start = self.current_range().start();
             let name = self.expect_identifier()?;
             self.advance();
 
@@ -415,9 +448,10 @@ impl Parser<'_> {
             self.advance();
 
             let datatype = self.expect_type()?;
+            let end = self.current_range().end();
             self.advance();
 
-            fields.push((name, datatype));
+            fields.push((name, datatype, SourceRange::new(start, end, self.file)));
         }
         let fields = fields;
 
@@ -437,13 +471,13 @@ impl Parser<'_> {
         self.expect(TokenKind::Keyword(Keyword::Fn))?;
         self.advance();
 
-        let name = if let TokenKind::Identifier(v) = self.current_kind() {
+        let (name, is_anonymous)= if let TokenKind::Identifier(v) = self.current_kind() {
             self.advance();
-            v
+            (v, false)
         } else {
             let ident = self.symbol_map.insert(format!("<anonymous-{}>", self.anonymous_function_counter));
             self.anonymous_function_counter += 1;
-            ident
+            (ident, true)
         };
 
         self.expect(TokenKind::LeftParenthesis)?;
@@ -521,14 +555,25 @@ impl Parser<'_> {
         self.expect(TokenKind::RightParenthesis)?;
         self.advance();
 
-        let return_type = {
+        let (return_type, return_mutable) = {
             if self.current_is(TokenKind::Colon) {
                 self.advance();
+                let return_mutable = if self.current_is(TokenKind::Keyword(Keyword::Mut)) {
+                    self.advance();
+                    true
+                } else { false };
+
                 let typ = self.expect_type()?;
                 self.advance();
-                typ
+                (typ, return_mutable)
             } else {
-                DataType::Unit
+                (
+                    DataType::new(
+                        SourceRange::new(start, self.current_range().end(), self.file), 
+                        DataTypeKind::Unit
+                    ), 
+                    true
+                )
             }
         };
         
@@ -542,9 +587,11 @@ impl Parser<'_> {
         Ok(Node::new(
             NodeKind::Declaration(Declaration::Function {
                 is_system, 
+                is_anonymous,
                 name,
                 arguments, 
                 return_type, 
+                return_mutable,
                 body,
             }),
 
@@ -684,7 +731,12 @@ impl Parser<'_> {
                     self.advance();
                     typ
                 }
-                else { DataType::Unit };
+                else {
+                    DataType::new(
+                        SourceRange::new(start, self.current_range().end(), self.file), 
+                        DataTypeKind::Unit
+                    ) 
+                };
 
 
             functions.push(ExternFunction::new(
@@ -740,19 +792,27 @@ impl Parser<'_> {
             }
 
 
+            let start = self.current_range().start();
             let name = self.expect_identifier()?;
-            self.advance();
 
             let data_type =
-                if self.current_is(TokenKind::Colon) {
+                if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance();
-                    let typ = self.expect_type()?;
                     self.advance();
-                    typ
+                    
+                    self.expect_type()?
                 }
-                else { DataType::Unit };
+                else {
+                    DataType::new(
+                        self.current_range(),
+                        DataTypeKind::Unit
+                    ) 
+                };
+
+            let end = self.current_range().end();
+            self.advance();
             
-            mappings.push((name, data_type));
+            mappings.push((name, data_type, SourceRange::new(start, end, self.file)));
         }
         let mappings = mappings;
 

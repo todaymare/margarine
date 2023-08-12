@@ -6,5 +6,6 @@ members = [
   "margarine/common",
   "margarine/lexer",
   "margarine/parser",
+  "margarine/semantic_analysis",
   "margarine/errors",
 ]

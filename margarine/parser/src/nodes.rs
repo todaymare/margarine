@@ -31,6 +31,18 @@ impl Node {
     pub fn range(&self) -> SourceRange {
         self.source_range
     }
+
+
+    #[inline(always)]
+    pub fn kind(&self) -> &NodeKind {
+        &self.kind
+    }
+
+
+    #[inline(always)]
+    pub fn kind_mut(&mut self) -> &mut NodeKind {
+        &mut self.kind
+    }
 }
 
 
@@ -47,19 +59,21 @@ pub enum Declaration {
     Struct {
         kind: StructKind,
         name: SymbolIndex,
-        fields: Vec<(SymbolIndex, DataType)>,
+        fields: Vec<(SymbolIndex, DataType, SourceRange)>,
     },
 
     Enum {
         name: SymbolIndex,
-        mappings: Vec<(SymbolIndex, DataType)>,
+        mappings: Vec<(SymbolIndex, DataType, SourceRange)>,
     },
 
     Function {
         is_system: bool,
+        is_anonymous: bool,
         name: SymbolIndex,
         arguments: Vec<FunctionArgument>,
         return_type: DataType,
+        return_mutable: bool,
         body: Block,
     },
     
@@ -158,7 +172,7 @@ pub enum Expression {
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StructKind {
     Component,
     Resource,

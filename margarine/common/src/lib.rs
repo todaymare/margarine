@@ -31,8 +31,8 @@ impl FileData {
 
     pub fn open<P: AsRef<Path>>(path: P, symbol_map: &mut SymbolMap) -> Result<Self, std::io::Error> {
         let data = std::fs::read_to_string(&path)?;
-        let name = path.as_ref().to_string_lossy().to_string();
-
+        let path = path.as_ref().with_extension("");
+        let name = path.to_string_lossy().to_string();
 
         Ok(Self::new(data, symbol_map.insert(name)))
     }
