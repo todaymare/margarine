@@ -64,7 +64,7 @@ pub enum Declaration {
 
     Enum {
         name: SymbolIndex,
-        mappings: Vec<(SymbolIndex, DataType, SourceRange)>,
+        mappings: Vec<EnumMapping>,
     },
 
     Function {
@@ -150,7 +150,7 @@ pub enum Expression {
 
     CreateStruct {
         data_type: DataType,
-        fields: Vec<(SymbolIndex, Node)>,
+        fields: Vec<(SymbolIndex, SourceRange, Node)>,
     },
 
     AccessField {
@@ -161,7 +161,7 @@ pub enum Expression {
     CallFunction {
         name: SymbolIndex,
         is_accessor: Option<Box<Node>>,
-        args: Vec<Node>,
+        args: Vec<(Node, bool)>,
     },
 
     WithinNamespace {
@@ -203,7 +203,7 @@ pub struct FunctionArgument {
 
 
 impl FunctionArgument {
-    pub(crate) fn new(name: SymbolIndex, data_type: DataType, is_inout: bool, source_range: SourceRange) -> Self { 
+    pub fn new(name: SymbolIndex, data_type: DataType, is_inout: bool, source_range: SourceRange) -> Self { 
         Self { name, data_type, is_inout, source_range } 
     }
 
@@ -224,21 +224,66 @@ impl FunctionArgument {
 #[derive(Debug, PartialEq, Clone)]
 pub struct MatchMapping {
     variant: SymbolIndex,
-    variable: SymbolIndex,
+    binding: SymbolIndex,
+    source_range: SourceRange,
     expression: Node,
 }
 
 
 impl MatchMapping {
-    pub fn new(variant: SymbolIndex, variable: SymbolIndex, expression: Node) -> Self { 
+    pub fn new(variant: SymbolIndex, binding: SymbolIndex, source_range: SourceRange, expression: Node) -> Self { 
         Self { 
             variant, 
-            variable, 
-            expression 
+            binding, 
+            expression,
+            source_range, 
         } 
     }
+
+    
+    #[inline(always)]
+    pub fn name(&self) -> SymbolIndex { self.variant }
+    #[inline(always)]
+    pub fn binding(&self) -> SymbolIndex { self.binding }
+    #[inline(always)]
+    pub fn node(&self) -> &Node { &self.expression }
+    #[inline(always)]
+    pub fn node_mut(&mut self) -> &mut Node { &mut self.expression }
+    #[inline(always)]
+    pub fn range(&self) -> SourceRange { self.source_range }
+
 }
 
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EnumMapping {
+    name: SymbolIndex,
+    data_type: DataType,
+    source_range: SourceRange,
+    is_implicit_unit: bool,
+}
+
+impl EnumMapping {
+    pub fn new(name: SymbolIndex, data_type: DataType, source_range: SourceRange, is_implicit_unit: bool) -> Self { 
+        if is_implicit_unit {
+            assert!(data_type.kind().is(&crate::DataTypeKind::Unit));
+        }
+
+        Self { name, data_type, source_range, is_implicit_unit } 
+    }
+
+    
+    #[inline(always)]
+    pub fn name(&self) -> SymbolIndex { self.name }
+    #[inline(always)]
+    pub fn data_type(&self) -> &DataType { &self.data_type }
+    #[inline(always)]
+    pub fn data_type_mut(&mut self) -> &mut DataType { &mut self.data_type }
+    #[inline(always)]
+    pub fn range(&self) -> SourceRange { self.source_range }
+    #[inline(always)]
+    pub fn is_implicit_unit(&self) -> bool { self.is_implicit_unit }
+}
 
 
 #[derive(Debug, Clone, PartialEq)]

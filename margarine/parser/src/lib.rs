@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use common::{SymbolMap, SourceRange, SymbolIndex, Slice};
 use errors::{Error, CompilerError, ErrorBuilder, ErrorCode, CombineIntoError};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument, ExternFunction, Expression, BinaryOperator, Statement};
+use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument, ExternFunction, Expression, BinaryOperator, Statement, EnumMapping};
 
 use crate::nodes::MatchMapping;
 
@@ -20,14 +20,12 @@ pub struct DataType {
 impl DataType {
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
-
-    
     #[inline(always)]
     pub fn kind(&self) -> &DataTypeKind { &self.kind }
-
-    
     #[inline(always)]
     pub fn kind_mut(&mut self) -> &mut DataTypeKind { &mut self.kind}
+    #[inline(always)]
+    pub fn kind_owned(self) -> DataTypeKind { self.kind }
 
 }
 
@@ -50,6 +48,15 @@ pub enum DataTypeKind {
     Unknown,
     Option(Box<DataType>),
     CustomType(SymbolIndex),
+}
+
+
+impl DataTypeKind {
+    pub fn is(&self, oth: &DataTypeKind) -> bool {
+           self == &DataTypeKind::Unknown
+        || oth == &DataTypeKind::Unknown
+        || self == oth
+    }
 }
 
 
@@ -788,24 +795,28 @@ impl Parser<'_> {
             let start = self.current_range().start();
             let name = self.expect_identifier()?;
 
-            let data_type =
+            let (data_type, is_implicit_unit)=
                 if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance();
                     self.advance();
                     
-                    self.expect_type()?
+                    (self.expect_type()?, false)
                 }
                 else {
-                    DataType::new(
-                        self.current_range(),
-                        DataTypeKind::Unit
+                    (
+                        DataType::new(
+                            self.current_range(),
+                            DataTypeKind::Unit
+                        ), 
+                        true
                     ) 
                 };
 
             let end = self.current_range().end();
             self.advance();
             
-            mappings.push((name, data_type, SourceRange::new(start, end, self.file)));
+            let mapping = EnumMapping::new(name, data_type, SourceRange::new(start, end, self.file), is_implicit_unit);
+            mappings.push(mapping);
         }
         let mappings = mappings;
 
@@ -1200,7 +1211,11 @@ impl Parser<'_> {
                 }
 
 
-                if settings.can_parse_struct_creation && self.peek_kind() == Some(TokenKind::LeftBracket) {
+                if settings.can_parse_struct_creation 
+                    && (
+                        self.peek_kind() == Some(TokenKind::LeftBracket)
+                        || self.peek_kind() == Some(TokenKind::QuestionMark)
+                    ) {
                     return self.struct_creation_expression()
                 }
 
@@ -1345,7 +1360,9 @@ impl Parser<'_> {
             }
 
             
+            let start = self.current_range().start();
             let name = self.expect_identifier()?;
+            let source_range = SourceRange::new(start, self.current_range().end(), self.file);
             self.advance();
 
             let bind_to =
@@ -1358,13 +1375,14 @@ impl Parser<'_> {
                     self.symbol_map.const_str("_")
                 };
 
+
             self.expect(TokenKind::Arrow)?;
             self.advance();
 
             let expr = self.expression(ParserSettings::default())?;
             self.advance();
 
-            mappings.push(MatchMapping::new(name, bind_to, expr));
+            mappings.push(MatchMapping::new(name, bind_to, source_range, expr));
         }
         let mappings = mappings;
 
@@ -1452,7 +1470,7 @@ impl Parser<'_> {
     }
 
 
-    fn parse_function_call_args(&mut self) -> Result<Vec<Node>, Error> {        
+    fn parse_function_call_args(&mut self) -> Result<Vec<(Node, bool)>, Error> {        
         let mut args = vec![];
         loop {
             if self.current_kind() == TokenKind::EndOfFile {
@@ -1477,16 +1495,18 @@ impl Parser<'_> {
             }
 
 
+            let is_inout = if self.current_is(TokenKind::Ampersand) { self.advance(); true }
+                            else { false };
             let expr = self.expression(ParserSettings::default())?;
             self.advance();
             
-            args.push(expr);
+            args.push((expr, is_inout));
         }
         Ok(args)
     }
 
 
-    fn struct_creation_expression(&mut self) -> ParseResult {        
+    fn struct_creation_expression(&mut self) -> ParseResult {
         let start = self.current_range().start();
         let data_type = self.expect_type()?;
         self.advance();
@@ -1513,10 +1533,11 @@ impl Parser<'_> {
 
             
             // To allow for trailing commas
-            if self.current_kind() == TokenKind::RightParenthesis {
+            if self.current_kind() == TokenKind::RightBracket {
                 break
             }
 
+            let start = self.current_range().start();
             let name = self.expect_identifier()?;
             self.advance();
 
@@ -1524,9 +1545,10 @@ impl Parser<'_> {
             self.advance();
 
             let expr = self.expression(ParserSettings::default())?;
+            let end = self.current_range().end();
             self.advance();
             
-            fields.push((name, expr));
+            fields.push((name, SourceRange::new(start, end, self.file), expr));
         }
         let fields = fields;
 

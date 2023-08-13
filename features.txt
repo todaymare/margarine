@@ -4,10 +4,18 @@
 // A component can be attached to
 // entities and queried by systems
 component Position {
-	x: Position,
+	x: int,
+	y: int,
 }
 
+enum Option {
+	some: any,
+	none: int,
+}
 
-fn hello(val: Position): Position {}
-system fn(val: Position): Position {}
-fn(val: Position): Position {}
+fn hi(&hey: int): int {
+	match Option::none(69) {
+		some => 1,
+		none => 0,
+	}
+}
