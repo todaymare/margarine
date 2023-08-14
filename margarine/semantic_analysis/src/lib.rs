@@ -1,6 +1,6 @@
 #![feature(if_let_guard)]
 #![allow(clippy::map_entry)]
-use std::{cell::{RefCell, Ref}, collections::HashMap, convert::identity, fmt::Write, ops::Deref, sync::Arc};
+use std::{collections::HashMap, fmt::Write};
 
 use common::{SymbolMap, SourceRange, SymbolIndex};
 use errors::{Error, CombineIntoError, CompilerError, ErrorCode, ErrorBuilder};
@@ -12,15 +12,11 @@ index_vec!(Symbols, SymbolId, Symbol);
 
 
 pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -> Result<Infer<'a>, Error> {
-    let mut infer = Infer {
+    let mut infer = Infer::new(
         symbol_map,
-        symbols: Symbols::new(),
-        ctx: Context { 
-            scopes: vec![], 
-            cs: Scope::new(nodes.range().file(), nodes.range().file()), 
-            file: nodes.range().file()
-        },
-    };
+        Symbols::new(),
+        Context::new(Scope::new(nodes.range().file(), nodes.range().file()))
+    );
 
     infer.analyse_block(nodes)?;
 
@@ -37,7 +33,7 @@ pub struct Infer<'a> {
 
 
 #[derive(Debug)]
-struct Context { 
+pub struct Context { 
     scopes: Vec<Scope>,
     // current scope
     cs: Scope,
@@ -46,7 +42,7 @@ struct Context {
 
 
 #[derive(Debug, Default, Clone)]
-struct Scope {
+pub struct Scope {
     symbols: HashMap<SymbolIndex, SymbolId>,
     namespaces: HashMap<SymbolIndex, Scope>,
     variables: Vec<Variable>,
@@ -58,16 +54,6 @@ struct Scope {
 }
 
 impl Scope {
-    fn new(mangle_name: SymbolIndex, file: SymbolIndex) -> Self { 
-        Self { 
-            symbols: HashMap::new(), 
-            mangle_name, 
-            namespaces: HashMap::new(), 
-            file, 
-            variables: Vec::new(),
-            is_function_scope: false, 
-        } 
-    }
 }
 
 
@@ -150,11 +136,26 @@ impl AnalysisResult {
 
 
 impl Scope {    
+    pub fn new(mangle_name: SymbolIndex, file: SymbolIndex) -> Self { 
+        Self { 
+            symbols: HashMap::new(), 
+            mangle_name, 
+            namespaces: HashMap::new(), 
+            file, 
+            variables: Vec::new(),
+            is_function_scope: false, 
+        } 
+    }
+
+    
     ///
     /// Mangles a name based off of the current
     /// active scope of the current context.
     ///
     fn mangle(&self, symbol_map: &mut SymbolMap, symbol: SymbolIndex, source: SourceRange) -> SymbolIndex {
+        if symbol_map.get(symbol).contains("::") {
+            panic!("already mangled name");
+        }
         let str = format!(
             "{}::{}({})", 
             symbol_map.get(self.mangle_name), 
@@ -187,7 +188,6 @@ impl Scope {
         }
         
         if self.symbols.contains_key(&identifier) {
-            panic!();
             return Err(CompilerError::new(
                     self.file, 
                     ErrorCode::SNameAlrDefined, 
@@ -210,6 +210,15 @@ impl Scope {
 
 
 impl Context {
+    pub fn new(cs: Scope) -> Self { 
+        Self {
+            scopes: vec![],
+            file: cs.file,
+            cs,
+        } 
+    }
+
+    
     ///
     /// Replaces current_scope with the
     /// given `Scope` and puts the old value of
@@ -387,7 +396,16 @@ impl Context {
 }
 
 
-impl Infer<'_> {
+impl<'a> Infer<'a> {
+    pub fn new(symbol_map: &'a mut SymbolMap, symbols: Symbols, ctx: Context) -> Self {
+        Self {
+            symbol_map,
+            symbols,
+            ctx,
+        }
+    }
+
+    
     fn expect_type(&self, expect: &DataTypeKind, value: &DataType) -> Result<(), Error> {
         if value.kind().is(expect) {
             return Ok(())
@@ -425,8 +443,6 @@ impl<'a> Infer<'a> {
 
         self.register_declarations(block)?;
 
-
-        self.register_declarations(block)?;
         let result = block
             .iter_mut()
             .map(|x| self.analyse_node(x))
@@ -775,6 +791,7 @@ impl<'a> Infer<'a> {
         match decl {
             Declaration::Struct { .. } => Ok(()),
             Declaration::Enum { .. } => Ok(()),
+
             Declaration::Function { is_system, is_anonymous, name, arguments, return_type, body } => {
 
                 // evaluate body
