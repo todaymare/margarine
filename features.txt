@@ -15,7 +15,7 @@ enum Option {
 
 fn hi(&hey: int): int {
 	match Option::none(69) {
-		some => 1,
-		none => 0,
+		some => hey,
+		none => 5,
 	}
 }
