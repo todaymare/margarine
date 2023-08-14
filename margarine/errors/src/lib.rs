@@ -54,6 +54,11 @@ pub enum ErrorCode {
     SMatchUnkownVar    = 326,
     SMatchVariantMiss  = 327,
     SMatchBranchDiffTy = 328,
+    SVarHintTypeDiff   = 329,
+    SInOutArgIsntMut   = 330,
+    SAssignValNotLHS   = 331,
+    SAssignValNotMut   = 332,
+    SAssignValDiffTy   = 333,
 }
 
 

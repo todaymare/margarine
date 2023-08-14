@@ -1221,6 +1221,7 @@ impl Parser<'_> {
 
 
                 if self.peek_kind() == Some(TokenKind::DoubleColon) {
+                    let source = self.current_range();
                     let start = self.current_range().start();
                     self.advance();
                     self.advance();
@@ -1230,7 +1231,8 @@ impl Parser<'_> {
                     return Ok(Node::new(
                         NodeKind::Expression(Expression::WithinNamespace { 
                             namespace: v,
-                            action: Box::new(expr)
+                            action: Box::new(expr),
+                            namespace_source: source,
                         }),
                         SourceRange::new(start, self.current_range().end(), self.file)
                     ))

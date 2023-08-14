@@ -28,6 +28,7 @@ pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -
 pub struct Infer<'a> {
     symbol_map: &'a mut SymbolMap,
     symbols: Symbols,
+    namespaces: HashMap<SymbolIndex, Scope>,
     ctx: Context,
 }
 
@@ -44,7 +45,7 @@ pub struct Context {
 #[derive(Debug, Default, Clone)]
 pub struct Scope {
     symbols: HashMap<SymbolIndex, SymbolId>,
-    namespaces: HashMap<SymbolIndex, Scope>,
+    namespaces: HashMap<SymbolIndex, SymbolIndex>,
     variables: Vec<Variable>,
 
     mangle_name: SymbolIndex,
@@ -156,6 +157,7 @@ impl Scope {
         if symbol_map.get(symbol).contains("::") {
             panic!("already mangled name");
         }
+
         let str = format!(
             "{}::{}({})", 
             symbol_map.get(self.mangle_name), 
@@ -253,15 +255,15 @@ impl Context {
     /// are no more parents left && the symbol doesn't
     /// exist
     ///
-    fn find_namespace(&self, name: SymbolIndex, source: SourceRange) -> Result<&Scope, Error> {
+    fn find_namespace(&self, name: SymbolIndex, source: SourceRange) -> Result<SymbolIndex, Error> {
         let mut current_scope = &self.cs;
 
-        for i in 0..self.scopes.len() {
+        for i in (0..self.scopes.len()).rev() {
             if let Some(v) = current_scope.namespaces.get(&name) {
-                return Ok(v)
+                return Ok(*v)
             }
 
-            current_scope = self.scopes.get(self.scopes.len() - i - 1).unwrap();
+            current_scope = &self.scopes[i];
             
         }
 
@@ -289,12 +291,12 @@ impl Context {
     fn find_symbol_id(&self, name: SymbolIndex, source: SourceRange) -> Result<SymbolId, Error> {
         let mut current_scope = &self.cs;
 
-        for i in 0..self.scopes.len() {
+        for i in (0..self.scopes.len()).rev() {
             if let Some(v) = current_scope.symbols.get(&name) {
                 return Ok(*v)
             }
 
-            current_scope = self.scopes.get(self.scopes.len() - i - 1).unwrap();
+            current_scope = &self.scopes[i];
             
         }
 
@@ -326,7 +328,7 @@ impl Context {
     fn find_variable(&self, name: SymbolIndex, source: SourceRange) -> Result<&Variable, Error> {
         let mut current_scope = &self.cs;
 
-        for i in 0..self.scopes.len() {
+        for i in (0..self.scopes.len()).rev() {
             if let Some(v) = current_scope.variables.iter().rev().find(|x| x.name == name) {
                 return Ok(v)
             }
@@ -335,7 +337,7 @@ impl Context {
                 break
             }
 
-            current_scope = self.scopes.get(self.scopes.len() - i - 1).unwrap();
+            current_scope = &self.scopes[i];
         }
 
         Err(CompilerError::new(
@@ -402,6 +404,7 @@ impl<'a> Infer<'a> {
             symbol_map,
             symbols,
             ctx,
+            namespaces: HashMap::new(),
         }
     }
 
@@ -505,7 +508,8 @@ impl<'a> Infer<'a> {
 
 
                         if !self.ctx.cs.namespaces.contains_key(&identifier) {
-                            self.ctx.cs.namespaces.insert(identifier, Scope::new(identifier, self.ctx.file));
+                            assert!(self.ctx.cs.namespaces.insert(identifier, *name).is_none());
+                            assert!(self.namespaces.insert(*name, Scope::new(identifier, self.ctx.file)).is_none());
                         }
                     },
 
@@ -685,9 +689,11 @@ impl<'a> Infer<'a> {
                             }
 
                             let Symbol::Enum(structure) = &mut self.symbols[SymbolId(index)] else { unreachable!() };
+                            let full_name = structure.full_name;
                             let name = structure.name;
 
-                            assert!(self.ctx.cs.namespaces.insert(name, scope).is_none());
+                            assert!(self.ctx.cs.namespaces.insert(name, full_name).is_none());
+                            assert!(self.namespaces.insert(full_name, scope).is_none());
                         }
                     }
 
@@ -846,7 +852,90 @@ impl<'a> Infer<'a> {
 
 
     fn analyse_statement(&mut self, stmt: &mut Statement, source: SourceRange) -> Result<(), Error> {
-        todo!()
+        match stmt {
+            Statement::Variable { name, hint, is_mut, rhs } => {
+                let rhs_typ = self.analyse_node(&mut *rhs);
+
+                // Decoy value in the case of the variable
+                // throwing an error
+                let index = self.ctx.cs.variables.len();
+                self.ctx.cs.register_variable(Variable::new(*name, DataType::new(source, DataTypeKind::Unknown), *is_mut));
+
+                let rhs_typ = match rhs_typ {
+                    Ok(v) => v,
+                    Err(e) => return Err(e),
+                };
+
+                if let Some(hint) = hint {
+                    if !rhs_typ.data_type.kind().is(hint.kind()) {
+                        return Err(
+                            CompilerError::new(
+                                source.file(), 
+                                ErrorCode::SVarHintTypeDiff, 
+                                "variable value differs from type hint"
+                            )
+                            .highlight(source)
+                                .note(format!("variable has the type hint {} but the value is {}",
+                                        display_type(self.symbol_map, hint.kind()),
+                                        display_type(self.symbol_map, rhs_typ.data_type.kind())
+                                    ))
+                            .build()
+                        )
+                    }
+                }
+                
+
+                let variable = Variable::new(*name, DataType::new(source, rhs_typ.data_type.kind_owned()), *is_mut);
+                self.ctx.cs.variables[index] = variable;
+                
+
+                Ok(())
+            },
+
+            
+            Statement::UpdateValue { lhs, rhs } => {
+                let lhs_typ = self.analyse_node(&mut *lhs)?;
+                let rhs_typ = self.analyse_node(&mut *rhs)?;
+
+                match lhs.kind() {
+                    | NodeKind::Expression(Expression::Identifier(_))
+                    | NodeKind::Expression(Expression::AccessField { .. })
+                     => (),
+
+                    _ => return Err(
+                        CompilerError::new(source.file(), ErrorCode::SAssignValNotLHS, "invalid assignment target")
+                            .highlight(lhs.range())
+                            .build()
+                    )
+                }
+
+
+                if !lhs_typ.mutability {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SAssignValNotMut, "assignment target isn't mutable")
+                            .highlight(lhs.range())
+                            .build()
+                    )
+                }
+
+
+                if !lhs_typ.data_type.kind().is(rhs_typ.data_type.kind()) {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SAssignValDiffTy, "assignment target's type and the value's types mismatch")
+                            .highlight(source)
+                                .note(format!(
+                                    "assignment target is of type '{}' but the value is '{}'",
+                                    display_type(self.symbol_map, lhs_typ.data_type.kind()),
+                                    display_type(self.symbol_map, rhs_typ.data_type.kind()),
+                                ))
+                            .build()
+                    )
+                    
+                }
+
+                Ok(())
+            },
+        }
     }
 
 
@@ -975,14 +1064,11 @@ impl<'a> Infer<'a> {
 
                 self.expect_type(&DataTypeKind::Bool, &condition_typ)?;
 
-                let mut body_typ = self.analyse_block(body)?;
+                let body_typ = self.analyse_block(body)?;
 
                 if let Some(else_block) = else_block {
                     let else_typ = self.analyse_node(&mut *else_block)?;
                     self.expect_type(body_typ.data_type.kind(), &else_typ.data_type)?;
-                    if !else_typ.mutability {
-                        body_typ.mutability = false
-                    }
 
                 } else if !body_typ.data_type.kind().is(&DataTypeKind::Unit) {
                     return Err(
@@ -999,7 +1085,7 @@ impl<'a> Infer<'a> {
 
                 AnalysisResult::new(
                     DataType::new(source, body_typ.data_type.kind_owned()), 
-                    body_typ.mutability,
+                    true,
                 )
             },
 
@@ -1077,7 +1163,7 @@ impl<'a> Infer<'a> {
                 }
 
 
-                let (return_type, mutability) = {
+                let return_type = {
                     let mut expected_type = None;
                     let mut mutability = true;
                     let mut errors = vec![];
@@ -1113,11 +1199,6 @@ impl<'a> Infer<'a> {
                         };
 
 
-                        if !result.mutability {
-                            mutability = false;
-                        }
-
-
                         if expected_type.as_ref().is_none() {
                             expected_type = Some(result.data_type.kind_owned());
                             continue
@@ -1143,11 +1224,11 @@ impl<'a> Infer<'a> {
                         return Err(errors.combine_into_error())
                     }
 
-                    (expected_type.unwrap_or(DataTypeKind::Unit), mutability)
+                    expected_type.unwrap_or(DataTypeKind::Unit)
                 };
                 
 
-                AnalysisResult::new(DataType::new(source, return_type), mutability)
+                AnalysisResult::new(DataType::new(source, return_type), true)
 
             },
 
@@ -1420,25 +1501,38 @@ impl<'a> Infer<'a> {
                                     .highlight(arg.0.range())
                                         .note(format!("..but the value is of type '{}'", display_type(self.symbol_map, arg_analysis.data_type.kind())))
                                     .build()
-                            )
+                            );
                         }
 
 
                         if arg.1 != expected_arg.is_inout() {
                             errors.push(
-                                CompilerError::new(source.file(), ErrorCode::SArgDiffInOut, "arguments differ in in-outness")
+                                CompilerError::new(source.file(), ErrorCode::SArgDiffInOut, "argument differ in in-outness")
                                     .highlight(arg.0.range())
                                         .note({
                                             match (arg.1, expected_arg.is_inout()) {
-                                                (true, false) => "consider removing this '&'",
+                                                (true, false) => "consider removing the '&'",
                                                 (false, true) => "consider adding a '&' before the argument",
 
                                                 _ => unreachable!(),
                                             }.to_string()
                                         })
                                     .build()
-                            )
+                            );
+                            continue;
                         }
+
+
+                        if expected_arg.is_inout() && !arg_analysis.mutability {                            
+                            errors.push(
+                                CompilerError::new(source.file(), ErrorCode::SInOutArgIsntMut, "argument is in-out but the value isn't mutable")
+                                    .highlight(arg.0.range())
+                                        .note("..isn't a mutable value".to_string())
+                                    .build()
+                            );
+                        }
+
+
                     }
 
 
@@ -1452,16 +1546,19 @@ impl<'a> Infer<'a> {
             },
 
             
-            Expression::WithinNamespace { namespace, action } => {
-                let namespace = self.ctx.find_namespace(*namespace, source)?;
+            Expression::WithinNamespace { namespace, action, namespace_source } => {
+                let namespace = self.ctx.find_namespace(*namespace, *namespace_source)?;
                 // PERFORMANCE: Maybe? Remove the clone
+                let namespace = self.namespaces.get(&namespace).unwrap();
                 let namespace = namespace.clone();
 
                 self.ctx.subscope(namespace);
 
                 let result = self.analyse_node(&mut *action)?;
 
-                AnalysisResult::new(DataType::new(source, result.data_type.kind_owned()), result.mutability)
+                self.ctx.pop_scope();
+
+                AnalysisResult::new(DataType::new(source, result.data_type.kind_owned()), true)
             },
         };
 

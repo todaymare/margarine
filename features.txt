@@ -10,12 +10,22 @@ component Position {
 
 enum Option {
 	some: any,
-	none: int,
+	none,
 }
 
-fn hi(&hey: int): int {
-	match Option::none(69) {
-		some => hey,
-		none => 5,
-	}
+
+fn some_69_func(): int { 69 }
+
+
+fn some_func(&hey: int) {
+	some_func(&hey)
+}
+
+
+fn() {
+	let mut x = Position { x: 69, y: 420 }
+
+	x.x = 20
+
+	some_func(&x.x)
 }

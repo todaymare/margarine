@@ -166,6 +166,7 @@ pub enum Expression {
 
     WithinNamespace {
         namespace: SymbolIndex,
+        namespace_source: SourceRange,
         action: Box<Node>,
     }
 }
