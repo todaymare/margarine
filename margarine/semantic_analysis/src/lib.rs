@@ -154,10 +154,12 @@ impl Scope {
     /// active scope of the current context.
     ///
     fn mangle(&self, symbol_map: &mut SymbolMap, symbol: SymbolIndex, source: SourceRange) -> SymbolIndex {
-        if symbol_map.get(symbol).contains("::") {
-            panic!("already mangled name");
+        #[cfg(debug_assertions)]
+        {
+            if symbol_map.get(symbol).contains("::") {
+                panic!("name already mangled")
+            }
         }
-
         let str = format!(
             "{}::{}({})", 
             symbol_map.get(self.mangle_name), 
@@ -441,11 +443,22 @@ impl<'a> Infer<'a> {
 
 impl<'a> Infer<'a> {
     fn analyse_block(&mut self, block: &mut Block) -> Result<AnalysisResult, Error> {
-        let mut errors = vec![];
         self.ctx.subscope(Scope::new(self.ctx.cs.mangle_name, self.ctx.file));
 
-        self.register_declarations(block)?;
+        let result = self.register_declarations(block);
+        let scope = self.ctx.pop_scope();
 
+        result?;
+
+        let result = self.analyse_block_with_scope(block, scope)?;
+        Ok(result.0)
+    }
+
+
+    fn analyse_block_with_scope(&mut self, block: &mut Block, scope: Scope) -> Result<(AnalysisResult, Scope), Error> {
+        let mut errors = vec![];
+        self.ctx.subscope(scope);
+        
         let result = block
             .iter_mut()
             .map(|x| self.analyse_node(x))
@@ -462,13 +475,13 @@ impl<'a> Infer<'a> {
                 AnalysisResult::new(DataType::new(range, DataTypeKind::Unknown), true)
             });
         
-        self.ctx.pop_scope();
+        let scope = self.ctx.pop_scope();
 
         if !errors.is_empty() {
             return Err(errors.combine_into_error())
         }
 
-        Ok(result)
+        Ok((result, scope))
     }
 
 
@@ -483,7 +496,7 @@ impl<'a> Infer<'a> {
     ) -> Result<(), Error> {
         // - name renaming
         // - base registeration
-        {
+        fn register_stage_1(slf: &mut Infer, nodes: &mut [Node]) -> Result<(), Error> {
             let mut errors = vec![];
             for node in nodes.iter_mut() {
                 let source = node.range();
@@ -492,7 +505,7 @@ impl<'a> Infer<'a> {
                 match decl {
                     Declaration::Struct { kind, name, .. } => {
                         let identifier = *name;
-                        *name = self.ctx.cs.mangle(self.symbol_map, *name, source);
+                        *name = slf.ctx.cs.mangle(slf.symbol_map, *name, source);
 
                         let structure = Structure {
                             name: identifier,
@@ -501,22 +514,22 @@ impl<'a> Infer<'a> {
                             kind: *kind,
                         };
 
-                        let result = self.ctx.cs.create_symbol(&mut self.symbols, Symbol::Structure(structure), identifier, source);
+                        let result = slf.ctx.cs.create_symbol(&mut slf.symbols, Symbol::Structure(structure), identifier, source);
                         if let Err(e) = result {
                             errors.push(e);
                         }
 
 
-                        if !self.ctx.cs.namespaces.contains_key(&identifier) {
-                            assert!(self.ctx.cs.namespaces.insert(identifier, *name).is_none());
-                            assert!(self.namespaces.insert(*name, Scope::new(identifier, self.ctx.file)).is_none());
+                        if !slf.ctx.cs.namespaces.contains_key(&identifier) {
+                            assert!(slf.ctx.cs.namespaces.insert(identifier, *name).is_none());
+                            assert!(slf.namespaces.insert(*name, Scope::new(identifier, slf.ctx.file)).is_none());
                         }
                     },
 
 
                     Declaration::Enum { name, .. } => {
                         let identifier = *name;
-                        *name = self.ctx.cs.mangle(self.symbol_map, *name, source);
+                        *name = slf.ctx.cs.mangle(slf.symbol_map, *name, source);
 
                         let enum_val = Enum {
                             name: identifier,
@@ -525,7 +538,7 @@ impl<'a> Infer<'a> {
                         };
 
                         
-                        let result = self.ctx.cs.create_symbol(&mut self.symbols, Symbol::Enum(enum_val), identifier, source);
+                        let result = slf.ctx.cs.create_symbol(&mut slf.symbols, Symbol::Enum(enum_val), identifier, source);
                         if let Err(e) = result {
                             errors.push(e);
                         }
@@ -534,7 +547,7 @@ impl<'a> Infer<'a> {
 
                     Declaration::Function { is_system, is_anonymous, name, arguments: _, return_type, body: _ } => {
                         let identifier = *name;
-                        *name = self.ctx.cs.mangle(self.symbol_map, *name, source);
+                        *name = slf.ctx.cs.mangle(slf.symbol_map, *name, source);
 
                         let function = Function {
                             name: identifier,
@@ -548,16 +561,51 @@ impl<'a> Infer<'a> {
                         };
 
                         
-                        let result = self.ctx.cs.create_symbol(&mut self.symbols, Symbol::Function(function), identifier, source);
+                        let result = slf.ctx.cs.create_symbol(&mut slf.symbols, Symbol::Function(function), identifier, source);
                         if let Err(e) = result {
                             errors.push(e);
                         }
                     }
 
                     
-                    Declaration::Impl { data_type, body } => todo!(),
+                    Declaration::Impl { data_type, body } => (),
                     Declaration::Using { file } => todo!(),
-                    Declaration::Module { name, body } => todo!(),
+                    Declaration::Module { name, body } => {
+                        let identifier = *name;
+                        *name = slf.ctx.cs.mangle(slf.symbol_map, *name, source);
+                        slf.ctx.cs.namespaces.insert(identifier, *name);
+
+                        let scope = Scope::new(*name, source.file());
+                        slf.namespaces.insert(*name, scope.clone());
+
+                        slf.ctx.subscope(scope);
+
+                        let result = register_stage_1(slf, body);
+                        
+                        let scope = slf.ctx.pop_scope();
+
+                        result?;
+
+                        if !slf.namespaces.contains_key(name) {
+                            slf.namespaces.insert(*name, scope);
+                            continue;
+                        }
+                        
+                        let namespace = slf.namespaces.get_mut(name).unwrap();
+
+                        {
+                            namespace.symbols.reserve(scope.symbols.len());
+                            for s in scope.symbols {
+                                namespace.symbols.insert(s.0, s.1);
+                            }
+                        }
+                        {
+                            namespace.namespaces.reserve(scope.namespaces.len());
+                            for s in scope.namespaces {
+                                namespace.namespaces.insert(s.0, s.1);
+                            }
+                        }
+                    },
                     Declaration::Extern { file, functions } => todo!(),
 
                 }
@@ -565,14 +613,72 @@ impl<'a> Infer<'a> {
             }
 
 
+            for node in nodes.iter_mut() {
+                let source = node.range();
+                let NodeKind::Declaration(decl) = node.kind_mut() else { continue };
+
+
+                match decl {
+                    Declaration::Impl { data_type, body } => {
+                        slf.ctx.validate_data_type(&mut slf.symbols, data_type)?;
+
+                        let name = match data_type.kind() {
+                            DataTypeKind::Int => todo!(),
+                            DataTypeKind::Bool => todo!(),
+                            DataTypeKind::Float => todo!(),
+                            DataTypeKind::Unit => todo!(),
+                            DataTypeKind::Any => todo!(),
+                            DataTypeKind::Unknown => todo!(),
+                            DataTypeKind::Option(_) => todo!(),
+                            DataTypeKind::CustomType(v) => *v,
+                        };
+
+                        let scope = Scope::new(name, source.file());
+
+                        slf.ctx.subscope(scope);
+
+                        let result = register_stage_1(slf, body);
+                        
+                        let scope = slf.ctx.pop_scope();
+
+                        result?;
+
+                        let namespace = slf.namespaces.get_mut(&name).unwrap();
+
+                        {
+                            namespace.symbols.reserve(scope.symbols.len());
+                            for s in scope.symbols {
+                                namespace.symbols.insert(s.0, s.1);
+                            }
+                        }
+                        {
+                            namespace.namespaces.reserve(scope.namespaces.len());
+                            for s in scope.namespaces {
+                                namespace.namespaces.insert(s.0, s.1);
+                            }
+                        }
+
+                    },
+                    Declaration::Using { file } => todo!(),
+                    Declaration::Module { name, body } => (),
+                    Declaration::Extern { file, functions } => todo!(),
+
+                    _ => ()
+                }
+                
+            }
+
+
             if !errors.is_empty() {
                 return Err(errors.combine_into_error())
             }
+
+            Ok(())
         }
 
 
         // type updating
-        {
+        fn register_stage_2(slf: &mut Infer, nodes: &mut [Node]) -> Result<(), Error> {
             let mut errors = vec![];
             for node in nodes.iter_mut() {
                 let _source = node.range();
@@ -582,7 +688,7 @@ impl<'a> Infer<'a> {
                     Declaration::Struct { kind: _, name, fields } => {
                         for i in 0..fields.len() {
                             let f = fields.get_mut(i).unwrap();
-                            let result = self.ctx.validate_data_type(&mut self.symbols, &mut f.1);
+                            let result = slf.ctx.validate_data_type(&mut slf.symbols, &mut f.1);
 
                             if let Err(e) = result {
                                 errors.push(e);
@@ -591,7 +697,7 @@ impl<'a> Infer<'a> {
                             let f = fields.get(i).unwrap();
                             if let Some(v) = fields[0..i].iter().find(|x| x.0 == f.0) {
                                 errors.push(CompilerError::new(
-                                    self.ctx.file, 
+                                    slf.ctx.file, 
                                     ErrorCode::SFieldDefEarlier, 
                                     "field is already defined"
                                 )
@@ -605,7 +711,7 @@ impl<'a> Infer<'a> {
 
 
                         {
-                            let id = self.symbols.vec
+                            let id = slf.symbols.vec
                                 .iter_mut()
                                 .rev()
                                 .filter_map(|x| {
@@ -627,7 +733,7 @@ impl<'a> Infer<'a> {
                     Declaration::Enum { name, mappings } => {
                         for i in 0..mappings.len() {
                             let m = mappings.get_mut(i).unwrap();
-                            let result = self.ctx.validate_data_type(&mut self.symbols, &mut m.data_type_mut());
+                            let result = slf.ctx.validate_data_type(&mut slf.symbols, &mut m.data_type_mut());
 
                             if let Err(e) = result {
                                 errors.push(e);
@@ -636,7 +742,7 @@ impl<'a> Infer<'a> {
                             let m = mappings.get(i).unwrap();
                             if let Some(v) = mappings[0..i].iter().find(|x| x.name() == m.name()) {
                                 errors.push(CompilerError::new(
-                                    self.ctx.file, 
+                                    slf.ctx.file, 
                                     ErrorCode::SVariantDefEarlier, 
                                     "variant is already defined"
                                 )
@@ -650,7 +756,7 @@ impl<'a> Infer<'a> {
 
 
                         {
-                            let (structure, index) = self.symbols.vec
+                            let (structure, index) = slf.symbols.vec
                                 .iter_mut()
                                 .enumerate()
                                 .rev()
@@ -667,12 +773,12 @@ impl<'a> Infer<'a> {
                             structure.mappings = mappings.clone();
 
                             
-                            let mut scope = Scope::new(structure.full_name, self.ctx.file);
+                            let mut scope = Scope::new(structure.full_name, slf.ctx.file);
 
                             for m in mappings.iter() {
                                 let func = Function {
                                     name: m.name(),
-                                    full_name: scope.mangle(self.symbol_map, m.name(), m.range()),
+                                    full_name: scope.mangle(slf.symbol_map, m.name(), m.range()),
                                     args: {
                                         if m.is_implicit_unit() {
                                             vec![]
@@ -685,15 +791,15 @@ impl<'a> Infer<'a> {
                                     return_type: DataType::new(m.range(), DataTypeKind::CustomType(*name)),
                                 };
 
-                                scope.create_symbol(&mut self.symbols, Symbol::Function(func), m.name(), m.range())?;
+                                scope.create_symbol(&mut slf.symbols, Symbol::Function(func), m.name(), m.range())?;
                             }
 
-                            let Symbol::Enum(structure) = &mut self.symbols[SymbolId(index)] else { unreachable!() };
+                            let Symbol::Enum(structure) = &mut slf.symbols[SymbolId(index)] else { unreachable!() };
                             let full_name = structure.full_name;
                             let name = structure.name;
 
-                            assert!(self.ctx.cs.namespaces.insert(name, full_name).is_none());
-                            assert!(self.namespaces.insert(full_name, scope).is_none());
+                            assert!(slf.ctx.cs.namespaces.insert(name, full_name).is_none());
+                            assert!(slf.namespaces.insert(full_name, scope).is_none());
                         }
                     }
 
@@ -701,7 +807,7 @@ impl<'a> Infer<'a> {
                     Declaration::Function { is_system: _, is_anonymous: _, name, arguments, return_type, body: _ } => {                        
                         for i in 0..arguments.len() {
                             let f = arguments.get_mut(i).unwrap();
-                            let result = self.ctx.validate_data_type(&mut self.symbols, f.data_type_mut());
+                            let result = slf.ctx.validate_data_type(&mut slf.symbols, f.data_type_mut());
 
                             if let Err(e) = result {
                                 errors.push(e);
@@ -710,7 +816,7 @@ impl<'a> Infer<'a> {
                             let f = arguments.get(i).unwrap();
                             if let Some(v) = arguments[0..i].iter().find(|x| x.name() == f.name()) {
                                 errors.push(CompilerError::new(
-                                    self.ctx.file, 
+                                    slf.ctx.file, 
                                     ErrorCode::SArgDefEarlier, 
                                     "argument is already defined"
                                 )
@@ -724,7 +830,7 @@ impl<'a> Infer<'a> {
 
 
                         {
-                            let result = self.ctx.validate_data_type(&mut self.symbols, return_type);
+                            let result = slf.ctx.validate_data_type(&mut slf.symbols, return_type);
                             if let Err(e) = result {
                                 errors.push(e);
                             }
@@ -732,7 +838,7 @@ impl<'a> Infer<'a> {
 
 
                         {
-                            let id = self.symbols.vec
+                            let id = slf.symbols.vec
                                 .iter_mut()
                                 .rev()
                                 .filter_map(|x| {
@@ -751,9 +857,42 @@ impl<'a> Infer<'a> {
                     }
 
                     
-                    Declaration::Impl { data_type, body } => todo!(),
+                    Declaration::Impl { data_type, body } => {
+                        let name = match data_type.kind() {
+                            DataTypeKind::Int => todo!(),
+                            DataTypeKind::Bool => todo!(),
+                            DataTypeKind::Float => todo!(),
+                            DataTypeKind::Unit => todo!(),
+                            DataTypeKind::Any => todo!(),
+                            DataTypeKind::Unknown => todo!(),
+                            DataTypeKind::Option(_) => todo!(),
+                            DataTypeKind::CustomType(v) => v,
+                        };
+
+
+                        let namespace = slf.namespaces.get(name).unwrap().clone();
+                        slf.ctx.subscope(namespace);
+                        let result = register_stage_2(slf, body);
+                        let namespace = slf.ctx.pop_scope();
+
+                        result?;
+
+                        *slf.namespaces.get_mut(name).unwrap() = namespace;
+
+                    },
                     Declaration::Using { file } => todo!(),
-                    Declaration::Module { name, body } => todo!(),
+                    Declaration::Module { name, body } => {
+                        let namespace = slf.namespaces.get(name).unwrap().clone();
+                        slf.ctx.subscope(namespace);
+                        let result = register_stage_2(slf, body);
+                        let namespace = slf.ctx.pop_scope();
+
+                        result?;
+
+                        *slf.namespaces.get_mut(name).unwrap() = namespace;
+
+                        
+                    },
                     Declaration::Extern { file, functions } => todo!(),
 
 
@@ -761,11 +900,17 @@ impl<'a> Infer<'a> {
             
             }
 
-
             if !errors.is_empty() {
                 return Err(errors.combine_into_error())
             }
+
+            Ok(())
         }
+
+        
+        register_stage_1(self, nodes)?;
+        register_stage_2(self, nodes)?;
+
         
         Ok(())
     }
@@ -816,10 +961,10 @@ impl<'a> Infer<'a> {
                     }
 
                     self.ctx.subscope(subscope);
-                    let result = self.analyse_block(body)?;
+                    let result = self.analyse_block(body);
                     self.ctx.pop_scope();
 
-                    result
+                    result?
                 };
 
 
@@ -843,9 +988,36 @@ impl<'a> Infer<'a> {
                 Ok(())
             },
 
-            Declaration::Impl { data_type, body } => todo!(),
+            Declaration::Impl { data_type, body } => {
+                let name = match data_type.kind() {
+                    DataTypeKind::Int => todo!(),
+                    DataTypeKind::Bool => todo!(),
+                    DataTypeKind::Float => todo!(),
+                    DataTypeKind::Unit => todo!(),
+                    DataTypeKind::Any => todo!(),
+                    DataTypeKind::Unknown => todo!(),
+                    DataTypeKind::Option(_) => todo!(),
+                    DataTypeKind::CustomType(v) => v,
+                };
+
+                let namespace = self.namespaces.get(name).unwrap().clone();
+                let (_, namespace) = self.analyse_block_with_scope(body, namespace)?;
+
+                *self.namespaces.get_mut(name).unwrap() = namespace;
+
+                Ok(())
+            },
+
             Declaration::Using { file } => todo!(),
-            Declaration::Module { name, body } => todo!(),
+            Declaration::Module { name, body } => {
+                let namespace = self.namespaces.get(name).unwrap().clone();
+                let (_, namespace) = self.analyse_block_with_scope(body, namespace)?;
+
+                *self.namespaces.get_mut(name).unwrap() = namespace;
+
+                Ok(())
+                
+            },
             Declaration::Extern { file, functions } => todo!(),
         }
     }
@@ -1554,11 +1726,11 @@ impl<'a> Infer<'a> {
 
                 self.ctx.subscope(namespace);
 
-                let result = self.analyse_node(&mut *action)?;
+                let result = self.analyse_node(&mut *action);
 
                 self.ctx.pop_scope();
 
-                AnalysisResult::new(DataType::new(source, result.data_type.kind_owned()), true)
+                AnalysisResult::new(DataType::new(source, result?.data_type.kind_owned()), true)
             },
         };
 

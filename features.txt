@@ -28,4 +28,16 @@ fn() {
 	x.x = 20
 
 	some_func(&x.x)
+	std::print(69)
+}
+
+impl Position {
+	fn yes(): Option {
+		Option::none()
+	}
+}
+
+
+mod std {
+	fn print(num: int) {}
 }

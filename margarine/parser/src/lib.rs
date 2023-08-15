@@ -1,6 +1,6 @@
 pub mod nodes;
 
-use std::ops::{Deref, DerefMut};
+use std::{ops::{Deref, DerefMut}, fmt::Write};
 
 use common::{SymbolMap, SourceRange, SymbolIndex, Slice};
 use errors::{Error, CompilerError, ErrorBuilder, ErrorCode, CombineIntoError};
@@ -226,9 +226,9 @@ impl Parser<'_> {
             let message = {
                 let mut str = String::new();
                 for (i, tk) in token_kinds.iter().enumerate() {
-                    str = format!("{str}{} {tk:?}", if i == 0 { "" }
+                    let _ = write!(str, "{} {tk:?}", if i == 0 { "" }
                                                 else if i == token_kinds.len()-1 { " or" }
-                                                else { "," })
+                                                else { "," });
                 }
 
                 str

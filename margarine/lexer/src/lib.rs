@@ -192,6 +192,11 @@ pub enum Keyword {
     If,
     Else,
     Let,
+    Loop,
+    While,
+    Return,
+    Break,
+    Continue,
 }
 
 
@@ -461,6 +466,11 @@ impl Lexer<'_> {
             "let" => TokenKind::Keyword(Keyword::Let),
             "if" => TokenKind::Keyword(Keyword::If),
             "else" => TokenKind::Keyword(Keyword::Else),
+            "loop" => TokenKind::Keyword(Keyword::Loop),
+            "while" => TokenKind::Keyword(Keyword::While),
+            "return" => TokenKind::Keyword(Keyword::Return),
+            "break" => TokenKind::Keyword(Keyword::Break),
+            "continue" => TokenKind::Keyword(Keyword::Continue),
 
             _ => {
                 let index = self.symbol_table.insert(String::from(&string));
