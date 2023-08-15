@@ -188,7 +188,7 @@ impl ErrorOption {
 
                 let start_line = line_at_index(source, range.start()).unwrap().1;
                 let end_line   = line_at_index(source, range.end()).unwrap().1;
-                let line_size  = end_line.to_string().len();
+                let line_size  = (end_line + 1).to_string().len();
 
                 
                 {

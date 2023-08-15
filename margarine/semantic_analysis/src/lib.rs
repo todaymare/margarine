@@ -15,7 +15,8 @@ pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -
     let mut infer = Infer::new(
         symbol_map,
         Symbols::new(),
-        Context::new(Scope::new(nodes.range().file(), nodes.range().file()))
+        Context::new(Scope::new(nodes.range().file(), nodes.range().file())),
+        nodes.range().file(),
     );
 
     infer.analyse_block(nodes)?;
@@ -30,6 +31,7 @@ pub struct Infer<'a> {
     symbols: Symbols,
     namespaces: HashMap<SymbolIndex, Scope>,
     ctx: Context,
+    root_file: SymbolIndex,
 }
 
 
@@ -44,8 +46,8 @@ pub struct Context {
 
 #[derive(Debug, Default, Clone)]
 pub struct Scope {
-    symbols: HashMap<SymbolIndex, SymbolId>,
-    namespaces: HashMap<SymbolIndex, SymbolIndex>,
+    symbols: HashMap<SymbolIndex, (SymbolId, SourceRange)>,
+    namespaces: HashMap<SymbolIndex, (SymbolIndex, SourceRange)>,
     variables: Vec<Variable>,
 
     mangle_name: SymbolIndex,
@@ -83,6 +85,15 @@ impl Symbol {
             Symbol::Function(_) => "function",
         }
     }
+
+
+    pub fn range(&self) -> SourceRange {
+        match self {
+            Symbol::Structure(v) => v.source,
+            Symbol::Enum(v) => v.source,
+            Symbol::Function(v) => v.source,
+        }
+    }
 }
 
 
@@ -92,6 +103,7 @@ pub struct Structure {
     full_name: SymbolIndex,
     fields: Vec<(SymbolIndex, DataType, SourceRange)>,
     kind: StructKind,
+    source: SourceRange
 }
 
 
@@ -100,6 +112,7 @@ pub struct Enum {
     name: SymbolIndex,
     full_name: SymbolIndex,
     mappings: Vec<EnumMapping>,
+    source: SourceRange,
 }
 
 
@@ -108,9 +121,11 @@ pub struct Function {
     name: SymbolIndex,
     full_name: SymbolIndex,
     args: Vec<FunctionArgument>,
+    is_extern: bool,
     is_system: bool,
     is_anonymous: bool,
     return_type: DataType,
+    source: SourceRange,
 }
 
 
@@ -190,7 +205,12 @@ impl Scope {
         if is_anonymous_function {
             return Ok(())
         }
-        
+
+        self.put_symbol(id, identifier, source)
+    }
+
+
+    fn put_symbol(&mut self, symbol_id: SymbolId, identifier: SymbolIndex, source: SourceRange) -> Result<(), Error> {
         if self.symbols.contains_key(&identifier) {
             return Err(CompilerError::new(
                     self.file, 
@@ -202,7 +222,24 @@ impl Scope {
             );
         }
         
-        assert!(self.symbols.insert(identifier, id).is_none());
+        assert!(self.symbols.insert(identifier, (symbol_id, source)).is_none());
+        Ok(())
+    }
+
+
+    fn put_namespace(&mut self, identifier: SymbolIndex, path: SymbolIndex, source: SourceRange) -> Result<(), Error> {
+        if self.namespaces.contains_key(&identifier) {
+            return Err(CompilerError::new(
+                    self.file, 
+                    ErrorCode::SNameAlrDefined,
+                    "name is already defined in the namespace"
+                )
+                .highlight(source)
+                .build()
+            );
+        }
+        
+        assert!(self.namespaces.insert(identifier, (path, source)).is_none());
         Ok(())
     }
 
@@ -260,12 +297,14 @@ impl Context {
     fn find_namespace(&self, name: SymbolIndex, source: SourceRange) -> Result<SymbolIndex, Error> {
         let mut current_scope = &self.cs;
 
-        for i in (0..self.scopes.len()).rev() {
+        for i in (0..self.scopes.len()+1).rev() {
             if let Some(v) = current_scope.namespaces.get(&name) {
-                return Ok(*v)
+                return Ok(v.0)
             }
 
-            current_scope = &self.scopes[i];
+            if i == 0 { break }
+
+            current_scope = &self.scopes[i-1];
             
         }
 
@@ -286,19 +325,21 @@ impl Context {
     /// recursively search through the parent aswell.
     ///
     /// # Errors
-    /// Returns a "namespace not found" error if there
+    /// Returns a "symbol not found" error if there
     /// are no more parents left && the symbol doesn't
     /// exist
     ///
     fn find_symbol_id(&self, name: SymbolIndex, source: SourceRange) -> Result<SymbolId, Error> {
         let mut current_scope = &self.cs;
 
-        for i in (0..self.scopes.len()).rev() {
+        for i in (0..self.scopes.len()+1).rev() {
             if let Some(v) = current_scope.symbols.get(&name) {
-                return Ok(*v)
+                return Ok(v.0)
             }
 
-            current_scope = &self.scopes[i];
+            if i == 0 { break }
+
+            current_scope = &self.scopes[i-1];
             
         }
 
@@ -330,7 +371,7 @@ impl Context {
     fn find_variable(&self, name: SymbolIndex, source: SourceRange) -> Result<&Variable, Error> {
         let mut current_scope = &self.cs;
 
-        for i in (0..self.scopes.len()).rev() {
+        for i in (0..self.scopes.len()+1).rev() {
             if let Some(v) = current_scope.variables.iter().rev().find(|x| x.name == name) {
                 return Ok(v)
             }
@@ -339,7 +380,9 @@ impl Context {
                 break
             }
 
-            current_scope = &self.scopes[i];
+            if i == 0 { break }
+
+            current_scope = &self.scopes[i-1];
         }
 
         Err(CompilerError::new(
@@ -401,12 +444,13 @@ impl Context {
 
 
 impl<'a> Infer<'a> {
-    pub fn new(symbol_map: &'a mut SymbolMap, symbols: Symbols, ctx: Context) -> Self {
+    pub fn new(symbol_map: &'a mut SymbolMap, symbols: Symbols, ctx: Context, root_file: SymbolIndex) -> Self {
         Self {
             symbol_map,
             symbols,
             ctx,
             namespaces: HashMap::new(),
+            root_file,
         }
     }
 
@@ -436,6 +480,30 @@ impl<'a> Infer<'a> {
             .as_slice()
             .iter()
             .find(|x| x.full_name() == name)
+    }
+
+
+    fn type_namespace(&mut self, data_type: &DataTypeKind) -> SymbolIndex {
+        let name = match data_type {
+            DataTypeKind::Int => self.symbol_map.const_str("int"),
+            DataTypeKind::Bool => self.symbol_map.const_str("bool"),
+            DataTypeKind::Float => self.symbol_map.const_str("float"),
+            DataTypeKind::Unit => self.symbol_map.const_str("unit"),
+            DataTypeKind::Any => self.symbol_map.const_str("any"),
+            DataTypeKind::Unknown => panic!(),
+            DataTypeKind::Option(v) => {
+                let kind = self.type_namespace(v.kind());
+                let string = format!("{}?", self.symbol_map.get(kind));
+                self.symbol_map.insert(string)
+            },
+            DataTypeKind::CustomType(v) => *v,
+        };
+
+        if !self.namespaces.contains_key(&name) {
+            self.namespaces.insert(name, Scope::new(name, self.find_symbol(name).map(|x| x.range().file()).unwrap_or(self.root_file)));
+        }
+
+        name
     }
 }
 
@@ -512,6 +580,7 @@ impl<'a> Infer<'a> {
                             full_name: *name,
                             fields: vec![], // will be initialised later
                             kind: *kind,
+                            source,
                         };
 
                         let result = slf.ctx.cs.create_symbol(&mut slf.symbols, Symbol::Structure(structure), identifier, source);
@@ -520,10 +589,8 @@ impl<'a> Infer<'a> {
                         }
 
 
-                        if !slf.ctx.cs.namespaces.contains_key(&identifier) {
-                            assert!(slf.ctx.cs.namespaces.insert(identifier, *name).is_none());
-                            assert!(slf.namespaces.insert(*name, Scope::new(identifier, slf.ctx.file)).is_none());
-                        }
+                        slf.ctx.cs.put_namespace(identifier, *name, source)?;
+                        assert!(slf.namespaces.insert(*name, Scope::new(identifier, slf.ctx.file)).is_none());
                     },
 
 
@@ -535,6 +602,7 @@ impl<'a> Infer<'a> {
                             name: identifier,
                             full_name: *name,
                             mappings: vec![], // will be initialised later
+                            source,
                         };
 
                         
@@ -553,11 +621,13 @@ impl<'a> Infer<'a> {
                             name: identifier,
                             full_name: *name,
                             args: vec![], // will be initialised later
+                            is_extern: false,
                             is_system: *is_system,
                             is_anonymous: *is_anonymous,
                             // IMPORTANT: This should be updated before any block of body
                             //            is ran.
                             return_type: return_type.clone(),
+                            source,
                         };
 
                         
@@ -568,12 +638,10 @@ impl<'a> Infer<'a> {
                     }
 
                     
-                    Declaration::Impl { data_type, body } => (),
-                    Declaration::Using { file } => todo!(),
                     Declaration::Module { name, body } => {
                         let identifier = *name;
                         *name = slf.ctx.cs.mangle(slf.symbol_map, *name, source);
-                        slf.ctx.cs.namespaces.insert(identifier, *name);
+                        slf.ctx.cs.put_namespace(identifier, *name, source)?;
 
                         let scope = Scope::new(*name, source.file());
                         slf.namespaces.insert(*name, scope.clone());
@@ -593,21 +661,56 @@ impl<'a> Infer<'a> {
                         
                         let namespace = slf.namespaces.get_mut(name).unwrap();
 
+                        let mut errors = vec![];
                         {
                             namespace.symbols.reserve(scope.symbols.len());
                             for s in scope.symbols {
-                                namespace.symbols.insert(s.0, s.1);
+                                if let Err(e) = namespace.put_symbol(s.1.0, s.0, s.1.1) {
+                                    errors.push(e)
+                                }
                             }
                         }
                         {
                             namespace.namespaces.reserve(scope.namespaces.len());
                             for s in scope.namespaces {
-                                namespace.namespaces.insert(s.0, s.1);
+                                if let Err(e) = namespace.put_namespace(s.0, s.1.0, s.1.1) {
+                                    errors.push(e)
+                                }
+                            }
+                        }
+
+                        if !errors.is_empty() {
+                            return Err(errors.combine_into_error())
+                        }
+                    },
+
+                    
+                    Declaration::Extern { file: _, functions } => {
+                        let mut errors = vec![];
+
+                        for f in functions.iter() {
+                            let function = Function { 
+                                name: f.name(), 
+                                full_name: slf.ctx.cs.mangle(slf.symbol_map, f.name(), f.range()), 
+                                args: f.args().to_vec(), 
+                                is_extern: true, 
+                                is_system: false,
+                                is_anonymous: false,
+                                return_type: f.return_type().clone(),
+                                source,
+                            };
+                            
+                            let result = slf.ctx.cs.create_symbol(&mut slf.symbols, Symbol::Function(function), f.name(), f.range());
+
+                            if let Err(e) = result {
+                                errors.push(e);
                             }
                         }
                     },
-                    Declaration::Extern { file, functions } => todo!(),
 
+
+                    Declaration::Impl { .. } => (),
+                    Declaration::Using { .. } => todo!(),
                 }
             
             }
@@ -622,16 +725,7 @@ impl<'a> Infer<'a> {
                     Declaration::Impl { data_type, body } => {
                         slf.ctx.validate_data_type(&mut slf.symbols, data_type)?;
 
-                        let name = match data_type.kind() {
-                            DataTypeKind::Int => todo!(),
-                            DataTypeKind::Bool => todo!(),
-                            DataTypeKind::Float => todo!(),
-                            DataTypeKind::Unit => todo!(),
-                            DataTypeKind::Any => todo!(),
-                            DataTypeKind::Unknown => todo!(),
-                            DataTypeKind::Option(_) => todo!(),
-                            DataTypeKind::CustomType(v) => *v,
-                        };
+                        let name = slf.type_namespace(data_type.kind());
 
                         let scope = Scope::new(name, source.file());
 
@@ -645,23 +739,34 @@ impl<'a> Infer<'a> {
 
                         let namespace = slf.namespaces.get_mut(&name).unwrap();
 
+                        let mut errors = vec![];
                         {
                             namespace.symbols.reserve(scope.symbols.len());
                             for s in scope.symbols {
-                                namespace.symbols.insert(s.0, s.1);
+                                if let Err(e) = namespace.put_symbol(s.1.0, s.0, s.1.1) {
+                                    errors.push(e)
+                                }
                             }
                         }
                         {
                             namespace.namespaces.reserve(scope.namespaces.len());
                             for s in scope.namespaces {
-                                namespace.namespaces.insert(s.0, s.1);
+                                if let Err(e) = namespace.put_namespace(s.0, s.1.0, s.1.1) {
+                                    errors.push(e)
+                                }
                             }
                         }
 
+                        if !errors.is_empty() {
+                            return Err(errors.combine_into_error())
+                        }
+
                     },
-                    Declaration::Using { file } => todo!(),
-                    Declaration::Module { name, body } => (),
-                    Declaration::Extern { file, functions } => todo!(),
+
+                    
+                    Declaration::Using { .. } => todo!(),
+                    Declaration::Module { .. } => (),
+                    Declaration::Extern { .. } => (),
 
                     _ => ()
                 }
@@ -681,7 +786,7 @@ impl<'a> Infer<'a> {
         fn register_stage_2(slf: &mut Infer, nodes: &mut [Node]) -> Result<(), Error> {
             let mut errors = vec![];
             for node in nodes.iter_mut() {
-                let _source = node.range();
+                let source = node.range();
                 let NodeKind::Declaration(decl) = node.kind_mut() else { continue };
 
                 match decl {
@@ -733,7 +838,7 @@ impl<'a> Infer<'a> {
                     Declaration::Enum { name, mappings } => {
                         for i in 0..mappings.len() {
                             let m = mappings.get_mut(i).unwrap();
-                            let result = slf.ctx.validate_data_type(&mut slf.symbols, &mut m.data_type_mut());
+                            let result = slf.ctx.validate_data_type(&mut slf.symbols, m.data_type_mut());
 
                             if let Err(e) = result {
                                 errors.push(e);
@@ -786,9 +891,11 @@ impl<'a> Infer<'a> {
                                             vec![FunctionArgument::new(m.name(), m.data_type().clone(), false, m.range())]
                                         }
                                     },
+                                    is_extern: false,
                                     is_system: false,
                                     is_anonymous: false,
                                     return_type: DataType::new(m.range(), DataTypeKind::CustomType(*name)),
+                                    source,
                                 };
 
                                 scope.create_symbol(&mut slf.symbols, Symbol::Function(func), m.name(), m.range())?;
@@ -798,7 +905,7 @@ impl<'a> Infer<'a> {
                             let full_name = structure.full_name;
                             let name = structure.name;
 
-                            assert!(slf.ctx.cs.namespaces.insert(name, full_name).is_none());
+                            slf.ctx.cs.put_namespace(name, full_name, source)?;
                             assert!(slf.namespaces.insert(full_name, scope).is_none());
                         }
                     }
@@ -858,29 +965,26 @@ impl<'a> Infer<'a> {
 
                     
                     Declaration::Impl { data_type, body } => {
-                        let name = match data_type.kind() {
-                            DataTypeKind::Int => todo!(),
-                            DataTypeKind::Bool => todo!(),
-                            DataTypeKind::Float => todo!(),
-                            DataTypeKind::Unit => todo!(),
-                            DataTypeKind::Any => todo!(),
-                            DataTypeKind::Unknown => todo!(),
-                            DataTypeKind::Option(_) => todo!(),
-                            DataTypeKind::CustomType(v) => v,
-                        };
+                        let name = slf.type_namespace(data_type.kind());
 
 
-                        let namespace = slf.namespaces.get(name).unwrap().clone();
+                        let namespace = slf.namespaces.get(&name).unwrap().clone();
                         slf.ctx.subscope(namespace);
                         let result = register_stage_2(slf, body);
                         let namespace = slf.ctx.pop_scope();
 
                         result?;
 
-                        *slf.namespaces.get_mut(name).unwrap() = namespace;
+                        dbg!(&namespace);
+                        println!("{}", slf.symbol_map.get(name));
+                        *slf.namespaces.get_mut(&name).unwrap() = namespace;
 
                     },
-                    Declaration::Using { file } => todo!(),
+
+                    
+                    Declaration::Using { .. } => todo!(),
+
+                    
                     Declaration::Module { name, body } => {
                         let namespace = slf.namespaces.get(name).unwrap().clone();
                         slf.ctx.subscope(namespace);
@@ -893,7 +997,9 @@ impl<'a> Infer<'a> {
 
                         
                     },
-                    Declaration::Extern { file, functions } => todo!(),
+
+                    
+                    Declaration::Extern { .. } => (),
 
 
                 }
@@ -943,7 +1049,8 @@ impl<'a> Infer<'a> {
             Declaration::Struct { .. } => Ok(()),
             Declaration::Enum { .. } => Ok(()),
 
-            Declaration::Function { is_system, is_anonymous, name, arguments, return_type, body } => {
+
+            Declaration::Function { name, arguments, return_type, body, .. } => {
 
                 // evaluate body
                 let block_return_type = {
@@ -988,27 +1095,22 @@ impl<'a> Infer<'a> {
                 Ok(())
             },
 
-            Declaration::Impl { data_type, body } => {
-                let name = match data_type.kind() {
-                    DataTypeKind::Int => todo!(),
-                    DataTypeKind::Bool => todo!(),
-                    DataTypeKind::Float => todo!(),
-                    DataTypeKind::Unit => todo!(),
-                    DataTypeKind::Any => todo!(),
-                    DataTypeKind::Unknown => todo!(),
-                    DataTypeKind::Option(_) => todo!(),
-                    DataTypeKind::CustomType(v) => v,
-                };
 
-                let namespace = self.namespaces.get(name).unwrap().clone();
+            Declaration::Impl { data_type, body } => {
+                let name = self.type_namespace(data_type.kind());
+
+                let namespace = self.namespaces.get(&name).unwrap().clone();
                 let (_, namespace) = self.analyse_block_with_scope(body, namespace)?;
 
-                *self.namespaces.get_mut(name).unwrap() = namespace;
+                *self.namespaces.get_mut(&name).unwrap() = namespace;
 
                 Ok(())
             },
 
-            Declaration::Using { file } => todo!(),
+
+            Declaration::Using { .. } => todo!(),
+
+            
             Declaration::Module { name, body } => {
                 let namespace = self.namespaces.get(name).unwrap().clone();
                 let (_, namespace) = self.analyse_block_with_scope(body, namespace)?;
@@ -1018,7 +1120,9 @@ impl<'a> Infer<'a> {
                 Ok(())
                 
             },
-            Declaration::Extern { file, functions } => todo!(),
+
+
+            Declaration::Extern { .. } => Ok(()),
         }
     }
 
@@ -1337,7 +1441,6 @@ impl<'a> Infer<'a> {
 
                 let return_type = {
                     let mut expected_type = None;
-                    let mut mutability = true;
                     let mut errors = vec![];
 
                     //  PERFORMANCE: avoid this clone
@@ -1622,12 +1725,29 @@ impl<'a> Infer<'a> {
 
                     arg_analysis
                 };
-
                 assert_eq!(args_analysis.len(), args.len());
 
-                println!("{}", self.symbol_map.get(*name));
 
-                let function = self.ctx.find_symbol_id(*name, source)?;
+                let function = if let Some(v) = is_accessor {
+                    println!("is acessor");
+
+                    let accessor_analysis = self.analyse_node(&mut * v)?;
+                    let path = self.type_namespace(accessor_analysis.data_type.kind());
+
+                    println!("{}", self.symbol_map.get(path));
+                    let scope = self.namespaces.get(&path).unwrap();
+                    dbg!(&scope);
+
+                    Context::new(scope.clone()).find_symbol_id(*name, source)
+
+                    
+                } else {
+                    self.ctx.find_symbol_id(*name, source)
+                };
+
+                println!("{} {name:?}", self.symbol_map.get(*name));
+
+                let function = function?;
                 let function = self.symbols.get(function).unwrap();
                 let Symbol::Function(function) = function
                 else {
@@ -1642,6 +1762,11 @@ impl<'a> Infer<'a> {
                         .build()
                     )
                 };
+
+
+                *name = function.full_name;
+                println!("{}", self.symbol_map.get(*name));
+
 
 
                 if args.len() != function.args.len() {

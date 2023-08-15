@@ -37,6 +37,7 @@ fn main() -> Result<(), &'static str> {
         Err(e) => {
             let report = e.build(&HashMap::from([(file.name(), file)]), &symbol_map);
             println!("{report}");
+            println!("{symbol_map:?}");
             return Err("failed to compile because of the previous errors")
         },
     };

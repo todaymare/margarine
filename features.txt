@@ -7,37 +7,11 @@ component Position {
 	x: int,
 	y: int,
 }
-
-enum Option {
-	some: any,
-	none,
+impl Position {
+	fn hi() {}
 }
-
-
-fn some_69_func(): int { 69 }
-
-
-fn some_func(&hey: int) {
-	some_func(&hey)
-}
-
 
 fn() {
-	let mut x = Position { x: 69, y: 420 }
-
-	x.x = 20
-
-	some_func(&x.x)
-	std::print(69)
-}
-
-impl Position {
-	fn yes(): Option {
-		Option::none()
-	}
-}
-
-
-mod std {
-	fn print(num: int) {}
+	let mut x = 69
+	x.hi()
 }

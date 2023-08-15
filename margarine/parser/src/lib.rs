@@ -320,6 +320,10 @@ impl Parser<'_> {
                 },
             }
 
+            if self.current_kind() == TokenKind::EndOfFile {
+                break
+            }
+
             self.advance();
         }
 
@@ -673,6 +677,7 @@ impl Parser<'_> {
             }
 
 
+            let start = self.current_range().start();
             self.expect(TokenKind::Keyword(Keyword::Fn))?;
             self.advance();
 
@@ -704,17 +709,23 @@ impl Parser<'_> {
                     break
                 }
 
+                let start = self.current_range().start();
+                let is_inout = if self.current_is(TokenKind::Colon) {
+                    self.advance();
+                    true
+                } else { false };
 
-                if matches!(self.current_kind(), TokenKind::Identifier(_)) {
-                    self.advance();
-                    self.expect(TokenKind::Colon)?;
-                    self.advance();
-                }
+                let identifier = self.expect_identifier()?;
+                self.advance();
+
+                self.expect(TokenKind::Colon)?;
+                self.advance();
 
                 let data_type = self.expect_type()?;
+                let end = self.current_range().end();
                 self.advance();
                 
-                arguments.push(data_type);
+                arguments.push(FunctionArgument::new(identifier, data_type, is_inout, SourceRange::new(start, end, self.file)));
 
             }
             let arguments = arguments;
@@ -724,14 +735,17 @@ impl Parser<'_> {
             self.advance();
 
 
+            let end;
             let return_type = 
                 if self.current_is(TokenKind::Colon) { 
                     self.advance();
                     let typ = self.expect_type()?;
+                    end = self.current_range().end();
                     self.advance();
                     typ
                 }
                 else {
+                    end = self.current_range().end();
                     DataType::new(
                         SourceRange::new(start, self.current_range().end(), self.file), 
                         DataTypeKind::Unit
@@ -743,6 +757,7 @@ impl Parser<'_> {
                 name,
                 arguments,
                 return_type,
+                SourceRange::new(start, end, self.file)
             ));
         }
         let functions = functions;
@@ -1147,7 +1162,6 @@ impl Parser<'_> {
                 self.advance();
 
                 let args = self.parse_function_call_args()?;
-                self.expect(TokenKind::RightParenthesis)?;
 
                 result = Node::new(
                     NodeKind::Expression(Expression::CallFunction {
@@ -1157,6 +1171,8 @@ impl Parser<'_> {
                     }),
                     SourceRange::new(start, self.current_range().end(), self.file)
                 )
+
+                
             } else {
                 result = Node::new(
                     NodeKind::Expression(Expression::AccessField { 
@@ -1460,8 +1476,6 @@ impl Parser<'_> {
         self.advance();
 
         let args = self.parse_function_call_args()?;
-
-        self.expect(TokenKind::RightParenthesis)?;
         let end = self.current_range().end();
 
         Ok(Node::new(
@@ -1504,6 +1518,8 @@ impl Parser<'_> {
             
             args.push((expr, is_inout));
         }
+        self.expect(TokenKind::RightParenthesis)?;
+
         Ok(args)
     }
 

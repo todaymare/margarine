@@ -183,14 +183,30 @@ pub enum StructKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFunction {
     name: SymbolIndex,
-    fields: Vec<DataType>,
+    args: Vec<FunctionArgument>,
     return_type: DataType,
+    source_range: SourceRange,
 }
 
 impl ExternFunction {
-    pub(crate) fn new(name: SymbolIndex, fields: Vec<DataType>, return_type: DataType) -> Self { 
-        Self { name, fields, return_type } 
+    pub(crate) fn new(name: SymbolIndex, args: Vec<FunctionArgument>, return_type: DataType, source_range: SourceRange) -> Self { 
+        Self { name, args, return_type, source_range } 
     }
+
+
+    #[inline(always)]
+    pub fn name(&self) -> SymbolIndex { self.name }
+    #[inline(always)]
+    pub fn args(&self) -> &[FunctionArgument] { &self.args }
+    #[inline(always)]
+    pub fn args_mht(&mut self) -> &mut [FunctionArgument] { &mut self.args }
+    #[inline(always)]
+    pub fn return_type(&self) -> &DataType { &self.return_type }
+    #[inline(always)]
+    pub fn return_type_mut(&mut self) -> &mut DataType { &mut self.return_type }
+    #[inline(always)]
+    pub fn range(&self) -> SourceRange { self.source_range }
+
 }
 
 
