@@ -34,7 +34,7 @@ impl DataType {
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum DataTypeKind {
     Int,
     Bool,
@@ -46,16 +46,46 @@ pub enum DataTypeKind {
     /// type of a node. It bypasses all
     /// type checks for error tolerance reasons.
     Unknown,
+    Never,
     Option(Box<DataType>),
+    Result(Box<DataType>, Box<DataType>),
     CustomType(SymbolIndex),
 }
 
 
 impl DataTypeKind {
+    /// Coersions happen from self to oth
+    /// not the other way around
     pub fn is(&self, oth: &DataTypeKind) -> bool {
            self == &DataTypeKind::Unknown
         || oth == &DataTypeKind::Unknown
+        || self == &DataTypeKind::Never
+        || oth == &DataTypeKind::Any
         || self == oth
+        
+    }
+}
+
+
+impl PartialEq for DataTypeKind {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            | (DataTypeKind::Int, DataTypeKind::Int)
+            | (DataTypeKind::Bool, DataTypeKind::Bool)
+            | (DataTypeKind::Float, DataTypeKind::Float)
+            | (DataTypeKind::Unit, DataTypeKind::Unit)
+            | (DataTypeKind::Any, DataTypeKind::Any)
+            | (DataTypeKind::Unknown, DataTypeKind::Unknown)
+            | (DataTypeKind::Never, DataTypeKind::Never)
+             => true,
+
+            
+            (DataTypeKind::Option(v1), DataTypeKind::Option(v2)) => v1.kind().is(v2.kind()),
+            (DataTypeKind::Result(v11, v12), DataTypeKind::Result(v21, v22)) => v11.kind().is(v21.kind()) && v12.kind().is(v22.kind()),
+            (DataTypeKind::CustomType(v1), DataTypeKind::CustomType(v2)) => v1 == v2,
+
+            _ => false,
+        }
     }
 }
 
@@ -245,7 +275,27 @@ impl Parser<'_> {
 
 
     fn expect_type(&mut self) -> Result<DataType, Error> {
+        if self.current_is(TokenKind::Bang) {
+            return Ok(DataType::new(self.current_range(), DataTypeKind::Never))
+        }
+
+        
+        if self.current_is(TokenKind::LeftParenthesis) {
+            self.advance();
+            if self.current_is(TokenKind::RightParenthesis) {
+                return Ok(DataType::new(self.current_range(), DataTypeKind::Unit))
+            }
+
+            let typ = self.expect_type()?;
+            self.advance();
+            self.expect(TokenKind::RightParenthesis)?;
+
+            return Ok(typ)
+        }
+
+        
         let start = self.current_range().start();
+        
         let identifier = self.expect_identifier()?;
 
         let result = match self.symbol_map.get(identifier).as_str() {
@@ -256,21 +306,47 @@ impl Parser<'_> {
             _ => DataTypeKind::CustomType(identifier),
         };
 
-        let result = DataType::new(
+        let mut result = DataType::new(
             SourceRange::new(start, self.current_range().end(), self.file), 
             result
         );
 
-        if self.peek_kind() == Some(TokenKind::QuestionMark) {
-            self.advance();
-            let end = self.current_range().end();
-            let result = DataTypeKind::Option(Box::new(result));
-            let result = DataType::new(
-                SourceRange::new(start, end, self.file),
-                result,
-            );
-            
-            return Ok(result)
+        loop {
+            let mut has_updated = false;
+            if self.peek_is(TokenKind::QuestionMark) {
+                self.advance();
+                let end = self.current_range().end();
+                let option_result = DataTypeKind::Option(Box::new(result));
+                let option_result = DataType::new(
+                    SourceRange::new(start, end, self.file),
+                    option_result,
+                );
+
+                result = option_result;
+                has_updated = true;
+            }
+
+            if self.peek_is(TokenKind::SquigglyDash) {
+                self.advance();
+                self.advance();
+
+                let oth_typ = self.expect_type()?;
+
+                let range = SourceRange::new(result.range().start(), oth_typ.range().end(), self.file);
+
+                let new_result = DataTypeKind::Result(Box::new(result), Box::new(oth_typ));
+                let new_result = DataType::new(
+                    range,
+                    new_result,
+                );
+
+                result = new_result;
+                has_updated = true;
+            }
+
+            if !has_updated {
+                break
+            }
         }
 
         Ok(result)
@@ -279,6 +355,11 @@ impl Parser<'_> {
 
     fn current_is(&self, token_kind: TokenKind) -> bool {
         self.current_kind() == token_kind
+    }
+
+
+    fn peek_is(&self, token_kind: TokenKind) -> bool {
+        self.peek_kind().map(|x| x == token_kind).unwrap_or(false)
     }
 }
 
@@ -1148,14 +1229,41 @@ impl Parser<'_> {
 
     fn accessors(&mut self, settings: ParserSettings) -> ParseResult {
         let mut result = self.atom(settings)?;
-        println!("\n\n\n{:?}", self.peek_kind());
 
-        while self.peek_kind() == Some(TokenKind::Dot) {
+        while 
+            self.peek_kind() == Some(TokenKind::Dot) 
+            || self.peek_kind() == Some(TokenKind::Bang)
+            || self.peek_kind() == Some(TokenKind::QuestionMark) {
             self.advance();
+
+            if self.current_is(TokenKind::Bang) {
+                let source = SourceRange::new(result.range().start(), self.current_range().end(), self.file);
+                result = Node::new(
+                    NodeKind::Expression(Expression::Unwrap(Box::new(result))),
+                    source,
+                );
+                continue
+            }
+
+            if self.current_is(TokenKind::QuestionMark) {
+                let source = SourceRange::new(result.range().start(), self.current_range().end(), self.file);
+                result = Node::new(
+                    NodeKind::Expression(Expression::OrReturn(Box::new(result))),
+                    source,
+                );
+                continue
+            }
+            
             self.advance();
             
             let start = self.current_range().start();
             let ident = self.expect_identifier()?;
+
+            if self.symbol_map.get(ident) == "cast" {
+                self.advance();
+                result = self.cast_expr(result)?;
+                continue
+            }
 
             if self.peek_kind() == Some(TokenKind::LeftParenthesis) {
                 self.advance();
@@ -1266,6 +1374,69 @@ impl Parser<'_> {
             
             
             TokenKind::At => self.parse_with_tag(settings, Self::expression),
+
+
+            TokenKind::Keyword(Keyword::Return) => {
+                let start = self.current_range().start();
+                self.advance();
+                let expr = self.expression(ParserSettings::default())?;
+                Ok(Node::new(
+                    NodeKind::Expression(Expression::Return(Box::new(expr))), 
+                    SourceRange::new(start, self.current_range().end(), self.file)
+                ))
+            }
+
+
+            TokenKind::Keyword(Keyword::Break) => {
+                Ok(Node::new(
+                    NodeKind::Expression(Expression::Break), 
+                    self.current_range(),
+                ))
+            }
+
+
+            TokenKind::Keyword(Keyword::Continue) => {
+                Ok(Node::new(
+                    NodeKind::Expression(Expression::Continue), 
+                    self.current_range(),
+                ))
+            },
+
+
+            TokenKind::Keyword(Keyword::Loop) => {
+                let start = self.current_range().start();
+                self.advance();
+                self.expect(TokenKind::LeftBracket)?;
+                self.advance();
+                let body = self.parse_till(TokenKind::RightBracket, ParserSettings::default())?;
+
+                Ok(Node::new(
+                    NodeKind::Expression(Expression::Loop { body }),
+                    SourceRange::new(start, self.current_range().end(), self.file)
+                ))
+            }
+
+
+            TokenKind::LeftSquare => {
+                let start = self.current_range().start();
+                self.advance();
+
+                let typ = self.expect_type()?;
+                self.advance();
+
+                self.expect(TokenKind::RightSquare)?;
+                self.advance();
+
+                self.expect(TokenKind::DoubleColon)?;
+                self.advance();
+
+                let expr = self.expression(ParserSettings::default())?;
+
+                Ok(Node::new(
+                    NodeKind::Expression(Expression::WithinTypeNamespace { namespace: typ, action: Box::new(expr) }),
+                    SourceRange::new(start, self.current_range().end(), self.file)
+                ))
+            }
 
             
             _ => Err(CompilerError::new(self.file, ErrorCode::PUnexpectedToken, "unexpected token")
@@ -1576,6 +1747,23 @@ impl Parser<'_> {
         Ok(Node::new(
             NodeKind::Expression(Expression::CreateStruct { data_type, fields }),
             SourceRange::new(start, end, self.file),
+        ))
+    }
+
+
+    fn cast_expr(&mut self, lhs: Node) -> ParseResult {
+        self.expect(TokenKind::LeftParenthesis)?;
+        self.advance();
+
+        let typ = self.expect_type()?;
+        self.advance();
+
+        self.expect(TokenKind::RightParenthesis)?;
+
+        let source = SourceRange::new(lhs.range().start(), self.current_range().end(), self.file);
+        Ok(Node::new(
+            NodeKind::Expression(Expression::CastAny { lhs: Box::new(lhs), data_type: typ }),
+            source,
         ))
     }
 }

@@ -1,17 +1,13 @@
-// This is a line comment
-// We do not have block comments
-
-// A component can be attached to
-// entities and queried by systems
-component Position {
-	x: int,
-	y: int,
+fn cast(): int ~ CastError {
+	1.cast(int)
 }
-impl Position {
+
+
+enum option { some: any, none }
+impl option {
 	fn hi() {}
 }
 
-fn() {
-	let mut x = 69
-	x.hi()
+fn(): any? {
+	[int?]::some([any?]::some(5)?.cast(int).ok?)
 }

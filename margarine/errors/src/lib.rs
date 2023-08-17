@@ -59,6 +59,12 @@ pub enum ErrorCode {
     SAssignValNotLHS   = 331,
     SAssignValNotMut   = 332,
     SAssignValDiffTy   = 333,
+    SReturnOutsideFunc = 334,
+    SBreakOutsideLoop  = 335,
+    SContOutsideLoop   = 336,
+    SCantUnwrapType    = 337,
+    STryOpOptionRetVal = 338,
+    STryOpResultRetVal = 339,
 }
 
 

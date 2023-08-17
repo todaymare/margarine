@@ -110,7 +110,7 @@ pub enum Statement {
     UpdateValue {
         lhs: Box<Node>,
         rhs: Box<Node>,
-    }
+    },
 }
 
 
@@ -168,7 +168,29 @@ pub enum Expression {
         namespace: SymbolIndex,
         namespace_source: SourceRange,
         action: Box<Node>,
-    }
+    },
+
+    WithinTypeNamespace {
+        namespace: DataType,
+        action: Box<Node>,
+    },
+
+    Loop {
+        body: Block,
+    },
+    
+    Return(Box<Node>),
+    Continue,
+    Break,
+
+    CastAny {
+        lhs: Box<Node>,
+        data_type: DataType,
+    },
+
+    Unwrap(Box<Node>),
+
+    OrReturn(Box<Node>),
 }
 
 
@@ -199,7 +221,7 @@ impl ExternFunction {
     #[inline(always)]
     pub fn args(&self) -> &[FunctionArgument] { &self.args }
     #[inline(always)]
-    pub fn args_mht(&mut self) -> &mut [FunctionArgument] { &mut self.args }
+    pub fn args_mut(&mut self) -> &mut [FunctionArgument] { &mut self.args }
     #[inline(always)]
     pub fn return_type(&self) -> &DataType { &self.return_type }
     #[inline(always)]

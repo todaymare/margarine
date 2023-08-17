@@ -123,6 +123,8 @@ pub enum TokenKind {
     QuestionMark,
     /// '&'
     Ampersand,
+    /// '~'
+    SquigglyDash,
 
     Literal(Literal),
     Keyword(Keyword),
@@ -331,6 +333,7 @@ pub fn lex(
             '=' => TokenKind::Equals,
             '!' if lexer.peek_is('=') => TokenKind::NotEqualsTo,
             '!' => TokenKind::Bang,
+            '~' => TokenKind::SquigglyDash,
 
             
             '_' => {
@@ -636,7 +639,12 @@ impl Lexer<'_> {
 
                 Some(_) => (),
                 _ => match value {
-                    '.' => dot_count += 1,
+                    '.' => {
+                        if self.peek().map(|x| x.is_alphabetic()).unwrap_or(false) {
+                            break
+                        }
+                        dot_count += 1
+                    },
                     '_' => {
                         self.advance();
                         continue;

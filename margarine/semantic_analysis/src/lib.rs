@@ -6,9 +6,13 @@ use common::{SymbolMap, SourceRange, SymbolIndex};
 use errors::{Error, CombineIntoError, CompilerError, ErrorCode, ErrorBuilder};
 use istd::index_vec;
 use lexer::Literal;
-use parser::{nodes::{Node, NodeKind, Declaration, StructKind, FunctionArgument, Statement, Expression, UnaryOperator, EnumMapping}, DataType, Block, DataTypeKind};
+use parser::{nodes::{Node, NodeKind, Declaration, StructKind, FunctionArgument, Statement, Expression, UnaryOperator, EnumMapping, MatchMapping}, DataType, Block, DataTypeKind};
 
 index_vec!(Symbols, SymbolId, Symbol);
+
+
+const GLOBAL_NAMESPACE : &str = "<global>";
+const ANY_CAST_ERROR_STRUCT : &str = "any::CastError";
 
 
 pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -> Result<Infer<'a>, Error> {
@@ -32,6 +36,7 @@ pub struct Infer<'a> {
     namespaces: HashMap<SymbolIndex, Scope>,
     ctx: Context,
     root_file: SymbolIndex,
+    global_scope: Scope,
 }
 
 
@@ -53,7 +58,9 @@ pub struct Scope {
     mangle_name: SymbolIndex,
     file: SymbolIndex,
 
-    is_function_scope: bool,
+    is_function_scope: Option<DataType>,
+    // the bool is whether or not it has `break` or not
+    is_loop_scope: Option<bool>,
 }
 
 impl Scope {
@@ -126,6 +133,8 @@ pub struct Function {
     is_anonymous: bool,
     return_type: DataType,
     source: SourceRange,
+
+    body: Vec<Node>,
 }
 
 
@@ -159,7 +168,8 @@ impl Scope {
             namespaces: HashMap::new(), 
             file, 
             variables: Vec::new(),
-            is_function_scope: false, 
+            is_function_scope: None,
+            is_loop_scope: None, 
         } 
     }
 
@@ -185,47 +195,6 @@ impl Scope {
         symbol_map.insert(str)
     }
 
-    ///
-    /// Pushes a symbol into the symbols list
-    ///
-    /// # Errors
-    /// This function will return a "name is
-    /// already defined error" if the `identifier`
-    /// is already defined in the current scope
-    /// and the given symbol isn't an anonymous
-    /// symbol
-    ///
-    fn create_symbol(&mut self, symbols: &mut Symbols, symbol: Symbol, identifier: SymbolIndex, source: SourceRange) -> Result<(), Error> {
-        let is_anonymous_function = matches!(symbol, Symbol::Function(Function { is_anonymous: true, .. }));
-        let id = symbols.push(symbol);
-        
-        // Anonymous functions are meant to be
-        // unreachable and thus there's no need
-        // to add them to the local namespace
-        if is_anonymous_function {
-            return Ok(())
-        }
-
-        self.put_symbol(id, identifier, source)
-    }
-
-
-    fn put_symbol(&mut self, symbol_id: SymbolId, identifier: SymbolIndex, source: SourceRange) -> Result<(), Error> {
-        if self.symbols.contains_key(&identifier) {
-            return Err(CompilerError::new(
-                    self.file, 
-                    ErrorCode::SNameAlrDefined, 
-                    "name is already defined in the namespace"
-                )
-                .highlight(source)
-                .build()
-            );
-        }
-        
-        assert!(self.symbols.insert(identifier, (symbol_id, source)).is_none());
-        Ok(())
-    }
-
 
     fn put_namespace(&mut self, identifier: SymbolIndex, path: SymbolIndex, source: SourceRange) -> Result<(), Error> {
         if self.namespaces.contains_key(&identifier) {
@@ -247,8 +216,58 @@ impl Scope {
     fn register_variable(&mut self, variable: Variable) {
         self.variables.push(variable)
     }
-}
 
+
+    ///
+    /// Pushes a symbol into the symbols list
+    ///
+    /// # Errors
+    /// This function will return a "name is
+    /// already defined error" if the `identifier`
+    /// is already defined in the current scope
+    /// and the given symbol isn't an anonymous
+    /// symbol
+    ///
+    fn create_symbol(
+        &mut self, 
+        symbols: &mut Symbols, 
+        symbol: Symbol, 
+        identifier: SymbolIndex, 
+        source: SourceRange
+    ) -> Result<SymbolId, Error> {
+        let is_anonymous_function = matches!(symbol, Symbol::Function(Function { is_anonymous: true, .. }));
+        let id = symbols.push(symbol);
+        
+        
+        // Anonymous functions are meant to be
+        // unreachable and thus there's no need
+        // to add them to the local namespace
+        if is_anonymous_function {
+            return Ok(id)
+        }
+
+        self.put_symbol(id, identifier, source).unwrap();
+        Ok(id)
+    }
+
+    
+    fn put_symbol(&mut self, symbol_id: SymbolId, identifier: SymbolIndex, source: SourceRange) -> Result<(), Error> {
+        if self.symbols.contains_key(&identifier) {
+            return Err(CompilerError::new(
+                    self.file, 
+                    ErrorCode::SNameAlrDefined, 
+                    "name is already defined in the namespace"
+                )
+                .highlight(source)
+                .build()
+            );
+        }
+        
+        assert!(self.symbols.insert(identifier, (symbol_id, source)).is_none());
+        dbg!(identifier, &self.symbols);
+        Ok(())
+    }
+}
 
 impl Context {
     pub fn new(cs: Scope) -> Self { 
@@ -329,7 +348,7 @@ impl Context {
     /// are no more parents left && the symbol doesn't
     /// exist
     ///
-    fn find_symbol_id(&self, name: SymbolIndex, source: SourceRange) -> Result<SymbolId, Error> {
+    fn find_symbol_id(&self, symbol_map: &SymbolMap, global_scope: Option<&Scope>, name: SymbolIndex, source: SourceRange) -> Result<SymbolId, Error> {
         let mut current_scope = &self.cs;
 
         for i in (0..self.scopes.len()+1).rev() {
@@ -338,9 +357,15 @@ impl Context {
             }
 
             if i == 0 { break }
-
+            
             current_scope = &self.scopes[i-1];
             
+        }
+
+        if let Some(v) = global_scope {
+            if let Some(v) = v.symbols.get(&name) {
+                return Ok(v.0)
+            }
         }
 
         Err(CompilerError::new(
@@ -349,6 +374,11 @@ impl Context {
                 "symbol not defined"
             )
             .highlight(source)
+                .note(format!(
+                    "there's no symbol named '{}' within '{}'",
+                    symbol_map.get(name),
+                    symbol_map.get(self.cs.mangle_name),
+                ))
             .build()
         )
     }
@@ -376,7 +406,7 @@ impl Context {
                 return Ok(v)
             }
 
-            if current_scope.is_function_scope {
+            if current_scope.is_function_scope.is_some() {
                 break
             }
 
@@ -394,63 +424,56 @@ impl Context {
             .build()
         )
     }
-    
+    /// 
+    /// Starting from the current scope, search
+    /// up the scopes vec, if any of the scopes
+    /// are loop-scopes return the `break` marker
+    /// otherwise none. 
     ///
-    /// Validates that a type exists and then
-    /// replaces the type with its fully-qualified
-    /// version. If the type doesn't exist it will
-    /// replace the type with `DataTypeKind::Unknown`
-    ///
-    /// This function will do nothing for built-in
-    /// types.
-    ///
-    /// # Errors
-    /// If the type doesn't exist in the current scope
-    /// or any of the parent scopes it will return a
-    /// "type doesn't exist or inaccessible" error.
-    ///
-    fn validate_data_type(&self, symbols: &mut Symbols, data_type: &mut DataType) -> Result<(), Error> {
-        let range = data_type.range();
-        match data_type.kind_mut() {
-            DataTypeKind::Int   => Ok(()),
-            DataTypeKind::Bool  => Ok(()),
-            DataTypeKind::Float => Ok(()),
-            DataTypeKind::Unit  => Ok(()),
-            DataTypeKind::Any   => Ok(()),
-            DataTypeKind::Unknown => Ok(()),
-            DataTypeKind::Option(v) => self.validate_data_type(symbols, v),
-            DataTypeKind::CustomType(v) => {
-                let symbol = self.find_symbol_id(*v, range)?;
-                let symbol = symbols.get(symbol).unwrap();
-                match symbol {
-                    | Symbol::Enum(_)
-                    | Symbol::Structure(_) => {
-                        *v = symbol.full_name();
-                        return Ok(())
-                    },
-
-                    _ => (),
-                };
+    fn is_in_loop_body(&mut self) -> Option<&mut bool> {
+        self.cs.is_loop_scope.as_mut().or_else(|| self.scopes.iter_mut().rev().find_map(|x| x.is_loop_scope.as_mut())) 
+    }
 
 
-                *data_type.kind_mut() = DataTypeKind::Unknown;
-                Err(CompilerError::new(self.file, ErrorCode::SSymbolIsntType, "symbol isn't a type")
-                    .highlight(data_type.range())
-                    .build())
-            },
-        }
+    /// 
+    /// Starting from the current scope, search
+    /// up the scopes vec, if any of the scopes
+    /// are func-scopes return the function type
+    /// otherwise return None
+    ///
+    fn is_func_body(&self) -> Option<&DataType> {
+        self.cs.is_function_scope.as_ref().or_else(|| self.scopes.iter().rev().find_map(|x| x.is_function_scope.as_ref())) 
     }
 }
 
 
 impl<'a> Infer<'a> {
-    pub fn new(symbol_map: &'a mut SymbolMap, symbols: Symbols, ctx: Context, root_file: SymbolIndex) -> Self {
+    pub fn new(symbol_map: &'a mut SymbolMap, mut symbols: Symbols, ctx: Context, root_file: SymbolIndex) -> Self {
+        let namespaces = HashMap::new();
+        
+        let global_namespace = symbol_map.const_str(GLOBAL_NAMESPACE);
+        let mut global_scope = Scope::new(symbol_map.const_str(""), global_namespace);
+        {
+            let name = symbol_map.const_str("CastError");
+            let source = SourceRange::new(0, 0, root_file);
+            let symbol = Symbol::Structure(Structure {
+                name,
+                full_name: symbol_map.const_str(ANY_CAST_ERROR_STRUCT),
+                fields: vec![],
+                kind: StructKind::Normal,
+                source,
+            });
+
+            global_scope.create_symbol(&mut symbols, symbol, name, source).unwrap();
+        }
+        
         Self {
             symbol_map,
             symbols,
             ctx,
-            namespaces: HashMap::new(),
+            namespaces,
             root_file,
+            global_scope,
         }
     }
 
@@ -458,7 +481,7 @@ impl<'a> Infer<'a> {
     fn expect_type(&self, expect: &DataTypeKind, value: &DataType) -> Result<(), Error> {
         if value.kind().is(expect) {
             return Ok(())
-        }        
+        }
 
         
         Err(
@@ -484,26 +507,235 @@ impl<'a> Infer<'a> {
 
 
     fn type_namespace(&mut self, data_type: &DataTypeKind) -> SymbolIndex {
-        let name = match data_type {
-            DataTypeKind::Int => self.symbol_map.const_str("int"),
-            DataTypeKind::Bool => self.symbol_map.const_str("bool"),
-            DataTypeKind::Float => self.symbol_map.const_str("float"),
-            DataTypeKind::Unit => self.symbol_map.const_str("unit"),
-            DataTypeKind::Any => self.symbol_map.const_str("any"),
-            DataTypeKind::Unknown => panic!(),
-            DataTypeKind::Option(v) => {
-                let kind = self.type_namespace(v.kind());
-                let string = format!("{}?", self.symbol_map.get(kind));
-                self.symbol_map.insert(string)
-            },
-            DataTypeKind::CustomType(v) => *v,
-        };
+        let name = display_type(self.symbol_map, data_type);
+        let name = self.symbol_map.insert(name);
 
-        if !self.namespaces.contains_key(&name) {
-            self.namespaces.insert(name, Scope::new(name, self.find_symbol(name).map(|x| x.range().file()).unwrap_or(self.root_file)));
+        if self.namespaces.contains_key(&name) {
+            return name;
         }
 
+
+        println!("creating {}", self.symbol_map.get(name));
+
+        let source = SourceRange::new(0, 0, self.symbol_map.const_str(GLOBAL_NAMESPACE));
+        self.namespaces.insert(name, Scope::new(name, source.file()));
+        let _ = self.global_scope.put_namespace(name, name, source);
+
+        
+        if let DataTypeKind::Result(v1, v2) = data_type {
+            // enum
+            {
+                let full_name = name;
+
+                let enum_val = Enum {
+                    name,
+                    full_name,
+                    mappings: vec![
+                        EnumMapping::new(
+                            self.symbol_map.const_str("ok"),
+                            DataType::new(source, v1.kind().clone()),
+                            source,
+                            false,
+                        ),
+                        EnumMapping::new(
+                            self.symbol_map.const_str("err"),
+                            DataType::new(source, v2.kind().clone()),
+                            source,
+                            false,
+                        )
+                    ],
+                    source,
+                };
+
+                let id = self.global_scope.create_symbol(&mut self.symbols, Symbol::Enum(enum_val), name, source).unwrap();
+                self.register_enum_methods(id, source, data_type.clone()).unwrap();
+            }
+        } else if let DataTypeKind::Option(v) = data_type {            
+            let some = self.symbol_map.const_str("some");
+            let none = self.symbol_map.const_str("none");
+            // enum
+            {
+                let full_name = name;
+
+                let enum_val = Enum {
+                    name,
+                    full_name,
+                    mappings: vec![
+                        EnumMapping::new(
+                            some,
+                            DataType::new(source, v.kind().clone()),
+                            source,
+                            false,
+                        ),
+                        EnumMapping::new(
+                            none,
+                            DataType::new(source, DataTypeKind::Unit),
+                            source,
+                            true,
+                        )
+                    ],
+                    source,
+                };
+
+                let id = self.global_scope.create_symbol(&mut self.symbols, Symbol::Enum(enum_val), name, source).unwrap();
+                println!("\n\n\n\n\n\noption");
+                self.register_enum_methods(id, source, data_type.clone()).unwrap();
+                dbg!(&self.namespaces.get(&self.symbols[id].full_name()));
+            }
+            // is_some
+            {
+                let namespace = self.namespaces.get_mut(&name).unwrap();
+                let function_name = self.symbol_map.const_str("is_some");
+                let self_var = self.symbol_map.const_str("self");
+
+                let function = Function {
+                    name: function_name,
+                    full_name: namespace.mangle(self.symbol_map, function_name, source),
+                    args: Vec::from([FunctionArgument::new(self_var, DataType::new(source, data_type.clone()), false, source)]),
+                    is_extern: false,
+                    is_system: false,
+                    is_anonymous: false,
+                    return_type: DataType::new(source, DataTypeKind::Bool),
+                    source,
+                    body: Vec::from([Node::new(
+                        NodeKind::Expression(Expression::Match { 
+                            value: Box::new(Node::new(
+                                NodeKind::Expression(Expression::Identifier(self_var)),
+                                source,
+                            )),
+                            mappings: Vec::from([
+                                MatchMapping::new(
+                                    some,
+                                    self_var, 
+                                    source, 
+                                    Node::new(
+                                        NodeKind::Expression(Expression::Literal(Literal::Bool(true))),
+                                        source,
+                                    )
+                                ),
+                                MatchMapping::new(
+                                    none,
+                                    self_var, 
+                                    source, 
+                                    Node::new(
+                                        NodeKind::Expression(Expression::Literal(Literal::Bool(false))),
+                                        source,
+                                    )
+                                )
+                            ]) 
+                        }),
+                        source
+                    )]),
+                };
+
+                namespace.create_symbol(&mut self.symbols, Symbol::Function(function), function_name, source).unwrap();
+                return name;
+            }
+        }
+
+        
+
         name
+    }
+    
+    ///
+    /// Validates that a type exists and then
+    /// replaces the type with its fully-qualified
+    /// version. If the type doesn't exist it will
+    /// replace the type with `DataTypeKind::Unknown`
+    ///
+    /// This function will do nothing for built-in
+    /// types.
+    ///
+    /// # Errors
+    /// If the type doesn't exist in the current scope
+    /// or any of the parent scopes it will return a
+    /// "type doesn't exist or inaccessible" error.
+    ///
+    fn validate_data_type(&self, data_type: &mut DataType) -> Result<(), Error> {
+        let range = data_type.range();
+        match data_type.kind_mut() {
+            DataTypeKind::Int   => Ok(()),
+            DataTypeKind::Bool  => Ok(()),
+            DataTypeKind::Float => Ok(()),
+            DataTypeKind::Unit  => Ok(()),
+            DataTypeKind::Any   => Ok(()),
+            DataTypeKind::Unknown => Ok(()),
+            DataTypeKind::Option(v) => self.validate_data_type(v),
+            DataTypeKind::Result(v1, v2) => {
+                self.validate_data_type(v1)?;
+                self.validate_data_type(v2)
+            },
+            DataTypeKind::Never => Ok(()),
+            DataTypeKind::CustomType(v) => {
+                let symbol = self.ctx.find_symbol_id(self.symbol_map, Some(&self.global_scope), *v, range)?;
+                let symbol = self.symbols.get(symbol).unwrap();
+                match symbol {
+                    | Symbol::Enum(_)
+                    | Symbol::Structure(_) => {
+                        *v = symbol.full_name();
+                        return Ok(())
+                    },
+
+                    _ => (),
+                };
+
+
+                *data_type.kind_mut() = DataTypeKind::Unknown;
+                Err(CompilerError::new(self.ctx.file, ErrorCode::SSymbolIsntType, "symbol isn't a type")
+                    .highlight(data_type.range())
+                    .build())
+            },
+        }
+    }
+
+
+    fn register_enum_methods(&mut self, symbol: SymbolId, source: SourceRange, kind: DataTypeKind) -> Result<(), Error> {
+        let structure = &mut self.symbols[symbol];
+        let Symbol::Enum(structure) = structure else { panic!() };
+        let scope = self.namespaces.entry(structure.full_name).or_insert(Scope::new(structure.full_name, source.file()));
+
+        let mappings = std::mem::take(&mut structure.mappings);
+        let full_name = structure.full_name;
+
+        let mut errors = vec![];
+        for m in mappings.iter() {
+            println!("\t\n\n\n\t\t{}", self.symbol_map.get(full_name));
+            let func = Function {
+                name: m.name(),
+                full_name: scope.mangle(self.symbol_map, m.name(), m.range()),
+                args: {
+                    if m.is_implicit_unit() {
+                        vec![]
+                    } else {
+                        vec![FunctionArgument::new(m.name(), m.data_type().clone(), false, m.range())]
+                    }
+                },
+                is_extern: false,
+                is_system: false,
+                is_anonymous: false,
+                return_type: DataType::new(m.range(), kind.clone()),
+                source,
+
+                body: vec![], // body cant be represented
+            };
+
+            let result = scope.create_symbol(&mut self.symbols, Symbol::Function(func), m.name(), m.range());
+            if let Err(e) = result {
+                errors.push(e)
+            }
+        }
+
+        let structure = &mut self.symbols[symbol];
+        let Symbol::Enum(structure) = structure else { panic!() };
+
+        structure.mappings = mappings;
+
+        if !errors.is_empty() {
+            return Err(errors.combine_into_error())
+        }
+        
+        Ok(())
     }
 }
 
@@ -589,7 +821,6 @@ impl<'a> Infer<'a> {
                         }
 
 
-                        slf.ctx.cs.put_namespace(identifier, *name, source)?;
                         assert!(slf.namespaces.insert(*name, Scope::new(identifier, slf.ctx.file)).is_none());
                     },
 
@@ -607,6 +838,7 @@ impl<'a> Infer<'a> {
 
                         
                         let result = slf.ctx.cs.create_symbol(&mut slf.symbols, Symbol::Enum(enum_val), identifier, source);
+                        slf.ctx.cs.put_namespace(identifier, *name, source)?;
                         if let Err(e) = result {
                             errors.push(e);
                         }
@@ -628,6 +860,8 @@ impl<'a> Infer<'a> {
                             //            is ran.
                             return_type: return_type.clone(),
                             source,
+
+                            body: vec![],
                         };
 
                         
@@ -665,9 +899,10 @@ impl<'a> Infer<'a> {
                         {
                             namespace.symbols.reserve(scope.symbols.len());
                             for s in scope.symbols {
-                                if let Err(e) = namespace.put_symbol(s.1.0, s.0, s.1.1) {
-                                    errors.push(e)
-                                }
+                                namespace.put_symbol(s.1.0, s.0, s.1.1).unwrap();
+                                // if let Err(e) =  {
+                                    // errors.push(e)
+                                // }
                             }
                         }
                         {
@@ -698,6 +933,8 @@ impl<'a> Infer<'a> {
                                 is_anonymous: false,
                                 return_type: f.return_type().clone(),
                                 source,
+
+                                body: vec![],
                             };
                             
                             let result = slf.ctx.cs.create_symbol(&mut slf.symbols, Symbol::Function(function), f.name(), f.range());
@@ -723,7 +960,7 @@ impl<'a> Infer<'a> {
 
                 match decl {
                     Declaration::Impl { data_type, body } => {
-                        slf.ctx.validate_data_type(&mut slf.symbols, data_type)?;
+                        slf.validate_data_type(data_type)?;
 
                         let name = slf.type_namespace(data_type.kind());
 
@@ -793,7 +1030,7 @@ impl<'a> Infer<'a> {
                     Declaration::Struct { kind: _, name, fields } => {
                         for i in 0..fields.len() {
                             let f = fields.get_mut(i).unwrap();
-                            let result = slf.ctx.validate_data_type(&mut slf.symbols, &mut f.1);
+                            let result = slf.validate_data_type(&mut f.1);
 
                             if let Err(e) = result {
                                 errors.push(e);
@@ -838,7 +1075,7 @@ impl<'a> Infer<'a> {
                     Declaration::Enum { name, mappings } => {
                         for i in 0..mappings.len() {
                             let m = mappings.get_mut(i).unwrap();
-                            let result = slf.ctx.validate_data_type(&mut slf.symbols, m.data_type_mut());
+                            let result = slf.validate_data_type(m.data_type_mut());
 
                             if let Err(e) = result {
                                 errors.push(e);
@@ -876,37 +1113,13 @@ impl<'a> Infer<'a> {
                             // TODO: Might be able to remove the clone here 
                             //       depending on how the rest of this goes
                             structure.mappings = mappings.clone();
+                            let name = structure.full_name;
 
-                            
-                            let mut scope = Scope::new(structure.full_name, slf.ctx.file);
+                            slf.register_enum_methods(SymbolId(index), source, DataTypeKind::CustomType(name))?;
 
-                            for m in mappings.iter() {
-                                let func = Function {
-                                    name: m.name(),
-                                    full_name: scope.mangle(slf.symbol_map, m.name(), m.range()),
-                                    args: {
-                                        if m.is_implicit_unit() {
-                                            vec![]
-                                        } else {
-                                            vec![FunctionArgument::new(m.name(), m.data_type().clone(), false, m.range())]
-                                        }
-                                    },
-                                    is_extern: false,
-                                    is_system: false,
-                                    is_anonymous: false,
-                                    return_type: DataType::new(m.range(), DataTypeKind::CustomType(*name)),
-                                    source,
-                                };
-
-                                scope.create_symbol(&mut slf.symbols, Symbol::Function(func), m.name(), m.range())?;
-                            }
-
-                            let Symbol::Enum(structure) = &mut slf.symbols[SymbolId(index)] else { unreachable!() };
-                            let full_name = structure.full_name;
-                            let name = structure.name;
-
-                            slf.ctx.cs.put_namespace(name, full_name, source)?;
-                            assert!(slf.namespaces.insert(full_name, scope).is_none());
+                            let structure = &slf.symbols[SymbolId(index)];
+                            let Symbol::Enum(structure) = structure else { panic!() };
+                            slf.ctx.cs.namespaces.insert(structure.name, (structure.full_name, source));
                         }
                     }
 
@@ -914,7 +1127,7 @@ impl<'a> Infer<'a> {
                     Declaration::Function { is_system: _, is_anonymous: _, name, arguments, return_type, body: _ } => {                        
                         for i in 0..arguments.len() {
                             let f = arguments.get_mut(i).unwrap();
-                            let result = slf.ctx.validate_data_type(&mut slf.symbols, f.data_type_mut());
+                            let result = slf.validate_data_type(f.data_type_mut());
 
                             if let Err(e) = result {
                                 errors.push(e);
@@ -937,7 +1150,7 @@ impl<'a> Infer<'a> {
 
 
                         {
-                            let result = slf.ctx.validate_data_type(&mut slf.symbols, return_type);
+                            let result = slf.validate_data_type(return_type);
                             if let Err(e) = result {
                                 errors.push(e);
                             }
@@ -1055,7 +1268,7 @@ impl<'a> Infer<'a> {
                 // evaluate body
                 let block_return_type = {
                     let mut subscope = Scope::new(*name, source.file());
-                    subscope.is_function_scope = true;
+                    subscope.is_function_scope = Some(return_type.clone());
 
                     for i in arguments {
                         let variable = Variable {
@@ -1076,6 +1289,7 @@ impl<'a> Infer<'a> {
 
 
                 if !block_return_type.data_type.kind().is(return_type.kind()) {
+                    dbg!(&block_return_type.data_type, &return_type);
                     return Err(
                         CompilerError::new(
                             source.file(), 
@@ -1083,7 +1297,7 @@ impl<'a> Infer<'a> {
                             "function return type differs from body"
                         )
                         .highlight(source)
-                            .note(format!("function returns {} but the body returns {}",
+                            .note(format!("function returns '{}' but the body returns '{}'",
                                     display_type(self.symbol_map, return_type.kind()),
                                     display_type(self.symbol_map, block_return_type.data_type.kind())
                                 ))
@@ -1340,11 +1554,15 @@ impl<'a> Infer<'a> {
 
                 self.expect_type(&DataTypeKind::Bool, &condition_typ)?;
 
-                let body_typ = self.analyse_block(body)?;
+                let mut body_typ = self.analyse_block(body)?;
 
                 if let Some(else_block) = else_block {
                     let else_typ = self.analyse_node(&mut *else_block)?;
-                    self.expect_type(body_typ.data_type.kind(), &else_typ.data_type)?;
+                    if body_typ.data_type.kind() == &DataTypeKind::Never {
+                        body_typ.data_type = else_typ.data_type
+                    } else {
+                        self.expect_type(body_typ.data_type.kind(), &else_typ.data_type)?;
+                    }
 
                 } else if !body_typ.data_type.kind().is(&DataTypeKind::Unit) {
                     return Err(
@@ -1369,22 +1587,23 @@ impl<'a> Infer<'a> {
             Expression::Match { value, mappings } => {
                 let value_typ = self.analyse_node(&mut *value)?;
 
-                let e = match value_typ.data_type.kind() {
-                    DataTypeKind::CustomType(v) if let Symbol::Enum(e) = self.find_symbol(*v).unwrap() => {
-                        e
-                    },
+                if value_typ.data_type.kind() == &DataTypeKind::Unknown {
+                    return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
+                }
 
-
-                    DataTypeKind::Unknown => return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true)),
-                    
-                    
-                    _ => return Err(
+                let e = self.type_namespace(value_typ.data_type.kind());
+                let e = self.find_symbol(e).unwrap();
+                let Symbol::Enum(e) = e
+                else {
+                    return Err(
                         CompilerError::new(source.file(), ErrorCode::SMatchValNotEnum, "match value is not an enum")
                             .highlight(source)
                                 .note(format!("is of type '{}' which is not an enum", display_type(self.symbol_map, value_typ.data_type.kind())))
                             .build()
                     )
+
                 };
+
 
 
                 {
@@ -1440,7 +1659,7 @@ impl<'a> Infer<'a> {
 
 
                 let return_type = {
-                    let mut expected_type = None;
+                    let mut expected_type : Option<DataTypeKind> = None;
                     let mut errors = vec![];
 
                     //  PERFORMANCE: avoid this clone
@@ -1474,13 +1693,13 @@ impl<'a> Infer<'a> {
                         };
 
 
-                        if expected_type.as_ref().is_none() {
+                        if expected_type.as_ref().is_none() || expected_type.as_ref().unwrap() == &DataTypeKind::Never {
                             expected_type = Some(result.data_type.kind_owned());
                             continue
                         }
 
 
-                        if !expected_type.as_ref().unwrap().is(result.data_type.kind()) {
+                        if !result.data_type.kind().is(expected_type.as_ref().unwrap()) {
                             errors.push(CompilerError::new(
                                 self.ctx.file, 
                                 ErrorCode::SMatchBranchDiffTy, 
@@ -1512,7 +1731,7 @@ impl<'a> Infer<'a> {
 
             
             Expression::CreateStruct { data_type, fields } => {
-                self.ctx.validate_data_type(&mut self.symbols, data_type)?;
+                self.validate_data_type(data_type)?;
 
 
                 let structure = match data_type.kind() {
@@ -1522,6 +1741,8 @@ impl<'a> Infer<'a> {
                     | DataTypeKind::Unit
                     | DataTypeKind::Any
                     | DataTypeKind::Option(_)
+                    | DataTypeKind::Result(_, _)
+                    | DataTypeKind::Never
                      => {
                         return Err(
                             CompilerError::new(source.file(), ErrorCode::SCantInitPrimitive, "can't initialise primitive types with structure creation syntax")
@@ -1605,7 +1826,7 @@ impl<'a> Infer<'a> {
                         let field = field.unwrap();
                         let Some(result) = result else { continue };
 
-                        if !field.1.kind().is(result.data_type.kind()) {                            
+                        if !result.data_type.kind().is(field.1.kind()) {                            
                             errors.push(CompilerError::new(
                                 self.ctx.file, 
                                 ErrorCode::SFieldTypeMismatch, 
@@ -1654,60 +1875,89 @@ impl<'a> Infer<'a> {
             Expression::AccessField { val, field: field_name } => {
                 let val_typ = self.analyse_node(&mut *val)?;
 
-                let structure = match val_typ.data_type.kind() {
-                    DataTypeKind::CustomType(v) => v,
-
-                    DataTypeKind::Unknown => return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true)),
-
-                    _ => {
-                        return Err(
-                            CompilerError::new(source.file(), ErrorCode::SAccFieldOnPrim, "can't access fields on a primitive type")
-                                .highlight(source)
-                                .build()
-                        )
-                    }
-                };
-
-                let structure = self.find_symbol(*structure).unwrap();
-                let Symbol::Structure(structure) = structure
+                if val_typ.data_type.kind() == &DataTypeKind::Unknown {
+                    return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
+                }
+                
+                let structure = self.type_namespace(val_typ.data_type.kind());
+                let Some(structure) = self.find_symbol(structure)
                 else {
                     return Err(
                         CompilerError::new(
                             source.file(), 
-                            ErrorCode::SSymbolIsntStruct, 
-                            "symbol exists but it's not a structure"
+                            ErrorCode::SAccFieldOnPrim, 
+                            "can't access fields on a primitive"
                         )
                         .highlight(source)
-                            .note(format!("the symbol is a '{}'", structure.type_name()))
                         .build()
                     )
                 };
 
+                match structure {
+                    Symbol::Structure(structure) => {
+                        let field = structure.fields.iter().find(|x| x.0 == *field_name);
+                        let Some(field) = field
+                        else {
+                            return Err(
+                                CompilerError::new(
+                                    source.file(), 
+                                    ErrorCode::SFieldDoesntExist, 
+                                    "field doesn't exist"
+                                )
+                                .highlight(source)
+                                    .note(format!("there's no field named {} on '{}'",
+                                        self.symbol_map.get(*field_name),
+                                        self.symbol_map.get(structure.full_name),
+                                    ))
+                                .build()
+                            )
+                        };
 
-                let field = structure.fields.iter().find(|x| x.0 == *field_name);
-                let Some(field) = field
-                else {                    
-                    return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SFieldDoesntExist, 
-                            "field doesn't exist"
+                        AnalysisResult::new(DataType::new(source, field.1.kind().clone()), val_typ.mutability)
+                    }
+
+
+                    Symbol::Enum(e) => {
+                        let variant = e.mappings.iter().find(|x| x.name() == *field_name);
+                        let Some(variant) = variant
+                        else {
+                            return Err(
+                                CompilerError::new(
+                                    source.file(), 
+                                    ErrorCode::SFieldDoesntExist, 
+                                    "field doesn't exist"
+                                )
+                                .highlight(source)
+                                    .note(format!("there's no variant named {} on '{}'",
+                                        self.symbol_map.get(*field_name),
+                                        self.symbol_map.get(e.full_name),
+                                    ))
+                                .build()
+                            )
+                        };
+
+                        AnalysisResult::new(DataType::new(source, DataTypeKind::Option(Box::new(variant.data_type().clone()))), val_typ.mutability)
+                    }
+                    
+                    
+                    _ => {
+                        return Err(
+                            CompilerError::new(
+                                source.file(), 
+                                ErrorCode::SSymbolIsntStruct, 
+                                "symbol exists but it's not a structure"
+                            )
+                            .highlight(source)
+                                .note(format!("the symbol is a '{}'", structure.type_name()))
+                            .build()
                         )
-                        .highlight(source)
-                            .note(format!("there's no field named {} on '{}'",
-                                self.symbol_map.get(*field_name),
-                                self.symbol_map.get(structure.full_name),
-                            ))
-                        .build()
-                    )
-                };
-
-                AnalysisResult::new(DataType::new(source, field.1.kind().clone()), val_typ.mutability)
+                    }
+                }
             },
 
             
             Expression::CallFunction { name, args, is_accessor } => {
-                let args_analysis = {
+                let mut args_analysis = {
                     let mut errors = vec![];
                     let mut arg_analysis = Vec::with_capacity(args.len());
                     for a in args.iter_mut() {
@@ -1728,24 +1978,24 @@ impl<'a> Infer<'a> {
                 assert_eq!(args_analysis.len(), args.len());
 
 
+                let has_accessor = is_accessor.is_some();
                 let function = if let Some(v) = is_accessor {
-                    println!("is acessor");
-
-                    let accessor_analysis = self.analyse_node(&mut * v)?;
+                    let accessor_analysis = self.analyse_node(&mut *v)?;
                     let path = self.type_namespace(accessor_analysis.data_type.kind());
 
-                    println!("{}", self.symbol_map.get(path));
                     let scope = self.namespaces.get(&path).unwrap();
-                    dbg!(&scope);
 
-                    Context::new(scope.clone()).find_symbol_id(*name, source)
+                    {
+                        args.insert(0, (*is_accessor.take().unwrap(), true));
+                        args_analysis.insert(0, accessor_analysis);
+                        
+                    }
 
-                    
+                    Context::new(scope.clone()).find_symbol_id(self.symbol_map, Some(&self.global_scope), *name, source)
+
                 } else {
-                    self.ctx.find_symbol_id(*name, source)
+                    self.ctx.find_symbol_id(self.symbol_map, Some(&self.global_scope), *name, source)
                 };
-
-                println!("{} {name:?}", self.symbol_map.get(*name));
 
                 let function = function?;
                 let function = self.symbols.get(function).unwrap();
@@ -1765,7 +2015,6 @@ impl<'a> Infer<'a> {
 
 
                 *name = function.full_name;
-                println!("{}", self.symbol_map.get(*name));
 
 
 
@@ -1782,6 +2031,9 @@ impl<'a> Infer<'a> {
                     )
                 }
 
+                if has_accessor {
+                    args[0].1 = function.args[0].is_inout();
+                }
 
                 {
                     let mut errors = vec![];
@@ -1793,10 +2045,12 @@ impl<'a> Infer<'a> {
                         if !arg_analysis.data_type.kind().is(expected_arg.data_type().kind()) {
                             errors.push(
                                 CompilerError::new(source.file(), ErrorCode::SArgTypeMismatch, "argument type mismatch")
-                                    .highlight(expected_arg.range())
-                                        .note(format!("argument is defined as '{}'", display_type(self.symbol_map, expected_arg.data_type().kind())))
                                     .highlight(arg.0.range())
-                                        .note(format!("..but the value is of type '{}'", display_type(self.symbol_map, arg_analysis.data_type.kind())))
+                                        .note(format!(
+                                            "argument is defined as {} but the value is of type '{}'", 
+                                            display_type(self.symbol_map, expected_arg.data_type().kind()),
+                                            display_type(self.symbol_map, arg_analysis.data_type.kind()),
+                                        ))
                                     .build()
                             );
                         }
@@ -1857,6 +2111,261 @@ impl<'a> Infer<'a> {
 
                 AnalysisResult::new(DataType::new(source, result?.data_type.kind_owned()), true)
             },
+
+            
+            Expression::WithinTypeNamespace { namespace, action } => {
+                self.validate_data_type(namespace)?;
+                
+                let namespace = self.type_namespace(namespace.kind());
+                // PERFORMANCE: Maybe? Remove the clone
+                let namespace = self.namespaces.get(&namespace).unwrap();
+                let namespace = namespace.clone();
+
+                self.ctx.subscope(namespace);
+
+                let result = self.analyse_node(&mut *action);
+
+                self.ctx.pop_scope();
+
+                AnalysisResult::new(DataType::new(source, result?.data_type.kind_owned()), true)
+            },
+
+            
+            Expression::Loop { body } => {
+                let mut scope = Scope::new(self.ctx.cs.mangle_name, self.ctx.cs.file);
+                scope.is_loop_scope = Some(false);
+
+                self.ctx.subscope(scope);
+                let result = self.analyse_block(body);
+                let scope = self.ctx.pop_scope();
+
+                result?;
+
+                let data_type = if scope.is_loop_scope.unwrap() { DataTypeKind::Unit }
+                                else { DataTypeKind::Never };
+
+                AnalysisResult::new(DataType::new(source, data_type), true)
+            },
+
+            
+            Expression::Return(v) => {
+                let return_type = self.analyse_node(&mut *v)?;
+
+                let function_return = self.ctx.is_func_body();
+                let Some(function_return) = function_return
+                else {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SReturnOutsideFunc, "can't return outside of a function")
+                            .highlight(source)
+                            .build()
+                    )
+                };
+
+
+                if !return_type.data_type.kind().is(function_return.kind()) {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SFuncReturnDiff, "function return type differs from body")
+                            .highlight(function_return.range())
+                                .note(format!("function returns '{}'", display_type(self.symbol_map, function_return.kind())))
+                            .highlight(source)
+                                .note(format!("..but this returns '{}'", display_type(self.symbol_map, return_type.data_type.kind())))
+                            .build()
+                    )
+                }
+
+
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
+            },
+
+            
+            Expression::Break => {
+                if !self.ctx.is_in_loop_body().map(|x| { *x = true; *x } ).unwrap_or(false) {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SBreakOutsideLoop, "break outside of loop")
+                            .highlight(source)
+                            .build()
+                    )
+                }
+
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
+            },
+
+            
+            Expression::Continue => {
+                if self.ctx.is_in_loop_body().is_none() {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SContOutsideLoop, "continue outside of loop")
+                            .highlight(source)
+                            .build()
+                    )
+                }
+
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
+            },
+
+            
+            Expression::CastAny { lhs, data_type } => {
+                self.analyse_node(&mut *lhs)?;
+
+                let kind = DataTypeKind::Result(
+                    Box::new(data_type.clone()), 
+                    Box::new(DataType::new(
+                        source, 
+                        DataTypeKind::CustomType(self.symbol_map.const_str(ANY_CAST_ERROR_STRUCT))
+                    )));
+
+                AnalysisResult::new(DataType::new(source, kind), true)
+            },
+
+
+            Expression::Unwrap(v) => {
+                let val_typ = self.analyse_node(&mut *v)?;
+
+                match val_typ.data_type.kind() {
+                    DataTypeKind::Unknown => AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true),
+
+                    | DataTypeKind::Option(v)
+                    | DataTypeKind::Result(v, _)
+                     => AnalysisResult::new(DataType::new(source, v.kind().clone()), true),
+
+                    _ => {
+                        return Err(
+                            CompilerError::new(source.file(), ErrorCode::SCantUnwrapType, "can't unwrap type")
+                                .highlight(source)
+                                    .note(format!("can't unwrap a value of type {}", display_type(self.symbol_map, val_typ.data_type.kind())))
+                                .build()
+                        )
+                    }
+                }
+            }
+
+
+            Expression::OrReturn(v) => {
+                let val_typ = self.analyse_node(&mut *v)?;
+                let Some(func_return) = self.ctx.is_func_body()
+                else {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SReturnOutsideFunc, "can't return outside of a function")
+                            .highlight(source)
+                            .build()
+                    )
+                };
+
+                match val_typ.data_type.kind() {
+                    DataTypeKind::Unknown => return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true)),
+
+                    DataTypeKind::Option(val) => {
+                        if !matches!(func_return.kind(), DataTypeKind::Option(_)) {
+                            return Err(CompilerError::new(source.file(), ErrorCode::STryOpOptionRetVal, "try operator on an option type only works if the function returns an option")
+                                .highlight(source)
+                                .build())
+                        }
+
+                        
+                        let some = self.symbol_map.const_str("some");
+                        let none = self.symbol_map.const_str("none");
+                        let value = self.symbol_map.const_str("value");
+                        let inner = Node::new(NodeKind::Expression(Expression::Literal(Literal::Integer(0))), SourceRange::new(0, 0, self.root_file));
+                        *expr = Expression::Match {
+                            value: Box::new(std::mem::replace(&mut *v, inner)),  
+                            mappings: Vec::from([
+                                MatchMapping::new(
+                                    some,
+                                    value,
+                                    source,
+                                    Node::new(
+                                        NodeKind::Expression(Expression::Identifier(value)),
+                                        source,
+                                    )
+                                ),
+                                MatchMapping::new(
+                                    none,
+                                    value,
+                                    source,
+                                    Node::new(
+                                        NodeKind::Expression(Expression::Return(
+                                            Box::new(Node::new(
+                                                NodeKind::Expression(Expression::CallFunction { 
+                                                    name: {
+                                                        let namespace = self.type_namespace(&func_return.kind().clone());
+                                                        let symbol = self.namespaces.get(&namespace).unwrap();
+
+                                                        let symbol = symbol.symbols.get(&none).unwrap();
+                                                        self.symbols[symbol.0].full_name()
+                                                    }, 
+                                                    is_accessor: None, 
+                                                    args: vec![]
+                                                }),
+                                                source
+                                            ))
+                                        )),
+                                        source,
+                                    )
+                                )
+                            ]) 
+                        };
+
+                        
+                        AnalysisResult::new(DataType::new(source, val.kind().clone()), true)
+
+                    }
+
+                    DataTypeKind::Result(val, err) => {
+                        if !matches!(func_return.kind(), DataTypeKind::Result(_, err2) if err == err2) {
+                            return Err(CompilerError::new(source.file(), ErrorCode::STryOpOptionRetVal, "try operator on a result type only works if the function returns a result with the same error type")
+                                .highlight(source)
+                                .build())
+                        }
+
+                        
+                        let some = self.symbol_map.const_str("ok");
+                        let none = self.symbol_map.const_str("err");
+                        let value = self.symbol_map.const_str("value");
+                        let inner = Node::new(NodeKind::Expression(Expression::Literal(Literal::Integer(0))), SourceRange::new(0, 0, self.root_file));
+                        *expr = Expression::Match {
+                            value: Box::new(std::mem::replace(&mut *v, inner)),  
+                            mappings: Vec::from([
+                                MatchMapping::new(
+                                    some,
+                                    value,
+                                    source,
+                                    Node::new(
+                                        NodeKind::Expression(Expression::Identifier(value)),
+                                        source,
+                                    )
+                                ),
+                                MatchMapping::new(
+                                    none,
+                                    value,
+                                    source,
+                                    Node::new(
+                                        NodeKind::Expression(Expression::Return(
+                                            Box::new(Node::new(
+                                                NodeKind::Expression(Expression::Identifier(value)),
+                                                source
+                                            ))
+                                        )),
+                                        source,
+                                    )
+                                )
+                            ]) 
+                        };
+
+                        AnalysisResult::new(DataType::new(source, val.kind().clone()), true)
+
+                    }
+
+                    _ => {
+                        return Err(
+                            CompilerError::new(source.file(), ErrorCode::SCantUnwrapType, "can't use the try operator on this type")
+                                .highlight(source)
+                                    .note(format!("..is of type {}", display_type(self.symbol_map, val_typ.data_type.kind())))
+                                .build()
+                        )
+                    }
+                }
+            }
+
         };
 
         Ok(result)
@@ -1881,7 +2390,21 @@ fn display_type_in(symbol_map: &SymbolMap, typ: &DataTypeKind, str: &mut String)
             DataTypeKind::Unit => "unit",
             DataTypeKind::Any => "any",
             DataTypeKind::Unknown => "unknown",
+            DataTypeKind::Never => "!",
 
+            DataTypeKind::Result(v1, v2) => {
+                if matches!(v1.kind(), DataTypeKind::Result(_, _)) { let _ = write!(str, "("); }
+                display_type_in(symbol_map, v1.kind(), str);
+                if matches!(v1.kind(), DataTypeKind::Result(_, _)) { let _ = write!(str, ")"); }
+
+                let _ = write!(str, " ~ ");
+                
+                if matches!(v2.kind(), DataTypeKind::Result(_, _)) { let _ = write!(str, "("); }
+                display_type_in(symbol_map, v2.kind(), str);
+                if matches!(v2.kind(), DataTypeKind::Result(_, _)) { let _ = write!(str, ")"); }
+
+                return
+            },
             
             DataTypeKind::Option(v) => {
                 display_type_in(symbol_map, v.kind(), str);
