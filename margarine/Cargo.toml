@@ -10,4 +10,5 @@ lexer = { path = "./lexer" }
 parser = { path = "./parser" }
 semantic_analysis = { path = "./semantic_analysis" }
 common = { path = "./common" }
+runtime = { path = "./runtime" }
 

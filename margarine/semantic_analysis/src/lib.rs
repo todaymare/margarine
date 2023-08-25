@@ -1237,23 +1237,26 @@ impl<'a> Infer<'a> {
 
     fn analyse_node(&mut self, node: &mut Node) -> Result<AnalysisResult, Error> {
         let source = node.range();
-        match node.kind_mut() {
+        let result = match node.kind_mut() {
             NodeKind::Declaration(v) => {
                 self.analyse_declaration(v, source)?;
-                Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true))
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true)
             },
 
             
             NodeKind::Statement(v) => {
                 self.analyse_statement(v, source)?;
-                Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true))
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true)
             },
 
             
             NodeKind::Expression(e) => {
-                self.analyse_expression(e, source)
+                self.analyse_expression(e, source)?
             },
-        }
+        };
+
+        node.data_kind = result.data_type.kind().clone();
+        Ok(result)
     }
 
 

@@ -2,13 +2,14 @@ use common::{SourceRange, SymbolIndex};
 use lexer::Literal;
 use thin_vec::ThinVec;
 
-use crate::{DataType, Block};
+use crate::{DataType, DataTypeKind, Block};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     kind: NodeKind,
     pub(crate) source_range: SourceRange,
     tags: ThinVec<SymbolIndex>,
+    pub data_kind: DataTypeKind,
 }
 
 impl Node {
@@ -16,7 +17,8 @@ impl Node {
         Self { 
             kind, 
             source_range,
-            tags: ThinVec::new(), 
+            tags: ThinVec::new(),
+            data_kind: DataTypeKind::Unknown, 
         } 
     }
 

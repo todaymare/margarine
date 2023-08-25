@@ -1,13 +1,5 @@
-fn cast(): int ~ CastError {
-	1.cast(int)
-}
-
-
-enum option { some: any, none }
-impl option {
-	fn hi() {}
-}
-
-fn(): any? {
-	[int?]::some([any?]::some(5)?.cast(int).ok?)
+system fn foo(query: Query[Hunger, Health]) {
+    for (hunger, &health) in query {
+        health += hunger
+    }
 }

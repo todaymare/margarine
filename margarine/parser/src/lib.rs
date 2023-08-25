@@ -90,7 +90,7 @@ impl PartialEq for DataTypeKind {
 }
 
 
-/// A wrapper type for Vec<Node> which
+/// A wrapper type for `Vec<Node>` which
 /// comes with the guarantee that the vec
 /// isn't empty
 #[derive(Clone, Debug, PartialEq)]
