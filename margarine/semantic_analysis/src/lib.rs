@@ -23,7 +23,10 @@ pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -
         nodes.range().file(),
     );
 
-    infer.analyse_block(nodes)?;
+
+    
+
+    infer.analyse_block(nodes, true)?;
 
     Ok(infer)
 }
@@ -32,7 +35,7 @@ pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -
 #[derive(Debug)]
 pub struct Infer<'a> {
     symbol_map: &'a mut SymbolMap,
-    symbols: Symbols,
+    pub symbols: Symbols,
     namespaces: HashMap<SymbolIndex, Scope>,
     ctx: Context,
     root_file: SymbolIndex,
@@ -61,9 +64,6 @@ pub struct Scope {
     is_function_scope: Option<DataType>,
     // the bool is whether or not it has `break` or not
     is_loop_scope: Option<bool>,
-}
-
-impl Scope {
 }
 
 
@@ -127,14 +127,14 @@ pub struct Enum {
 pub struct Function {
     name: SymbolIndex,
     full_name: SymbolIndex,
-    args: Vec<FunctionArgument>,
-    is_extern: bool,
-    is_system: bool,
+    pub args: Vec<FunctionArgument>,
+    pub is_extern: bool,
+    pub is_system: bool,
     is_anonymous: bool,
     return_type: DataType,
     source: SourceRange,
 
-    body: Vec<Node>,
+    pub body: Vec<Node>,
 }
 
 
@@ -742,7 +742,7 @@ impl<'a> Infer<'a> {
 
 
 impl<'a> Infer<'a> {
-    fn analyse_block(&mut self, block: &mut Block) -> Result<AnalysisResult, Error> {
+    fn analyse_block(&mut self, block: &mut Block, only_declarations: bool) -> Result<AnalysisResult, Error> {
         self.ctx.subscope(Scope::new(self.ctx.cs.mangle_name, self.ctx.file));
 
         let result = self.register_declarations(block);
@@ -750,12 +750,30 @@ impl<'a> Infer<'a> {
 
         result?;
 
-        let result = self.analyse_block_with_scope(block, scope)?;
+        let result = self.analyse_block_with_scope(block, scope, only_declarations)?;
         Ok(result.0)
     }
 
 
-    fn analyse_block_with_scope(&mut self, block: &mut Block, scope: Scope) -> Result<(AnalysisResult, Scope), Error> {
+    fn analyse_block_with_scope(&mut self, block: &mut Block, scope: Scope, only_declarations: bool) -> Result<(AnalysisResult, Scope), Error> {
+        if only_declarations {
+            let errors = block.iter().filter_map(|x| {
+                if !matches!(x.kind(), NodeKind::Declaration(_)) {
+                    Some(CompilerError::new(self.ctx.cs.file, ErrorCode::SBlockOnlyAllowDec, "this block only allows declarations")
+                        .highlight(x.range())
+                        .build())
+                } else {
+                    None
+                }
+            }).collect::<Vec<_>>();
+    
+
+            if !errors.is_empty() {
+                return Err(errors.combine_into_error())
+            }
+        }
+
+        
         let mut errors = vec![];
         self.ctx.subscope(scope);
         
@@ -1284,7 +1302,7 @@ impl<'a> Infer<'a> {
                     }
 
                     self.ctx.subscope(subscope);
-                    let result = self.analyse_block(body);
+                    let result = self.analyse_block(body, false);
                     self.ctx.pop_scope();
 
                     result?
@@ -1317,7 +1335,7 @@ impl<'a> Infer<'a> {
                 let name = self.type_namespace(data_type.kind());
 
                 let namespace = self.namespaces.get(&name).unwrap().clone();
-                let (_, namespace) = self.analyse_block_with_scope(body, namespace)?;
+                let (_, namespace) = self.analyse_block_with_scope(body, namespace, true)?;
 
                 *self.namespaces.get_mut(&name).unwrap() = namespace;
 
@@ -1330,7 +1348,7 @@ impl<'a> Infer<'a> {
             
             Declaration::Module { name, body } => {
                 let namespace = self.namespaces.get(name).unwrap().clone();
-                let (_, namespace) = self.analyse_block_with_scope(body, namespace)?;
+                let (_, namespace) = self.analyse_block_with_scope(body, namespace, true)?;
 
                 *self.namespaces.get_mut(name).unwrap() = namespace;
 
@@ -1557,7 +1575,7 @@ impl<'a> Infer<'a> {
 
                 self.expect_type(&DataTypeKind::Bool, &condition_typ)?;
 
-                let mut body_typ = self.analyse_block(body)?;
+                let mut body_typ = self.analyse_block(body, false)?;
 
                 if let Some(else_block) = else_block {
                     let else_typ = self.analyse_node(&mut *else_block)?;
@@ -1730,7 +1748,7 @@ impl<'a> Infer<'a> {
             },
 
             
-            Expression::Block { block } => self.analyse_block(block)?,
+            Expression::Block { block } => self.analyse_block(block, false)?,
 
             
             Expression::CreateStruct { data_type, fields } => {
@@ -1875,7 +1893,7 @@ impl<'a> Infer<'a> {
             },
 
             
-            Expression::AccessField { val, field: field_name } => {
+            Expression::AccessField { val, field: field_name, field_meta } => {
                 let val_typ = self.analyse_node(&mut *val)?;
 
                 if val_typ.data_type.kind() == &DataTypeKind::Unknown {
@@ -1898,8 +1916,8 @@ impl<'a> Infer<'a> {
 
                 match structure {
                     Symbol::Structure(structure) => {
-                        let field = structure.fields.iter().find(|x| x.0 == *field_name);
-                        let Some(field) = field
+                        let field = structure.fields.iter().enumerate().find(|x| x.1.0 == *field_name);
+                        let Some((index, field)) = field
                         else {
                             return Err(
                                 CompilerError::new(
@@ -1916,13 +1934,15 @@ impl<'a> Infer<'a> {
                             )
                         };
 
+                        *field_meta = (index as u16, false);
+
                         AnalysisResult::new(DataType::new(source, field.1.kind().clone()), val_typ.mutability)
                     }
 
 
                     Symbol::Enum(e) => {
-                        let variant = e.mappings.iter().find(|x| x.name() == *field_name);
-                        let Some(variant) = variant
+                        let variant = e.mappings.iter().enumerate().find(|x| x.1.name() == *field_name);
+                        let Some((index, variant)) = variant
                         else {
                             return Err(
                                 CompilerError::new(
@@ -1938,6 +1958,8 @@ impl<'a> Infer<'a> {
                                 .build()
                             )
                         };
+
+                        *field_meta = (index as u16, true);
 
                         AnalysisResult::new(DataType::new(source, DataTypeKind::Option(Box::new(variant.data_type().clone()))), val_typ.mutability)
                     }
@@ -2139,7 +2161,7 @@ impl<'a> Infer<'a> {
                 scope.is_loop_scope = Some(false);
 
                 self.ctx.subscope(scope);
-                let result = self.analyse_block(body);
+                let result = self.analyse_block(body, false);
                 let scope = self.ctx.pop_scope();
 
                 result?;

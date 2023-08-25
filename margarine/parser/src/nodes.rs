@@ -158,6 +158,7 @@ pub enum Expression {
     AccessField {
         val: Box<Node>,
         field: SymbolIndex,
+        field_meta: (u16, bool),
     },
 
     CallFunction {

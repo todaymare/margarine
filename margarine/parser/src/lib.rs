@@ -10,7 +10,7 @@ use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument, ExternFun
 use crate::nodes::MatchMapping;
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash,)]
 pub struct DataType {
     source_range: SourceRange,
     kind: DataTypeKind, 
@@ -34,7 +34,7 @@ impl DataType {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub enum DataTypeKind {
     Int,
     Bool,
@@ -85,6 +85,27 @@ impl PartialEq for DataTypeKind {
             (DataTypeKind::CustomType(v1), DataTypeKind::CustomType(v2)) => v1 == v2,
 
             _ => false,
+        }
+    }
+}
+
+
+impl std::hash::Hash for DataTypeKind {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            DataTypeKind::Int => DataTypeKind::Int.hash(state),
+            DataTypeKind::Bool => DataTypeKind::Bool.hash(state),
+            DataTypeKind::Float => DataTypeKind::Float.hash(state),
+            DataTypeKind::Unit => DataTypeKind::Unit.hash(state),
+            DataTypeKind::Any => DataTypeKind::Any.hash(state),
+            DataTypeKind::Unknown => DataTypeKind::Unknown.hash(state),
+            DataTypeKind::Never => DataTypeKind::Never.hash(state),
+            DataTypeKind::Option(v) => v.kind().hash(state),
+            DataTypeKind::Result(v1, v2) => {
+                v1.kind().hash(state);
+                v2.kind().hash(state);
+            },
+            DataTypeKind::CustomType(v) => v.hash(state),
         }
     }
 }
@@ -1286,6 +1307,7 @@ impl Parser<'_> {
                     NodeKind::Expression(Expression::AccessField { 
                         val: Box::new(result), 
                         field: ident,
+                        field_meta: (u16::MAX, false),
                     }),
                     SourceRange::new(start, self.current_range().end(), self.file)
                 )

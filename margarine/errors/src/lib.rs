@@ -65,6 +65,7 @@ pub enum ErrorCode {
     SCantUnwrapType    = 337,
     STryOpOptionRetVal = 338,
     STryOpResultRetVal = 339,
+    SBlockOnlyAllowDec = 340,
 }
 
 

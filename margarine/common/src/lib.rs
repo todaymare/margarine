@@ -48,7 +48,7 @@ impl FileData {
 /// Represents the source range of
 /// something in byte offset from its
 /// respected file data.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
 pub struct SourceRange {
     start: usize,
     end  : usize,

@@ -1,5 +1,10 @@
-system fn foo(query: Query[Hunger, Health]) {
-    for (hunger, &health) in query {
-        health += hunger
-    }
+// system fn foo(query: Query[Hunger, Health]) {
+//     for (hunger, &health) in query {
+//         health += hunger
+//     }
+// }
+
+
+fn add(v1: int, v2: int): int {
+    v1 + v2
 }

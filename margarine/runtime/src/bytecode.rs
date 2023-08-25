@@ -43,8 +43,8 @@ bytecode! {
         [len(fields): u16] [fields: []Field[name: str, type: TypeId(u32)]]"),
     
     
-    Ret("ret []"),
-    Copy("copy [dst: Reg(u8)] [src: Reg(u8)] [len(inouts) = u8] [inouts: []u8]"),
+    Ret("ret"),
+    Copy("copy [dst: Reg(u8)] [src: Reg(u8)]"),
     Lit("lit [dst: Reg(u8)] [val: u32]"),
 
     Push("push [amount: u8]"),
@@ -58,8 +58,8 @@ bytecode! {
     CastAny("castany [dst: Reg(u8)] [src: Reg(u8)] [target type: TypeId(u32)]"),
 
     CreateStruct("struct [dst: Reg(u8)] [type_id: TypeId(u32)] [len(list): u8] [list: []Reg(u8)]"),
-    AccField("accfield [dst: Reg(u8)] [src: Reg(u8)] [index: u8]"),
-    SetField("setfield [dst: Reg(u8)] [src: Reg(u8)] [index: u8]"),
+    AccField("accfield [dst: Reg(u8)] [src: Reg(u8)] [index: u16]"),
+    SetField("setfield [dst: Reg(u8)] [src: Reg(u8)] [index: u16]"),
 
     Call("call [dst: Reg(u8)] [func: u32] [len(args): u8] [args: []Reg(u8)]"),
 
