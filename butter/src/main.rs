@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use margarine::{Stack, VM, Code, bytecode::bytecode_consts, CompilerMetadata, Data, FileData, SymbolMap};
+use margarine::{FileData, SymbolMap};
 
 fn main() -> Result<(), &'static str> {
     let mut symbol_map = SymbolMap::new();
@@ -17,6 +17,7 @@ fn main() -> Result<(), &'static str> {
     };
 
     println!("{tokens:?}");
+    println!("OHOHO");
 
 
     let instructions = margarine::parse(tokens, &mut symbol_map);
@@ -30,6 +31,7 @@ fn main() -> Result<(), &'static str> {
     };
 
     println!("{instructions:#?}");
+    println!("HELLOOO");
 
     let state = margarine::semantic_analysis(&mut symbol_map, &mut instructions);
     let state = match state {
@@ -43,7 +45,16 @@ fn main() -> Result<(), &'static str> {
     };
 
     println!("{state:#?}");
+    println!("POWOIEKA");
+
+    let state = margarine::convert(state);
+
+    println!("{state:#?}");
+    
+    let codegen = margarine::codegen(&symbol_map, &state);
+    
     println!("{symbol_map:?}");
+
     Ok(())
 }
 

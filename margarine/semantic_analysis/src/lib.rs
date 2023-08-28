@@ -34,7 +34,7 @@ pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -
 
 #[derive(Debug)]
 pub struct Infer<'a> {
-    symbol_map: &'a mut SymbolMap,
+    pub symbol_map: &'a mut SymbolMap,
     pub symbols: Symbols,
     namespaces: HashMap<SymbolIndex, Scope>,
     ctx: Context,
@@ -128,10 +128,11 @@ pub struct Function {
     name: SymbolIndex,
     full_name: SymbolIndex,
     pub args: Vec<FunctionArgument>,
-    pub is_extern: bool,
+    pub is_extern: Option<(SymbolIndex, SymbolIndex)>,
     pub is_system: bool,
-    is_anonymous: bool,
-    return_type: DataType,
+    pub is_anonymous: bool,
+    pub is_enum_variant_function: Option<u16>,
+    pub return_type: DataType,
     source: SourceRange,
 
     pub body: Vec<Node>,
@@ -153,10 +154,12 @@ impl Variable {
 struct AnalysisResult {
     data_type: DataType,
     mutability: bool,
+
+    accessor_field_is_an_enum: bool,
 }
 
 impl AnalysisResult {
-    fn new(data_type: DataType, mutability: bool) -> Self { Self { data_type, mutability } }
+    fn new(data_type: DataType, mutability: bool) -> Self { Self { data_type, mutability, accessor_field_is_an_enum: false } }
 }
 
 
@@ -192,7 +195,7 @@ impl Scope {
             source.start(),
         );
 
-        symbol_map.insert(str)
+        symbol_map.insert(str.as_str())
     }
 
 
@@ -451,14 +454,14 @@ impl<'a> Infer<'a> {
     pub fn new(symbol_map: &'a mut SymbolMap, mut symbols: Symbols, ctx: Context, root_file: SymbolIndex) -> Self {
         let namespaces = HashMap::new();
         
-        let global_namespace = symbol_map.const_str(GLOBAL_NAMESPACE);
-        let mut global_scope = Scope::new(symbol_map.const_str(""), global_namespace);
+        let global_namespace = symbol_map.insert(GLOBAL_NAMESPACE);
+        let mut global_scope = Scope::new(symbol_map.insert(""), global_namespace);
         {
-            let name = symbol_map.const_str("CastError");
+            let name = symbol_map.insert("CastError");
             let source = SourceRange::new(0, 0, root_file);
             let symbol = Symbol::Structure(Structure {
                 name,
-                full_name: symbol_map.const_str(ANY_CAST_ERROR_STRUCT),
+                full_name: symbol_map.insert(ANY_CAST_ERROR_STRUCT),
                 fields: vec![],
                 kind: StructKind::Normal,
                 source,
@@ -496,7 +499,6 @@ impl<'a> Infer<'a> {
         )
     }
 
-
     
     fn find_symbol(&self, name: SymbolIndex) -> Option<&Symbol> {
         self.symbols
@@ -505,10 +507,18 @@ impl<'a> Infer<'a> {
             .find(|x| x.full_name() == name)
     }
 
+    
+    fn find_symbol_mut(&mut self, name: SymbolIndex) -> Option<&mut Symbol> {
+        self.symbols
+            .vec
+            .iter_mut()
+            .find(|x| x.full_name() == name)
+    }
+
 
     fn type_namespace(&mut self, data_type: &DataTypeKind) -> SymbolIndex {
         let name = display_type(self.symbol_map, data_type);
-        let name = self.symbol_map.insert(name);
+        let name = self.symbol_map.insert(name.as_str());
 
         if self.namespaces.contains_key(&name) {
             return name;
@@ -517,7 +527,7 @@ impl<'a> Infer<'a> {
 
         println!("creating {}", self.symbol_map.get(name));
 
-        let source = SourceRange::new(0, 0, self.symbol_map.const_str(GLOBAL_NAMESPACE));
+        let source = SourceRange::new(0, 0, self.symbol_map.insert(GLOBAL_NAMESPACE));
         self.namespaces.insert(name, Scope::new(name, source.file()));
         let _ = self.global_scope.put_namespace(name, name, source);
 
@@ -532,17 +542,19 @@ impl<'a> Infer<'a> {
                     full_name,
                     mappings: vec![
                         EnumMapping::new(
-                            self.symbol_map.const_str("ok"),
-                            DataType::new(source, v1.kind().clone()),
+                            self.symbol_map.insert("err"),
+                            0,
+                            DataType::new(source, v2.kind().clone()),
                             source,
                             false,
                         ),
                         EnumMapping::new(
-                            self.symbol_map.const_str("err"),
-                            DataType::new(source, v2.kind().clone()),
+                            self.symbol_map.insert("ok"),
+                            1,
+                            DataType::new(source, v1.kind().clone()),
                             source,
                             false,
-                        )
+                        ),
                     ],
                     source,
                 };
@@ -551,8 +563,8 @@ impl<'a> Infer<'a> {
                 self.register_enum_methods(id, source, data_type.clone()).unwrap();
             }
         } else if let DataTypeKind::Option(v) = data_type {            
-            let some = self.symbol_map.const_str("some");
-            let none = self.symbol_map.const_str("none");
+            let some = self.symbol_map.insert("some");
+            let none = self.symbol_map.insert("none");
             // enum
             {
                 let full_name = name;
@@ -562,17 +574,19 @@ impl<'a> Infer<'a> {
                     full_name,
                     mappings: vec![
                         EnumMapping::new(
+                            none,
+                            0,
+                            DataType::new(source, DataTypeKind::Unit),
+                            source,
+                            true,
+                        ),
+                        EnumMapping::new(
                             some,
+                            1,
                             DataType::new(source, v.kind().clone()),
                             source,
                             false,
                         ),
-                        EnumMapping::new(
-                            none,
-                            DataType::new(source, DataTypeKind::Unit),
-                            source,
-                            true,
-                        )
                     ],
                     source,
                 };
@@ -585,16 +599,17 @@ impl<'a> Infer<'a> {
             // is_some
             {
                 let namespace = self.namespaces.get_mut(&name).unwrap();
-                let function_name = self.symbol_map.const_str("is_some");
-                let self_var = self.symbol_map.const_str("self");
+                let function_name = self.symbol_map.insert("is_some");
+                let self_var = self.symbol_map.insert("self");
 
                 let function = Function {
                     name: function_name,
                     full_name: namespace.mangle(self.symbol_map, function_name, source),
                     args: Vec::from([FunctionArgument::new(self_var, DataType::new(source, data_type.clone()), false, source)]),
-                    is_extern: false,
+                    is_extern: None,
                     is_system: false,
                     is_anonymous: false,
+                    is_enum_variant_function: None,
                     return_type: DataType::new(source, DataTypeKind::Bool),
                     source,
                     body: Vec::from([Node::new(
@@ -700,7 +715,6 @@ impl<'a> Infer<'a> {
 
         let mut errors = vec![];
         for m in mappings.iter() {
-            println!("\t\n\n\n\t\t{}", self.symbol_map.get(full_name));
             let func = Function {
                 name: m.name(),
                 full_name: scope.mangle(self.symbol_map, m.name(), m.range()),
@@ -711,9 +725,10 @@ impl<'a> Infer<'a> {
                         vec![FunctionArgument::new(m.name(), m.data_type().clone(), false, m.range())]
                     }
                 },
-                is_extern: false,
+                is_extern: None,
                 is_system: false,
                 is_anonymous: false,
+                is_enum_variant_function: Some(m.number()),
                 return_type: DataType::new(m.range(), kind.clone()),
                 source,
 
@@ -803,6 +818,1081 @@ impl<'a> Infer<'a> {
     }
 
 
+    fn analyse_declaration(&mut self, decl: &mut Declaration, source: SourceRange) -> Result<(), Error> {
+        match decl {
+            Declaration::Struct { .. } => Ok(()),
+            Declaration::Enum { .. } => Ok(()),
+
+
+            Declaration::Function { name, arguments, return_type, body, .. } => {
+
+                // evaluate body
+                let block_return_type = {
+                    let mut subscope = Scope::new(*name, source.file());
+                    subscope.is_function_scope = Some(return_type.clone());
+
+                    for i in arguments {
+                        let variable = Variable {
+                            name: i.name(),
+                            data_type: i.data_type().clone(),
+                            is_mut: true,
+                        };
+
+                        subscope.register_variable(variable);
+                    }
+
+                    self.ctx.subscope(subscope);
+                    let result = self.analyse_block(body, false);
+                    self.ctx.pop_scope();
+
+                    result?
+                };
+
+
+                if !block_return_type.data_type.kind().is(return_type.kind()) {
+                    dbg!(&block_return_type.data_type, &return_type);
+                    return Err(
+                        CompilerError::new(
+                            source.file(), 
+                            ErrorCode::SFuncReturnDiff, 
+                            "function return type differs from body"
+                        )
+                        .highlight(source)
+                            .note(format!("function returns '{}' but the body returns '{}'",
+                                    display_type(self.symbol_map, return_type.kind()),
+                                    display_type(self.symbol_map, block_return_type.data_type.kind())
+                                ))
+                        .build()
+                    )
+                }
+
+
+                let Symbol::Function(symbol) = self.find_symbol_mut(*name).unwrap() else { panic!() };
+                symbol.body = body.take_vec();
+                
+
+                Ok(())
+            },
+
+
+            Declaration::Impl { data_type, body } => {
+                let name = self.type_namespace(data_type.kind());
+
+                let namespace = self.namespaces.get(&name).unwrap().clone();
+                let (_, namespace) = self.analyse_block_with_scope(body, namespace, true)?;
+
+                *self.namespaces.get_mut(&name).unwrap() = namespace;
+
+                Ok(())
+            },
+
+
+            Declaration::Using { .. } => todo!(),
+
+            
+            Declaration::Module { name, body } => {
+                let namespace = self.namespaces.get(name).unwrap().clone();
+                let (_, namespace) = self.analyse_block_with_scope(body, namespace, true)?;
+
+                *self.namespaces.get_mut(name).unwrap() = namespace;
+
+                Ok(())
+                
+            },
+
+
+            Declaration::Extern { .. } => Ok(()),
+        }
+    }
+
+
+    fn analyse_expression(&mut self, expr: &mut Expression, source: SourceRange) -> Result<AnalysisResult, Error> {
+        let result = match expr {
+            Expression::Unit => AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true),
+
+            
+            Expression::Literal(v) => {
+                let kind = match v {
+                    Literal::Float(_)   => DataTypeKind::Float,
+                    Literal::Integer(_) => DataTypeKind::Int,
+                    Literal::String(_)  => todo!(),
+                    Literal::Bool(_)    => DataTypeKind::Bool,
+                };
+
+                AnalysisResult::new(DataType::new(source, kind), true)
+            },
+
+
+            Expression::Identifier(v) => {
+                let variable = self.ctx.find_variable(*v, source)?;
+                
+                AnalysisResult::new(variable.data_type.clone(), variable.is_mut)
+            },
+
+            
+            Expression::BinaryOp { operator, lhs, rhs } => {
+                let lhs_typ = self.analyse_node(&mut *lhs)?.data_type;
+                let rhs_typ = self.analyse_node(&mut *rhs)?.data_type;
+
+                if lhs_typ.kind() == &DataTypeKind::Unknown
+                    || rhs_typ.kind() == &DataTypeKind::Unknown {
+                    return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
+                }
+
+                let kind = match (operator, lhs_typ.kind()) {
+                    | (parser::nodes::BinaryOperator::Add, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Add, DataTypeKind::Float)
+                    | (parser::nodes::BinaryOperator::Sub, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Sub, DataTypeKind::Float)
+                    | (parser::nodes::BinaryOperator::Mul, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Mul, DataTypeKind::Float)
+                    | (parser::nodes::BinaryOperator::Div, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Div, DataTypeKind::Float)
+                    | (parser::nodes::BinaryOperator::Rem, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Rem, DataTypeKind::Float)
+                    | (parser::nodes::BinaryOperator::BitshiftLeft, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::BitshiftRight, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::BitwiseAnd, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::BitwiseOr, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::BitwiseXor, DataTypeKind::Int)
+                     if lhs_typ.kind().is(rhs_typ.kind()) => {
+                        lhs_typ.kind_owned()
+                    }
+
+                    | (parser::nodes::BinaryOperator::Eq, _ )
+                    | (parser::nodes::BinaryOperator::Ne, _ )
+                    | (parser::nodes::BinaryOperator::Gt, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Gt, DataTypeKind::Float)
+                    | (parser::nodes::BinaryOperator::Ge, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Ge, DataTypeKind::Float)
+                    | (parser::nodes::BinaryOperator::Lt, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Lt, DataTypeKind::Float)
+                    | (parser::nodes::BinaryOperator::Le, DataTypeKind::Int)
+                    | (parser::nodes::BinaryOperator::Le, DataTypeKind::Float)
+                     if lhs_typ.kind().is(rhs_typ.kind()) => {
+                        DataTypeKind::Bool
+                    }
+
+
+                    _ => return Err(
+                        CompilerError::new(source.file(), ErrorCode::SInvalidBinOp, "invalid binary operation")
+                            .highlight(source)
+                                .note(format!(
+                                    "left side is '{}' while the right side is '{}'", 
+                                    display_type(self.symbol_map, lhs_typ.kind()), 
+                                    display_type(self.symbol_map, rhs_typ.kind())
+                                ))
+                            .build()
+                    )
+                };
+
+                AnalysisResult::new(DataType::new(source, kind), true)
+            },
+            
+
+            Expression::UnaryOp { operator, rhs } => {
+                let rhs = self.analyse_node(&mut *rhs)?.data_type;
+                let rhs_typ = rhs.kind();
+
+                let kind = match (&operator, rhs_typ) {
+                    | (UnaryOperator::Not, DataTypeKind::Bool)
+                    | (UnaryOperator::Neg, DataTypeKind::Int)
+                    | (UnaryOperator::Neg, DataTypeKind::Float)
+                     => {
+                        rhs.kind_owned()
+                    }
+
+                    _ => return Err(
+                        CompilerError::new(source.file(), ErrorCode::SInvalidBinOp, "invalid unary operation")
+                            .highlight(source)
+                                .note(format!(
+                                    "the '{}' operator only works on values of type {}", 
+                                    match &operator {
+                                        UnaryOperator::Not => "not",
+                                        UnaryOperator::Neg => "negate",
+                                    },
+
+                                    match &operator {
+                                        UnaryOperator::Not => "'bool'",
+                                        UnaryOperator::Neg => "'int' or 'float'",
+                                    },
+                                
+                                ))
+                            .build()
+                    )
+                };
+
+                AnalysisResult::new(DataType::new(source, kind), true)
+            },
+
+            
+            Expression::If { condition, body, else_block } => {
+                let condition_typ = self.analyse_node(&mut *condition)?.data_type;
+
+                self.expect_type(&DataTypeKind::Bool, &condition_typ)?;
+
+                let mut body_typ = self.analyse_block(body, false)?;
+
+                if let Some(else_block) = else_block {
+                    let else_typ = self.analyse_node(&mut *else_block)?;
+                    if body_typ.data_type.kind() == &DataTypeKind::Never {
+                        body_typ.data_type = else_typ.data_type
+                    } else {
+                        self.expect_type(body_typ.data_type.kind(), &else_typ.data_type)?;
+                    }
+
+                } else if !body_typ.data_type.kind().is(&DataTypeKind::Unit) {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SIfExprNoElse, "if expression has no else")
+                        .highlight(source)
+                            .note(format!(
+                                "the body returns {} but there's no else block",
+                                display_type(self.symbol_map, body_typ.data_type.kind())
+                            ))
+                        .build()
+                    )
+                }
+
+
+                AnalysisResult::new(
+                    DataType::new(source, body_typ.data_type.kind_owned()), 
+                    true,
+                )
+            },
+
+            
+            Expression::Match { value, mappings } => {
+                let value_typ = self.analyse_node(&mut *value)?;
+
+                if value_typ.data_type.kind() == &DataTypeKind::Unknown {
+                    return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
+                }
+
+                let e = self.type_namespace(value_typ.data_type.kind());
+                let e = self.find_symbol(e).unwrap();
+                let Symbol::Enum(e) = e
+                else {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SMatchValNotEnum, "match value is not an enum")
+                            .highlight(source)
+                                .note(format!("is of type '{}' which is not an enum", display_type(self.symbol_map, value_typ.data_type.kind())))
+                            .build()
+                    )
+
+                };
+
+
+
+                {
+                    let mut errors = vec![];
+                    for i in 0..mappings.len() {                    
+                        let f = mappings.get(i).unwrap();
+
+                        if let Some(v) = mappings[0..i].iter().find(|x| x.name() == f.name()) {
+                            errors.push(CompilerError::new(
+                                self.ctx.file, 
+                                ErrorCode::SVariantDefEarlier, 
+                                "variant is already defined"
+                            )
+                            .highlight(v.node().range())
+                                .note("variant is defined earlier here".to_string())
+                            .highlight(f.node().range())
+                                .note("..but it's defined again here".to_string())
+                            .build())
+                        }
+
+
+                        if !e.mappings.iter().any(|x| x.name() == f.name()) {                            
+                            errors.push(CompilerError::new(
+                                self.ctx.file, 
+                                ErrorCode::SMatchUnkownVar, 
+                                "unknown variant"
+                            )
+                            .highlight(f.range())
+                            .build())
+                        }
+                    }
+
+                    
+                    for mapping in &e.mappings {
+                        if !mappings.iter().any(|x| x.name() == mapping.name()) {
+                            errors.push(CompilerError::new(
+                                self.ctx.file, 
+                                ErrorCode::SMissingField, 
+                                "missing field"
+                            )
+                            .highlight(source)
+                                .note(format!("missing '{}'",
+                                    self.symbol_map.get(mapping.name()), 
+                                ))
+                            .build())
+                        }
+                    }
+
+                    if !errors.is_empty() {
+                        return Err(errors.combine_into_error())
+                    }
+                }
+
+
+                let return_type = {
+                    let mut expected_type : Option<DataTypeKind> = None;
+                    let mut errors = vec![];
+
+                    //  PERFORMANCE: avoid this clone
+                    let enum_mappings = e.mappings.clone();
+                    let enum_name = e.name;
+
+                    let mut numbers = Vec::with_capacity(mappings.len());
+                    for mapping in mappings.iter_mut() {
+                        let enum_mapping = enum_mappings.iter().find(|x| x.name() == mapping.name()).unwrap();
+                        numbers.push(enum_mapping.number());
+
+                        let mut mapping_scope = Scope::new(enum_name, source.file());
+                        mapping_scope.register_variable(
+                            Variable::new(
+                                mapping.binding(), 
+                                enum_mapping.data_type().clone(), 
+                                value_typ.mutability,
+                            )
+                        );
+
+                        self.ctx.subscope(mapping_scope);
+
+                        let result = self.analyse_node(mapping.node_mut());
+
+                        self.ctx.pop_scope();
+
+                        let result = match result {
+                            Ok(v) => v,
+                            Err(v) => {
+                                errors.push(v);
+                                continue
+                            },
+                        };
+
+
+                        if expected_type.as_ref().is_none() || expected_type.as_ref().unwrap() == &DataTypeKind::Never {
+                            expected_type = Some(result.data_type.kind_owned());
+                            continue
+                        }
+
+
+                        if !result.data_type.kind().is(expected_type.as_ref().unwrap()) {
+                            errors.push(CompilerError::new(
+                                self.ctx.file, 
+                                ErrorCode::SMatchBranchDiffTy, 
+                                "match branch returns a different type"
+                            )
+                            .highlight(mapping.node().range())
+                                .note(format!("expected '{}' found '{}'",
+                                    display_type(self.symbol_map, expected_type.as_ref().unwrap()),
+                                    display_type(self.symbol_map, result.data_type.kind())
+                                ))
+                            .build())
+                        }
+                    }
+
+
+                    if !errors.is_empty() {
+                        return Err(errors.combine_into_error())
+                    }
+
+                    let mut counter = 0;
+                    mappings.sort_unstable_by_key(|x| {
+                        counter += 1;
+                        numbers[counter-1]
+                    });
+                    expected_type.unwrap_or(DataTypeKind::Unit)
+                };
+                
+
+                AnalysisResult::new(DataType::new(source, return_type), true)
+
+            },
+
+            
+            Expression::Block { block } => self.analyse_block(block, false)?,
+
+            
+            Expression::CreateStruct { data_type, fields } => {
+                self.validate_data_type(data_type)?;
+
+
+                let structure = match data_type.kind() {
+                    | DataTypeKind::Int
+                    | DataTypeKind::Bool
+                    | DataTypeKind::Float
+                    | DataTypeKind::Unit
+                    | DataTypeKind::Any
+                    | DataTypeKind::Option(_)
+                    | DataTypeKind::Result(_, _)
+                    | DataTypeKind::Never
+                     => {
+                        return Err(
+                            CompilerError::new(source.file(), ErrorCode::SCantInitPrimitive, "can't initialise primitive types with structure creation syntax")
+                                .highlight(source)
+                                .build()
+                        )
+                    }
+
+                    DataTypeKind::Unknown => return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true)),
+
+                    DataTypeKind::CustomType(e) => e,
+                };
+
+
+                let structure = self.find_symbol(*structure).unwrap();
+                let Symbol::Structure(structure) = structure
+                else {
+                    return Err(
+                        CompilerError::new(
+                            source.file(), 
+                            ErrorCode::SSymbolIsntStruct, 
+                            "symbol exists but it's not a structure"
+                        )
+                        .highlight(source)
+                            .note(format!("the symbol is a '{}'", structure.type_name()))
+                        .build()
+                    )
+                };
+                
+
+                {
+                    // PERFORAMANCE: Remove clone
+                    let structure_fields = structure.fields.clone();
+                    let structure_name = structure.full_name;
+
+                    let mut errors = vec![];
+                    for i in 0..fields.len() {
+                        let f = fields.get_mut(i).unwrap();
+                        let result = self.analyse_node(&mut f.2);
+                        let result = match result {
+                            Ok(v) => Some(v),
+                            Err(v) => {
+                                errors.push(v);
+                                None
+                            }
+                        };
+                        
+                        
+                        let f = fields.get(i).unwrap();
+                        if let Some(v) = fields[0..i].iter().find(|x| x.0 == f.0) {
+                            errors.push(CompilerError::new(
+                                self.ctx.file, 
+                                ErrorCode::SFieldDefEarlier, 
+                                "field is already defined"
+                            )
+                            .highlight(v.1)
+                                .note("field is defined earlier here".to_string())
+                            .highlight(f.1)
+                                .note("..but it's defined again here".to_string())
+                            .build())
+                        }
+
+
+                        let field = structure_fields.iter().find(|x| x.0 == f.0);
+                        if field.is_none() {
+                            errors.push(CompilerError::new(
+                                self.ctx.file, 
+                                ErrorCode::SUnknownField, 
+                                "unknown field"
+                            )
+                            .highlight(f.1)
+                                .note(format!("there's no field named {} in {}",
+                                    self.symbol_map.get(f.0), 
+                                    self.symbol_map.get(structure_name), 
+                                ))
+                            .build());
+
+                            continue
+                        }
+
+                        let field = field.unwrap();
+                        let Some(result) = result else { continue };
+
+                        if !result.data_type.kind().is(field.1.kind()) {                            
+                            errors.push(CompilerError::new(
+                                self.ctx.file, 
+                                ErrorCode::SFieldTypeMismatch, 
+                                "field type mismatch"
+                            )
+                            .highlight(field.2)
+                                .note(format!("the field {} is defined as {} here",
+                                    self.symbol_map.get(f.0), 
+                                    display_type(self.symbol_map, field.1.kind()),
+                                ))
+                            .empty_line()
+                            .highlight(f.2.range())
+                                .note(format!("..but the value here is of type {}",
+                                    display_type(self.symbol_map, result.data_type.kind())
+                                ))
+                            .build());
+                        }
+                    }
+
+
+                    for field in &structure_fields {
+                        if !fields.iter().any(|x| x.0 == field.0) {
+                            errors.push(CompilerError::new(
+                                self.ctx.file, 
+                                ErrorCode::SMissingField, 
+                                "missing field"
+                            )
+                            .highlight(source)
+                                .note(format!("missing '{}'",
+                                    self.symbol_map.get(field.0), 
+                                ))
+                            .build())
+                        }
+                    }
+                    
+
+                    if !errors.is_empty() {
+                        return Err(errors.combine_into_error())
+                    }
+                }
+
+                AnalysisResult::new(data_type.clone(), true)
+            },
+
+            
+            Expression::AccessField { val, field: field_name, field_meta } => {
+                let val_typ = self.analyse_node(&mut *val)?;
+
+                if val_typ.data_type.kind() == &DataTypeKind::Unknown {
+                    return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
+                }
+                
+                let structure = self.type_namespace(val_typ.data_type.kind());
+                let Some(structure) = self.find_symbol(structure)
+                else {
+                    return Err(
+                        CompilerError::new(
+                            source.file(), 
+                            ErrorCode::SAccFieldOnPrim, 
+                            "can't access fields on a primitive"
+                        )
+                        .highlight(source)
+                        .build()
+                    )
+                };
+
+                match structure {
+                    Symbol::Structure(structure) => {
+                        let field = structure.fields.iter().enumerate().find(|x| x.1.0 == *field_name);
+                        let Some((index, field)) = field
+                        else {
+                            return Err(
+                                CompilerError::new(
+                                    source.file(), 
+                                    ErrorCode::SFieldDoesntExist, 
+                                    "field doesn't exist"
+                                )
+                                .highlight(source)
+                                    .note(format!("there's no field named {} on '{}'",
+                                        self.symbol_map.get(*field_name),
+                                        self.symbol_map.get(structure.full_name),
+                                    ))
+                                .build()
+                            )
+                        };
+
+                        *field_meta = (index as u16, false);
+
+                        AnalysisResult::new(DataType::new(source, field.1.kind().clone()), val_typ.mutability)
+                    }
+
+
+                    Symbol::Enum(e) => {
+                        let variant = e.mappings.iter().enumerate().find(|x| x.1.name() == *field_name);
+                        let Some((index, variant)) = variant
+                        else {
+                            return Err(
+                                CompilerError::new(
+                                    source.file(), 
+                                    ErrorCode::SFieldDoesntExist, 
+                                    "field doesn't exist"
+                                )
+                                .highlight(source)
+                                    .note(format!("there's no variant named {} on '{}'",
+                                        self.symbol_map.get(*field_name),
+                                        self.symbol_map.get(e.full_name),
+                                    ))
+                                .build()
+                            )
+                        };
+
+                        *field_meta = (index as u16, true);
+
+                        let mut analysis = AnalysisResult::new(DataType::new(source, DataTypeKind::Option(Box::new(variant.data_type().clone()))), true);
+                        analysis.accessor_field_is_an_enum = true;
+                        analysis
+                    }
+                    
+                    
+                    _ => {
+                        return Err(
+                            CompilerError::new(
+                                source.file(), 
+                                ErrorCode::SSymbolIsntStruct, 
+                                "symbol exists but it's not a structure"
+                            )
+                            .highlight(source)
+                                .note(format!("the symbol is a '{}'", structure.type_name()))
+                            .build()
+                        )
+                    }
+                }
+            },
+
+            
+            Expression::CallFunction { name, args, is_accessor } => {
+                let mut args_analysis = {
+                    let mut errors = vec![];
+                    let mut arg_analysis = Vec::with_capacity(args.len());
+                    for a in args.iter_mut() {
+                        let a_typ = self.analyse_node(&mut a.0);
+
+                        match a_typ {
+                            Ok(e) => arg_analysis.push(e),
+                            Err(e) => errors.push(e),
+                        }
+                    }
+
+                    if !errors.is_empty() {
+                        return Err(errors.combine_into_error())
+                    }
+
+                    arg_analysis
+                };
+                assert_eq!(args_analysis.len(), args.len());
+
+
+                let has_accessor = is_accessor.is_some();
+                let function = if let Some(v) = is_accessor {
+                    let accessor_analysis = self.analyse_node(&mut *v)?;
+                    let path = self.type_namespace(accessor_analysis.data_type.kind());
+
+                    let scope = self.namespaces.get(&path).unwrap();
+
+                    {
+                        args.insert(0, (*is_accessor.take().unwrap(), true));
+                        args_analysis.insert(0, accessor_analysis);
+                        
+                    }
+
+                    Context::new(scope.clone()).find_symbol_id(self.symbol_map, Some(&self.global_scope), *name, source)
+
+                } else {
+                    self.ctx.find_symbol_id(self.symbol_map, Some(&self.global_scope), *name, source)
+                };
+
+                let function = function?;
+                let function = self.symbols.get(function).unwrap();
+                let Symbol::Function(function) = function
+                else {
+                    return Err(
+                        CompilerError::new(
+                            source.file(), 
+                            ErrorCode::SSymbolIsntFunc, 
+                            "symbol exists but it's not a function"
+                        )
+                        .highlight(source)
+                            .note(format!("the symbol is a '{}'", function.type_name()))
+                        .build()
+                    )
+                };
+
+
+                *name = function.full_name;
+
+
+
+                if args.len() != function.args.len() {
+                    return Err(
+                        CompilerError::new(
+                            source.file(), 
+                            ErrorCode::SFuncArgcMismatch, 
+                            "argument count mismatch"
+                        )
+                        .highlight(source)
+                            .note(format!("the function requires {} arguments but you've provided {}", function.args.len(), args.len()))
+                        .build()
+                    )
+                }
+
+                if has_accessor {
+                    args[0].1 = function.args[0].is_inout();
+                }
+
+                {
+                    let mut errors = vec![];
+                    for i in 0..args.len() {
+                        let arg = &mut args[i];
+                        let arg_analysis = &args_analysis[i];
+                        let expected_arg = &function.args[i];
+
+                        if !arg_analysis.data_type.kind().is(expected_arg.data_type().kind()) {
+                            errors.push(
+                                CompilerError::new(source.file(), ErrorCode::SArgTypeMismatch, "argument type mismatch")
+                                    .highlight(arg.0.range())
+                                        .note(format!(
+                                            "argument is defined as {} but the value is of type '{}'", 
+                                            display_type(self.symbol_map, expected_arg.data_type().kind()),
+                                            display_type(self.symbol_map, arg_analysis.data_type.kind()),
+                                        ))
+                                    .build()
+                            );
+                        }
+
+
+                        if arg.1 != expected_arg.is_inout() {
+                            errors.push(
+                                CompilerError::new(source.file(), ErrorCode::SArgDiffInOut, "argument differ in in-outness")
+                                    .highlight(arg.0.range())
+                                        .note({
+                                            match (arg.1, expected_arg.is_inout()) {
+                                                (true, false) => "consider removing the '&'",
+                                                (false, true) => "consider adding a '&' before the argument",
+
+                                                _ => unreachable!(),
+                                            }.to_string()
+                                        })
+                                    .build()
+                            );
+                            continue;
+                        }
+
+
+                        if expected_arg.is_inout() && !arg_analysis.mutability {                            
+                            errors.push(
+                                CompilerError::new(source.file(), ErrorCode::SInOutArgIsntMut, "argument is in-out but the value isn't mutable")
+                                    .highlight(arg.0.range())
+                                        .note("..isn't a mutable value".to_string())
+                                    .build()
+                            );
+                        }
+
+
+                    }
+
+
+                    if !errors.is_empty() {
+                        return Err(errors.combine_into_error())
+                    }
+                }
+                
+                
+                AnalysisResult::new(DataType::new(source, function.return_type.kind().clone()), true)
+            },
+
+            
+            Expression::WithinNamespace { namespace, action, namespace_source } => {
+                let namespace = self.ctx.find_namespace(*namespace, *namespace_source)?;
+                // PERFORMANCE: Maybe? Remove the clone
+                let namespace = self.namespaces.get(&namespace).unwrap();
+                let namespace = namespace.clone();
+
+                self.ctx.subscope(namespace);
+
+                let result = self.analyse_node(&mut *action);
+
+                self.ctx.pop_scope();
+
+                AnalysisResult::new(DataType::new(source, result?.data_type.kind_owned()), true)
+            },
+
+            
+            Expression::WithinTypeNamespace { namespace, action } => {
+                self.validate_data_type(namespace)?;
+                
+                let namespace = self.type_namespace(namespace.kind());
+                // PERFORMANCE: Maybe? Remove the clone
+                let namespace = self.namespaces.get(&namespace).unwrap();
+                let namespace = namespace.clone();
+
+                self.ctx.subscope(namespace);
+
+                let result = self.analyse_node(&mut *action);
+
+                self.ctx.pop_scope();
+
+                AnalysisResult::new(DataType::new(source, result?.data_type.kind_owned()), true)
+            },
+
+            
+            Expression::Loop { body } => {
+                let mut scope = Scope::new(self.ctx.cs.mangle_name, self.ctx.cs.file);
+                scope.is_loop_scope = Some(false);
+
+                self.ctx.subscope(scope);
+                let result = self.analyse_block(body, false);
+                let scope = self.ctx.pop_scope();
+
+                result?;
+
+                let data_type = if scope.is_loop_scope.unwrap() { DataTypeKind::Unit }
+                                else { DataTypeKind::Never };
+
+                AnalysisResult::new(DataType::new(source, data_type), true)
+            },
+
+            
+            Expression::Return(v) => {
+                let return_type = self.analyse_node(&mut *v)?;
+
+                let function_return = self.ctx.is_func_body();
+                let Some(function_return) = function_return
+                else {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SReturnOutsideFunc, "can't return outside of a function")
+                            .highlight(source)
+                            .build()
+                    )
+                };
+
+
+                if !return_type.data_type.kind().is(function_return.kind()) {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SFuncReturnDiff, "function return type differs from body")
+                            .highlight(function_return.range())
+                                .note(format!("function returns '{}'", display_type(self.symbol_map, function_return.kind())))
+                            .highlight(source)
+                                .note(format!("..but this returns '{}'", display_type(self.symbol_map, return_type.data_type.kind())))
+                            .build()
+                    )
+                }
+
+
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
+            },
+
+            
+            Expression::Break => {
+                if !self.ctx.is_in_loop_body().map(|x| { *x = true; *x } ).unwrap_or(false) {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SBreakOutsideLoop, "break outside of loop")
+                            .highlight(source)
+                            .build()
+                    )
+                }
+
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
+            },
+
+            
+            Expression::Continue => {
+                if self.ctx.is_in_loop_body().is_none() {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SContOutsideLoop, "continue outside of loop")
+                            .highlight(source)
+                            .build()
+                    )
+                }
+
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
+            },
+
+            
+            Expression::CastAny { lhs, data_type } => {
+                self.analyse_node(&mut *lhs)?;
+
+                let kind = DataTypeKind::Result(
+                    Box::new(data_type.clone()), 
+                    Box::new(DataType::new(
+                        source, 
+                        DataTypeKind::CustomType(self.symbol_map.insert(ANY_CAST_ERROR_STRUCT))
+                    )));
+
+                AnalysisResult::new(DataType::new(source, kind), true)
+            },
+
+
+            Expression::Unwrap(v) => {
+                let val_typ = self.analyse_node(&mut *v)?;
+
+                match val_typ.data_type.kind() {
+                    DataTypeKind::Unknown => AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true),
+
+                    | DataTypeKind::Option(v)
+                    | DataTypeKind::Result(v, _)
+                     => AnalysisResult::new(DataType::new(source, v.kind().clone()), true),
+
+                    _ => {
+                        return Err(
+                            CompilerError::new(source.file(), ErrorCode::SCantUnwrapType, "can't unwrap type")
+                                .highlight(source)
+                                    .note(format!("can't unwrap a value of type {}", display_type(self.symbol_map, val_typ.data_type.kind())))
+                                .build()
+                        )
+                    }
+                }
+            }
+
+
+            Expression::OrReturn(v) => {
+                let val_typ = self.analyse_node(&mut *v)?;
+                let Some(func_return) = self.ctx.is_func_body()
+                else {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SReturnOutsideFunc, "can't return outside of a function")
+                            .highlight(source)
+                            .build()
+                    )
+                };
+
+                match val_typ.data_type.kind() {
+                    DataTypeKind::Unknown => return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true)),
+
+                    DataTypeKind::Option(val) => {
+                        if !matches!(func_return.kind(), DataTypeKind::Option(_)) {
+                            return Err(CompilerError::new(source.file(), ErrorCode::STryOpOptionRetVal, "try operator on an option type only works if the function returns an option")
+                                .highlight(source)
+                                .build())
+                        }
+
+                        AnalysisResult::new(DataType::new(source, val.kind().clone()), true)
+
+                    }
+
+                    DataTypeKind::Result(val, err) => {
+                        if !matches!(func_return.kind(), DataTypeKind::Result(_, err2) if err == err2) {
+                            return Err(CompilerError::new(source.file(), ErrorCode::STryOpOptionRetVal, "try operator on a result type only works if the function returns a result with the same error type")
+                                .highlight(source)
+                                .build())
+                        }
+
+                        AnalysisResult::new(DataType::new(source, val.kind().clone()), true)
+
+                    }
+
+                    _ => {
+                        return Err(
+                            CompilerError::new(source.file(), ErrorCode::SCantUnwrapType, "can't use the try operator on this type")
+                                .highlight(source)
+                                    .note(format!("..is of type {}", display_type(self.symbol_map, val_typ.data_type.kind())))
+                                .build()
+                        )
+                    }
+                }
+            }
+
+        };
+
+        Ok(result)
+    }
+
+
+    fn analyse_node(&mut self, node: &mut Node) -> Result<AnalysisResult, Error> {
+        let source = node.range();
+        let result = match node.kind_mut() {
+            NodeKind::Declaration(v) => {
+                self.analyse_declaration(v, source)?;
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true)
+            },
+
+            
+            NodeKind::Statement(v) => {
+                self.analyse_statement(v, source)?;
+                AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true)
+            },
+
+            
+            NodeKind::Expression(e) => {
+                self.analyse_expression(e, source)?
+            },
+        };
+
+        node.data_kind = result.data_type.kind().clone();
+        Ok(result)
+    }
+
+
+    fn analyse_statement(&mut self, stmt: &mut Statement, source: SourceRange) -> Result<(), Error> {
+        match stmt {
+            Statement::Variable { name, hint, is_mut, rhs } => {
+                let rhs_typ = self.analyse_node(&mut *rhs);
+
+                // Decoy value in the case of the variable
+                // throwing an error
+                let index = self.ctx.cs.variables.len();
+                self.ctx.cs.register_variable(Variable::new(*name, DataType::new(source, DataTypeKind::Unknown), *is_mut));
+
+                let rhs_typ = match rhs_typ {
+                    Ok(v) => v,
+                    Err(e) => return Err(e),
+                };
+
+                if let Some(hint) = hint {
+                    if !rhs_typ.data_type.kind().is(hint.kind()) {
+                        return Err(
+                            CompilerError::new(
+                                source.file(), 
+                                ErrorCode::SVarHintTypeDiff, 
+                                "variable value differs from type hint"
+                            )
+                            .highlight(source)
+                                .note(format!("variable has the type hint {} but the value is {}",
+                                        display_type(self.symbol_map, hint.kind()),
+                                        display_type(self.symbol_map, rhs_typ.data_type.kind())
+                                    ))
+                            .build()
+                        )
+                    }
+                }
+                
+
+                let variable = Variable::new(*name, DataType::new(source, rhs_typ.data_type.kind_owned()), *is_mut);
+                self.ctx.cs.variables[index] = variable;
+                
+
+                Ok(())
+            },
+
+            
+            Statement::UpdateValue { lhs, rhs } => {
+                let lhs_typ = self.analyse_node(&mut *lhs)?;
+                let rhs_typ = self.analyse_node(&mut *rhs)?;
+
+                if lhs_typ.accessor_field_is_an_enum || !is_l_val(lhs.kind()) {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SAssignValNotLHS, "invalid assignment target")
+                            .highlight(lhs.range())
+                            .build()
+                    )
+                }
+
+
+                if !lhs_typ.mutability {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SAssignValNotMut, "assignment target isn't mutable")
+                            .highlight(lhs.range())
+                            .build()
+                    )
+                }
+
+
+                if !lhs_typ.data_type.kind().is(rhs_typ.data_type.kind()) {
+                    return Err(
+                        CompilerError::new(source.file(), ErrorCode::SAssignValDiffTy, "assignment target's type and the value's types mismatch")
+                            .highlight(source)
+                                .note(format!(
+                                    "assignment target is of type '{}' but the value is '{}'",
+                                    display_type(self.symbol_map, lhs_typ.data_type.kind()),
+                                    display_type(self.symbol_map, rhs_typ.data_type.kind()),
+                                ))
+                            .build()
+                    )
+                    
+                }
+
+                Ok(())
+            },
+        }
+    }
+
+
     fn register_declarations(
         &mut self, 
         // We can't just take an iterator of
@@ -871,9 +1961,10 @@ impl<'a> Infer<'a> {
                             name: identifier,
                             full_name: *name,
                             args: vec![], // will be initialised later
-                            is_extern: false,
+                            is_extern: None,
                             is_system: *is_system,
                             is_anonymous: *is_anonymous,
+                            is_enum_variant_function: None,
                             // IMPORTANT: This should be updated before any block of body
                             //            is ran.
                             return_type: return_type.clone(),
@@ -938,7 +2029,7 @@ impl<'a> Infer<'a> {
                     },
 
                     
-                    Declaration::Extern { file: _, functions } => {
+                    Declaration::Extern { file, functions } => {
                         let mut errors = vec![];
 
                         for f in functions.iter() {
@@ -946,9 +2037,10 @@ impl<'a> Infer<'a> {
                                 name: f.name(), 
                                 full_name: slf.ctx.cs.mangle(slf.symbol_map, f.name(), f.range()), 
                                 args: f.args().to_vec(), 
-                                is_extern: true, 
+                                is_extern: Some((*file, f.path())), 
                                 is_system: false,
                                 is_anonymous: false,
+                                is_enum_variant_function: None,
                                 return_type: f.return_type().clone(),
                                 source,
 
@@ -1251,1150 +2343,6 @@ impl<'a> Infer<'a> {
         
         Ok(())
     }
-
-
-    fn analyse_node(&mut self, node: &mut Node) -> Result<AnalysisResult, Error> {
-        let source = node.range();
-        let result = match node.kind_mut() {
-            NodeKind::Declaration(v) => {
-                self.analyse_declaration(v, source)?;
-                AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true)
-            },
-
-            
-            NodeKind::Statement(v) => {
-                self.analyse_statement(v, source)?;
-                AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true)
-            },
-
-            
-            NodeKind::Expression(e) => {
-                self.analyse_expression(e, source)?
-            },
-        };
-
-        node.data_kind = result.data_type.kind().clone();
-        Ok(result)
-    }
-
-
-    fn analyse_declaration(&mut self, decl: &mut Declaration, source: SourceRange) -> Result<(), Error> {
-        match decl {
-            Declaration::Struct { .. } => Ok(()),
-            Declaration::Enum { .. } => Ok(()),
-
-
-            Declaration::Function { name, arguments, return_type, body, .. } => {
-
-                // evaluate body
-                let block_return_type = {
-                    let mut subscope = Scope::new(*name, source.file());
-                    subscope.is_function_scope = Some(return_type.clone());
-
-                    for i in arguments {
-                        let variable = Variable {
-                            name: i.name(),
-                            data_type: i.data_type().clone(),
-                            is_mut: true,
-                        };
-
-                        subscope.register_variable(variable);
-                    }
-
-                    self.ctx.subscope(subscope);
-                    let result = self.analyse_block(body, false);
-                    self.ctx.pop_scope();
-
-                    result?
-                };
-
-
-                if !block_return_type.data_type.kind().is(return_type.kind()) {
-                    dbg!(&block_return_type.data_type, &return_type);
-                    return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SFuncReturnDiff, 
-                            "function return type differs from body"
-                        )
-                        .highlight(source)
-                            .note(format!("function returns '{}' but the body returns '{}'",
-                                    display_type(self.symbol_map, return_type.kind()),
-                                    display_type(self.symbol_map, block_return_type.data_type.kind())
-                                ))
-                        .build()
-                    )
-                }
-
-
-                Ok(())
-            },
-
-
-            Declaration::Impl { data_type, body } => {
-                let name = self.type_namespace(data_type.kind());
-
-                let namespace = self.namespaces.get(&name).unwrap().clone();
-                let (_, namespace) = self.analyse_block_with_scope(body, namespace, true)?;
-
-                *self.namespaces.get_mut(&name).unwrap() = namespace;
-
-                Ok(())
-            },
-
-
-            Declaration::Using { .. } => todo!(),
-
-            
-            Declaration::Module { name, body } => {
-                let namespace = self.namespaces.get(name).unwrap().clone();
-                let (_, namespace) = self.analyse_block_with_scope(body, namespace, true)?;
-
-                *self.namespaces.get_mut(name).unwrap() = namespace;
-
-                Ok(())
-                
-            },
-
-
-            Declaration::Extern { .. } => Ok(()),
-        }
-    }
-
-
-    fn analyse_statement(&mut self, stmt: &mut Statement, source: SourceRange) -> Result<(), Error> {
-        match stmt {
-            Statement::Variable { name, hint, is_mut, rhs } => {
-                let rhs_typ = self.analyse_node(&mut *rhs);
-
-                // Decoy value in the case of the variable
-                // throwing an error
-                let index = self.ctx.cs.variables.len();
-                self.ctx.cs.register_variable(Variable::new(*name, DataType::new(source, DataTypeKind::Unknown), *is_mut));
-
-                let rhs_typ = match rhs_typ {
-                    Ok(v) => v,
-                    Err(e) => return Err(e),
-                };
-
-                if let Some(hint) = hint {
-                    if !rhs_typ.data_type.kind().is(hint.kind()) {
-                        return Err(
-                            CompilerError::new(
-                                source.file(), 
-                                ErrorCode::SVarHintTypeDiff, 
-                                "variable value differs from type hint"
-                            )
-                            .highlight(source)
-                                .note(format!("variable has the type hint {} but the value is {}",
-                                        display_type(self.symbol_map, hint.kind()),
-                                        display_type(self.symbol_map, rhs_typ.data_type.kind())
-                                    ))
-                            .build()
-                        )
-                    }
-                }
-                
-
-                let variable = Variable::new(*name, DataType::new(source, rhs_typ.data_type.kind_owned()), *is_mut);
-                self.ctx.cs.variables[index] = variable;
-                
-
-                Ok(())
-            },
-
-            
-            Statement::UpdateValue { lhs, rhs } => {
-                let lhs_typ = self.analyse_node(&mut *lhs)?;
-                let rhs_typ = self.analyse_node(&mut *rhs)?;
-
-                match lhs.kind() {
-                    | NodeKind::Expression(Expression::Identifier(_))
-                    | NodeKind::Expression(Expression::AccessField { .. })
-                     => (),
-
-                    _ => return Err(
-                        CompilerError::new(source.file(), ErrorCode::SAssignValNotLHS, "invalid assignment target")
-                            .highlight(lhs.range())
-                            .build()
-                    )
-                }
-
-
-                if !lhs_typ.mutability {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SAssignValNotMut, "assignment target isn't mutable")
-                            .highlight(lhs.range())
-                            .build()
-                    )
-                }
-
-
-                if !lhs_typ.data_type.kind().is(rhs_typ.data_type.kind()) {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SAssignValDiffTy, "assignment target's type and the value's types mismatch")
-                            .highlight(source)
-                                .note(format!(
-                                    "assignment target is of type '{}' but the value is '{}'",
-                                    display_type(self.symbol_map, lhs_typ.data_type.kind()),
-                                    display_type(self.symbol_map, rhs_typ.data_type.kind()),
-                                ))
-                            .build()
-                    )
-                    
-                }
-
-                Ok(())
-            },
-        }
-    }
-
-
-    fn analyse_expression(&mut self, expr: &mut Expression, source: SourceRange) -> Result<AnalysisResult, Error> {
-        let result = match expr {
-            Expression::Unit => AnalysisResult::new(DataType::new(source, DataTypeKind::Unit), true),
-
-            
-            Expression::Literal(v) => {
-                let kind = match v {
-                    Literal::Float(_)   => DataTypeKind::Float,
-                    Literal::Integer(_) => DataTypeKind::Int,
-                    Literal::String(_)  => todo!(),
-                    Literal::Bool(_)    => DataTypeKind::Bool,
-                };
-
-                AnalysisResult::new(DataType::new(source, kind), true)
-            },
-
-
-            Expression::Identifier(v) => {
-                let variable = self.ctx.find_variable(*v, source)?;
-                
-                AnalysisResult::new(variable.data_type.clone(), variable.is_mut)
-            },
-
-            
-            Expression::BinaryOp { operator, lhs, rhs } => {
-                let lhs_typ = self.analyse_node(&mut *lhs)?.data_type;
-                let rhs_typ = self.analyse_node(&mut *rhs)?.data_type;
-
-                if lhs_typ.kind() == &DataTypeKind::Unknown
-                    || rhs_typ.kind() == &DataTypeKind::Unknown {
-                    return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
-                }
-
-                let kind = match (operator, lhs_typ.kind()) {
-                    | (parser::nodes::BinaryOperator::Add, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Add, DataTypeKind::Float)
-                    | (parser::nodes::BinaryOperator::Sub, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Sub, DataTypeKind::Float)
-                    | (parser::nodes::BinaryOperator::Mul, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Mul, DataTypeKind::Float)
-                    | (parser::nodes::BinaryOperator::Div, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Div, DataTypeKind::Float)
-                    | (parser::nodes::BinaryOperator::Rem, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Rem, DataTypeKind::Float)
-                    | (parser::nodes::BinaryOperator::BitshiftLeft, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::BitshiftRight, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::BitwiseAnd, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::BitwiseOr, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::BitwiseXor, DataTypeKind::Int)
-                     if lhs_typ.kind().is(rhs_typ.kind()) => {
-                        lhs_typ.kind_owned()
-                    }
-
-                    | (parser::nodes::BinaryOperator::Eq, _ )
-                    | (parser::nodes::BinaryOperator::Ne, _ )
-                    | (parser::nodes::BinaryOperator::Gt, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Gt, DataTypeKind::Float)
-                    | (parser::nodes::BinaryOperator::Ge, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Ge, DataTypeKind::Float)
-                    | (parser::nodes::BinaryOperator::Lt, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Lt, DataTypeKind::Float)
-                    | (parser::nodes::BinaryOperator::Le, DataTypeKind::Int)
-                    | (parser::nodes::BinaryOperator::Le, DataTypeKind::Float)
-                     if lhs_typ.kind().is(rhs_typ.kind()) => {
-                        DataTypeKind::Bool
-                    }
-
-
-                    _ => return Err(
-                        CompilerError::new(source.file(), ErrorCode::SInvalidBinOp, "invalid binary operation")
-                            .highlight(source)
-                                .note(format!(
-                                    "left side is '{}' while the right side is '{}'", 
-                                    display_type(self.symbol_map, lhs_typ.kind()), 
-                                    display_type(self.symbol_map, rhs_typ.kind())
-                                ))
-                            .build()
-                    )
-                };
-
-                AnalysisResult::new(DataType::new(source, kind), true)
-            },
-            
-
-            Expression::UnaryOp { operator, rhs } => {
-                let rhs = self.analyse_node(&mut *rhs)?.data_type;
-                let rhs_typ = rhs.kind();
-
-                let kind = match (&operator, rhs_typ) {
-                    | (UnaryOperator::Not, DataTypeKind::Bool)
-                    | (UnaryOperator::Neg, DataTypeKind::Int)
-                    | (UnaryOperator::Neg, DataTypeKind::Float)
-                     => {
-                        rhs.kind_owned()
-                    }
-
-                    _ => return Err(
-                        CompilerError::new(source.file(), ErrorCode::SInvalidBinOp, "invalid unary operation")
-                            .highlight(source)
-                                .note(format!(
-                                    "the '{}' operator only works on values of type {}", 
-                                    match &operator {
-                                        UnaryOperator::Not => "not",
-                                        UnaryOperator::Neg => "negate",
-                                    },
-
-                                    match &operator {
-                                        UnaryOperator::Not => "'bool'",
-                                        UnaryOperator::Neg => "'int' or 'float'",
-                                    },
-                                
-                                ))
-                            .build()
-                    )
-                };
-
-                AnalysisResult::new(DataType::new(source, kind), true)
-            },
-
-            
-            Expression::If { condition, body, else_block } => {
-                let condition_typ = self.analyse_node(&mut *condition)?.data_type;
-
-                self.expect_type(&DataTypeKind::Bool, &condition_typ)?;
-
-                let mut body_typ = self.analyse_block(body, false)?;
-
-                if let Some(else_block) = else_block {
-                    let else_typ = self.analyse_node(&mut *else_block)?;
-                    if body_typ.data_type.kind() == &DataTypeKind::Never {
-                        body_typ.data_type = else_typ.data_type
-                    } else {
-                        self.expect_type(body_typ.data_type.kind(), &else_typ.data_type)?;
-                    }
-
-                } else if !body_typ.data_type.kind().is(&DataTypeKind::Unit) {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SIfExprNoElse, "if expression has no else")
-                        .highlight(source)
-                            .note(format!(
-                                "the body returns {} but there's no else block",
-                                display_type(self.symbol_map, body_typ.data_type.kind())
-                            ))
-                        .build()
-                    )
-                }
-
-
-                AnalysisResult::new(
-                    DataType::new(source, body_typ.data_type.kind_owned()), 
-                    true,
-                )
-            },
-
-            
-            Expression::Match { value, mappings } => {
-                let value_typ = self.analyse_node(&mut *value)?;
-
-                if value_typ.data_type.kind() == &DataTypeKind::Unknown {
-                    return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
-                }
-
-                let e = self.type_namespace(value_typ.data_type.kind());
-                let e = self.find_symbol(e).unwrap();
-                let Symbol::Enum(e) = e
-                else {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SMatchValNotEnum, "match value is not an enum")
-                            .highlight(source)
-                                .note(format!("is of type '{}' which is not an enum", display_type(self.symbol_map, value_typ.data_type.kind())))
-                            .build()
-                    )
-
-                };
-
-
-
-                {
-                    let mut errors = vec![];
-                    for i in 0..mappings.len() {                    
-                        let f = mappings.get(i).unwrap();
-
-                        if let Some(v) = mappings[0..i].iter().find(|x| x.name() == f.name()) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SVariantDefEarlier, 
-                                "variant is already defined"
-                            )
-                            .highlight(v.node().range())
-                                .note("variant is defined earlier here".to_string())
-                            .highlight(f.node().range())
-                                .note("..but it's defined again here".to_string())
-                            .build())
-                        }
-
-
-                        if !e.mappings.iter().any(|x| x.name() == f.name()) {                            
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SMatchUnkownVar, 
-                                "unknown variant"
-                            )
-                            .highlight(f.range())
-                            .build())
-                        }
-                    }
-
-                    
-                    for mapping in &e.mappings {
-                        if !mappings.iter().any(|x| x.name() == mapping.name()) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SMissingField, 
-                                "missing field"
-                            )
-                            .highlight(source)
-                                .note(format!("missing '{}'",
-                                    self.symbol_map.get(mapping.name()), 
-                                ))
-                            .build())
-                        }
-                    }
-
-                    if !errors.is_empty() {
-                        return Err(errors.combine_into_error())
-                    }
-                }
-
-
-                let return_type = {
-                    let mut expected_type : Option<DataTypeKind> = None;
-                    let mut errors = vec![];
-
-                    //  PERFORMANCE: avoid this clone
-                    let enum_mappings = e.mappings.clone();
-                    let enum_name = e.name;
-
-                    for mapping in mappings {
-                        let enum_mapping = enum_mappings.iter().find(|x| x.name() == mapping.name()).unwrap();
-
-                        let mut mapping_scope = Scope::new(enum_name, source.file());
-                        mapping_scope.register_variable(
-                            Variable::new(
-                                mapping.binding(), 
-                                enum_mapping.data_type().clone(), 
-                                value_typ.mutability,
-                            )
-                        );
-
-                        self.ctx.subscope(mapping_scope);
-
-                        let result = self.analyse_node(mapping.node_mut());
-
-                        self.ctx.pop_scope();
-
-                        let result = match result {
-                            Ok(v) => v,
-                            Err(v) => {
-                                errors.push(v);
-                                continue
-                            },
-                        };
-
-
-                        if expected_type.as_ref().is_none() || expected_type.as_ref().unwrap() == &DataTypeKind::Never {
-                            expected_type = Some(result.data_type.kind_owned());
-                            continue
-                        }
-
-
-                        if !result.data_type.kind().is(expected_type.as_ref().unwrap()) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SMatchBranchDiffTy, 
-                                "match branch returns a different type"
-                            )
-                            .highlight(mapping.node().range())
-                                .note(format!("expected '{}' found '{}'",
-                                    display_type(self.symbol_map, expected_type.as_ref().unwrap()),
-                                    display_type(self.symbol_map, result.data_type.kind())
-                                ))
-                            .build())
-                        }
-                    }
-
-                    if !errors.is_empty() {
-                        return Err(errors.combine_into_error())
-                    }
-
-                    expected_type.unwrap_or(DataTypeKind::Unit)
-                };
-                
-
-                AnalysisResult::new(DataType::new(source, return_type), true)
-
-            },
-
-            
-            Expression::Block { block } => self.analyse_block(block, false)?,
-
-            
-            Expression::CreateStruct { data_type, fields } => {
-                self.validate_data_type(data_type)?;
-
-
-                let structure = match data_type.kind() {
-                    | DataTypeKind::Int
-                    | DataTypeKind::Bool
-                    | DataTypeKind::Float
-                    | DataTypeKind::Unit
-                    | DataTypeKind::Any
-                    | DataTypeKind::Option(_)
-                    | DataTypeKind::Result(_, _)
-                    | DataTypeKind::Never
-                     => {
-                        return Err(
-                            CompilerError::new(source.file(), ErrorCode::SCantInitPrimitive, "can't initialise primitive types with structure creation syntax")
-                                .highlight(source)
-                                .build()
-                        )
-                    }
-
-                    DataTypeKind::Unknown => return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true)),
-
-                    DataTypeKind::CustomType(e) => e,
-                };
-
-
-                let structure = self.find_symbol(*structure).unwrap();
-                let Symbol::Structure(structure) = structure
-                else {
-                    return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SSymbolIsntStruct, 
-                            "symbol exists but it's not a structure"
-                        )
-                        .highlight(source)
-                            .note(format!("the symbol is a '{}'", structure.type_name()))
-                        .build()
-                    )
-                };
-                
-
-                {
-                    // PERFORAMANCE: Remove clone
-                    let structure_fields = structure.fields.clone();
-                    let structure_name = structure.full_name;
-
-                    let mut errors = vec![];
-                    for i in 0..fields.len() {
-                        let f = fields.get_mut(i).unwrap();
-                        let result = self.analyse_node(&mut f.2);
-                        let result = match result {
-                            Ok(v) => Some(v),
-                            Err(v) => {
-                                errors.push(v);
-                                None
-                            }
-                        };
-                        
-                        
-                        let f = fields.get(i).unwrap();
-                        if let Some(v) = fields[0..i].iter().find(|x| x.0 == f.0) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SFieldDefEarlier, 
-                                "field is already defined"
-                            )
-                            .highlight(v.1)
-                                .note("field is defined earlier here".to_string())
-                            .highlight(f.1)
-                                .note("..but it's defined again here".to_string())
-                            .build())
-                        }
-
-
-                        let field = structure_fields.iter().find(|x| x.0 == f.0);
-                        if field.is_none() {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SUnknownField, 
-                                "unknown field"
-                            )
-                            .highlight(f.1)
-                                .note(format!("there's no field named {} in {}",
-                                    self.symbol_map.get(f.0), 
-                                    self.symbol_map.get(structure_name), 
-                                ))
-                            .build());
-
-                            continue
-                        }
-
-                        let field = field.unwrap();
-                        let Some(result) = result else { continue };
-
-                        if !result.data_type.kind().is(field.1.kind()) {                            
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SFieldTypeMismatch, 
-                                "field type mismatch"
-                            )
-                            .highlight(field.2)
-                                .note(format!("the field {} is defined as {} here",
-                                    self.symbol_map.get(f.0), 
-                                    display_type(self.symbol_map, field.1.kind()),
-                                ))
-                            .empty_line()
-                            .highlight(f.2.range())
-                                .note(format!("..but the value here is of type {}",
-                                    display_type(self.symbol_map, result.data_type.kind())
-                                ))
-                            .build());
-                        }
-                    }
-
-
-                    for field in &structure_fields {
-                        if !fields.iter().any(|x| x.0 == field.0) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SMissingField, 
-                                "missing field"
-                            )
-                            .highlight(source)
-                                .note(format!("missing '{}'",
-                                    self.symbol_map.get(field.0), 
-                                ))
-                            .build())
-                        }
-                    }
-                    
-
-                    if !errors.is_empty() {
-                        return Err(errors.combine_into_error())
-                    }
-                }
-
-                AnalysisResult::new(data_type.clone(), true)
-            },
-
-            
-            Expression::AccessField { val, field: field_name, field_meta } => {
-                let val_typ = self.analyse_node(&mut *val)?;
-
-                if val_typ.data_type.kind() == &DataTypeKind::Unknown {
-                    return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
-                }
-                
-                let structure = self.type_namespace(val_typ.data_type.kind());
-                let Some(structure) = self.find_symbol(structure)
-                else {
-                    return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SAccFieldOnPrim, 
-                            "can't access fields on a primitive"
-                        )
-                        .highlight(source)
-                        .build()
-                    )
-                };
-
-                match structure {
-                    Symbol::Structure(structure) => {
-                        let field = structure.fields.iter().enumerate().find(|x| x.1.0 == *field_name);
-                        let Some((index, field)) = field
-                        else {
-                            return Err(
-                                CompilerError::new(
-                                    source.file(), 
-                                    ErrorCode::SFieldDoesntExist, 
-                                    "field doesn't exist"
-                                )
-                                .highlight(source)
-                                    .note(format!("there's no field named {} on '{}'",
-                                        self.symbol_map.get(*field_name),
-                                        self.symbol_map.get(structure.full_name),
-                                    ))
-                                .build()
-                            )
-                        };
-
-                        *field_meta = (index as u16, false);
-
-                        AnalysisResult::new(DataType::new(source, field.1.kind().clone()), val_typ.mutability)
-                    }
-
-
-                    Symbol::Enum(e) => {
-                        let variant = e.mappings.iter().enumerate().find(|x| x.1.name() == *field_name);
-                        let Some((index, variant)) = variant
-                        else {
-                            return Err(
-                                CompilerError::new(
-                                    source.file(), 
-                                    ErrorCode::SFieldDoesntExist, 
-                                    "field doesn't exist"
-                                )
-                                .highlight(source)
-                                    .note(format!("there's no variant named {} on '{}'",
-                                        self.symbol_map.get(*field_name),
-                                        self.symbol_map.get(e.full_name),
-                                    ))
-                                .build()
-                            )
-                        };
-
-                        *field_meta = (index as u16, true);
-
-                        AnalysisResult::new(DataType::new(source, DataTypeKind::Option(Box::new(variant.data_type().clone()))), val_typ.mutability)
-                    }
-                    
-                    
-                    _ => {
-                        return Err(
-                            CompilerError::new(
-                                source.file(), 
-                                ErrorCode::SSymbolIsntStruct, 
-                                "symbol exists but it's not a structure"
-                            )
-                            .highlight(source)
-                                .note(format!("the symbol is a '{}'", structure.type_name()))
-                            .build()
-                        )
-                    }
-                }
-            },
-
-            
-            Expression::CallFunction { name, args, is_accessor } => {
-                let mut args_analysis = {
-                    let mut errors = vec![];
-                    let mut arg_analysis = Vec::with_capacity(args.len());
-                    for a in args.iter_mut() {
-                        let a_typ = self.analyse_node(&mut a.0);
-
-                        match a_typ {
-                            Ok(e) => arg_analysis.push(e),
-                            Err(e) => errors.push(e),
-                        }
-                    }
-
-                    if !errors.is_empty() {
-                        return Err(errors.combine_into_error())
-                    }
-
-                    arg_analysis
-                };
-                assert_eq!(args_analysis.len(), args.len());
-
-
-                let has_accessor = is_accessor.is_some();
-                let function = if let Some(v) = is_accessor {
-                    let accessor_analysis = self.analyse_node(&mut *v)?;
-                    let path = self.type_namespace(accessor_analysis.data_type.kind());
-
-                    let scope = self.namespaces.get(&path).unwrap();
-
-                    {
-                        args.insert(0, (*is_accessor.take().unwrap(), true));
-                        args_analysis.insert(0, accessor_analysis);
-                        
-                    }
-
-                    Context::new(scope.clone()).find_symbol_id(self.symbol_map, Some(&self.global_scope), *name, source)
-
-                } else {
-                    self.ctx.find_symbol_id(self.symbol_map, Some(&self.global_scope), *name, source)
-                };
-
-                let function = function?;
-                let function = self.symbols.get(function).unwrap();
-                let Symbol::Function(function) = function
-                else {
-                    return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SSymbolIsntFunc, 
-                            "symbol exists but it's not a function"
-                        )
-                        .highlight(source)
-                            .note(format!("the symbol is a '{}'", function.type_name()))
-                        .build()
-                    )
-                };
-
-
-                *name = function.full_name;
-
-
-
-                if args.len() != function.args.len() {
-                    return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SFuncArgcMismatch, 
-                            "argument count mismatch"
-                        )
-                        .highlight(source)
-                            .note(format!("the function requires {} arguments but you've provided {}", function.args.len(), args.len()))
-                        .build()
-                    )
-                }
-
-                if has_accessor {
-                    args[0].1 = function.args[0].is_inout();
-                }
-
-                {
-                    let mut errors = vec![];
-                    for i in 0..args.len() {
-                        let arg = &mut args[i];
-                        let arg_analysis = &args_analysis[i];
-                        let expected_arg = &function.args[i];
-
-                        if !arg_analysis.data_type.kind().is(expected_arg.data_type().kind()) {
-                            errors.push(
-                                CompilerError::new(source.file(), ErrorCode::SArgTypeMismatch, "argument type mismatch")
-                                    .highlight(arg.0.range())
-                                        .note(format!(
-                                            "argument is defined as {} but the value is of type '{}'", 
-                                            display_type(self.symbol_map, expected_arg.data_type().kind()),
-                                            display_type(self.symbol_map, arg_analysis.data_type.kind()),
-                                        ))
-                                    .build()
-                            );
-                        }
-
-
-                        if arg.1 != expected_arg.is_inout() {
-                            errors.push(
-                                CompilerError::new(source.file(), ErrorCode::SArgDiffInOut, "argument differ in in-outness")
-                                    .highlight(arg.0.range())
-                                        .note({
-                                            match (arg.1, expected_arg.is_inout()) {
-                                                (true, false) => "consider removing the '&'",
-                                                (false, true) => "consider adding a '&' before the argument",
-
-                                                _ => unreachable!(),
-                                            }.to_string()
-                                        })
-                                    .build()
-                            );
-                            continue;
-                        }
-
-
-                        if expected_arg.is_inout() && !arg_analysis.mutability {                            
-                            errors.push(
-                                CompilerError::new(source.file(), ErrorCode::SInOutArgIsntMut, "argument is in-out but the value isn't mutable")
-                                    .highlight(arg.0.range())
-                                        .note("..isn't a mutable value".to_string())
-                                    .build()
-                            );
-                        }
-
-
-                    }
-
-
-                    if !errors.is_empty() {
-                        return Err(errors.combine_into_error())
-                    }
-                }
-                
-                
-                AnalysisResult::new(DataType::new(source, function.return_type.kind().clone()), true)
-            },
-
-            
-            Expression::WithinNamespace { namespace, action, namespace_source } => {
-                let namespace = self.ctx.find_namespace(*namespace, *namespace_source)?;
-                // PERFORMANCE: Maybe? Remove the clone
-                let namespace = self.namespaces.get(&namespace).unwrap();
-                let namespace = namespace.clone();
-
-                self.ctx.subscope(namespace);
-
-                let result = self.analyse_node(&mut *action);
-
-                self.ctx.pop_scope();
-
-                AnalysisResult::new(DataType::new(source, result?.data_type.kind_owned()), true)
-            },
-
-            
-            Expression::WithinTypeNamespace { namespace, action } => {
-                self.validate_data_type(namespace)?;
-                
-                let namespace = self.type_namespace(namespace.kind());
-                // PERFORMANCE: Maybe? Remove the clone
-                let namespace = self.namespaces.get(&namespace).unwrap();
-                let namespace = namespace.clone();
-
-                self.ctx.subscope(namespace);
-
-                let result = self.analyse_node(&mut *action);
-
-                self.ctx.pop_scope();
-
-                AnalysisResult::new(DataType::new(source, result?.data_type.kind_owned()), true)
-            },
-
-            
-            Expression::Loop { body } => {
-                let mut scope = Scope::new(self.ctx.cs.mangle_name, self.ctx.cs.file);
-                scope.is_loop_scope = Some(false);
-
-                self.ctx.subscope(scope);
-                let result = self.analyse_block(body, false);
-                let scope = self.ctx.pop_scope();
-
-                result?;
-
-                let data_type = if scope.is_loop_scope.unwrap() { DataTypeKind::Unit }
-                                else { DataTypeKind::Never };
-
-                AnalysisResult::new(DataType::new(source, data_type), true)
-            },
-
-            
-            Expression::Return(v) => {
-                let return_type = self.analyse_node(&mut *v)?;
-
-                let function_return = self.ctx.is_func_body();
-                let Some(function_return) = function_return
-                else {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SReturnOutsideFunc, "can't return outside of a function")
-                            .highlight(source)
-                            .build()
-                    )
-                };
-
-
-                if !return_type.data_type.kind().is(function_return.kind()) {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SFuncReturnDiff, "function return type differs from body")
-                            .highlight(function_return.range())
-                                .note(format!("function returns '{}'", display_type(self.symbol_map, function_return.kind())))
-                            .highlight(source)
-                                .note(format!("..but this returns '{}'", display_type(self.symbol_map, return_type.data_type.kind())))
-                            .build()
-                    )
-                }
-
-
-                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
-            },
-
-            
-            Expression::Break => {
-                if !self.ctx.is_in_loop_body().map(|x| { *x = true; *x } ).unwrap_or(false) {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SBreakOutsideLoop, "break outside of loop")
-                            .highlight(source)
-                            .build()
-                    )
-                }
-
-                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
-            },
-
-            
-            Expression::Continue => {
-                if self.ctx.is_in_loop_body().is_none() {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SContOutsideLoop, "continue outside of loop")
-                            .highlight(source)
-                            .build()
-                    )
-                }
-
-                AnalysisResult::new(DataType::new(source, DataTypeKind::Never), true)
-            },
-
-            
-            Expression::CastAny { lhs, data_type } => {
-                self.analyse_node(&mut *lhs)?;
-
-                let kind = DataTypeKind::Result(
-                    Box::new(data_type.clone()), 
-                    Box::new(DataType::new(
-                        source, 
-                        DataTypeKind::CustomType(self.symbol_map.const_str(ANY_CAST_ERROR_STRUCT))
-                    )));
-
-                AnalysisResult::new(DataType::new(source, kind), true)
-            },
-
-
-            Expression::Unwrap(v) => {
-                let val_typ = self.analyse_node(&mut *v)?;
-
-                match val_typ.data_type.kind() {
-                    DataTypeKind::Unknown => AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true),
-
-                    | DataTypeKind::Option(v)
-                    | DataTypeKind::Result(v, _)
-                     => AnalysisResult::new(DataType::new(source, v.kind().clone()), true),
-
-                    _ => {
-                        return Err(
-                            CompilerError::new(source.file(), ErrorCode::SCantUnwrapType, "can't unwrap type")
-                                .highlight(source)
-                                    .note(format!("can't unwrap a value of type {}", display_type(self.symbol_map, val_typ.data_type.kind())))
-                                .build()
-                        )
-                    }
-                }
-            }
-
-
-            Expression::OrReturn(v) => {
-                let val_typ = self.analyse_node(&mut *v)?;
-                let Some(func_return) = self.ctx.is_func_body()
-                else {
-                    return Err(
-                        CompilerError::new(source.file(), ErrorCode::SReturnOutsideFunc, "can't return outside of a function")
-                            .highlight(source)
-                            .build()
-                    )
-                };
-
-                match val_typ.data_type.kind() {
-                    DataTypeKind::Unknown => return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true)),
-
-                    DataTypeKind::Option(val) => {
-                        if !matches!(func_return.kind(), DataTypeKind::Option(_)) {
-                            return Err(CompilerError::new(source.file(), ErrorCode::STryOpOptionRetVal, "try operator on an option type only works if the function returns an option")
-                                .highlight(source)
-                                .build())
-                        }
-
-                        
-                        let some = self.symbol_map.const_str("some");
-                        let none = self.symbol_map.const_str("none");
-                        let value = self.symbol_map.const_str("value");
-                        let inner = Node::new(NodeKind::Expression(Expression::Literal(Literal::Integer(0))), SourceRange::new(0, 0, self.root_file));
-                        *expr = Expression::Match {
-                            value: Box::new(std::mem::replace(&mut *v, inner)),  
-                            mappings: Vec::from([
-                                MatchMapping::new(
-                                    some,
-                                    value,
-                                    source,
-                                    Node::new(
-                                        NodeKind::Expression(Expression::Identifier(value)),
-                                        source,
-                                    )
-                                ),
-                                MatchMapping::new(
-                                    none,
-                                    value,
-                                    source,
-                                    Node::new(
-                                        NodeKind::Expression(Expression::Return(
-                                            Box::new(Node::new(
-                                                NodeKind::Expression(Expression::CallFunction { 
-                                                    name: {
-                                                        let namespace = self.type_namespace(&func_return.kind().clone());
-                                                        let symbol = self.namespaces.get(&namespace).unwrap();
-
-                                                        let symbol = symbol.symbols.get(&none).unwrap();
-                                                        self.symbols[symbol.0].full_name()
-                                                    }, 
-                                                    is_accessor: None, 
-                                                    args: vec![]
-                                                }),
-                                                source
-                                            ))
-                                        )),
-                                        source,
-                                    )
-                                )
-                            ]) 
-                        };
-
-                        
-                        AnalysisResult::new(DataType::new(source, val.kind().clone()), true)
-
-                    }
-
-                    DataTypeKind::Result(val, err) => {
-                        if !matches!(func_return.kind(), DataTypeKind::Result(_, err2) if err == err2) {
-                            return Err(CompilerError::new(source.file(), ErrorCode::STryOpOptionRetVal, "try operator on a result type only works if the function returns a result with the same error type")
-                                .highlight(source)
-                                .build())
-                        }
-
-                        
-                        let some = self.symbol_map.const_str("ok");
-                        let none = self.symbol_map.const_str("err");
-                        let value = self.symbol_map.const_str("value");
-                        let inner = Node::new(NodeKind::Expression(Expression::Literal(Literal::Integer(0))), SourceRange::new(0, 0, self.root_file));
-                        *expr = Expression::Match {
-                            value: Box::new(std::mem::replace(&mut *v, inner)),  
-                            mappings: Vec::from([
-                                MatchMapping::new(
-                                    some,
-                                    value,
-                                    source,
-                                    Node::new(
-                                        NodeKind::Expression(Expression::Identifier(value)),
-                                        source,
-                                    )
-                                ),
-                                MatchMapping::new(
-                                    none,
-                                    value,
-                                    source,
-                                    Node::new(
-                                        NodeKind::Expression(Expression::Return(
-                                            Box::new(Node::new(
-                                                NodeKind::Expression(Expression::Identifier(value)),
-                                                source
-                                            ))
-                                        )),
-                                        source,
-                                    )
-                                )
-                            ]) 
-                        };
-
-                        AnalysisResult::new(DataType::new(source, val.kind().clone()), true)
-
-                    }
-
-                    _ => {
-                        return Err(
-                            CompilerError::new(source.file(), ErrorCode::SCantUnwrapType, "can't use the try operator on this type")
-                                .highlight(source)
-                                    .note(format!("..is of type {}", display_type(self.symbol_map, val_typ.data_type.kind())))
-                                .build()
-                        )
-                    }
-                }
-            }
-
-        };
-
-        Ok(result)
-    }
 }
 
 
@@ -2445,4 +2393,16 @@ fn display_type_in(symbol_map: &SymbolMap, typ: &DataTypeKind, str: &mut String)
             }
         }
     );
+}
+
+
+pub fn is_l_val(node: &NodeKind) -> bool {
+    match node {
+        NodeKind::Expression(Expression::Identifier(_)) => true,
+        NodeKind::Expression(Expression::AccessField { val, .. }) => is_l_val(val.kind()),
+        NodeKind::Expression(Expression::Unwrap(val)) => is_l_val(val.kind()),
+        NodeKind::Expression(Expression::OrReturn(val)) => is_l_val(val.kind()),
+
+        _ => false,
+    }
 }

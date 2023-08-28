@@ -1,7 +1,7 @@
 use std::{str::Chars, ops::{Deref, DerefMut}};
 
 use errors::{CompilerError, ErrorBuilder, Error, CombineIntoError, ErrorCode};
-use common::{SymbolMap, SymbolIndex, SourceRange, FileData};
+use common::{SymbolMap, SymbolIndex, SourceRange, FileData, HashableF64};
 
 mod tests;
 
@@ -168,10 +168,10 @@ pub enum TokenKind {
 }
 
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Literal {
     Integer(i64),
-    Float(f64),
+    Float(HashableF64),
     String(SymbolIndex),
     Bool(bool),
 }
@@ -476,7 +476,7 @@ impl Lexer<'_> {
             "continue" => TokenKind::Keyword(Keyword::Continue),
 
             _ => {
-                let index = self.symbol_table.insert(String::from(&string));
+                let index = self.symbol_table.insert(&string);
                 
                 TokenKind::Identifier(index)
             },
@@ -537,7 +537,7 @@ impl Lexer<'_> {
         }
 
         if errors.is_empty() {
-            let index = self.symbol_table.insert(string);
+            let index = self.symbol_table.insert(string.as_str());
             return Ok(Literal::String(index));
         }
 
@@ -682,7 +682,7 @@ impl Lexer<'_> {
             }
 
             self.return_string_storage(number_string);
-            return Ok(Literal::Float(number as f64 + decimal));
+            return Ok(Literal::Float(HashableF64(number as f64 + decimal)));
         }
 
         self.return_string_storage(number_string);

@@ -37,7 +37,7 @@ macro_rules! bytecode {
 
 bytecode! {
     Func("func [name: str] [is_system: u8] [func_size: u32] [ret: TypeId(u32)]\
-        [len(args): u16] [args: []Arg(name: str, is_inout: bool, type: TypeId(u32))]"),
+        [len(args): u8] [args: []Arg(name: str, is_inout: bool, type: TypeId(u32))]"),
 
     Struct("struct [name: str] [type: type_id] [kind: u8] \
         [len(fields): u16] [fields: []Field[name: str, type: TypeId(u32)]]"),
@@ -46,6 +46,7 @@ bytecode! {
     Ret("ret"),
     Copy("copy [dst: Reg(u8)] [src: Reg(u8)]"),
     Lit("lit [dst: Reg(u8)] [val: u32]"),
+    Unit("unit [dst: Reg(u8)]"),
 
     Push("push [amount: u8]"),
     Pop("pop [amount: u8]"),
@@ -57,11 +58,15 @@ bytecode! {
 
     CastAny("castany [dst: Reg(u8)] [src: Reg(u8)] [target type: TypeId(u32)]"),
 
-    CreateStruct("struct [dst: Reg(u8)] [type_id: TypeId(u32)] [len(list): u8] [list: []Reg(u8)]"),
+    CreateStruct("struct [dst: Reg(u8)] [type_id: TypeId(u32)] [len(list): u16] [list: []Reg(u8)]"),
     AccField("accfield [dst: Reg(u8)] [src: Reg(u8)] [index: u16]"),
-    SetField("setfield [dst: Reg(u8)] [src: Reg(u8)] [index: u16]"),
+    SetField("setfield [dst: Reg(u8)] [src: Reg(u8)] [len(indexes): u16] [indexes: []u16]"),
+    AccVariant("accvariant [dst: Reg(u8)] [src: Reg(u8)] [index: u16]"),
+    SetVariant("setvariant [dst: Reg(u8)] [src: Reg(u8)] [index: u16]"),
+    Unwrap("unwrap [dst]"),
+    OrReturn("orreturn [dst]"),
 
-    Call("call [dst: Reg(u8)] [func: u32] [len(args): u8] [args: []Reg(u8)]"),
+    Call("call [dst: Reg(u8)] [func: u32] [len(args): u8] [args: [](src: Reg(u8), inout: Reg(u8)])"),
 
     Not("not [dst: Reg(u8)] [src: Reg(u8)]"),
     NegI("negi [dst: Reg(u8)] [src: Reg(u8)]"),

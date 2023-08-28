@@ -10,7 +10,7 @@ use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument, ExternFun
 use crate::nodes::MatchMapping;
 
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash,)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataType {
     source_range: SourceRange,
     kind: DataTypeKind, 
@@ -93,19 +93,27 @@ impl PartialEq for DataTypeKind {
 impl std::hash::Hash for DataTypeKind {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
-            DataTypeKind::Int => DataTypeKind::Int.hash(state),
-            DataTypeKind::Bool => DataTypeKind::Bool.hash(state),
-            DataTypeKind::Float => DataTypeKind::Float.hash(state),
-            DataTypeKind::Unit => DataTypeKind::Unit.hash(state),
-            DataTypeKind::Any => DataTypeKind::Any.hash(state),
-            DataTypeKind::Unknown => DataTypeKind::Unknown.hash(state),
-            DataTypeKind::Never => DataTypeKind::Never.hash(state),
-            DataTypeKind::Option(v) => v.kind().hash(state),
+            DataTypeKind::Int => 0.hash(state),
+            DataTypeKind::Bool => 1.hash(state),
+            DataTypeKind::Float => 2.hash(state),
+            DataTypeKind::Unit => 3.hash(state),
+            DataTypeKind::Any => 4.hash(state),
+            DataTypeKind::Unknown => 5.hash(state),
+            DataTypeKind::Never => 6.hash(state),
+            DataTypeKind::Option(v) => {
+                7.hash(state);
+                v.kind().hash(state)
+            },
+            
             DataTypeKind::Result(v1, v2) => {
+                8.hash(state);
                 v1.kind().hash(state);
                 v2.kind().hash(state);
             },
-            DataTypeKind::CustomType(v) => v.hash(state),
+            DataTypeKind::CustomType(v) => {
+                9.hash(state);
+                v.hash(state)
+            },
         }
     }
 }
@@ -135,6 +143,11 @@ impl Block {
 
     pub fn range(&self) -> SourceRange {
         self.source_range
+    }
+
+
+    pub fn take_vec(&mut self) -> Vec<Node> {
+        std::mem::take(&mut self.nodes)
     }
 }
 
@@ -319,7 +332,7 @@ impl Parser<'_> {
         
         let identifier = self.expect_identifier()?;
 
-        let result = match self.symbol_map.get(identifier).as_str() {
+        let result = match self.symbol_map.get(identifier) {
             "int" => DataTypeKind::Int,
             "float" => DataTypeKind::Float,
             "bool" => DataTypeKind::Bool,
@@ -586,7 +599,7 @@ impl Parser<'_> {
             self.advance();
             (v, false)
         } else {
-            let ident = self.symbol_map.const_str("anonymous");
+            let ident = self.symbol_map.insert("anonymous");
             (ident, true)
         };
 
@@ -633,7 +646,7 @@ impl Parser<'_> {
 
             {
                 if arguments.is_empty()
-                    && self.symbol_map.get(name).as_str() == "self" {
+                    && self.symbol_map.get(name) == "self" {
                     if let Some(settings) = settings.is_in_impl.clone() {
                         arguments.push(FunctionArgument::new(
                             name,
@@ -786,6 +799,9 @@ impl Parser<'_> {
             let name = self.expect_identifier()?;
             self.advance();
 
+            let path = if let Ok(path) = self.expect_literal_str() { path }
+            else { name };
+
             self.expect(TokenKind::LeftParenthesis)?;
             self.advance();
 
@@ -857,6 +873,7 @@ impl Parser<'_> {
 
             functions.push(ExternFunction::new(
                 name,
+                path,
                 arguments,
                 return_type,
                 SourceRange::new(start, end, self.file)
@@ -932,7 +949,7 @@ impl Parser<'_> {
             let end = self.current_range().end();
             self.advance();
             
-            let mapping = EnumMapping::new(name, data_type, SourceRange::new(start, end, self.file), is_implicit_unit);
+            let mapping = EnumMapping::new(name, mappings.len().try_into().unwrap(), data_type, SourceRange::new(start, end, self.file), is_implicit_unit);
             mappings.push(mapping);
         }
         let mappings = mappings;
@@ -1583,7 +1600,7 @@ impl Parser<'_> {
                     self.advance();
                     name
                 } else {
-                    self.symbol_map.const_str("_")
+                    self.symbol_map.insert("_")
                 };
 
 

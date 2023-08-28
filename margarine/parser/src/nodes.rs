@@ -208,19 +208,22 @@ pub enum StructKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFunction {
     name: SymbolIndex,
+    path: SymbolIndex,
     args: Vec<FunctionArgument>,
     return_type: DataType,
     source_range: SourceRange,
 }
 
 impl ExternFunction {
-    pub(crate) fn new(name: SymbolIndex, args: Vec<FunctionArgument>, return_type: DataType, source_range: SourceRange) -> Self { 
-        Self { name, args, return_type, source_range } 
+    pub(crate) fn new(name: SymbolIndex, path: SymbolIndex, args: Vec<FunctionArgument>, return_type: DataType, source_range: SourceRange) -> Self { 
+        Self { name, args, return_type, source_range, path } 
     }
 
 
     #[inline(always)]
     pub fn name(&self) -> SymbolIndex { self.name }
+    #[inline(always)]
+    pub fn path(&self) -> SymbolIndex { self.name }
     #[inline(always)]
     pub fn args(&self) -> &[FunctionArgument] { &self.args }
     #[inline(always)]
@@ -300,18 +303,19 @@ impl MatchMapping {
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumMapping {
     name: SymbolIndex,
+    number: u16,
     data_type: DataType,
     source_range: SourceRange,
     is_implicit_unit: bool,
 }
 
 impl EnumMapping {
-    pub fn new(name: SymbolIndex, data_type: DataType, source_range: SourceRange, is_implicit_unit: bool) -> Self { 
+    pub fn new(name: SymbolIndex, number: u16, data_type: DataType, source_range: SourceRange, is_implicit_unit: bool) -> Self { 
         if is_implicit_unit {
             assert!(data_type.kind().is(&crate::DataTypeKind::Unit));
         }
 
-        Self { name, data_type, source_range, is_implicit_unit } 
+        Self { name, data_type, source_range, is_implicit_unit, number } 
     }
 
     
@@ -325,6 +329,8 @@ impl EnumMapping {
     pub fn range(&self) -> SourceRange { self.source_range }
     #[inline(always)]
     pub fn is_implicit_unit(&self) -> bool { self.is_implicit_unit }
+    #[inline(always)]
+    pub fn number(&self) -> u16 { self.number }
 }
 
 

@@ -2,7 +2,7 @@
 #![allow(unused)]
 use std::fmt::Debug;
 
-use common::{SymbolMap, SourceRange, FileData, SymbolIndex, Slice};
+use common::{SymbolMap, SourceRange, FileData, SymbolIndex, Slice, HashableF64};
 
 use crate::{lex, Token, TokenKind, Literal};
 
@@ -10,7 +10,7 @@ use crate::{lex, Token, TokenKind, Literal};
 #[test]
 fn empty() {
     let mut symbol_table = SymbolMap::new();
-    let file_name = symbol_table.insert(String::from("test"));
+    let file_name = symbol_table.insert("test");
     let file_data = FileData::new(String::new(), file_name);
 
     let tokens = lex(&file_data, &mut symbol_table).unwrap();
@@ -28,7 +28,7 @@ fn empty() {
 fn tokens() {
     {
         let mut symbol_table = SymbolMap::new();
-        let file = symbol_table.insert(String::from("test"));
+        let file = symbol_table.insert("test");
         let data = "() <> {} [] % / + - * ^ : :: , . ! = _ \
                     <= >= == != || && += -= *= /= @ ?";
         let file_data = FileData::new(data.to_string(), file);
@@ -84,7 +84,7 @@ fn tokens() {
     // Invalid character
     {
         let mut symbol_table = SymbolMap::new();
-        let file = symbol_table.insert(String::from("test"));
+        let file = symbol_table.insert("test");
         let data = ";";
         let file_data = FileData::new(data.to_string(), file);
     
@@ -99,7 +99,7 @@ fn numbers() {
     // valid integer
     {
         let mut symbol_table = SymbolMap::new();
-        let file = symbol_table.insert(String::from("test"));
+        let file = symbol_table.insert("test");
         let data = "123456789";
         let file_data = FileData::new(data.to_string(), file);
     
@@ -121,7 +121,7 @@ fn numbers() {
     // valid float
     {
         let mut symbol_table = SymbolMap::new();
-        let file = symbol_table.insert(String::from("test"));
+        let file = symbol_table.insert("test");
         let data = "420.69";
         let file_data = FileData::new(data.to_string(), file);
     
@@ -129,7 +129,7 @@ fn numbers() {
 
         compare_individually(tokens.as_slice(), vec![
             Token {
-                token_kind: TokenKind::Literal(Literal::Float(420.69)),
+                token_kind: TokenKind::Literal(Literal::Float(HashableF64(420.69))),
                 source_range: SourceRange::new(0, 5, file),
             },
             Token {
@@ -143,7 +143,7 @@ fn numbers() {
     // too many dots
     {
         let mut symbol_table = SymbolMap::new();
-        let file = symbol_table.insert(String::from("test"));
+        let file = symbol_table.insert("test");
         let data = "420.69.50";
         let file_data = FileData::new(data.to_string(), file);
     
@@ -156,7 +156,7 @@ fn numbers() {
 #[test]
 fn identifiers() {
     let mut symbol_table = SymbolMap::new();
-    let file = symbol_table.insert(String::from("test"));
+    let file = symbol_table.insert("test");
     let data = "hello _there";
     let file_data = FileData::new(data.to_string(), file);
 
@@ -164,11 +164,11 @@ fn identifiers() {
 
     compare_individually(tokens.as_slice(), vec![
         Token {
-            token_kind: TokenKind::Identifier(symbol_table.insert(String::from("hello"))),
+            token_kind: TokenKind::Identifier(symbol_table.insert("hello")),
             source_range: SourceRange::new(0, 4, file),
         },
         Token {
-            token_kind: TokenKind::Identifier(symbol_table.insert(String::from("_there"))),
+            token_kind: TokenKind::Identifier(symbol_table.insert("_there")),
             source_range: SourceRange::new(6, 11, file),
         },
         Token {
@@ -184,7 +184,7 @@ fn string() {
     // valid string
     {
         let mut symbol_table = SymbolMap::new();
-        let file = symbol_table.insert(String::from("test"));
+        let file = symbol_table.insert("test");
         let data = "\"hello there\"";
         let file_data = FileData::new(data.to_string(), file);
 
@@ -192,7 +192,7 @@ fn string() {
 
         compare_individually(tokens.as_slice(), vec![
             Token {
-                token_kind: TokenKind::Literal(Literal::String(symbol_table.insert(String::from("hello there")))),
+                token_kind: TokenKind::Literal(Literal::String(symbol_table.insert("hello there"))),
                 source_range: SourceRange::new(0, 12, file),
             },
             Token {
@@ -206,7 +206,7 @@ fn string() {
     // unterminated string
     {
         let mut symbol_table = SymbolMap::new();
-        let file = symbol_table.insert(String::from("test"));
+        let file = symbol_table.insert("test");
         let data = "\"hello there";
         let file_data = FileData::new(data.to_string(), file);
 
@@ -219,7 +219,7 @@ fn string() {
 #[test]
 fn comments() {
     let mut symbol_table = SymbolMap::new();
-    let file = symbol_table.insert(String::from("test"));
+    let file = symbol_table.insert("test");
     let data = "// hello there!\n";
     let file_data = FileData::new(data.to_string(), file);
 
