@@ -247,6 +247,14 @@ impl Parser<'_> {
     }
 
 
+    fn is_literal_str(&self) -> Option<SymbolIndex> {
+        match self.current_kind() {
+            TokenKind::Literal(Literal::String(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+
     fn expect_literal_str(&self) -> Result<SymbolIndex, Error> {
         match self.current_kind() {
             TokenKind::Literal(Literal::String(v)) => Ok(v),
@@ -799,7 +807,7 @@ impl Parser<'_> {
             let name = self.expect_identifier()?;
             self.advance();
 
-            let path = if let Ok(path) = self.expect_literal_str() { path }
+            let path = if let Some(path) = self.is_literal_str() { self.advance(); path }
             else { name };
 
             self.expect(TokenKind::LeftParenthesis)?;

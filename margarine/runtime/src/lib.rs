@@ -32,7 +32,7 @@ impl VM<'_> {
     ) -> Self { 
         Self { 
             callstack: Vec::new(),
-            current: ProgramCounter::new(Code::new(null(), null())),
+            current: ProgramCounter::new(Code::new(null(), #[cfg(debug_assertions)] null())),
             stack, 
             constants,
 

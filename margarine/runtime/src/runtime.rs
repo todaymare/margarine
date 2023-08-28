@@ -40,7 +40,7 @@ impl VM<'_> {
                     }
 
 
-                    let code = Code::new(self.current.counter, unsafe { self.current.counter.add(size as usize) });
+                    let code = Code::new(self.current.counter, #[cfg(debug_assertions)] unsafe { self.current.counter.add(size as usize) });
 
                     self.current.skip(size as usize);
 

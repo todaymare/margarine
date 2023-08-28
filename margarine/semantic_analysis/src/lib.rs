@@ -267,7 +267,7 @@ impl Scope {
         }
         
         assert!(self.symbols.insert(identifier, (symbol_id, source)).is_none());
-        dbg!(identifier, &self.symbols);
+        // dbg!(identifier, &self.symbols);
         Ok(())
     }
 }
@@ -455,7 +455,7 @@ impl<'a> Infer<'a> {
         let namespaces = HashMap::new();
         
         let global_namespace = symbol_map.insert(GLOBAL_NAMESPACE);
-        let mut global_scope = Scope::new(symbol_map.insert(""), global_namespace);
+        let mut global_scope = Scope::new(symbol_map.insert(""), root_file);
         {
             let name = symbol_map.insert("CastError");
             let source = SourceRange::new(0, 0, root_file);
@@ -516,8 +516,8 @@ impl<'a> Infer<'a> {
     }
 
 
-    fn type_namespace(&mut self, data_type: &DataTypeKind) -> SymbolIndex {
-        let name = display_type(self.symbol_map, data_type);
+    fn type_namespace(&mut self, data_type: &DataType) -> SymbolIndex {
+        let name = display_type(self.symbol_map, data_type.kind());
         let name = self.symbol_map.insert(name.as_str());
 
         if self.namespaces.contains_key(&name) {
@@ -527,12 +527,12 @@ impl<'a> Infer<'a> {
 
         println!("creating {}", self.symbol_map.get(name));
 
-        let source = SourceRange::new(0, 0, self.symbol_map.insert(GLOBAL_NAMESPACE));
+        let source = data_type.range();
         self.namespaces.insert(name, Scope::new(name, source.file()));
         let _ = self.global_scope.put_namespace(name, name, source);
 
         
-        if let DataTypeKind::Result(v1, v2) = data_type {
+        if let DataTypeKind::Result(v1, v2) = data_type.kind() {
             // enum
             {
                 let full_name = name;
@@ -560,9 +560,9 @@ impl<'a> Infer<'a> {
                 };
 
                 let id = self.global_scope.create_symbol(&mut self.symbols, Symbol::Enum(enum_val), name, source).unwrap();
-                self.register_enum_methods(id, source, data_type.clone()).unwrap();
+                self.register_enum_methods(id, source, data_type.kind().clone()).unwrap();
             }
-        } else if let DataTypeKind::Option(v) = data_type {            
+        } else if let DataTypeKind::Option(v) = data_type.kind() {            
             let some = self.symbol_map.insert("some");
             let none = self.symbol_map.insert("none");
             // enum
@@ -593,7 +593,7 @@ impl<'a> Infer<'a> {
 
                 let id = self.global_scope.create_symbol(&mut self.symbols, Symbol::Enum(enum_val), name, source).unwrap();
                 println!("\n\n\n\n\n\noption");
-                self.register_enum_methods(id, source, data_type.clone()).unwrap();
+                self.register_enum_methods(id, source, data_type.kind().clone()).unwrap();
                 dbg!(&self.namespaces.get(&self.symbols[id].full_name()));
             }
             // is_some
@@ -605,7 +605,7 @@ impl<'a> Infer<'a> {
                 let function = Function {
                     name: function_name,
                     full_name: namespace.mangle(self.symbol_map, function_name, source),
-                    args: Vec::from([FunctionArgument::new(self_var, DataType::new(source, data_type.clone()), false, source)]),
+                    args: Vec::from([FunctionArgument::new(self_var, data_type.clone(), false, source)]),
                     is_extern: None,
                     is_system: false,
                     is_anonymous: false,
@@ -771,9 +771,10 @@ impl<'a> Infer<'a> {
 
 
     fn analyse_block_with_scope(&mut self, block: &mut Block, scope: Scope, only_declarations: bool) -> Result<(AnalysisResult, Scope), Error> {
-        if only_declarations {
+        if only_declarations && !matches!(block[0].kind(), NodeKind::Expression(Expression::Unit)) {
             let errors = block.iter().filter_map(|x| {
                 if !matches!(x.kind(), NodeKind::Declaration(_)) {
+                    dbg!(x.kind());
                     Some(CompilerError::new(self.ctx.cs.file, ErrorCode::SBlockOnlyAllowDec, "this block only allows declarations")
                         .highlight(x.range())
                         .build())
@@ -876,7 +877,7 @@ impl<'a> Infer<'a> {
 
 
             Declaration::Impl { data_type, body } => {
-                let name = self.type_namespace(data_type.kind());
+                let name = self.type_namespace(data_type);
 
                 let namespace = self.namespaces.get(&name).unwrap().clone();
                 let (_, namespace) = self.analyse_block_with_scope(body, namespace, true)?;
@@ -1068,7 +1069,7 @@ impl<'a> Infer<'a> {
                     return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
                 }
 
-                let e = self.type_namespace(value_typ.data_type.kind());
+                let e = self.type_namespace(&value_typ.data_type);
                 let e = self.find_symbol(e).unwrap();
                 let Symbol::Enum(e) = e
                 else {
@@ -1364,7 +1365,7 @@ impl<'a> Infer<'a> {
                     return Ok(AnalysisResult::new(DataType::new(source, DataTypeKind::Unknown), true))
                 }
                 
-                let structure = self.type_namespace(val_typ.data_type.kind());
+                let structure = self.type_namespace(&val_typ.data_type);
                 let Some(structure) = self.find_symbol(structure)
                 else {
                     return Err(
@@ -1472,7 +1473,7 @@ impl<'a> Infer<'a> {
                 let has_accessor = is_accessor.is_some();
                 let function = if let Some(v) = is_accessor {
                     let accessor_analysis = self.analyse_node(&mut *v)?;
-                    let path = self.type_namespace(accessor_analysis.data_type.kind());
+                    let path = self.type_namespace(&accessor_analysis.data_type);
 
                     let scope = self.namespaces.get(&path).unwrap();
 
@@ -1607,7 +1608,7 @@ impl<'a> Infer<'a> {
             Expression::WithinTypeNamespace { namespace, action } => {
                 self.validate_data_type(namespace)?;
                 
-                let namespace = self.type_namespace(namespace.kind());
+                let namespace = self.type_namespace(namespace);
                 // PERFORMANCE: Maybe? Remove the clone
                 let namespace = self.namespaces.get(&namespace).unwrap();
                 let namespace = namespace.clone();
@@ -2072,7 +2073,7 @@ impl<'a> Infer<'a> {
                     Declaration::Impl { data_type, body } => {
                         slf.validate_data_type(data_type)?;
 
-                        let name = slf.type_namespace(data_type.kind());
+                        let name = slf.type_namespace(data_type);
 
                         let scope = Scope::new(name, source.file());
 
@@ -2288,7 +2289,7 @@ impl<'a> Infer<'a> {
 
                     
                     Declaration::Impl { data_type, body } => {
-                        let name = slf.type_namespace(data_type.kind());
+                        let name = slf.type_namespace(data_type);
 
 
                         let namespace = slf.namespaces.get(&name).unwrap().clone();
@@ -2298,8 +2299,8 @@ impl<'a> Infer<'a> {
 
                         result?;
 
-                        dbg!(&namespace);
-                        println!("{}", slf.symbol_map.get(name));
+                        // dbg!(&namespace);
+                        // println!("{}", slf.symbol_map.get(name));
                         *slf.namespaces.get_mut(&name).unwrap() = namespace;
 
                     },

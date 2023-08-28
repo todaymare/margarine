@@ -182,12 +182,16 @@ pub trait ErrorBuilder {
 impl ErrorOption {
     pub fn build(self, files: &HashMap<SymbolIndex, FileData>, symbol_map: &SymbolMap) -> String {
         match self {
-            ErrorOption::Text(text) => text,
+            ErrorOption::Text(text) => {
+                println!("{text}");
+                text
+            },
 
 
             ErrorOption::Highlight { range, note, colour, file } => {
                 let mut string = String::new();
 
+                println!("error {note:?} in {} {range:?}", symbol_map.get(file));
                 let file = files.get(&file).unwrap();
                 let source = file.read();
                 let file_name = file.name();
