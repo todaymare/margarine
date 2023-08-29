@@ -811,7 +811,7 @@ impl<'a> Infer<'a> {
         Ok((result, scope))
     }
 
-
+    panic!();
     fn analyse_declaration(&mut self, decl: &mut Declaration, source: SourceRange) -> Result<(), Error> {
         match decl {
             Declaration::Struct { .. } => Ok(()),

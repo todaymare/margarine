@@ -7,7 +7,7 @@ fn main() -> Result<(), &'static str> {
         let mut symbol_map = SymbolMap::new();
         let file = DropTimer::with_timer(
             "opening file", 
-            || FileData::open("../gen_code/text.txt", &mut symbol_map).unwrap()
+            || FileData::open("text.txt", &mut symbol_map).unwrap()
         );
 
         let tokens = DropTimer::with_timer("tokenisation", || {
@@ -36,10 +36,20 @@ fn main() -> Result<(), &'static str> {
             }
         })?;
 
-        let state = DropTimer::with_timer(
-            "semantic analysis", 
-            || margarine::semantic_analysis(&mut symbol_map, &mut instructions)
-        );
+        let state = {
+            let _1 = DropTimer::new("semantic analysis");
+            let state = margarine::semantic_analysis(&mut symbol_map, &mut instructions);
+            match state {
+                Ok(v) => v,
+                Err(e) => {
+                    let report = e.build(&HashMap::from([(file.name(), file.clone())]), &symbol_map);
+                    println!("{report}");
+                    return Err("failed to compile because of the previous errors")
+                }
+            }
+        };
+
+        println!("{:?}", symbol_map.arena_stats());
     
         Ok(())
     })

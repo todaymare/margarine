@@ -1,6 +1,6 @@
 use std::{path::Path, ops::{Deref, DerefMut}, sync::{OnceLock, Mutex}, collections::HashMap, fmt::write, time::Instant};
 use istd::index_map;
-use sti::arena::Arena;
+use sti::arena::{Arena, ArenaStats};
 
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Debug, Hash)]
@@ -61,6 +61,12 @@ impl SymbolMap {
 
     #[inline(always)]
     pub fn is_empty(&self) -> bool { self.vec.is_empty() }
+
+
+    #[inline(always)]
+    pub fn arena_stats(&self) -> ArenaStats {
+        self.arena.stats()
+    }
 }
 
 

@@ -438,16 +438,14 @@ impl Lexer<'_> {
 
 impl Lexer<'_> {
     fn identifier(&mut self) -> TokenKind {
-        let mut string = self.borrow_string_storage();
+        let start = self.byte_offset;
+        let mut len = 0;
 
-        string.push(self.current_character().unwrap());
-
-        while let Some(value) = self.advance() {
-            match value {
-                'a'..='z' | 'A'..='Z' | '_' | '0'..='9' => string.push(value),
-                _ => break,
-            }
+        while let Some('a'..='z' | 'A'..='Z' | '_' | '0'..='9') = self.advance() {
+            len += 1;
         }
+
+        let string = unsafe { core::str::from_utf8_unchecked(self.characters) };
         self.stale = true;
 
         let token = match string.as_str() {
