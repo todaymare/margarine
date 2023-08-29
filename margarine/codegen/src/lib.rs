@@ -12,9 +12,9 @@ pub fn codegen(symbol_map: &SymbolMap, state: &State) {
         .map(|x| codegen_function(x, symbol_map, &function_calls))
         .collect::<Vec<_>>();
 
-    for b in bodies.iter() {
-        println!("{:?}", b);
-    }
+    // for b in bodies.iter() {
+    //     println!("{:?}", b);
+    // }
 }
 
 

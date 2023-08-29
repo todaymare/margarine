@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use margarine::{FileData, SymbolMap};
 
 fn main() -> Result<(), &'static str> {
+    let time = Instant::now();
     let mut symbol_map = SymbolMap::new();
     let file = FileData::open("../gen_code/text.txt", &mut symbol_map).unwrap();
 
@@ -28,18 +29,19 @@ fn main() -> Result<(), &'static str> {
     };
 
     let state = margarine::semantic_analysis(&mut symbol_map, &mut instructions);
-    let state = match state {
-        Ok(v)  => v,
-        Err(e) => {
-            let report = e.build(&HashMap::from([(file.name(), file)]), &symbol_map);
-            println!("{report}");
-            return Err("failed to compile because of the previous errors")
-        },
-    };
+    // let state = match state {
+    //     Ok(v)  => v,
+    //     Err(e) => {
+    //         let report = e.build(&HashMap::from([(file.name(), file)]), &symbol_map);
+    //         println!("{report}");
+    //         return Err("failed to compile because of the previous errors")
+    //     },
+    // };
 
-    let state = margarine::convert(state);
+    // let state = margarine::convert(state);
 
-    let codegen = margarine::codegen(&symbol_map, &state);
+    // let codegen = margarine::codegen(&symbol_map, &state);
+    println!("time {}", time.elapsed().as_secs_f64());
     
 
     Ok(())

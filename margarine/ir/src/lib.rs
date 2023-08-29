@@ -13,7 +13,6 @@ const RESERVED_INTERNAL_TYPE_IDS : u32 = 256;
 
 
 pub fn convert(ctx: Infer) -> State {
-    println!("converting");
     let mut state : State = State {
         constants: HashMap::new(),
         types: HashMap::with_capacity(ctx.symbols.len()),
@@ -71,11 +70,10 @@ pub fn convert(ctx: Infer) -> State {
         state.functions.push(function);
     }
 
-    for f in &state.functions {
-        let mut string = String::new();
-        f.pretty_print(&mut string, &ctx.symbol_map);
-        println!("{string}");
-    }
+    // for f in &state.functions {
+    //     let mut string = String::new();
+    //     f.pretty_print(&mut string, &ctx.symbol_map);
+    // }
 
     assert!(state.loop_break_point.is_none());
     assert!(state.loop_cont_point.is_none());
@@ -344,7 +342,6 @@ impl Function {
 
 
     fn convert_expression(&mut self, state: &mut State, block: &mut Block, expr: &Expression, typ: &DataTypeKind) -> Reg {
-        println!("expression {expr:?}");
         match expr {
             Expression::Unit => {
                 let reg = self.new_reg();
