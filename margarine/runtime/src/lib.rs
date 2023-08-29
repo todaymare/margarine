@@ -4,6 +4,8 @@ pub mod ecs;
 
 use std::{mem::{size_of, ManuallyDrop}, fmt::Debug, collections::HashMap, rc::Rc, ptr::null};
 
+use common::FuckMap;
+
 // static_assert_eq!(size_of::<DataUnion>(), 8);
 // static_assert_eq!(size_of::<Data>(), 16);
 
@@ -16,9 +18,9 @@ pub struct VM<'a> {
     pub stack: Stack,
     constants: Box<[Data]>,
 
-    name_to_typeid: HashMap<&'a str, TypeId>,
-    name_to_func: HashMap<&'a str, FunctionIndex>,
-    structures: HashMap<TypeId, Structure<'a>>,
+    name_to_typeid: FuckMap<&'a str, TypeId>,
+    name_to_func: FuckMap<&'a str, FunctionIndex>,
+    structures: FuckMap<TypeId, Structure<'a>>,
     functions: Vec<Code>,
     functions_debug_info: Vec<FunctionDebugInfo<'a>>,
 }
@@ -36,9 +38,9 @@ impl VM<'_> {
             stack, 
             constants,
 
-            name_to_typeid: HashMap::with_capacity(metadata.num_of_structs), 
-            name_to_func: HashMap::with_capacity(metadata.num_of_functions),
-            structures: HashMap::with_capacity(metadata.num_of_structs), 
+            name_to_typeid: FuckMap::with_capacity(metadata.num_of_structs), 
+            name_to_func: FuckMap::with_capacity(metadata.num_of_functions),
+            structures: FuckMap::with_capacity(metadata.num_of_structs), 
             functions: Vec::with_capacity(metadata.num_of_functions), 
             functions_debug_info: Vec::with_capacity(metadata.num_of_functions),
         } 

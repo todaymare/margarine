@@ -2,7 +2,7 @@
 #![allow(clippy::map_entry)]
 use std::{collections::HashMap, fmt::Write};
 
-use common::{SymbolMap, SourceRange, SymbolIndex};
+use common::{SymbolMap, SourceRange, SymbolIndex, FuckMap};
 use errors::{Error, CombineIntoError, CompilerError, ErrorCode, ErrorBuilder};
 use istd::index_vec;
 use lexer::Literal;
@@ -32,9 +32,9 @@ pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -
 #[derive(Debug)]
 pub struct Infer<'a> {
     pub symbol_map: &'a mut SymbolMap,
-    name_to_symbol: HashMap<SymbolIndex, SymbolId>,
+    name_to_symbol: FuckMap<SymbolIndex, SymbolId>,
     pub symbols: Symbols,
-    namespaces: HashMap<SymbolIndex, Scope>,
+    namespaces: FuckMap<SymbolIndex, Scope>,
     ctx: Context,
     root_file: SymbolIndex,
     global_scope: Scope,
@@ -52,8 +52,8 @@ pub struct Context {
 
 #[derive(Debug, Default, Clone)]
 pub struct Scope {
-    symbols: HashMap<SymbolIndex, (SymbolId, SourceRange)>,
-    namespaces: HashMap<SymbolIndex, (SymbolIndex, SourceRange)>,
+    symbols: FuckMap<SymbolIndex, (SymbolId, SourceRange)>,
+    namespaces: FuckMap<SymbolIndex, (SymbolIndex, SourceRange)>,
     variables: Vec<Variable>,
 
     mangle_name: SymbolIndex,
@@ -164,9 +164,9 @@ impl AnalysisResult {
 impl Scope {    
     pub fn new(mangle_name: SymbolIndex, file: SymbolIndex) -> Self { 
         Self { 
-            symbols: HashMap::new(), 
+            symbols: FuckMap::new(), 
             mangle_name, 
-            namespaces: HashMap::new(), 
+            namespaces: FuckMap::new(), 
             file, 
             variables: Vec::new(),
             is_function_scope: None,
@@ -232,7 +232,7 @@ impl Scope {
     fn create_symbol(
         &mut self, 
         symbols: &mut Symbols, 
-        mappings: &mut HashMap<SymbolIndex, SymbolId>,
+        mappings: &mut FuckMap<SymbolIndex, SymbolId>,
         symbol: Symbol, 
         identifier: SymbolIndex, 
         source: SourceRange
@@ -452,8 +452,8 @@ impl Context {
 
 impl<'a> Infer<'a> {
     pub fn new(symbol_map: &'a mut SymbolMap, mut symbols: Symbols, ctx: Context, root_file: SymbolIndex) -> Self {
-        let namespaces = HashMap::new();
-        let mut name_to_symbol = HashMap::new();
+        let namespaces = FuckMap::new();
+        let mut name_to_symbol = FuckMap::new();
         
         let global_namespace = symbol_map.insert(GLOBAL_NAMESPACE);
         let mut global_scope = Scope::new(symbol_map.insert(""), root_file);

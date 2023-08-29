@@ -3,7 +3,7 @@ use std::fmt::{Write, Display};
 #[allow(dead_code)]
 use std::{collections::{HashMap, BTreeMap}, sync::RwLock};
 
-use common::{SymbolIndex, SymbolMap};
+use common::{SymbolIndex, SymbolMap, FuckMap};
 use lexer::Literal;
 use parser::{nodes::{Node, Statement, Expression, BinaryOperator, UnaryOperator, NodeKind, FunctionArgument}, DataTypeKind};
 use semantic_analysis::{Infer, Symbol, is_l_val};
@@ -14,12 +14,12 @@ const RESERVED_INTERNAL_TYPE_IDS : u32 = 256;
 
 pub fn convert(ctx: Infer) -> State {
     let mut state : State = State {
-        constants: HashMap::new(),
-        types: HashMap::with_capacity(ctx.symbols.len()),
+        constants: FuckMap::new(),
+        types: FuckMap::with_capacity(ctx.symbols.len()),
         loop_break_point: None,
         loop_cont_point: None,
         functions: Vec::with_capacity(ctx.symbols.as_slice().iter().filter(|x| matches!(x, Symbol::Function(semantic_analysis::Function { is_extern: None, .. }))).count()),
-        extern_functions: HashMap::with_capacity(ctx.symbols.as_slice().iter().filter(|x| matches!(x, Symbol::Function(semantic_analysis::Function { is_extern: Some(_), .. }))).count()),
+        extern_functions: FuckMap::with_capacity(ctx.symbols.as_slice().iter().filter(|x| matches!(x, Symbol::Function(semantic_analysis::Function { is_extern: Some(_), .. }))).count()),
     };
 
 
@@ -224,13 +224,13 @@ pub struct Function {
 
 #[derive(Debug)]
 pub struct State {
-    pub constants: HashMap<Literal, ConstIndex>,
-    pub types: HashMap<DataTypeKind, TypeId>,
+    pub constants: FuckMap<Literal, ConstIndex>,
+    pub types: FuckMap<DataTypeKind, TypeId>,
 
     loop_break_point: Option<(Label, Reg)>,
     loop_cont_point: Option<Label>,
     pub functions: Vec<Function>,
-    pub extern_functions: HashMap<SymbolIndex, (SymbolIndex, SymbolIndex)>,
+    pub extern_functions: FuckMap<SymbolIndex, (SymbolIndex, SymbolIndex)>,
 }
 
 

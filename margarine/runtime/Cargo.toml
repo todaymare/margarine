@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 sti = "*"
 bytemuck = "*"
+common = { path = "../common" }
