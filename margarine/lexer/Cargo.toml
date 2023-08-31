@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 errors = { path = "../errors" }
+
+sti = { git = "https://github.com/leddoo/sti"}

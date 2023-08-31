@@ -2,7 +2,7 @@ pub mod nodes;
 
 use std::{ops::{Deref, DerefMut}, fmt::Write};
 
-use common::{SymbolMap, SourceRange, SymbolIndex, Slice};
+use common::{source::SourceRange, string_map::{StringMap, StringIndex}, Slice};
 use errors::{Error, CompilerError, ErrorBuilder, ErrorCode, CombineIntoError};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument, ExternFunction, Expression, BinaryOperator, Statement, EnumMapping};
@@ -49,7 +49,7 @@ pub enum DataTypeKind {
     Never,
     Option(Box<DataType>),
     Result(Box<DataType>, Box<DataType>),
-    CustomType(SymbolIndex),
+    CustomType(StringIndex),
 }
 
 
@@ -168,11 +168,10 @@ impl DerefMut for Block {
 }
 
 
-pub fn parse(tokens: TokenList, symbol_map: &mut SymbolMap) -> Result<Block, Error> {
+pub fn parse(tokens: TokenList, symbol_map: &mut StringMap) -> Result<Block, Error> {
     let mut parser = Parser {
         tokens: tokens.as_slice(),
         index: 0,
-        file: tokens.file(),
         symbol_map,
     };
 
@@ -204,9 +203,8 @@ impl Default for ParserSettings {
 struct Parser<'a> {
     tokens: &'a [Token],
     index: usize,
-    file: SymbolIndex,
 
-    symbol_map: &'a mut SymbolMap,
+    symbol_map: &'a mut StringMap,
 }
 
 
@@ -247,7 +245,7 @@ impl Parser<'_> {
     }
 
 
-    fn is_literal_str(&self) -> Option<SymbolIndex> {
+    fn is_literal_str(&self) -> Option<StringIndex> {
         match self.current_kind() {
             TokenKind::Literal(Literal::String(v)) => Some(v),
             _ => None,
@@ -255,11 +253,11 @@ impl Parser<'_> {
     }
 
 
-    fn expect_literal_str(&self) -> Result<SymbolIndex, Error> {
+    fn expect_literal_str(&self) -> Result<StringIndex, Error> {
         match self.current_kind() {
             TokenKind::Literal(Literal::String(v)) => Ok(v),
             _ => {
-                Err(CompilerError::new(self.file, ErrorCode::PUnexpectedToken, "unexpected token")
+                Err(CompilerError::new(ErrorCode::PUnexpectedToken)
                     .highlight(self.current_range())
                         .note(format!("expected a literal string found {:?}", self.current_kind()))
                     .build())
@@ -268,11 +266,11 @@ impl Parser<'_> {
     }
 
 
-    fn expect_identifier(&self) -> Result<SymbolIndex, Error> {
+    fn expect_identifier(&self) -> Result<StringIndex, Error> {
         match self.current_kind() {
             TokenKind::Identifier(v) => Ok(v),
             _ => {
-                Err(CompilerError::new(self.file, ErrorCode::PUnexpectedToken, "unexpected token")
+                Err(CompilerError::new(ErrorCode::PUnexpectedToken)
                     .highlight(self.current_range())
                         .note(format!("expected an identifier found {:?}", self.current_kind()))
                     .build())
@@ -283,7 +281,7 @@ impl Parser<'_> {
 
     fn expect(&self, token_kind: TokenKind) -> Result<&Token, Error> {
         if self.current_kind() != token_kind {
-            return Err(CompilerError::new(self.file, ErrorCode::PUnexpectedToken, "unexpected token")
+            return Err(CompilerError::new(ErrorCode::PUnexpectedToken)
                 .highlight(self.current_range())
                     .note(format!("expected {:?} found {:?}", token_kind, self.current_kind()))
                 .build())
@@ -306,7 +304,7 @@ impl Parser<'_> {
                 str
             };
             
-            return Err(CompilerError::new(self.file, ErrorCode::PUnexpectedToken, "unexpected token")
+            return Err(CompilerError::new(ErrorCode::PUnexpectedToken)
                 .highlight(self.current_range())
                     .note(format!("expected {message} found {:?}", self.current_kind()))
                 .build())
@@ -349,7 +347,7 @@ impl Parser<'_> {
         };
 
         let mut result = DataType::new(
-            SourceRange::new(start, self.current_range().end(), self.file), 
+            SourceRange::new(start, self.current_range().end()), 
             result
         );
 
@@ -360,7 +358,7 @@ impl Parser<'_> {
                 let end = self.current_range().end();
                 let option_result = DataTypeKind::Option(Box::new(result));
                 let option_result = DataType::new(
-                    SourceRange::new(start, end, self.file),
+                    SourceRange::new(start, end),
                     option_result,
                 );
 
@@ -374,7 +372,7 @@ impl Parser<'_> {
 
                 let oth_typ = self.expect_type()?;
 
-                let range = SourceRange::new(result.range().start(), oth_typ.range().end(), self.file);
+                let range = SourceRange::new(result.range().start(), oth_typ.range().end());
 
                 let new_result = DataTypeKind::Result(Box::new(result), Box::new(oth_typ));
                 let new_result = DataType::new(
@@ -461,11 +459,11 @@ impl Parser<'_> {
         if storage.is_empty() {
             storage.push(Node::new(
                 NodeKind::Expression(Expression::Unit),
-                SourceRange::new(start, end, self.file)
+                SourceRange::new(start, end)
             ));
         }
 
-        Ok(Block::new(storage, SourceRange::new(start, end, self.file)))
+        Ok(Block::new(storage, SourceRange::new(start, end)))
     }
 
 
@@ -583,7 +581,7 @@ impl Parser<'_> {
             let end = self.current_range().end();
             self.advance();
 
-            fields.push((name, datatype, SourceRange::new(start, end, self.file)));
+            fields.push((name, datatype, SourceRange::new(start, end)));
         }
         let fields = fields;
 
@@ -592,7 +590,7 @@ impl Parser<'_> {
 
         Ok(Node::new(
             NodeKind::Declaration(Declaration::Struct { kind, name, fields }),
-            SourceRange::new(start, end, self.file),
+            SourceRange::new(start, end),
         ))
     }
 
@@ -680,7 +678,7 @@ impl Parser<'_> {
                 name,
                 data_type,
                 is_inout,
-                SourceRange::new(start, end, self.file)
+                SourceRange::new(start, end)
             );
 
             arguments.push(argument);
@@ -699,7 +697,7 @@ impl Parser<'_> {
                 typ
             } else {
                 DataType::new(
-                    SourceRange::new(start, self.current_range().end(), self.file), 
+                    SourceRange::new(start, self.current_range().end()), 
                     DataTypeKind::Unit
                 )
             }
@@ -722,7 +720,7 @@ impl Parser<'_> {
                 body,
             }),
 
-            SourceRange::new(start, end, self.file)
+            SourceRange::new(start, end)
         ))
     }
 
@@ -751,7 +749,7 @@ impl Parser<'_> {
                 data_type, body
             }),
 
-            SourceRange::new(start, end, self.file),
+            SourceRange::new(start, end),
         ))
     }
 
@@ -772,7 +770,7 @@ impl Parser<'_> {
 
         Ok(Node::new(
             NodeKind::Declaration(Declaration::Module { name, body }),
-            SourceRange::new(start, end, self.file)
+            SourceRange::new(start, end)
         ))
     }
 
@@ -851,7 +849,7 @@ impl Parser<'_> {
                 let end = self.current_range().end();
                 self.advance();
                 
-                arguments.push(FunctionArgument::new(identifier, data_type, is_inout, SourceRange::new(start, end, self.file)));
+                arguments.push(FunctionArgument::new(identifier, data_type, is_inout, SourceRange::new(start, end)));
 
             }
             let arguments = arguments;
@@ -873,7 +871,7 @@ impl Parser<'_> {
                 else {
                     end = self.current_range().end();
                     DataType::new(
-                        SourceRange::new(start, self.current_range().end(), self.file), 
+                        SourceRange::new(start, self.current_range().end()), 
                         DataTypeKind::Unit
                     ) 
                 };
@@ -884,7 +882,7 @@ impl Parser<'_> {
                 path,
                 arguments,
                 return_type,
-                SourceRange::new(start, end, self.file)
+                SourceRange::new(start, end)
             ));
         }
         let functions = functions;
@@ -894,7 +892,7 @@ impl Parser<'_> {
 
         Ok(Node::new(
             NodeKind::Declaration(Declaration::Extern { file, functions }),
-            SourceRange::new(start, end, self.file)
+            SourceRange::new(start, end)
         ))
     }
 
@@ -957,7 +955,14 @@ impl Parser<'_> {
             let end = self.current_range().end();
             self.advance();
             
-            let mapping = EnumMapping::new(name, mappings.len().try_into().unwrap(), data_type, SourceRange::new(start, end, self.file), is_implicit_unit);
+            let mapping = EnumMapping::new(
+                name, 
+                mappings.len().try_into().unwrap(), 
+                data_type, 
+                SourceRange::new(start, end), 
+                is_implicit_unit
+            );
+
             mappings.push(mapping);
         }
         let mappings = mappings;
@@ -967,7 +972,7 @@ impl Parser<'_> {
 
         Ok(Node::new(
             NodeKind::Declaration(Declaration::Enum { name, mappings }),
-            SourceRange::new(start, end, self.file)
+            SourceRange::new(start, end)
         ))
     }
 
@@ -982,7 +987,7 @@ impl Parser<'_> {
 
         Ok(Node::new(
             NodeKind::Declaration(Declaration::Using { file }),
-            SourceRange::new(start, end, self.file)
+            SourceRange::new(start, end)
         ))
     }
 
@@ -1024,7 +1029,7 @@ impl Parser<'_> {
                 is_mut, 
                 rhs: Box::new(expr)
             }),
-            SourceRange::new(start, self.current_range().end(), self.file)
+            SourceRange::new(start, self.current_range().end())
         ))
     }
 
@@ -1035,7 +1040,7 @@ impl Parser<'_> {
             parser.advance();
 
             let rhs = parser.expression(settings)?;
-            let range = SourceRange::new(lhs.source_range.start(), parser.current_range().end(), parser.file);
+            let range = SourceRange::new(lhs.source_range.start(), parser.current_range().end());
 
             Ok(Node::new(
                 NodeKind::Statement(Statement::UpdateValue { 
@@ -1074,7 +1079,7 @@ impl Parser<'_> {
                         lhs: Box::new(lhs), 
                         rhs: Box::new(rhs) 
                     }),
-                    SourceRange::new(start, self.current_range().end(), self.file)
+                    SourceRange::new(start, self.current_range().end())
                 ))
             }
             _ => Ok(lhs)
@@ -1100,7 +1105,7 @@ impl Parser<'_> {
 
         let rhs = self.logical_and(settings)?;
 
-        let range = SourceRange::new(lhs.range().start(), rhs.range().end(), self.file);
+        let range = SourceRange::new(lhs.range().start(), rhs.range().end());
 
         Ok(Node::new(
             NodeKind::Expression(Expression::If {
@@ -1136,7 +1141,7 @@ impl Parser<'_> {
 
         let rhs = self.unary_not(settings)?;
 
-        let range = SourceRange::new(lhs.range().start(), rhs.range().end(), self.file);
+        let range = SourceRange::new(lhs.range().start(), rhs.range().end());
 
         Ok(Node::new(
             NodeKind::Expression(Expression::If {
@@ -1169,7 +1174,7 @@ impl Parser<'_> {
                     operator: nodes::UnaryOperator::Not, 
                     rhs: Box::new(expr) 
                 }),
-                SourceRange::new(start, self.current_range().end(), self.file)
+                SourceRange::new(start, self.current_range().end())
             ))
         }
 
@@ -1265,7 +1270,7 @@ impl Parser<'_> {
                     operator: nodes::UnaryOperator::Neg, 
                     rhs: Box::new(expr) 
                 }),
-                SourceRange::new(start, self.current_range().end(), self.file)
+                SourceRange::new(start, self.current_range().end())
             ))
         }
 
@@ -1283,7 +1288,7 @@ impl Parser<'_> {
             self.advance();
 
             if self.current_is(TokenKind::Bang) {
-                let source = SourceRange::new(result.range().start(), self.current_range().end(), self.file);
+                let source = SourceRange::new(result.range().start(), self.current_range().end());
                 result = Node::new(
                     NodeKind::Expression(Expression::Unwrap(Box::new(result))),
                     source,
@@ -1292,7 +1297,7 @@ impl Parser<'_> {
             }
 
             if self.current_is(TokenKind::QuestionMark) {
-                let source = SourceRange::new(result.range().start(), self.current_range().end(), self.file);
+                let source = SourceRange::new(result.range().start(), self.current_range().end());
                 result = Node::new(
                     NodeKind::Expression(Expression::OrReturn(Box::new(result))),
                     source,
@@ -1323,7 +1328,7 @@ impl Parser<'_> {
                         args,
                         is_accessor: Some(Box::new(result)), 
                     }),
-                    SourceRange::new(start, self.current_range().end(), self.file)
+                    SourceRange::new(start, self.current_range().end())
                 )
 
                 
@@ -1334,7 +1339,7 @@ impl Parser<'_> {
                         field: ident,
                         field_meta: (u16::MAX, false),
                     }),
-                    SourceRange::new(start, self.current_range().end(), self.file)
+                    SourceRange::new(start, self.current_range().end())
                 )
             }
         }
@@ -1367,7 +1372,7 @@ impl Parser<'_> {
 
                 self.expect(TokenKind::RightParenthesis)?;
 
-                expr.source_range = SourceRange::new(start, self.current_range().end(), self.file);
+                expr.source_range = SourceRange::new(start, self.current_range().end());
                 
                 Ok(expr)
             },
@@ -1405,7 +1410,7 @@ impl Parser<'_> {
                             action: Box::new(expr),
                             namespace_source: source,
                         }),
-                        SourceRange::new(start, self.current_range().end(), self.file)
+                        SourceRange::new(start, self.current_range().end())
                     ))
                 }
                 
@@ -1429,7 +1434,7 @@ impl Parser<'_> {
                 let expr = self.expression(ParserSettings::default())?;
                 Ok(Node::new(
                     NodeKind::Expression(Expression::Return(Box::new(expr))), 
-                    SourceRange::new(start, self.current_range().end(), self.file)
+                    SourceRange::new(start, self.current_range().end())
                 ))
             }
 
@@ -1459,7 +1464,7 @@ impl Parser<'_> {
 
                 Ok(Node::new(
                     NodeKind::Expression(Expression::Loop { body }),
-                    SourceRange::new(start, self.current_range().end(), self.file)
+                    SourceRange::new(start, self.current_range().end())
                 ))
             }
 
@@ -1481,12 +1486,12 @@ impl Parser<'_> {
 
                 Ok(Node::new(
                     NodeKind::Expression(Expression::WithinTypeNamespace { namespace: typ, action: Box::new(expr) }),
-                    SourceRange::new(start, self.current_range().end(), self.file)
+                    SourceRange::new(start, self.current_range().end())
                 ))
             }
 
             
-            _ => Err(CompilerError::new(self.file, ErrorCode::PUnexpectedToken, "unexpected token")
+            _ => Err(CompilerError::new(ErrorCode::PUnexpectedToken)
                 .highlight(self.current_range())
                     .note(format!("'{:?}'", self.current_kind()))
                 .build())
@@ -1537,7 +1542,6 @@ impl Parser<'_> {
             let range = SourceRange::new(
                 lhs.range().start(), 
                 rhs.range().end(),
-                self.file,
             );
 
             lhs = Node::new(
@@ -1598,7 +1602,7 @@ impl Parser<'_> {
             
             let start = self.current_range().start();
             let name = self.expect_identifier()?;
-            let source_range = SourceRange::new(start, self.current_range().end(), self.file);
+            let source_range = SourceRange::new(start, self.current_range().end());
             self.advance();
 
             let bind_to =
@@ -1630,7 +1634,7 @@ impl Parser<'_> {
                 value: Box::new(val), 
                 mappings
             }),
-            SourceRange::new(start, end, self.file)
+            SourceRange::new(start, end)
         ))
     }
 
@@ -1644,7 +1648,7 @@ impl Parser<'_> {
 
         Ok(Node::new(
             NodeKind::Expression(Expression::Block { block }),
-            SourceRange::new(start, self.current_range().end(), self.file)
+            SourceRange::new(start, self.current_range().end())
         ))
     }
 
@@ -1680,7 +1684,7 @@ impl Parser<'_> {
                 body, 
                 else_block,
             }),
-            SourceRange::new(start, self.current_range().end(), self.file)
+            SourceRange::new(start, self.current_range().end())
         ))
     }
 
@@ -1698,7 +1702,7 @@ impl Parser<'_> {
 
         Ok(Node::new(
             NodeKind::Expression(Expression::CallFunction { name, args, is_accessor: None }),
-            SourceRange::new(start, end, self.file)
+            SourceRange::new(start, end)
         ))
         
     }
@@ -1784,8 +1788,9 @@ impl Parser<'_> {
             let end = self.current_range().end();
             self.advance();
             
-            fields.push((name, SourceRange::new(start, end, self.file), expr));
+            fields.push((name, SourceRange::new(start, end), expr));
         }
+
         let fields = fields;
 
         self.expect(TokenKind::RightBracket)?;
@@ -1793,7 +1798,7 @@ impl Parser<'_> {
 
         Ok(Node::new(
             NodeKind::Expression(Expression::CreateStruct { data_type, fields }),
-            SourceRange::new(start, end, self.file),
+            SourceRange::new(start, end),
         ))
     }
 
@@ -1807,7 +1812,7 @@ impl Parser<'_> {
 
         self.expect(TokenKind::RightParenthesis)?;
 
-        let source = SourceRange::new(lhs.range().start(), self.current_range().end(), self.file);
+        let source = SourceRange::new(lhs.range().start(), self.current_range().end());
         Ok(Node::new(
             NodeKind::Expression(Expression::CastAny { lhs: Box::new(lhs), data_type: typ }),
             source,

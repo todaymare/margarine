@@ -1,13 +1,12 @@
-use std::{collections::linked_list, mem::size_of, sync::Mutex};
+use std::{mem::size_of, sync::Mutex};
 
-use common::{SymbolIndex, SymbolMap};
+use common::string_map::{StringIndex, StringMap};
 use ir::{State, Function, Reg, TypeId};
-use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use runtime::bytecode::Bytecode;
 
-pub fn codegen(symbol_map: &SymbolMap, state: &State) {
+pub fn codegen(symbol_map: &StringMap, state: &State) {
     let function_calls = Mutex::new(Vec::new());
-    let bodies = state.functions
+    let _bodies = state.functions
         .iter()
         .map(|x| codegen_function(x, symbol_map, &function_calls))
         .collect::<Vec<_>>();
@@ -18,7 +17,7 @@ pub fn codegen(symbol_map: &SymbolMap, state: &State) {
 }
 
 
-fn codegen_function(function: &Function, symbol_map: &SymbolMap, function_calls: &Mutex<Vec<(SymbolIndex, SymbolIndex, usize)>>) -> BytecodeVec {
+fn codegen_function(function: &Function, symbol_map: &StringMap, function_calls: &Mutex<Vec<(StringIndex, StringIndex, usize)>>) -> BytecodeVec {
     let mut bytes = BytecodeVec::with_capacity(128);
     let mut labels = Vec::with_capacity(function.blocks().len());
     let mut endings = Vec::with_capacity(function.blocks().len());

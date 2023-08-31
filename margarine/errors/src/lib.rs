@@ -1,24 +1,25 @@
-use std::{fmt::Write, collections::HashMap};
+use std::fmt::Write;
 
-use colored::{Color, Colorize};
-use common::{SymbolIndex, SourceRange, FileData, SymbolMap};
+use colourful::{Colour, ColourBrush};
+use common::{source::{SourceRange, FileData}, string_map::StringMap};
 
 
-const ORANGE: Color = Color::TrueColor {
-    r: 255,
-    g: 160,
-    b: 100,
-};
+const ORANGE: Colour = Colour::rgb(
+    255,
+    160,
+    100,
+);
 
 // Error Creation
 #[repr(usize)]
+#[derive(Clone, Copy)]
 pub enum ErrorCode {
     LInvalidCharacter  = 101,
     LUnterminatedStr   = 102,
     LCorruptUnicodeEsc = 103,
     LUnicodeNotBase16  = 104,
     LInvalidUnicodeChr = 105,
-    LInvalidNumForBase = 106,
+    LUnterminatedUni   = 106,
     LTooManyDots       = 107,
     LNumTooLarge       = 108,
 
@@ -69,6 +70,63 @@ pub enum ErrorCode {
 }
 
 
+impl ErrorCode {
+    pub fn msg(self) -> &'static str {
+        match self {
+            ErrorCode::LInvalidCharacter => "invalid character",
+            ErrorCode::LUnterminatedStr => "unterminated string",
+            ErrorCode::LCorruptUnicodeEsc => "corrupt unicode escape",
+            ErrorCode::LUnicodeNotBase16 => "unicode value is not base-16",
+            ErrorCode::LInvalidUnicodeChr => "invalid unicode character",
+            ErrorCode::LUnterminatedUni => "unterminated unicode escape",
+            ErrorCode::LTooManyDots => "too many dots",
+            ErrorCode::LNumTooLarge => "number too large",
+            ErrorCode::PUnexpectedToken => "unexpected token",
+            ErrorCode::SNameAlrDefined => "name is already defined",
+            ErrorCode::STypeDoesntExist => "type doesn't exist",
+            ErrorCode::SFieldDefEarlier => "field is defined earlier",
+            ErrorCode::SVariantDefEarlier => "variant is defined earlier",
+            ErrorCode::SArgDefEarlier => "argument is defined earlier",
+            ErrorCode::SVariableNotDef => "variable is not defined",
+            ErrorCode::SFuncReturnDiff => "function returns a different type than the body",
+            ErrorCode::SInvalidBinOp => "invalid binary operation",
+            ErrorCode::SUnexpectedType => "unexpected type",
+            ErrorCode::SIfExprNoElse => "if expression returns a type but has no else block",
+            ErrorCode::SMatchValNotEnum => "the value being matched is not an enum",
+            ErrorCode::SSymbolUnreachable => "symbol exists but it's unreachable",
+            ErrorCode::SSymbolIsntFunc => "symbol exists but it's not a function",
+            ErrorCode::SFuncArgcMismatch => "function expects a different number of arguments than given",
+            ErrorCode::SArgTypeMismatch => "function argument is of a different type than given",
+            ErrorCode::SArgDiffInOut => "function argument is of a different in-outness than given",
+            ErrorCode::SCantInitPrimitive => "can't initialise a primitive type with structure creation syntax",
+            ErrorCode::SSymbolIsntType => "symbol exists but it's not a type",
+            ErrorCode::SSymbolIsntStruct => "symbol exists but it's not a structure",
+            ErrorCode::SUnknownField => "unknown field",
+            ErrorCode::SMissingField => "missing field",
+            ErrorCode::SFieldTypeMismatch => "type field us if a dufferebt tyoe than given",
+            ErrorCode::SAccFieldOnPrim => "can't access fields on primitives as they have no fields",
+            ErrorCode::SFieldDoesntExist => "field doesn't exist",
+            ErrorCode::SNspaceUnreachable => "namespace exists but it's unreachable",
+            ErrorCode::SMatchUnkownVar => "unknown variant in match",
+            ErrorCode::SMatchVariantMiss => "missing variant in match",
+            ErrorCode::SMatchBranchDiffTy => "the match branch differs in the return type compared to others",
+            ErrorCode::SVarHintTypeDiff => "the type's hint differs from the given value",
+            ErrorCode::SInOutArgIsntMut => "in-out argument isn't mutable",
+            ErrorCode::SAssignValNotLHS => "can't assign on this expression",
+            ErrorCode::SAssignValNotMut => "can't assign to a value that is immutable",
+            ErrorCode::SAssignValDiffTy => "the given value differs from the expected type of the assignment target",
+            ErrorCode::SReturnOutsideFunc => "return outside of a function",
+            ErrorCode::SBreakOutsideLoop => "break outside of a loop",
+            ErrorCode::SContOutsideLoop => "continue outside of a loop",
+            ErrorCode::SCantUnwrapType => "this type can't be unwrapped",
+            ErrorCode::STryOpOptionRetVal => "the try-operator on an option type only works if the function's return type is an option too",
+            ErrorCode::STryOpResultRetVal => "the try-operator on a result type only works if the function's return type is a result with the same error type",
+            ErrorCode::SBlockOnlyAllowDec => "this block only allows declarations",
+        }
+    }
+}
+
+
 
 #[derive(Debug, PartialEq)]
 pub struct Error {
@@ -79,7 +137,7 @@ pub struct Error {
 impl Error {
     pub fn new(body: Vec<ErrorOption>) -> Self { Self { body } }
 
-    pub fn build(self, files: &HashMap<SymbolIndex, FileData>, symbol_map: &SymbolMap) -> String {
+    pub fn build(self, files: &[FileData], symbol_map: &StringMap) -> String {
         self.body.into_iter().map(|x| x.build(files, symbol_map)).collect()
     }
 }
@@ -116,9 +174,7 @@ pub enum ErrorOption {
     Highlight {
         range: SourceRange,
         note: Option<String>,
-        colour: Color,
-
-        file: SymbolIndex,
+        colour: Colour,
     }
 }
 
@@ -132,7 +188,7 @@ pub trait ErrorBuilder {
             parent: self,
             range,
             note: None,
-            colour: Color::BrightRed,
+            colour: Colour::rgb(255, 0, 0),
         }
     }
 
@@ -173,14 +229,11 @@ pub trait ErrorBuilder {
         
         Error::new(buffer)
     }
-
-
-    fn file(&self) -> SymbolIndex;
 }
 
 
 impl ErrorOption {
-    pub fn build(self, files: &HashMap<SymbolIndex, FileData>, symbol_map: &SymbolMap) -> String {
+    pub fn build(self, files: &[FileData], symbol_map: &StringMap) -> String {
         match self {
             ErrorOption::Text(text) => {
                 println!("{text}");
@@ -188,29 +241,29 @@ impl ErrorOption {
             },
 
 
-            ErrorOption::Highlight { range, note, colour, file } => {
+            ErrorOption::Highlight { range, note, colour } => {
+                println!("{note:?}");
                 let mut string = String::new();
 
-                println!("error {note:?} in {} {range:?}", symbol_map.get(file));
-                let file = files.get(&file).unwrap();
+                let file = range.file(files);
                 let source = file.read();
                 let file_name = file.name();
                 let file_name = symbol_map.get(file_name);
 
-                let start_line = line_at_index(source, range.start()).unwrap().1;
-                let end_line   = line_at_index(source, range.end()).unwrap().1;
+                let start_line = line_at_index(source, range.start() as usize).unwrap().1;
+                let end_line   = line_at_index(source, range.end() as usize).unwrap().1;
                 let line_size  = (end_line + 1).to_string().len();
 
                 
                 {
                     let _ = writeln!(string, 
                         "{}{} {}:{}:{}", " ".repeat(line_size), 
-                        "-->".color(ORANGE), 
+                        "-->".colour(ORANGE), 
                         file_name, start_line+1, 
-                        range.start() - start_of_line(source, start_line)
+                        range.start() as usize - start_of_line(source, start_line),
                     );
 
-                    let _ = write!(string, "{} {}", " ".repeat(line_size), "|".color(ORANGE));
+                    let _ = write!(string, "{} {}", " ".repeat(line_size), "|".colour(ORANGE));
                 }
 
 
@@ -220,11 +273,11 @@ impl ErrorOption {
                for (line_number, line) in source.lines().enumerate().take(end_line + 1).skip(start_line) {
                     let _ = writeln!(string);
 
-                    let _ = writeln!(string, "{:>w$} {} {}", (line_number + 1).to_string().color(ORANGE), "|".color(ORANGE), line, w = line_size);
+                    let _ = writeln!(string, "{:>w$} {} {}", (line_number + 1).colour(ORANGE), "|".colour(ORANGE), line, w = line_size);
 
                     let _ = write!(string, "{:>w$} {} ",
                         " ".repeat(line_number.to_string().len()),
-                        "|".color(ORANGE),
+                        "|".colour(ORANGE),
 
                         w = line_size,
                     );
@@ -236,7 +289,7 @@ impl ErrorOption {
                             " ".repeat({
                                 let mut count = 0;
                                 for (index, i) in line.chars().enumerate() {
-                                    if count >= range.start() - start_of_line {
+                                    if count >= range.start() as usize - start_of_line {
                                         count = index;
                                         break
                                     }
@@ -246,12 +299,12 @@ impl ErrorOption {
                             }),
                             "^".repeat({
                                 if end_line == line_number {
-                                    (range.end() - range.start()) + 1
+                                    (range.end() - range.start()) as usize + 1
                                 } else {
                                     dbg!(line, range, start_of_line, line_number);
-                                    line.len() - (range.start() - start_of_line) + 1
+                                    line.len() - (range.start() as usize - start_of_line) + 1
                                 }
-                            }).color(colour),
+                            }).colour(colour),
                         );
 
                         
@@ -259,14 +312,14 @@ impl ErrorOption {
                         let _ = write!(string, "{}",
                             "^".repeat({
                                 let start_of_end = start_of_line(source, end_line);
-                                range.end() - start_of_end + 1
-                            }).color(colour),
+                                range.end() as usize - start_of_end + 1
+                            }).colour(colour),
                         );
 
                        
                     } else {
                         let _ = write!(string, "{}",
-                            "^".repeat(line.len()).color(colour),
+                            "^".repeat(line.len()).colour(colour),
                         );
                     }
 
@@ -292,21 +345,15 @@ pub struct Highlight<T: ErrorBuilder> {
     
     range: SourceRange,
     note: Option<String>,
-    colour: Color,
+    colour: Colour,
 }
 
 
 impl<T: ErrorBuilder> ErrorBuilder for Highlight<T> {
     fn flatten(self, vec: &mut Vec<ErrorOption>) {
-        let file = self.file();
         self.parent.flatten(vec);
 
-        vec.push(ErrorOption::Highlight { range: self.range, note: self.note, colour: self.colour, file })
-    }
-
-
-    fn file(&self) -> SymbolIndex {
-        self.parent.file()
+        vec.push(ErrorOption::Highlight { range: self.range, note: self.note, colour: self.colour })
     }
 }
 
@@ -317,7 +364,7 @@ impl<T: ErrorBuilder> Highlight<T> {
         self
     }
 
-    pub fn colour(mut self, colour: Color) -> Self {
+    pub fn colour(mut self, colour: Colour) -> Self {
         self.colour = colour;
         self
     }
@@ -337,25 +384,20 @@ impl<T: ErrorBuilder> ErrorBuilder for Text<T> {
 
         vec.push(ErrorOption::Text(self.text))
     }
+}
 
 
-    fn file(&self) -> SymbolIndex {
-        self.parent.file()
+pub struct CompilerError(ErrorCode);
+
+
+impl CompilerError {
+    pub fn new(id: ErrorCode) -> CompilerError {
+        CompilerError(id)
     }
 }
 
 
-pub struct CompilerError<'a>(ErrorCode, &'a str, SymbolIndex);
-
-
-impl CompilerError<'_> {
-    pub fn new(file: SymbolIndex, id: ErrorCode, text: &str) -> CompilerError {
-        CompilerError(id, text, file)
-    }
-}
-
-
-impl ErrorBuilder for CompilerError<'_> {
+impl ErrorBuilder for CompilerError {
     fn flatten(self, vec: &mut Vec<ErrorOption>) {
         let mut string = String::new();
 
@@ -363,14 +405,9 @@ impl ErrorBuilder for CompilerError<'_> {
 
         string = string.red().bold().to_string();
                 
-        let _ = writeln!(string, " {}", self.1.white().bold());
+        let _ = writeln!(string, " {}", self.0.msg().white().bold());
         
         vec.push(ErrorOption::Text(string))
-    }
-
-    
-    fn file(&self) -> SymbolIndex {
-        self.2
     }
 }
 

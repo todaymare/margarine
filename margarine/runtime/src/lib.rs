@@ -3,8 +3,7 @@ pub mod runtime;
 pub mod ecs;
 
 use std::{mem::{size_of, ManuallyDrop}, fmt::Debug, collections::HashMap, rc::Rc, ptr::null};
-
-use common::FuckMap;
+use common::fuck_map::FuckMap;
 
 // static_assert_eq!(size_of::<DataUnion>(), 8);
 // static_assert_eq!(size_of::<Data>(), 16);

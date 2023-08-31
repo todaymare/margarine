@@ -1,4 +1,4 @@
-use common::{SourceRange, SymbolIndex};
+use common::{string_map::StringIndex, source::SourceRange};
 use lexer::Literal;
 use thin_vec::ThinVec;
 
@@ -8,7 +8,7 @@ use crate::{DataType, DataTypeKind, Block};
 pub struct Node {
     kind: NodeKind,
     pub(crate) source_range: SourceRange,
-    tags: ThinVec<SymbolIndex>,
+    tags: ThinVec<StringIndex>,
     pub data_kind: DataTypeKind,
 }
 
@@ -24,7 +24,7 @@ impl Node {
 
 
     #[inline(always)]
-    pub fn add_tag(&mut self, tag: SymbolIndex) {
+    pub fn add_tag(&mut self, tag: StringIndex) {
         self.tags.push(tag)
     }
 
@@ -60,19 +60,19 @@ pub enum NodeKind {
 pub enum Declaration {
     Struct {
         kind: StructKind,
-        name: SymbolIndex,
-        fields: Vec<(SymbolIndex, DataType, SourceRange)>,
+        name: StringIndex,
+        fields: Vec<(StringIndex, DataType, SourceRange)>,
     },
 
     Enum {
-        name: SymbolIndex,
+        name: StringIndex,
         mappings: Vec<EnumMapping>,
     },
 
     Function {
         is_system: bool,
         is_anonymous: bool,
-        name: SymbolIndex,
+        name: StringIndex,
         arguments: Vec<FunctionArgument>,
         return_type: DataType,
         body: Block,
@@ -84,16 +84,16 @@ pub enum Declaration {
     },
 
     Using {
-        file: SymbolIndex,
+        file: StringIndex,
     },
 
     Module {
-        name: SymbolIndex,
+        name: StringIndex,
         body: Block,
     },
 
     Extern {
-        file: SymbolIndex,
+        file: StringIndex,
         functions: Vec<ExternFunction>,
     }
 }
@@ -102,7 +102,7 @@ pub enum Declaration {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Variable {
-        name: SymbolIndex,
+        name: StringIndex,
         hint: Option<DataType>,
         is_mut: bool,
         rhs: Box<Node>,
@@ -122,7 +122,7 @@ pub enum Expression {
     
     Literal(Literal),
 
-    Identifier(SymbolIndex),
+    Identifier(StringIndex),
 
     BinaryOp {
         operator: BinaryOperator,
@@ -152,23 +152,23 @@ pub enum Expression {
 
     CreateStruct {
         data_type: DataType,
-        fields: Vec<(SymbolIndex, SourceRange, Node)>,
+        fields: Vec<(StringIndex, SourceRange, Node)>,
     },
 
     AccessField {
         val: Box<Node>,
-        field: SymbolIndex,
+        field: StringIndex,
         field_meta: (u16, bool),
     },
 
     CallFunction {
-        name: SymbolIndex,
+        name: StringIndex,
         is_accessor: Option<Box<Node>>,
         args: Vec<(Node, bool)>,
     },
 
     WithinNamespace {
-        namespace: SymbolIndex,
+        namespace: StringIndex,
         namespace_source: SourceRange,
         action: Box<Node>,
     },
@@ -207,23 +207,23 @@ pub enum StructKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFunction {
-    name: SymbolIndex,
-    path: SymbolIndex,
+    name: StringIndex,
+    path: StringIndex,
     args: Vec<FunctionArgument>,
     return_type: DataType,
     source_range: SourceRange,
 }
 
 impl ExternFunction {
-    pub(crate) fn new(name: SymbolIndex, path: SymbolIndex, args: Vec<FunctionArgument>, return_type: DataType, source_range: SourceRange) -> Self { 
+    pub(crate) fn new(name: StringIndex, path: StringIndex, args: Vec<FunctionArgument>, return_type: DataType, source_range: SourceRange) -> Self { 
         Self { name, args, return_type, source_range, path } 
     }
 
 
     #[inline(always)]
-    pub fn name(&self) -> SymbolIndex { self.name }
+    pub fn name(&self) -> StringIndex { self.name }
     #[inline(always)]
-    pub fn path(&self) -> SymbolIndex { self.name }
+    pub fn path(&self) -> StringIndex { self.name }
     #[inline(always)]
     pub fn args(&self) -> &[FunctionArgument] { &self.args }
     #[inline(always)]
@@ -240,7 +240,7 @@ impl ExternFunction {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionArgument {
-    name: SymbolIndex,
+    name: StringIndex,
     data_type: DataType,
     is_inout: bool,
     source_range: SourceRange,
@@ -248,7 +248,7 @@ pub struct FunctionArgument {
 
 
 impl FunctionArgument {
-    pub fn new(name: SymbolIndex, data_type: DataType, is_inout: bool, source_range: SourceRange) -> Self { 
+    pub fn new(name: StringIndex, data_type: DataType, is_inout: bool, source_range: SourceRange) -> Self { 
         Self { name, data_type, is_inout, source_range } 
     }
 
@@ -258,7 +258,7 @@ impl FunctionArgument {
     #[inline(always)]
     pub fn data_type_mut(&mut self) -> &mut DataType { &mut self.data_type }
     #[inline(always)]
-    pub fn name(&self) -> SymbolIndex { self.name }
+    pub fn name(&self) -> StringIndex { self.name }
     #[inline(always)]
     pub fn is_inout(&self) -> bool { self.is_inout }
     #[inline(always)]
@@ -268,15 +268,15 @@ impl FunctionArgument {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct MatchMapping {
-    variant: SymbolIndex,
-    binding: SymbolIndex,
+    variant: StringIndex,
+    binding: StringIndex,
     source_range: SourceRange,
     expression: Node,
 }
 
 
 impl MatchMapping {
-    pub fn new(variant: SymbolIndex, binding: SymbolIndex, source_range: SourceRange, expression: Node) -> Self { 
+    pub fn new(variant: StringIndex, binding: StringIndex, source_range: SourceRange, expression: Node) -> Self { 
         Self { 
             variant, 
             binding, 
@@ -287,9 +287,9 @@ impl MatchMapping {
 
     
     #[inline(always)]
-    pub fn name(&self) -> SymbolIndex { self.variant }
+    pub fn name(&self) -> StringIndex { self.variant }
     #[inline(always)]
-    pub fn binding(&self) -> SymbolIndex { self.binding }
+    pub fn binding(&self) -> StringIndex { self.binding }
     #[inline(always)]
     pub fn node(&self) -> &Node { &self.expression }
     #[inline(always)]
@@ -302,7 +302,7 @@ impl MatchMapping {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumMapping {
-    name: SymbolIndex,
+    name: StringIndex,
     number: u16,
     data_type: DataType,
     source_range: SourceRange,
@@ -310,7 +310,7 @@ pub struct EnumMapping {
 }
 
 impl EnumMapping {
-    pub fn new(name: SymbolIndex, number: u16, data_type: DataType, source_range: SourceRange, is_implicit_unit: bool) -> Self { 
+    pub fn new(name: StringIndex, number: u16, data_type: DataType, source_range: SourceRange, is_implicit_unit: bool) -> Self { 
         if is_implicit_unit {
             assert!(data_type.kind().is(&crate::DataTypeKind::Unit));
         }
@@ -320,7 +320,7 @@ impl EnumMapping {
 
     
     #[inline(always)]
-    pub fn name(&self) -> SymbolIndex { self.name }
+    pub fn name(&self) -> StringIndex { self.name }
     #[inline(always)]
     pub fn data_type(&self) -> &DataType { &self.data_type }
     #[inline(always)]

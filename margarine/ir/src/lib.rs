@@ -3,7 +3,7 @@ use std::fmt::{Write, Display};
 #[allow(dead_code)]
 use std::{collections::{HashMap, BTreeMap}, sync::RwLock};
 
-use common::{SymbolIndex, SymbolMap, FuckMap};
+use common::{string_map::{StringIndex, StringMap}, fuck_map::FuckMap};
 use lexer::Literal;
 use parser::{nodes::{Node, Statement, Expression, BinaryOperator, UnaryOperator, NodeKind, FunctionArgument}, DataTypeKind};
 use semantic_analysis::{Infer, Symbol, is_l_val};
@@ -85,7 +85,7 @@ pub fn convert(ctx: Infer) -> State {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum IR {
-    DebugName { dst: Reg, name: SymbolIndex },
+    DebugName { dst: Reg, name: StringIndex },
 
     
     Unit { dst: Reg },
@@ -100,8 +100,8 @@ pub enum IR {
     AccEnumVariant { dst: Reg, src: Reg, variant: u16 },
     SetEnumVariant { dst: Reg, src: Reg, variant: u16 },
 
-    Call { dst: Reg, function: SymbolIndex, args: Vec<(Reg, Reg)> },    
-    ExternCall { dst: Reg, function: SymbolIndex, args: Vec<(Reg, Reg)> },    
+    Call { dst: Reg, function: StringIndex, args: Vec<(Reg, Reg)> },    
+    ExternCall { dst: Reg, function: StringIndex, args: Vec<(Reg, Reg)> },    
 
     Unwrap { src: Reg },
     OrReturn { src: Reg },
@@ -208,13 +208,13 @@ pub struct Block {
 
 #[derive(Debug)]
 pub struct Function {
-    name: SymbolIndex,
+    name: StringIndex,
     blocks: Vec<Block>,
 
     reg_count: usize,
-    named_regs: Vec<(SymbolIndex, Reg)>,
+    named_regs: Vec<(StringIndex, Reg)>,
 
-    pub args: Vec<(SymbolIndex, bool, TypeId)>,
+    pub args: Vec<(StringIndex, bool, TypeId)>,
     pub return_type: TypeId,
     pub is_system: bool,
 
@@ -230,7 +230,7 @@ pub struct State {
     loop_break_point: Option<(Label, Reg)>,
     loop_cont_point: Option<Label>,
     pub functions: Vec<Function>,
-    pub extern_functions: FuckMap<SymbolIndex, (SymbolIndex, SymbolIndex)>,
+    pub extern_functions: FuckMap<StringIndex, (StringIndex, StringIndex)>,
 }
 
 
@@ -257,7 +257,7 @@ impl Block {
 
 
 impl Function {
-    pub fn from_body(constants: &mut State, name: SymbolIndex, args: &[FunctionArgument], body: &[Node], return_type: TypeId, is_system: bool) -> Self {
+    pub fn from_body(constants: &mut State, name: StringIndex, args: &[FunctionArgument], body: &[Node], return_type: TypeId, is_system: bool) -> Self {
         let mut function = Function {
             name,
             blocks: vec![],
@@ -291,7 +291,7 @@ impl Function {
     #[inline(always)]
     pub fn blocks(&self) -> &[Block] { &self.blocks }
     #[inline(always)]
-    pub fn name(&self) -> SymbolIndex { self.name }
+    pub fn name(&self) -> StringIndex { self.name }
     
 
     fn convert_block(&mut self, state: &mut State, block: &mut Block, body: &[Node]) -> Reg {
@@ -660,7 +660,7 @@ impl Function {
     }
 
 
-    fn find_named_reg(&self, name: SymbolIndex) -> Reg {
+    fn find_named_reg(&self, name: StringIndex) -> Reg {
         self.named_regs.iter().rev().find(|x| x.0 == name).unwrap().1
     }
 
@@ -717,7 +717,7 @@ impl Function {
 
 
 impl Function {
-    pub fn pretty_print(&self, f: &mut impl Write, symbol_map: &SymbolMap) {
+    pub fn pretty_print(&self, f: &mut impl Write, symbol_map: &StringMap) {
         let _ = write!(f, "fn {} (", symbol_map.get(self.name));
 
         for i in 0..self.args.len() {
@@ -740,7 +740,7 @@ impl Function {
 
 
 impl Block {
-    pub fn pretty_print(&self, f: &mut impl Write, symbol_map: &SymbolMap, indent: bool) {
+    pub fn pretty_print(&self, f: &mut impl Write, symbol_map: &StringMap, indent: bool) {
         const SPACING : &str = "    ";
         if indent {
             let _ = write!(f, "{SPACING}");

@@ -1,7 +1,8 @@
-use std::{str::Chars, ops::{Deref, DerefMut}};
+use std::ops::{Deref, DerefMut};
 
-use errors::{CompilerError, ErrorBuilder, Error, CombineIntoError, ErrorCode};
-use common::{SymbolMap, SymbolIndex, SourceRange, FileData, HashableF64};
+use errors::{Error, CompilerError, ErrorCode, ErrorBuilder, CombineIntoError};
+use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData}, hashables::HashableF64};
+use sti::reader::Reader;
 
 mod tests;
 
@@ -12,7 +13,6 @@ mod tests;
 #[derive(Debug)]
 pub struct TokenList {
     vec: Vec<Token>,
-    file: SymbolIndex,
 }
 
 
@@ -22,14 +22,9 @@ impl TokenList {
     pub fn new(vec: Vec<Token>) -> Self {
         assert!(!vec.is_empty());
         Self {
-            file: vec[0].range().file(),
             vec,
         }
     }
-
-
-    #[inline(always)]
-    pub fn file(&self) -> SymbolIndex { self.file }
 }
 
 
@@ -128,7 +123,7 @@ pub enum TokenKind {
 
     Literal(Literal),
     Keyword(Keyword),
-    Identifier(SymbolIndex),
+    Identifier(StringIndex),
 
     /// '<='
     LesserEquals,
@@ -151,6 +146,8 @@ pub enum TokenKind {
     MulEquals,
     /// '/='
     DivEquals,
+    /// '%='
+    RemEquals,
 
     /// '<<'
     BitshiftLeft,
@@ -172,7 +169,7 @@ pub enum TokenKind {
 pub enum Literal {
     Integer(i64),
     Float(HashableF64),
-    String(SymbolIndex),
+    String(StringIndex),
     Bool(bool),
 }
 
@@ -202,315 +199,318 @@ pub enum Keyword {
 }
 
 
-#[derive(Debug)]
-struct Lexer<'a> {
-    characters: Chars<'a>,
-    byte_offset: usize,
-
-    current: Option<char>,
-    stale: bool,
-
-    string_storage: String,
-    symbol_table: &'a mut SymbolMap,
-    file: SymbolIndex,
-}
-
-
-///
-/// Lexer
-///
-/// # Panics: 
-///   If `data` includes any `\t` or `\r` characters this function will panic  
-///   `\t` should be converted to spaces while any mention of `\r` should be
-///   stripped out
-///
-/// # Arguments:
-///   - `data`: The file source code
-///   - `file`:
-///     - The file name (without extension) the errors will be created with
-///     - This can be obtained by using the `SymbolTable::add` method
-///   - `symbol_table`:
-///     - **MUTABILITY**: Appends newly encountered strings and identifier
-///     - Check the `SymbolTable` docs to see how to create it
-///
-/// # Return Value:
-///   - The return value either returns a vector with the tokens or
-///     the lexing errors that occurred while lexing.
-///
 pub fn lex(
     file: &FileData,
-    symbol_table: &mut SymbolMap
+    string_map: &mut StringMap
 ) -> Result<TokenList, Error> {
-    
     let mut lexer = Lexer {
-        characters: file.read().chars(),
-        byte_offset: 0,
-        current: None,
-        stale: false,
-        string_storage: String::with_capacity(128),
-        symbol_table,
-        file: file.name(),
+        reader: Reader::new(file.read().as_bytes()),
+        string_map,
     };
 
-    let mut tokens = vec![];
-    let mut errors = vec![];
+    let mut tokens = Vec::new();
+    let mut errors = Vec::new();
 
-    while let Some(value) = lexer.advance() {
-        let start = lexer.byte_offset;
-
-        let token_kind = match value {
-            '0'..='9' => {
-                let parsed_number = lexer.number();
-                lexer.stale = true;
-                match parsed_number {
-                    Ok(value) => TokenKind::Literal(value),
-                    Err(error) => {
-                        errors.push(error);
-                        continue;
-
-                    },
-                }
-            }
-
-
-            '\n' | ' ' => continue,
-
-            '"' => match lexer.string() {
-                Ok(value) => TokenKind::Literal(value),
-                Err(mut error) => {
-                    errors.append(&mut error);
-                    continue;
-                }
-            },
-
-            '/' if lexer.peek_is('/') => {
-                while let Some(value) = lexer.current_character() {
-                    if value == '\n' {
-                        break;
-                    }
-                    lexer.advance();
-                }
+    loop {
+        let token = lexer.next_token();
+        let token = match token {
+            Ok(t) => t,
+            Err(e) => {
+                errors.push(e);
                 continue;
-                
-            }
-            '/' if lexer.peek_is('=') => TokenKind::DivEquals,
-            '/' => TokenKind::Slash,
-
-            'a'..='z' | 'A'..='Z' => lexer.identifier(),
-
-            '(' => TokenKind::LeftParenthesis,
-            ')' => TokenKind::RightParenthesis,
-            '<' if lexer.peek_is('=') => TokenKind::LesserEquals,
-            '<' if lexer.peek_is('<') => TokenKind::BitshiftLeft,
-            '<' => TokenKind::LeftAngle,
-            '>' if lexer.peek_is('=') => TokenKind::GreaterEquals,
-            '>' if lexer.peek_is('>') => TokenKind::BitshiftRight,
-            '>' => TokenKind::RightAngle,
-            '&' if lexer.peek_is('&') => TokenKind::LogicalAnd,
-            '&' => TokenKind::Ampersand,
-            '|' if lexer.peek_is('|') => TokenKind::LogicalOr,
-            '|' => TokenKind::Ampersand,
-            '{' => TokenKind::LeftBracket,
-            '}' => TokenKind::RightBracket,
-            '[' => TokenKind::LeftSquare,
-            ']' => TokenKind::RightSquare,
-            '%' => TokenKind::Percent,
-            '+' if lexer.peek_is('=') => TokenKind::AddEquals,
-            '+' => TokenKind::Plus,
-            '-' if lexer.peek_is('=') => TokenKind::SubEquals,
-            '-' => TokenKind::Minus,
-            '*' if lexer.peek_is('=') => TokenKind::MulEquals,
-            '*' => TokenKind::Star,
-            '^' => TokenKind::BitwiseXor,
-            ',' => TokenKind::Comma,
-            '.' => TokenKind::Dot,
-            '@' => TokenKind::At,
-            '?' => TokenKind::QuestionMark,
-            ':' if lexer.peek_is(':') => TokenKind::DoubleColon,
-            ':' => TokenKind::Colon,
-            '=' if lexer.peek_is('=') => TokenKind::EqualsTo,
-            '=' if lexer.peek_is('>') => TokenKind::Arrow,
-            '=' => TokenKind::Equals,
-            '!' if lexer.peek_is('=') => TokenKind::NotEqualsTo,
-            '!' => TokenKind::Bang,
-            '~' => TokenKind::SquigglyDash,
-
-            
-            '_' => {
-                if let Some('a'..='z' | 'A'..='Z' | '_' | '0'..='9') = lexer.peek() {
-                    lexer.identifier()
-                } else {
-                    TokenKind::Underscore
-                }
             },
-
-            #[cfg(not(tarpaulin_include))]
-            '\t' => panic!("compiler error! tab character wasn't converted"),
-            #[cfg(not(tarpaulin_include))]
-            '\r' => panic!("compiler error! carriage return character wasn't converted"),
-            
-            
-            _ => {
-                errors.push(CompilerError::new(lexer.file, ErrorCode::LInvalidCharacter, "invalid character")
-                    .highlight(SourceRange::new(start, start, lexer.file))
-                        .note(format!("{value:?}"))
-                    .build());
-                continue;
-            }
         };
 
-        let end = lexer.byte_offset - lexer.stale as usize;
-
-        let token = Token {
-            token_kind,
-            source_range: SourceRange::new(start, end, lexer.file),
-        };
-
+        let is_eof = token.token_kind == TokenKind::EndOfFile;
         tokens.push(token);
+
+        if is_eof {
+            break;
+        }
     }
 
-    let end = lexer.byte_offset.saturating_sub(1);
 
-    tokens.push(Token {
-        token_kind: TokenKind::EndOfFile,
-        source_range: SourceRange::new(end, end, lexer.file),
-    });
+    if !errors.is_empty() {
+        return Err(errors.combine_into_error())
+    }
 
-    if errors.is_empty() {
-        Ok(TokenList::new(tokens))
-    } else {
-        Err(errors.combine_into_error())
+    Ok(TokenList::new(tokens))
+
+}
+
+
+#[derive(Debug)]
+struct Lexer<'a> {
+    reader: Reader<'a, u8>,
+    string_map: &'a mut StringMap,
+}
+
+
+impl Lexer<'_> {
+    fn skip_whitespace(&mut self) {
+        self.reader.consume_while(|x| x.is_ascii_whitespace());
     }
 }
 
 
-// utility methods
 impl Lexer<'_> {
-    pub(crate) fn advance(&mut self) -> Option<char> {
-        if self.stale {
-            self.stale = false;
-            return self.current;
-        }
-        
-        if let Some(v) = self.current {
-            self.byte_offset += v.len_utf8();
-        }
-        
-        self.current = self.characters.next();
-        self.current
-    }
-
-
-    fn current_character(&self) -> Option<char> {
-        self.current
-    }
-
-
-    fn peek_is(&mut self, chr: char) -> bool {
-        if self.peek() == Some(chr) {
-            self.advance();
-            true
-        } else { false }
-    }
-    
-
-    pub(crate) fn peek(&mut self) -> Option<char> {
-        self.characters.clone().next()
-    }
-
-
-    /// # Safety:
-    ///   - It is the responsibility of the caller to
-    ///     properly call `Lexer::return_string_storage`
-    ///     on all code-paths and not use this multiple
-    ///     times without returning.
-    fn borrow_string_storage(&mut self) -> String {
-        self.string_storage.clear();
-        std::mem::take(&mut self.string_storage)
-    }
-
-
-    fn return_string_storage(&mut self, string: String) {
-        self.string_storage = string;
-    }
-
-}
-
-impl Lexer<'_> {
-    fn identifier(&mut self) -> TokenKind {
-        let start = self.byte_offset;
-        let mut len = 0;
-
-        while let Some('a'..='z' | 'A'..='Z' | '_' | '0'..='9') = self.advance() {
-            len += 1;
+    fn next_token(&mut self) -> Result<Token, Error> {
+        if self.reader.starts_with(b"//") {
+            self.reader.consume_while(|x| *x != b'\n');
         }
 
-        let string = unsafe { core::str::from_utf8_unchecked(self.characters) };
-        self.stale = true;
+        self.skip_whitespace();
 
-        let token = match string.as_str() {
-            "true" => TokenKind::Literal(Literal::Bool(true)),
-            "false" => TokenKind::Literal(Literal::Bool(false)),
 
-            "system" => TokenKind::Keyword(Keyword::System),
-            "fn" => TokenKind::Keyword(Keyword::Fn),
-            "struct" => TokenKind::Keyword(Keyword::Struct),
-            "component" => TokenKind::Keyword(Keyword::Component),
-            "resource" => TokenKind::Keyword(Keyword::Resource),
-            "impl" => TokenKind::Keyword(Keyword::Impl),
-            "using" => TokenKind::Keyword(Keyword::Using),
-            "extern" => TokenKind::Keyword(Keyword::Extern),
-            "mut" => TokenKind::Keyword(Keyword::Mut),
-            "mod" => TokenKind::Keyword(Keyword::Mod),
-            "enum" => TokenKind::Keyword(Keyword::Enum),
-            "match" => TokenKind::Keyword(Keyword::Match),
-            "let" => TokenKind::Keyword(Keyword::Let),
-            "if" => TokenKind::Keyword(Keyword::If),
-            "else" => TokenKind::Keyword(Keyword::Else),
-            "loop" => TokenKind::Keyword(Keyword::Loop),
-            "while" => TokenKind::Keyword(Keyword::While),
-            "return" => TokenKind::Keyword(Keyword::Return),
-            "break" => TokenKind::Keyword(Keyword::Break),
-            "continue" => TokenKind::Keyword(Keyword::Continue),
+        let start = self.reader.offset() as u32;
+        let Some(val) = self.reader.next() else { return Ok(self.eof()) };
 
-            _ => {
-                let index = self.symbol_table.insert(&string);
-                
-                TokenKind::Identifier(index)
-            },
+        let kind = match val {
+            b'(' => TokenKind::LeftParenthesis,
+            b')' => TokenKind::RightParenthesis,
+
+            b'{' => TokenKind::LeftBracket,
+            b'}' => TokenKind::RightBracket,
+
+            b'[' => TokenKind::LeftSquare,
+            b']' => TokenKind::RightSquare,
+
+
+            b',' => TokenKind::Comma,
+            b'.' => TokenKind::Dot,
+            b'@' => TokenKind::At,
+            b'?' => TokenKind::QuestionMark,
+            b'~' => TokenKind::SquigglyDash,
+            b'^' => TokenKind::BitwiseXor,
+
+
+            b'&' => {
+                if self.reader.consume_if_eq(&b'&') { TokenKind::LogicalAnd }
+                else { TokenKind::Ampersand }
+            }
+
+            b'|' => {
+                if self.reader.consume_if_eq(&b'|') { TokenKind::LogicalOr }
+                else { TokenKind::BitwiseOr }
+            }
+            
+            b'<' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::LesserEquals }
+                else if self.reader.consume_if_eq(&b'<') { TokenKind::BitshiftLeft }
+                else { TokenKind::LeftAngle }
+            }
+
+            b'>' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::GreaterEquals }
+                else if self.reader.consume_if_eq(&b'>') { TokenKind::BitshiftRight }
+                else { TokenKind::RightAngle }
+            }
+
+            b'%' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::RemEquals }
+                else { TokenKind::Percent }
+            }
+
+            b'/' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::DivEquals }
+                else { TokenKind::Slash }
+            }
+
+            b'+' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::AddEquals }
+                else { TokenKind::Plus }
+            }
+
+            b'-' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::SubEquals }
+                else { TokenKind::Minus }
+            }
+
+            b'*' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::MulEquals }
+                else { TokenKind::Star }
+            }
+
+            b'!' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::NotEqualsTo }
+                else { TokenKind::Bang }
+            }
+
+            b'=' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::EqualsTo }
+                else if self.reader.consume_if_eq(&b'>') { TokenKind::Arrow }
+                else { TokenKind::Equals }
+            }
+
+            b':' => {
+                if self.reader.consume_if_eq(&b':') { TokenKind::DoubleColon }
+                else { TokenKind::Colon }
+            }
+
+
+            b'"' => self.string(start as usize)?,
+
+            _ if val.is_ascii_alphabetic() || val == b'_' => self.identifier(start as usize),
+
+
+            _ if val.is_ascii_digit() => self.number(start as usize)?,
+            
+
+            _ => return Err(CompilerError::new(ErrorCode::LInvalidCharacter)
+                .highlight(SourceRange::new(start, start))
+                    .note(format!("'{}'", char::from_u32(val as u32).unwrap()))
+                .build()
+            )
         };
 
-        self.return_string_storage(string);
+        let end = self.reader.offset() as u32 - 1;
+        let source_range = SourceRange::new(start, end);
 
-        token
+        Ok(Token {
+            token_kind: kind,
+            source_range,
+        })
     }
 
-    
-    fn string(&mut self) -> Result<Literal, Vec<Error>> {
-        let mut string = String::new();
-        let start = self.byte_offset;
+
+    fn eof(&self) -> Token {
+        Token { 
+            token_kind: 
+            TokenKind::EndOfFile, 
+            source_range: SourceRange::new(
+                self.reader.offset() as u32,
+                self.reader.offset() as u32,
+            ) 
+        }
+    }
+
+
+    fn identifier(&mut self, begin: usize) -> TokenKind {
+        let (value, _)= self.reader.consume_while_slice_from(begin, |x| {
+            x.is_ascii_alphanumeric() || *x == b'_'
+        });
+        
+        let value = unsafe { core::str::from_utf8_unchecked(value) };
+
+        match value {
+            "_"         => TokenKind::Underscore,
+            "system"    => TokenKind::Keyword(Keyword::System),
+            "fn"        => TokenKind::Keyword(Keyword::Fn),
+            "struct"    => TokenKind::Keyword(Keyword::Struct),
+            "component" => TokenKind::Keyword(Keyword::Component),
+            "resource"  => TokenKind::Keyword(Keyword::Resource),
+            "impl"      => TokenKind::Keyword(Keyword::Impl),
+            "extern"    => TokenKind::Keyword(Keyword::Extern),
+            "using"     => TokenKind::Keyword(Keyword::Using),
+            "mut"       => TokenKind::Keyword(Keyword::Mut),
+            "mod"       => TokenKind::Keyword(Keyword::Mod),
+            "enum"      => TokenKind::Keyword(Keyword::Enum),
+            "match"     => TokenKind::Keyword(Keyword::Match),
+            "if"        => TokenKind::Keyword(Keyword::If),
+            "else"      => TokenKind::Keyword(Keyword::Else),
+            "let"       => TokenKind::Keyword(Keyword::Let),
+            "loop"      => TokenKind::Keyword(Keyword::Loop),
+            "while"     => TokenKind::Keyword(Keyword::While),
+            "return"    => TokenKind::Keyword(Keyword::Return),
+            "break"     => TokenKind::Keyword(Keyword::Break),
+            "continue"  => TokenKind::Keyword(Keyword::Continue),
+
+            _ => {
+                let index = self.string_map.insert(value);
+                TokenKind::Identifier(index)
+            }
+        }
+    }
+
+
+    fn number(&mut self, begin: usize) -> Result<TokenKind, Error> {
+        let mut dot_count = 0;
+        let (value, _) = self.reader.consume_while_slice_from(begin, |x| {
+            if *x == b'.' {
+                dot_count += 1;
+                return true
+            }
+
+            x.is_ascii_digit()
+        });
+        
+        let value = unsafe { core::str::from_utf8_unchecked(value) };
+
+        let source = SourceRange::new(begin as u32, self.reader.offset() as u32);
+
+        let kind = match dot_count {
+            0 => {
+                match value.parse() {
+                    Ok(e) => Literal::Integer(e),
+                    Err(_) => return Err(CompilerError::new(ErrorCode::LNumTooLarge)
+                        .highlight(source)
+                        .build()),
+                }
+            },
+            1 => {
+                match value.parse() {
+                    Ok(e) => Literal::Float(HashableF64(e)),
+                    Err(_) => return Err(CompilerError::new(ErrorCode::LNumTooLarge)
+                        .highlight(source)
+                        .build()),
+                }
+            },
+            _ =>  return Err(CompilerError::new(ErrorCode::LTooManyDots)
+                .highlight(source)
+                .build()
+            )
+        };
+
+
+        Ok(TokenKind::Literal(kind))
+    }
+
+
+    fn string(&mut self, start: usize) -> Result<TokenKind, Error> {
+        let str = {
+            let mut is_escaped = false;
+            let (value, _) = self.reader.consume_while_slice(|at| {
+                let done = !is_escaped && *at == b'"';
+                is_escaped = *at == b'\\' as u8 && !is_escaped;
+                return !done;
+            });
+
+            if self.reader.next() != Some(b'"') {
+                return Err(CompilerError::new(ErrorCode::LUnterminatedStr)
+                    .highlight(SourceRange::new(start as u32, self.reader.offset() as u32))
+                        .note("consider adding a quotation mark here".to_string())
+
+                    .build()
+                );
+            }
+            
+            value
+        };
+        let mut iter = str.iter();
+
+        let mut string = String::with_capacity(str.len());
 
         let mut errors = vec![];
 
         let mut is_in_escape = false;
-        while let Some(value) = self.advance() {
+        while let Some(value) = iter.next() {
             if is_in_escape {
                 match value {
-                    'n' => string.push('\n'),
-                    'r' => string.push('\r'),
-                    't' => string.push('\t'),
-                    '\\' => string.push('\\'),
-                    '0' => string.push('\0'),
-                    '"' => string.push('"'),
+                    b'n' => string.push('\n'),
+                    b'r' => string.push('\r'),
+                    b't' => string.push('\t'),
+                    b'\\' => string.push('\\'),
+                    b'0' => string.push('\0'),
+                    b'"' => string.push('"'),
 
-                    'u' => match self.unicode_escape_character() {
+                    b'u' => match self.unicode_escape_character() {
                         Ok(val) => string.push(val),
                         Err(err) => {
                             errors.push(err);
                         },
                     },
 
-                    _ => string.push(value),
+                    _ => string.push(*value as char),
                 }
 
                 is_in_escape = false;
@@ -519,234 +519,62 @@ impl Lexer<'_> {
             }
 
             match value {
-                '\\' => is_in_escape = true,
-                '"' => break,
-                _ => string.push(value),
+                b'\\' => is_in_escape = true,
+                b'"' => break,
+                _ => string.push(*value as char),
             }
         }
 
-        if self.current_character() != Some('"') {
-            errors.push(CompilerError::new(self.file, ErrorCode::LUnterminatedStr, "unterminated string")
-                .highlight(SourceRange::new(start, self.byte_offset, self.file))
-                    .note("consider adding a quotation mark here".to_string())
-
-                .build()
-            );
-        }
-
         if errors.is_empty() {
-            let index = self.symbol_table.insert(string.as_str());
-            return Ok(Literal::String(index));
+            let index = self.string_map.insert(&string);
+            return Ok(TokenKind::Literal(Literal::String(index)));
         }
 
-        Err(errors)
+        Err(errors.combine_into_error())
     }
 
 
     fn unicode_escape_character(&mut self) -> Result<char, Error> {
-        if self.advance() != Some('{') {
-            self.stale = true;
-            return Err(CompilerError::new(self.file, ErrorCode::LCorruptUnicodeEsc, "corrupt unicode escape")
-                .highlight(SourceRange::new(self.byte_offset, self.byte_offset, self.file))
-                    .note("unicode escapes are formatted like \\u{..}".to_string())
+        if self.reader.next() != Some(b'{') {
+            let offset = self.reader.offset() as u32;
+            return Err(CompilerError::new(ErrorCode::LCorruptUnicodeEsc)
+                .highlight(SourceRange::new(offset, offset))
+                    .note("unicode escapes are formatted like '\\u{..}'".to_string())
 
                 .build()
             );
         }
 
-        let start = self.byte_offset;
+        let start = self.reader.offset();
         
-        let mut unicode = self.borrow_string_storage();
+        let (unicode, no_eoi) = self.reader.consume_while_slice(|x| x.is_ascii_hexdigit());
+        let unicode = unsafe { core::str::from_utf8_unchecked(unicode) };
 
-        while let Some(value) = self.advance() {
-            match value {
-                '}' => break,
 
-                '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 'A' | 'B' | 'C'
-                | 'D' | 'E' | 'F' => unicode.push(value),
-
-                _ => return Err(CompilerError::new(self.file, ErrorCode::LUnicodeNotBase16, "invalid unicode value")
-                    .highlight(SourceRange::new(self.byte_offset, self.byte_offset, self.file))
-                        .note("unicode escape values must be written in base-16 (0-1-2-3-4-5-6-7-8-9-A-B-C-D-E-F)".to_string())
-                    
-                    .build()
-                ),
-            }
+        if !no_eoi || self.reader.next() != Some(b'}') {
+            return Err(CompilerError::new(ErrorCode::LUnterminatedUni)
+                .highlight(SourceRange::new(start as u32, self.reader.offset() as u32))
+                    .note("unicode escapes need to end with '}'".to_string())
+                .build()
+            )
         }
 
-        let number = self.base_n_number_conversion(16, &unicode)?;
+        let source = SourceRange::new(start as u32, self.reader.offset() as u32);
+        
+        let val = match u32::from_str_radix(unicode, 16) {
+            Ok(v) => v,
+            Err(_) => return Err(CompilerError::new(ErrorCode::LNumTooLarge)
+                .highlight(source)
+                .build()
+            ),
+        };
 
-        self.return_string_storage(unicode);
-
-        match char::from_u32(number as u32) {
+        match char::from_u32(val) {
             Some(value) => Ok(value),
-            None => Err(CompilerError::new(self.file, ErrorCode::LInvalidUnicodeChr, "isn't a valid unicode character")
-                    .highlight(SourceRange::new(start, self.byte_offset, self.file))
-                    .build()
-                ),
-        }
-    }
-
-
-    fn number(&mut self) -> Result<Literal, Error> {
-        if self.current_character() == Some('0') {
-            match self.peek() {
-                Some('b') => {
-                    self.advance();
-                    self.advance();
-                    self.base_n_number(2)
-                }
-
-                Some('o') => {
-                    self.advance();
-                    self.advance();
-                    self.base_n_number(8)
-                }
-
-                Some('x') => {
-                    self.advance();
-                    self.advance();
-                    self.base_n_number(16)
-                }
-
-                _ => self.base_n_number(10),
-            }
-        } else {
-            self.base_n_number(10)
-        }
-    }
-
-
-    fn base_n_number(&mut self, base: u32) -> Result<Literal, Error> {
-        if base > 16 {
-            panic!("invalid base number provided by the compiler")
-        }
-
-        let mut number_string = self.borrow_string_storage();
-        let mut dot_count = 0;
-        let start = self.byte_offset;
-
-        while let Some(value) = self.current_character() {
-            match map_to_hex(value) {
-                Some(n) if base < n as u32 + 1 => 
-                    return Err(CompilerError::new(self.file, ErrorCode::LInvalidNumForBase, "invalid number for base")
-                        .highlight(SourceRange::new(self.byte_offset, self.byte_offset, self.file))
-                            .note(format!("the value {value} is too big for a base-{base} number"))
-
-                        .build()),
-
-                Some(_) => (),
-                _ => match value {
-                    '.' => {
-                        if self.peek().map(|x| x.is_alphabetic()).unwrap_or(false) {
-                            break
-                        }
-                        dot_count += 1
-                    },
-                    '_' => {
-                        self.advance();
-                        continue;
-                    }
-                    _ => break,
-                }
-            }
-
-            number_string.push(value);
-            self.advance();
-        }
-
-        if dot_count > 1 {
-            self.return_string_storage(number_string);
-
-            return Err(CompilerError::new(self.file, ErrorCode::LTooManyDots, "too many dots")
-                .highlight(SourceRange::new(start, self.byte_offset, self.file))
+            None => Err(CompilerError::new(ErrorCode::LInvalidUnicodeChr)
+                .highlight(source)
                 .build()
-            );
+            ),
         }
-
-        let (full_number, decimals) = number_string
-            .split_once('.')
-            .unwrap_or((&number_string, ""));
-
-        let number = self.base_n_number_conversion(base, full_number)?;
-
-        if !decimals.is_empty() {
-            let mut decimal = 0.0;
-            for (index, value) in decimals.chars().enumerate() {
-                let digit = value.to_digit(base).expect("unreachable") as f64;
-                let power = -(index as i32) - 1;
-
-                decimal += (base as f64).powi(power) * digit;
-            }
-
-            self.return_string_storage(number_string);
-            return Ok(Literal::Float(HashableF64(number as f64 + decimal)));
-        }
-
-        self.return_string_storage(number_string);
-        Ok(Literal::Integer(number))
     }
-}
-
-
-impl Lexer<'_> {
-    fn base_n_number_conversion(&self, base: u32, text: &str) -> Result<i64, Error> {
-        let mut number : i64 = 0;
-        let start = self.byte_offset - text.len();
-
-        
-        for (index, value) in text.chars().rev().enumerate() {
-            let digit = value.to_digit(base).expect("unreachable") as i64;
-            let power = index as u32;
-
-            let power = match (base as i64).checked_pow(power) {
-                Some(value) => value,
-                None => return Err(CompilerError::new(self.file, ErrorCode::LNumTooLarge, "number is too large")
-                    .highlight(SourceRange::new(start, self.byte_offset-1, self.file))
-                    .build()
-                ),
-            };
-
-            let result : i64 = match power.checked_mul(digit) {
-                Some(value) => value,
-                None => return Err(CompilerError::new(self.file, ErrorCode::LNumTooLarge, "number is too large")
-                    .highlight(SourceRange::new(start, self.byte_offset-1, self.file))
-                    .build()),
-            };
-
-            number = match number.checked_add(result) {
-                Some(value) => value,
-                None => return Err(CompilerError::new(self.file, ErrorCode::LNumTooLarge, "number is too large")
-                    .highlight(SourceRange::new(start, self.byte_offset-1, self.file))
-                    .build()),
-            };
-        }
-
-        Ok(number)
-    }
-
-    
-}
-
-
-fn map_to_hex(character: char) -> Option<u8> {
-    match character {
-        '0' => Some(0),
-        '1' => Some(1),
-        '2' => Some(2),
-        '3' => Some(3),
-        '4' => Some(4),
-        '5' => Some(5),
-        '6' => Some(6),
-        '7' => Some(7),
-        '8' => Some(8),
-        '9' => Some(9),
-        'A' => Some(10),
-        'B' => Some(11),
-        'C' => Some(12),
-        'D' => Some(13),
-        'E' => Some(14),
-        'F' => Some(15),
-        _ => None
-    }       
 }

@@ -1,8 +1,8 @@
 #![feature(if_let_guard)]
 #![allow(clippy::map_entry)]
-use std::{collections::HashMap, fmt::Write};
+use std::fmt::Write;
 
-use common::{SymbolMap, SourceRange, SymbolIndex, FuckMap};
+use common::{source::{SourceRange, FileData}, string_map::{StringMap, StringIndex}, fuck_map::FuckMap};
 use errors::{Error, CombineIntoError, CompilerError, ErrorCode, ErrorBuilder};
 use istd::index_vec;
 use lexer::Literal;
@@ -15,12 +15,13 @@ const GLOBAL_NAMESPACE : &str = "<global>";
 const ANY_CAST_ERROR_STRUCT : &str = "any::CastError";
 
 
-pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -> Result<Infer<'a>, Error> {
+pub fn semantic_analysis<'a>(symbol_map: &'a mut StringMap, files: &'a [FileData], nodes: &mut Block) -> Result<Infer<'a>, Error> {
+    let file = nodes.range().file(files).name();
     let mut infer = Infer::new(
         symbol_map,
         Symbols::new(),
-        Context::new(Scope::new(nodes.range().file(), nodes.range().file())),
-        nodes.range().file(),
+        files,
+        Context::new(Scope::new(file, file)),
     );
 
     infer.analyse_block(nodes, true)?;
@@ -31,12 +32,12 @@ pub fn semantic_analysis<'a>(symbol_map: &'a mut SymbolMap, nodes: &mut Block) -
 
 #[derive(Debug)]
 pub struct Infer<'a> {
-    pub symbol_map: &'a mut SymbolMap,
-    name_to_symbol: FuckMap<SymbolIndex, SymbolId>,
+    pub symbol_map: &'a mut StringMap,
+    files: &'a [FileData],
+    name_to_symbol: FuckMap<StringIndex, SymbolId>,
     pub symbols: Symbols,
-    namespaces: FuckMap<SymbolIndex, Scope>,
+    namespaces: FuckMap<StringIndex, Scope>,
     ctx: Context,
-    root_file: SymbolIndex,
     global_scope: Scope,
 }
 
@@ -46,18 +47,18 @@ pub struct Context {
     scopes: Vec<Scope>,
     // current scope
     cs: Scope,
-    file: SymbolIndex,
+    file: StringIndex,
 }
 
 
 #[derive(Debug, Default, Clone)]
 pub struct Scope {
-    symbols: FuckMap<SymbolIndex, (SymbolId, SourceRange)>,
-    namespaces: FuckMap<SymbolIndex, (SymbolIndex, SourceRange)>,
+    symbols: FuckMap<StringIndex, (SymbolId, SourceRange)>,
+    namespaces: FuckMap<StringIndex, (StringIndex, SourceRange)>,
     variables: Vec<Variable>,
 
-    mangle_name: SymbolIndex,
-    file: SymbolIndex,
+    mangle_name: StringIndex,
+    file: StringIndex,
 
     is_function_scope: Option<DataType>,
     // the bool is whether or not it has `break` or not
@@ -74,7 +75,7 @@ pub enum Symbol {
 
 
 impl Symbol {
-    pub fn full_name(&self) -> SymbolIndex {
+    pub fn full_name(&self) -> StringIndex {
         match self {
             Symbol::Structure(v) => v.full_name,
             Symbol::Enum(v) => v.full_name,
@@ -104,9 +105,9 @@ impl Symbol {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Structure {
-    name: SymbolIndex,
-    full_name: SymbolIndex,
-    fields: Vec<(SymbolIndex, DataType, SourceRange)>,
+    name: StringIndex,
+    full_name: StringIndex,
+    fields: Vec<(StringIndex, DataType, SourceRange)>,
     kind: StructKind,
     source: SourceRange
 }
@@ -114,8 +115,8 @@ pub struct Structure {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Enum {
-    name: SymbolIndex,
-    full_name: SymbolIndex,
+    name: StringIndex,
+    full_name: StringIndex,
     mappings: Vec<EnumMapping>,
     source: SourceRange,
 }
@@ -123,10 +124,10 @@ pub struct Enum {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
-    name: SymbolIndex,
-    full_name: SymbolIndex,
+    name: StringIndex,
+    full_name: StringIndex,
     pub args: Vec<FunctionArgument>,
-    pub is_extern: Option<(SymbolIndex, SymbolIndex)>,
+    pub is_extern: Option<(StringIndex, StringIndex)>,
     pub is_system: bool,
     pub is_anonymous: bool,
     pub is_enum_variant_function: Option<u16>,
@@ -139,13 +140,13 @@ pub struct Function {
 
 #[derive(Clone, Debug)]
 pub struct Variable {
-    name: SymbolIndex,
+    name: StringIndex,
     data_type: DataType,
     is_mut: bool,
 }
 
 impl Variable {
-    pub fn new(name: SymbolIndex, data_type: DataType, is_mut: bool) -> Self { Self { name, data_type, is_mut } }
+    pub fn new(name: StringIndex, data_type: DataType, is_mut: bool) -> Self { Self { name, data_type, is_mut } }
 }
 
 
@@ -162,7 +163,7 @@ impl AnalysisResult {
 
 
 impl Scope {    
-    pub fn new(mangle_name: SymbolIndex, file: SymbolIndex) -> Self { 
+    pub fn new(mangle_name: StringIndex, file: StringIndex) -> Self { 
         Self { 
             symbols: FuckMap::new(), 
             mangle_name, 
@@ -179,7 +180,7 @@ impl Scope {
     /// Mangles a name based off of the current
     /// active scope of the current context.
     ///
-    fn mangle(&self, symbol_map: &mut SymbolMap, symbol: SymbolIndex, source: SourceRange) -> SymbolIndex {
+    fn mangle(&self, symbol_map: &mut StringMap, symbol: StringIndex, source: SourceRange) -> StringIndex {
         #[cfg(debug_assertions)]
         {
             if symbol_map.get(symbol).contains("::") {
@@ -197,13 +198,9 @@ impl Scope {
     }
 
 
-    fn put_namespace(&mut self, identifier: SymbolIndex, path: SymbolIndex, source: SourceRange) -> Result<(), Error> {
+    fn put_namespace(&mut self, identifier: StringIndex, path: StringIndex, source: SourceRange) -> Result<(), Error> {
         if self.namespaces.contains_key(&identifier) {
-            return Err(CompilerError::new(
-                    self.file, 
-                    ErrorCode::SNameAlrDefined,
-                    "name is already defined in the namespace"
-                )
+            return Err(CompilerError::new(ErrorCode::SNameAlrDefined)
                 .highlight(source)
                 .build()
             );
@@ -232,9 +229,9 @@ impl Scope {
     fn create_symbol(
         &mut self, 
         symbols: &mut Symbols, 
-        mappings: &mut FuckMap<SymbolIndex, SymbolId>,
+        mappings: &mut FuckMap<StringIndex, SymbolId>,
         symbol: Symbol, 
-        identifier: SymbolIndex, 
+        identifier: StringIndex, 
         source: SourceRange
     ) -> Result<SymbolId, Error> {
         let is_anonymous_function = matches!(symbol, Symbol::Function(Function { is_anonymous: true, .. }));
@@ -255,13 +252,9 @@ impl Scope {
     }
 
     
-    fn put_symbol(&mut self, symbol_id: SymbolId, identifier: SymbolIndex, source: SourceRange) -> Result<(), Error> {
+    fn put_symbol(&mut self, symbol_id: SymbolId, identifier: StringIndex, source: SourceRange) -> Result<(), Error> {
         if self.symbols.contains_key(&identifier) {
-            return Err(CompilerError::new(
-                    self.file, 
-                    ErrorCode::SNameAlrDefined, 
-                    "name is already defined in the namespace"
-                )
+            return Err(CompilerError::new(ErrorCode::SNameAlrDefined)
                 .highlight(source)
                 .build()
             );
@@ -316,7 +309,7 @@ impl Context {
     /// are no more parents left && the symbol doesn't
     /// exist
     ///
-    fn find_namespace(&self, name: SymbolIndex, source: SourceRange) -> Result<SymbolIndex, Error> {
+    fn find_namespace(&self, name: StringIndex, source: SourceRange) -> Result<StringIndex, Error> {
         let mut current_scope = &self.cs;
 
         for i in (0..self.scopes.len()+1).rev() {
@@ -330,11 +323,7 @@ impl Context {
             
         }
 
-        Err(CompilerError::new(
-                source.file(), 
-                ErrorCode::SNspaceUnreachable, 
-                "namespace not defined or inaccessible"
-            )
+        Err(CompilerError::new(ErrorCode::SNspaceUnreachable)
             .highlight(source)
             .build()
         )
@@ -351,7 +340,7 @@ impl Context {
     /// are no more parents left && the symbol doesn't
     /// exist
     ///
-    fn find_symbol_id(&self, symbol_map: &SymbolMap, global_scope: Option<&Scope>, name: SymbolIndex, source: SourceRange) -> Result<SymbolId, Error> {
+    fn find_symbol_id(&self, symbol_map: &StringMap, global_scope: Option<&Scope>, name: StringIndex, source: SourceRange) -> Result<SymbolId, Error> {
         let mut current_scope = &self.cs;
 
         for i in (0..self.scopes.len()+1).rev() {
@@ -371,11 +360,7 @@ impl Context {
             }
         }
 
-        Err(CompilerError::new(
-                source.file(), 
-                ErrorCode::SSymbolUnreachable, 
-                "symbol not defined"
-            )
+        Err(CompilerError::new(ErrorCode::SSymbolUnreachable)
             .highlight(source)
                 .note(format!(
                     "there's no symbol named '{}' within '{}'",
@@ -401,7 +386,7 @@ impl Context {
     /// Returns a "variable not found" error if there
     /// are no more parents left && the variable doesn't exist
     ///
-    fn find_variable(&self, name: SymbolIndex, source: SourceRange) -> Result<&Variable, Error> {
+    fn find_variable(&self, name: StringIndex, source: SourceRange) -> Result<&Variable, Error> {
         let mut current_scope = &self.cs;
 
         for i in (0..self.scopes.len()+1).rev() {
@@ -418,11 +403,7 @@ impl Context {
             current_scope = &self.scopes[i-1];
         }
 
-        Err(CompilerError::new(
-                source.file(), 
-                ErrorCode::SVariableNotDef, 
-                "variable not defined"
-            )
+        Err(CompilerError::new(ErrorCode::SVariableNotDef)
             .highlight(source)
             .build()
         )
@@ -451,15 +432,15 @@ impl Context {
 
 
 impl<'a> Infer<'a> {
-    pub fn new(symbol_map: &'a mut SymbolMap, mut symbols: Symbols, ctx: Context, root_file: SymbolIndex) -> Self {
+    pub fn new(symbol_map: &'a mut StringMap, mut symbols: Symbols, files: &'a [FileData], ctx: Context) -> Self {
         let namespaces = FuckMap::new();
         let mut name_to_symbol = FuckMap::new();
         
         let global_namespace = symbol_map.insert(GLOBAL_NAMESPACE);
-        let mut global_scope = Scope::new(symbol_map.insert(""), root_file);
+        let mut global_scope = Scope::new(symbol_map.insert(""), files[0].name());
         {
             let name = symbol_map.insert("CastError");
-            let source = SourceRange::new(0, 0, root_file);
+            let source = SourceRange::new(0, 0);
             let symbol = Symbol::Structure(Structure {
                 name,
                 full_name: symbol_map.insert(ANY_CAST_ERROR_STRUCT),
@@ -476,9 +457,9 @@ impl<'a> Infer<'a> {
             symbols,
             ctx,
             namespaces,
-            root_file,
             global_scope,
             name_to_symbol,
+            files,
         }
     }
 
@@ -490,7 +471,7 @@ impl<'a> Infer<'a> {
 
         
         Err(
-            CompilerError::new(value.range().file(), ErrorCode::SUnexpectedType, "unexpected type")
+            CompilerError::new(ErrorCode::SUnexpectedType)
                 .highlight(value.range())
                     .note(format!(
                         "this expression expects a '{}' but found a '{}'", 
@@ -502,19 +483,19 @@ impl<'a> Infer<'a> {
     }
 
     
-    fn find_symbol(&self, name: SymbolIndex) -> Option<&Symbol> {
+    fn find_symbol(&self, name: StringIndex) -> Option<&Symbol> {
         let id = self.name_to_symbol.get(&name)?;
         self.symbols.get(*id)
     }
 
     
-    fn find_symbol_mut(&mut self, name: SymbolIndex) -> Option<&mut Symbol> {
+    fn find_symbol_mut(&mut self, name: StringIndex) -> Option<&mut Symbol> {
         let id = self.name_to_symbol.get(&name)?;
         self.symbols.get_mut(*id)
     }
 
 
-    fn type_namespace(&mut self, data_type: &DataType) -> SymbolIndex {
+    fn type_namespace(&mut self, data_type: &DataType) -> StringIndex {
         let name = display_type(self.symbol_map, data_type.kind());
         let name = self.symbol_map.insert(name.as_str());
 
@@ -524,7 +505,7 @@ impl<'a> Infer<'a> {
 
 
         let source = data_type.range();
-        self.namespaces.insert(name, Scope::new(name, source.file()));
+        self.namespaces.insert(name, Scope::new(name, source.file(self.files).name()));
         let _ = self.global_scope.put_namespace(name, name, source);
 
         
@@ -691,7 +672,7 @@ impl<'a> Infer<'a> {
 
 
                 *data_type.kind_mut() = DataTypeKind::Unknown;
-                Err(CompilerError::new(self.ctx.file, ErrorCode::SSymbolIsntType, "symbol isn't a type")
+                Err(CompilerError::new(ErrorCode::SSymbolIsntType)
                     .highlight(data_type.range())
                     .build())
             },
@@ -702,7 +683,12 @@ impl<'a> Infer<'a> {
     fn register_enum_methods(&mut self, symbol: SymbolId, source: SourceRange, kind: DataTypeKind) -> Result<(), Error> {
         let structure = &mut self.symbols[symbol];
         let Symbol::Enum(structure) = structure else { panic!() };
-        let scope = self.namespaces.entry(structure.full_name).or_insert(Scope::new(structure.full_name, source.file()));
+        let scope = self.namespaces
+            .entry(structure.full_name)
+            .or_insert(Scope::new(
+                structure.full_name, 
+                source.file(self.files).name()
+            ));
 
         let mappings = std::mem::take(&mut structure.mappings);
         let full_name = structure.full_name;
@@ -768,7 +754,7 @@ impl<'a> Infer<'a> {
         if only_declarations && !matches!(block[0].kind(), NodeKind::Expression(Expression::Unit)) {
             let errors = block.iter().filter_map(|x| {
                 if !matches!(x.kind(), NodeKind::Declaration(_)) {
-                    Some(CompilerError::new(self.ctx.cs.file, ErrorCode::SBlockOnlyAllowDec, "this block only allows declarations")
+                    Some(CompilerError::new(ErrorCode::SBlockOnlyAllowDec)
                         .highlight(x.range())
                         .build())
                 } else {
@@ -811,7 +797,7 @@ impl<'a> Infer<'a> {
         Ok((result, scope))
     }
 
-    panic!();
+
     fn analyse_declaration(&mut self, decl: &mut Declaration, source: SourceRange) -> Result<(), Error> {
         match decl {
             Declaration::Struct { .. } => Ok(()),
@@ -822,7 +808,7 @@ impl<'a> Infer<'a> {
 
                 // evaluate body
                 let block_return_type = {
-                    let mut subscope = Scope::new(*name, source.file());
+                    let mut subscope = Scope::new(*name, source.file(self.files).name());
                     subscope.is_function_scope = Some(return_type.clone());
 
                     for i in arguments {
@@ -845,11 +831,7 @@ impl<'a> Infer<'a> {
 
                 if !block_return_type.data_type.kind().is(return_type.kind()) {
                     return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SFuncReturnDiff, 
-                            "function return type differs from body"
-                        )
+                        CompilerError::new(ErrorCode::SFuncReturnDiff)
                         .highlight(source)
                             .note(format!("function returns '{}' but the body returns '{}'",
                                     display_type(self.symbol_map, return_type.kind()),
@@ -968,7 +950,7 @@ impl<'a> Infer<'a> {
 
 
                     _ => return Err(
-                        CompilerError::new(source.file(), ErrorCode::SInvalidBinOp, "invalid binary operation")
+                        CompilerError::new(ErrorCode::SInvalidBinOp)
                             .highlight(source)
                                 .note(format!(
                                     "left side is '{}' while the right side is '{}'", 
@@ -996,7 +978,7 @@ impl<'a> Infer<'a> {
                     }
 
                     _ => return Err(
-                        CompilerError::new(source.file(), ErrorCode::SInvalidBinOp, "invalid unary operation")
+                        CompilerError::new(ErrorCode::SInvalidBinOp)
                             .highlight(source)
                                 .note(format!(
                                     "the '{}' operator only works on values of type {}", 
@@ -1036,7 +1018,7 @@ impl<'a> Infer<'a> {
 
                 } else if !body_typ.data_type.kind().is(&DataTypeKind::Unit) {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SIfExprNoElse, "if expression has no else")
+                        CompilerError::new(ErrorCode::SIfExprNoElse)
                         .highlight(source)
                             .note(format!(
                                 "the body returns {} but there's no else block",
@@ -1066,7 +1048,7 @@ impl<'a> Infer<'a> {
                 let Symbol::Enum(e) = e
                 else {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SMatchValNotEnum, "match value is not an enum")
+                        CompilerError::new(ErrorCode::SMatchValNotEnum)
                             .highlight(source)
                                 .note(format!("is of type '{}' which is not an enum", display_type(self.symbol_map, value_typ.data_type.kind())))
                             .build()
@@ -1082,11 +1064,7 @@ impl<'a> Infer<'a> {
                         let f = mappings.get(i).unwrap();
 
                         if let Some(v) = mappings[0..i].iter().find(|x| x.name() == f.name()) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SVariantDefEarlier, 
-                                "variant is already defined"
-                            )
+                            errors.push(CompilerError::new(ErrorCode::SVariantDefEarlier)
                             .highlight(v.node().range())
                                 .note("variant is defined earlier here".to_string())
                             .highlight(f.node().range())
@@ -1096,11 +1074,7 @@ impl<'a> Infer<'a> {
 
 
                         if !e.mappings.iter().any(|x| x.name() == f.name()) {                            
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SMatchUnkownVar, 
-                                "unknown variant"
-                            )
+                            errors.push(CompilerError::new(ErrorCode::SMatchUnkownVar)
                             .highlight(f.range())
                             .build())
                         }
@@ -1109,11 +1083,7 @@ impl<'a> Infer<'a> {
                     
                     for mapping in &e.mappings {
                         if !mappings.iter().any(|x| x.name() == mapping.name()) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SMissingField, 
-                                "missing field"
-                            )
+                            errors.push(CompilerError::new(ErrorCode::SMissingField)
                             .highlight(source)
                                 .note(format!("missing '{}'",
                                     self.symbol_map.get(mapping.name()), 
@@ -1141,7 +1111,7 @@ impl<'a> Infer<'a> {
                         let enum_mapping = enum_mappings.iter().find(|x| x.name() == mapping.name()).unwrap();
                         numbers.push(enum_mapping.number());
 
-                        let mut mapping_scope = Scope::new(enum_name, source.file());
+                        let mut mapping_scope = Scope::new(enum_name, source.file(self.files).name());
                         mapping_scope.register_variable(
                             Variable::new(
                                 mapping.binding(), 
@@ -1172,11 +1142,7 @@ impl<'a> Infer<'a> {
 
 
                         if !result.data_type.kind().is(expected_type.as_ref().unwrap()) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SMatchBranchDiffTy, 
-                                "match branch returns a different type"
-                            )
+                            errors.push(CompilerError::new(ErrorCode::SMatchBranchDiffTy)
                             .highlight(mapping.node().range())
                                 .note(format!("expected '{}' found '{}'",
                                     display_type(self.symbol_map, expected_type.as_ref().unwrap()),
@@ -1223,7 +1189,7 @@ impl<'a> Infer<'a> {
                     | DataTypeKind::Never
                      => {
                         return Err(
-                            CompilerError::new(source.file(), ErrorCode::SCantInitPrimitive, "can't initialise primitive types with structure creation syntax")
+                            CompilerError::new(ErrorCode::SCantInitPrimitive)
                                 .highlight(source)
                                 .build()
                         )
@@ -1239,11 +1205,7 @@ impl<'a> Infer<'a> {
                 let Symbol::Structure(structure) = structure
                 else {
                     return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SSymbolIsntStruct, 
-                            "symbol exists but it's not a structure"
-                        )
+                        CompilerError::new(ErrorCode::SSymbolIsntStruct)
                         .highlight(source)
                             .note(format!("the symbol is a '{}'", structure.type_name()))
                         .build()
@@ -1271,11 +1233,7 @@ impl<'a> Infer<'a> {
                         
                         let f = fields.get(i).unwrap();
                         if let Some(v) = fields[0..i].iter().find(|x| x.0 == f.0) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SFieldDefEarlier, 
-                                "field is already defined"
-                            )
+                            errors.push(CompilerError::new(ErrorCode::SFieldDefEarlier)
                             .highlight(v.1)
                                 .note("field is defined earlier here".to_string())
                             .highlight(f.1)
@@ -1286,11 +1244,7 @@ impl<'a> Infer<'a> {
 
                         let field = structure_fields.iter().find(|x| x.0 == f.0);
                         if field.is_none() {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SUnknownField, 
-                                "unknown field"
-                            )
+                            errors.push(CompilerError::new(ErrorCode::SUnknownField)
                             .highlight(f.1)
                                 .note(format!("there's no field named {} in {}",
                                     self.symbol_map.get(f.0), 
@@ -1305,11 +1259,7 @@ impl<'a> Infer<'a> {
                         let Some(result) = result else { continue };
 
                         if !result.data_type.kind().is(field.1.kind()) {                            
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SFieldTypeMismatch, 
-                                "field type mismatch"
-                            )
+                            errors.push(CompilerError::new(ErrorCode::SFieldTypeMismatch)
                             .highlight(field.2)
                                 .note(format!("the field {} is defined as {} here",
                                     self.symbol_map.get(f.0), 
@@ -1327,11 +1277,7 @@ impl<'a> Infer<'a> {
 
                     for field in &structure_fields {
                         if !fields.iter().any(|x| x.0 == field.0) {
-                            errors.push(CompilerError::new(
-                                self.ctx.file, 
-                                ErrorCode::SMissingField, 
-                                "missing field"
-                            )
+                            errors.push(CompilerError::new(ErrorCode::SMissingField)
                             .highlight(source)
                                 .note(format!("missing '{}'",
                                     self.symbol_map.get(field.0), 
@@ -1360,13 +1306,8 @@ impl<'a> Infer<'a> {
                 let structure = self.type_namespace(&val_typ.data_type);
                 let Some(structure) = self.find_symbol(structure)
                 else {
-                    return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SAccFieldOnPrim, 
-                            "can't access fields on a primitive"
-                        )
-                        .highlight(source)
+                    return Err(CompilerError::new(ErrorCode::SAccFieldOnPrim)
+                            .highlight(source)
                         .build()
                     )
                 };
@@ -1377,11 +1318,7 @@ impl<'a> Infer<'a> {
                         let Some((index, field)) = field
                         else {
                             return Err(
-                                CompilerError::new(
-                                    source.file(), 
-                                    ErrorCode::SFieldDoesntExist, 
-                                    "field doesn't exist"
-                                )
+                                CompilerError::new(ErrorCode::SFieldDoesntExist)
                                 .highlight(source)
                                     .note(format!("there's no field named {} on '{}'",
                                         self.symbol_map.get(*field_name),
@@ -1402,11 +1339,7 @@ impl<'a> Infer<'a> {
                         let Some((index, variant)) = variant
                         else {
                             return Err(
-                                CompilerError::new(
-                                    source.file(), 
-                                    ErrorCode::SFieldDoesntExist, 
-                                    "field doesn't exist"
-                                )
+                                CompilerError::new(ErrorCode::SFieldDoesntExist)
                                 .highlight(source)
                                     .note(format!("there's no variant named {} on '{}'",
                                         self.symbol_map.get(*field_name),
@@ -1426,11 +1359,7 @@ impl<'a> Infer<'a> {
                     
                     _ => {
                         return Err(
-                            CompilerError::new(
-                                source.file(), 
-                                ErrorCode::SSymbolIsntStruct, 
-                                "symbol exists but it's not a structure"
-                            )
+                            CompilerError::new(ErrorCode::SSymbolIsntStruct)
                             .highlight(source)
                                 .note(format!("the symbol is a '{}'", structure.type_name()))
                             .build()
@@ -1486,11 +1415,7 @@ impl<'a> Infer<'a> {
                 let Symbol::Function(function) = function
                 else {
                     return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SSymbolIsntFunc, 
-                            "symbol exists but it's not a function"
-                        )
+                        CompilerError::new(ErrorCode::SSymbolIsntFunc)
                         .highlight(source)
                             .note(format!("the symbol is a '{}'", function.type_name()))
                         .build()
@@ -1504,11 +1429,7 @@ impl<'a> Infer<'a> {
 
                 if args.len() != function.args.len() {
                     return Err(
-                        CompilerError::new(
-                            source.file(), 
-                            ErrorCode::SFuncArgcMismatch, 
-                            "argument count mismatch"
-                        )
+                        CompilerError::new(ErrorCode::SFuncArgcMismatch)
                         .highlight(source)
                             .note(format!("the function requires {} arguments but you've provided {}", function.args.len(), args.len()))
                         .build()
@@ -1528,7 +1449,7 @@ impl<'a> Infer<'a> {
 
                         if !arg_analysis.data_type.kind().is(expected_arg.data_type().kind()) {
                             errors.push(
-                                CompilerError::new(source.file(), ErrorCode::SArgTypeMismatch, "argument type mismatch")
+                                CompilerError::new(ErrorCode::SArgTypeMismatch)
                                     .highlight(arg.0.range())
                                         .note(format!(
                                             "argument is defined as {} but the value is of type '{}'", 
@@ -1542,7 +1463,7 @@ impl<'a> Infer<'a> {
 
                         if arg.1 != expected_arg.is_inout() {
                             errors.push(
-                                CompilerError::new(source.file(), ErrorCode::SArgDiffInOut, "argument differ in in-outness")
+                                CompilerError::new(ErrorCode::SArgDiffInOut)
                                     .highlight(arg.0.range())
                                         .note({
                                             match (arg.1, expected_arg.is_inout()) {
@@ -1560,7 +1481,7 @@ impl<'a> Infer<'a> {
 
                         if expected_arg.is_inout() && !arg_analysis.mutability {                            
                             errors.push(
-                                CompilerError::new(source.file(), ErrorCode::SInOutArgIsntMut, "argument is in-out but the value isn't mutable")
+                                CompilerError::new(ErrorCode::SInOutArgIsntMut)
                                     .highlight(arg.0.range())
                                         .note("..isn't a mutable value".to_string())
                                     .build()
@@ -1639,7 +1560,7 @@ impl<'a> Infer<'a> {
                 let Some(function_return) = function_return
                 else {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SReturnOutsideFunc, "can't return outside of a function")
+                        CompilerError::new(ErrorCode::SReturnOutsideFunc)
                             .highlight(source)
                             .build()
                     )
@@ -1648,7 +1569,7 @@ impl<'a> Infer<'a> {
 
                 if !return_type.data_type.kind().is(function_return.kind()) {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SFuncReturnDiff, "function return type differs from body")
+                        CompilerError::new(ErrorCode::SFuncReturnDiff)
                             .highlight(function_return.range())
                                 .note(format!("function returns '{}'", display_type(self.symbol_map, function_return.kind())))
                             .highlight(source)
@@ -1665,7 +1586,7 @@ impl<'a> Infer<'a> {
             Expression::Break => {
                 if !self.ctx.is_in_loop_body().map(|x| { *x = true; *x } ).unwrap_or(false) {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SBreakOutsideLoop, "break outside of loop")
+                        CompilerError::new(ErrorCode::SBreakOutsideLoop)
                             .highlight(source)
                             .build()
                     )
@@ -1678,7 +1599,7 @@ impl<'a> Infer<'a> {
             Expression::Continue => {
                 if self.ctx.is_in_loop_body().is_none() {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SContOutsideLoop, "continue outside of loop")
+                        CompilerError::new(ErrorCode::SContOutsideLoop)
                             .highlight(source)
                             .build()
                     )
@@ -1714,7 +1635,7 @@ impl<'a> Infer<'a> {
 
                     _ => {
                         return Err(
-                            CompilerError::new(source.file(), ErrorCode::SCantUnwrapType, "can't unwrap type")
+                            CompilerError::new(ErrorCode::SCantUnwrapType)
                                 .highlight(source)
                                     .note(format!("can't unwrap a value of type {}", display_type(self.symbol_map, val_typ.data_type.kind())))
                                 .build()
@@ -1729,7 +1650,7 @@ impl<'a> Infer<'a> {
                 let Some(func_return) = self.ctx.is_func_body()
                 else {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SReturnOutsideFunc, "can't return outside of a function")
+                        CompilerError::new(ErrorCode::SReturnOutsideFunc)
                             .highlight(source)
                             .build()
                     )
@@ -1740,7 +1661,7 @@ impl<'a> Infer<'a> {
 
                     DataTypeKind::Option(val) => {
                         if !matches!(func_return.kind(), DataTypeKind::Option(_)) {
-                            return Err(CompilerError::new(source.file(), ErrorCode::STryOpOptionRetVal, "try operator on an option type only works if the function returns an option")
+                            return Err(CompilerError::new(ErrorCode::STryOpOptionRetVal)
                                 .highlight(source)
                                 .build())
                         }
@@ -1751,7 +1672,7 @@ impl<'a> Infer<'a> {
 
                     DataTypeKind::Result(val, err) => {
                         if !matches!(func_return.kind(), DataTypeKind::Result(_, err2) if err == err2) {
-                            return Err(CompilerError::new(source.file(), ErrorCode::STryOpOptionRetVal, "try operator on a result type only works if the function returns a result with the same error type")
+                            return Err(CompilerError::new(ErrorCode::STryOpOptionRetVal)
                                 .highlight(source)
                                 .build())
                         }
@@ -1762,7 +1683,7 @@ impl<'a> Infer<'a> {
 
                     _ => {
                         return Err(
-                            CompilerError::new(source.file(), ErrorCode::SCantUnwrapType, "can't use the try operator on this type")
+                            CompilerError::new(ErrorCode::SCantUnwrapType)
                                 .highlight(source)
                                     .note(format!("..is of type {}", display_type(self.symbol_map, val_typ.data_type.kind())))
                                 .build()
@@ -1820,11 +1741,7 @@ impl<'a> Infer<'a> {
                 if let Some(hint) = hint {
                     if !rhs_typ.data_type.kind().is(hint.kind()) {
                         return Err(
-                            CompilerError::new(
-                                source.file(), 
-                                ErrorCode::SVarHintTypeDiff, 
-                                "variable value differs from type hint"
-                            )
+                            CompilerError::new(ErrorCode::SVarHintTypeDiff)
                             .highlight(source)
                                 .note(format!("variable has the type hint {} but the value is {}",
                                         display_type(self.symbol_map, hint.kind()),
@@ -1850,7 +1767,7 @@ impl<'a> Infer<'a> {
 
                 if lhs_typ.accessor_field_is_an_enum || !is_l_val(lhs.kind()) {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SAssignValNotLHS, "invalid assignment target")
+                        CompilerError::new(ErrorCode::SAssignValNotLHS)
                             .highlight(lhs.range())
                             .build()
                     )
@@ -1859,7 +1776,7 @@ impl<'a> Infer<'a> {
 
                 if !lhs_typ.mutability {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SAssignValNotMut, "assignment target isn't mutable")
+                        CompilerError::new(ErrorCode::SAssignValNotMut)
                             .highlight(lhs.range())
                             .build()
                     )
@@ -1868,7 +1785,7 @@ impl<'a> Infer<'a> {
 
                 if !lhs_typ.data_type.kind().is(rhs_typ.data_type.kind()) {
                     return Err(
-                        CompilerError::new(source.file(), ErrorCode::SAssignValDiffTy, "assignment target's type and the value's types mismatch")
+                        CompilerError::new(ErrorCode::SAssignValDiffTy)
                             .highlight(source)
                                 .note(format!(
                                     "assignment target is of type '{}' but the value is '{}'",
@@ -1979,7 +1896,7 @@ impl<'a> Infer<'a> {
                         *name = slf.ctx.cs.mangle(slf.symbol_map, *name, source);
                         slf.ctx.cs.put_namespace(identifier, *name, source)?;
 
-                        let scope = Scope::new(*name, source.file());
+                        let scope = Scope::new(*name, source.file(slf.files).name());
                         slf.namespaces.insert(*name, scope.clone());
 
                         slf.ctx.subscope(scope);
@@ -2067,7 +1984,7 @@ impl<'a> Infer<'a> {
 
                         let name = slf.type_namespace(data_type);
 
-                        let scope = Scope::new(name, source.file());
+                        let scope = Scope::new(name, source.file(slf.files).name());
 
                         slf.ctx.subscope(scope);
 
@@ -2141,11 +2058,7 @@ impl<'a> Infer<'a> {
 
                             let f = fields.get(i).unwrap();
                             if let Some(v) = fields[0..i].iter().find(|x| x.0 == f.0) {
-                                errors.push(CompilerError::new(
-                                    slf.ctx.file, 
-                                    ErrorCode::SFieldDefEarlier, 
-                                    "field is already defined"
-                                )
+                                errors.push(CompilerError::new(ErrorCode::SFieldDefEarlier)
                                 .highlight(v.2)
                                     .note("field is defined earlier here".to_string())
                                 .highlight(f.2)
@@ -2186,11 +2099,7 @@ impl<'a> Infer<'a> {
 
                             let m = mappings.get(i).unwrap();
                             if let Some(v) = mappings[0..i].iter().find(|x| x.name() == m.name()) {
-                                errors.push(CompilerError::new(
-                                    slf.ctx.file, 
-                                    ErrorCode::SVariantDefEarlier, 
-                                    "variant is already defined"
-                                )
+                                errors.push(CompilerError::new(ErrorCode::SVariantDefEarlier)
                                 .highlight(v.range())
                                     .note("variant is defined earlier here".to_string())
                                 .highlight(m.range())
@@ -2238,11 +2147,7 @@ impl<'a> Infer<'a> {
 
                             let f = arguments.get(i).unwrap();
                             if let Some(v) = arguments[0..i].iter().find(|x| x.name() == f.name()) {
-                                errors.push(CompilerError::new(
-                                    slf.ctx.file, 
-                                    ErrorCode::SArgDefEarlier, 
-                                    "argument is already defined"
-                                )
+                                errors.push(CompilerError::new(ErrorCode::SArgDefEarlier)
                                 .highlight(v.range())
                                     .note("argument is defined earlier here".to_string())
                                 .highlight(f.range())
@@ -2338,14 +2243,14 @@ impl<'a> Infer<'a> {
 
 
 
-fn display_type(symbol_map: &SymbolMap, typ: &DataTypeKind) -> String {
+fn display_type(symbol_map: &StringMap, typ: &DataTypeKind) -> String {
     let mut string = String::with_capacity(8);
     display_type_in(symbol_map, typ, &mut string);
     string
 }
 
 
-fn display_type_in(symbol_map: &SymbolMap, typ: &DataTypeKind, str: &mut String) {
+fn display_type_in(symbol_map: &StringMap, typ: &DataTypeKind, str: &mut String) {
     let _ = write!(str, "{}", 
         match typ {
             DataTypeKind::Int => "int",

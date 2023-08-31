@@ -1,21 +1,21 @@
-use std::{collections::HashMap, time::Instant};
-
-use margarine::{FileData, SymbolMap, DropTimer};
+use margarine::{FileData, StringMap, DropTimer};
 
 fn main() -> Result<(), &'static str> {
+    let arg = std::env::args().skip(1).next().unwrap_or(0.to_string());
     DropTimer::with_timer("compilation", || {
-        let mut symbol_map = SymbolMap::new();
+        let mut symbol_map = StringMap::new();
         let file = DropTimer::with_timer(
             "opening file", 
-            || FileData::open("text.txt", &mut symbol_map).unwrap()
+            || FileData::open(format!("text{arg}.txt"), &mut symbol_map).unwrap()
         );
+        let file = [file];
 
         let tokens = DropTimer::with_timer("tokenisation", || {
-            let tokens = margarine::lex(&file, &mut symbol_map);
+            let tokens = margarine::lex(&file[0], &mut symbol_map);
             match tokens {
                 Ok(v)  => Ok(v),
                 Err(e) => {
-                    let report = e.build(&HashMap::from([(file.name(), file.clone())]), &symbol_map);
+                    let report = e.build(&file, &symbol_map);
                     println!("{report}");
                     return Err("failed to compile because of the previous errors")
                 },
@@ -29,25 +29,37 @@ fn main() -> Result<(), &'static str> {
             match instructions {
                 Ok(v)  => Ok(v),
                 Err(e) => {
-                    let report = e.build(&HashMap::from([(file.name(), file.clone())]), &symbol_map);
+                    let report = e.build(&file, &symbol_map);
                     println!("{report}");
                     return Err("failed to compile because of the previous errors")
                 },
             }
         })?;
 
+
         let state = {
             let _1 = DropTimer::new("semantic analysis");
-            let state = margarine::semantic_analysis(&mut symbol_map, &mut instructions);
+            let state = margarine::semantic_analysis(&mut symbol_map, &file, &mut instructions);
             match state {
                 Ok(v) => v,
                 Err(e) => {
-                    let report = e.build(&HashMap::from([(file.name(), file.clone())]), &symbol_map);
+                    let report = e.build(&file, &symbol_map);
                     println!("{report}");
                     return Err("failed to compile because of the previous errors")
                 }
             }
         };
+
+
+        let ir = DropTimer::with_timer("ir", || {
+            margarine::convert(state)
+        });
+
+
+        let codegen = DropTimer::with_timer("codegen", || {
+            margarine::codegen(&symbol_map, &ir)
+        });
+
 
         println!("{:?}", symbol_map.arena_stats());
     
