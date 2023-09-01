@@ -198,7 +198,6 @@ pub enum Keyword {
     Continue,
 }
 
-
 pub fn lex(
     file: &FileData,
     string_map: &mut StringMap
@@ -416,6 +415,7 @@ impl Lexer<'_> {
             "continue"  => TokenKind::Keyword(Keyword::Continue),
 
             _ => {
+                // let index = self.string_map.insert_static(unsafe { std::mem::transmute(value) });
                 let index = self.string_map.insert(value);
                 TokenKind::Identifier(index)
             }

@@ -2,69 +2,34 @@ use margarine::{FileData, StringMap, DropTimer};
 
 fn main() -> Result<(), &'static str> {
     let arg = std::env::args().skip(1).next().unwrap_or(0.to_string());
-    DropTimer::with_timer("compilation", || {
-        let mut symbol_map = StringMap::new();
-        let file = DropTimer::with_timer(
-            "opening file", 
-            || FileData::open(format!("text{arg}.txt"), &mut symbol_map).unwrap()
-        );
-        let file = [file];
+    for _ in 0..10 {
+        DropTimer::with_timer("compilation", || {
+            let mut symbol_map = StringMap::new();
+            let file = DropTimer::with_timer(
+                "opening file", 
+                || FileData::open(format!("text{arg}.txt"), &mut symbol_map).unwrap()
+            );
+            let file = [file];
 
-        let tokens = DropTimer::with_timer("tokenisation", || {
-            let tokens = margarine::lex(&file[0], &mut symbol_map);
-            match tokens {
-                Ok(v)  => Ok(v),
-                Err(e) => {
-                    let report = e.build(&file, &symbol_map);
-                    println!("{report}");
-                    return Err("failed to compile because of the previous errors")
-                },
-            }
-        })?;
-
-
-        let mut instructions = DropTimer::with_timer("parsing", || {
-            // drop_timer!("parsing");
-            let instructions = margarine::parse(tokens, &mut symbol_map);
-            match instructions {
-                Ok(v)  => Ok(v),
-                Err(e) => {
-                    let report = e.build(&file, &symbol_map);
-                    println!("{report}");
-                    return Err("failed to compile because of the previous errors")
-                },
-            }
-        })?;
-
-
-        let state = {
-            let _1 = DropTimer::new("semantic analysis");
-            let state = margarine::semantic_analysis(&mut symbol_map, &file, &mut instructions);
-            match state {
-                Ok(v) => v,
-                Err(e) => {
-                    let report = e.build(&file, &symbol_map);
-                    println!("{report}");
-                    return Err("failed to compile because of the previous errors")
+            let tokens = DropTimer::with_timer("tokenisation", || {
+                let tokens = margarine::lex(&file[0], &mut symbol_map);
+                match tokens {
+                    Ok(v)  => Ok(v),
+                    Err(e) => {
+                        let report = e.build(&file, &symbol_map);
+                        println!("{report}");
+                        return Err("failed to compile because of the previous errors")
+                    },
                 }
-            }
-        };
+            });
 
-
-        let ir = DropTimer::with_timer("ir", || {
-            margarine::convert(state)
-        });
-
-
-        let codegen = DropTimer::with_timer("codegen", || {
-            margarine::codegen(&symbol_map, &ir)
-        });
-
-
-        println!("{:?}", symbol_map.arena_stats());
+            println!("{:?}", symbol_map.arena_stats());
     
-        Ok(())
-    })
+            // Ok(())
+        });
+    }
+
+    Ok(())
 }
 
 

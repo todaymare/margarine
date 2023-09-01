@@ -10,10 +10,6 @@ pub fn codegen(symbol_map: &StringMap, state: &State) {
         .iter()
         .map(|x| codegen_function(x, symbol_map, &function_calls))
         .collect::<Vec<_>>();
-
-    // for b in bodies.iter() {
-    //     println!("{:?}", b);
-    // }
 }
 
 
