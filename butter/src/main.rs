@@ -1,33 +1,80 @@
 use margarine::{FileData, StringMap, DropTimer};
+use sti::prelude::Arena;
 
 fn main() -> Result<(), &'static str> {
     let arg = std::env::args().skip(1).next().unwrap_or(0.to_string());
-    for _ in 0..10 {
-        DropTimer::with_timer("compilation", || {
-            let mut symbol_map = StringMap::new();
-            let file = DropTimer::with_timer(
-                "opening file", 
-                || FileData::open(format!("text{arg}.txt"), &mut symbol_map).unwrap()
-            );
-            let file = [file];
+    DropTimer::with_timer("compilation", || {
+        let mut symbol_map = StringMap::new();
+        let file = DropTimer::with_timer(
+            "opening file", 
+            || FileData::open(format!("text{arg}.txt"), &mut symbol_map).unwrap()
+        );
+        let file = [file];
 
-            let tokens = DropTimer::with_timer("tokenisation", || {
-                let tokens = margarine::lex(&file[0], &mut symbol_map);
-                match tokens {
-                    Ok(v)  => Ok(v),
-                    Err(e) => {
-                        let report = e.build(&file, &symbol_map);
-                        println!("{report}");
-                        return Err("failed to compile because of the previous errors")
-                    },
-                }
-            });
+        let tokens = DropTimer::with_timer("tokenisation", || {
+            let tokens = margarine::lex(&file[0], &mut symbol_map);
+            match tokens {
+                Ok(v)  => Ok(v),
+                Err(e) => {
+                    let report = e.display(&symbol_map, &file);
+                    println!("{report}");
+                    return Err("failed to compile because of the previous errors")
+                },
+            }
+        })?;
 
-            println!("{:?}", symbol_map.arena_stats());
-    
-            // Ok(())
-        });
-    }
+
+        let mut arena = Arena::new();
+        let instructions = DropTimer::with_timer("parsing", || {
+            let instructions = margarine::parse(tokens, &mut arena, &mut symbol_map);
+            match instructions {
+                Ok(v)  => Ok(v),
+                Err(e) => {
+                    let report = e.display(&symbol_map, &file);
+                    println!("{report}");
+                    return Err("failed to compile because of the previous errors")
+                },
+            }
+            
+        })?;
+
+
+        let ns_arena = Arena::new();
+        let scopes = Arena::new();
+        let typed_ast = {
+            let _1 = DropTimer::new("semantic analysis");
+            margarine::semantic_analysis(
+                &ns_arena, 
+                &ns_arena, 
+                &ns_arena, 
+                &mut symbol_map,
+                &instructions
+            )
+        };
+
+        let typed_ast = match typed_ast {
+            Ok(v)  => v,
+            Err(e) => {
+                let report = e.display(&symbol_map, &file);
+                println!("{report}");
+                return Err("failed to compile because of the previous errors")
+            },
+        };
+
+        dbg!(&typed_ast);
+
+
+        println!("scopes {:?}", scopes.stats());
+        drop(scopes);
+
+        println!("typed ast arena {:?}", ns_arena.stats());
+        
+
+        println!("symbol map arena {:?}", symbol_map.arena_stats());
+
+        Ok(())
+    })?;
+ 
 
     Ok(())
 }

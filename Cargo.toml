@@ -8,8 +8,8 @@ members = [
   "margarine/lexer",
   "margarine/parser",
   "margarine/semantic_analysis",
-  "margarine/ir",
-  "margarine/codegen",
+  # "margarine/ir",
+  # "margarine/codegen",
   "margarine/errors",
   "margarine/runtime",
 ]

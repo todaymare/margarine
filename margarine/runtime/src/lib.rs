@@ -2,7 +2,7 @@ pub mod bytecode;
 pub mod runtime;
 pub mod ecs;
 
-use std::{mem::{size_of, ManuallyDrop}, fmt::Debug, collections::HashMap, rc::Rc, ptr::null};
+use std::{mem::ManuallyDrop, fmt::Debug, rc::Rc, ptr::null};
 use common::fuck_map::FuckMap;
 
 // static_assert_eq!(size_of::<DataUnion>(), 8);
@@ -17,7 +17,7 @@ pub struct VM<'a> {
     pub stack: Stack,
     constants: Box<[Data]>,
 
-    name_to_typeid: FuckMap<&'a str, TypeId>,
+    name_to_typeid: FuckMap<&'a str, TypeId, >,
     name_to_func: FuckMap<&'a str, FunctionIndex>,
     structures: FuckMap<TypeId, Structure<'a>>,
     functions: Vec<Code>,
@@ -609,9 +609,9 @@ impl FunctionDebugInfo<'_> {
 
 #[derive(Debug)]
 pub struct FunctionArgument<'a> {
-    name: &'a str,
-    data_type: TypeId,
-    is_inout: bool,
+    _name: &'a str,
+    _data_type: TypeId,
+    _is_inout: bool,
 }
 
 

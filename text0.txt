@@ -1,0 +1,8 @@
+enum Hi {
+	some_field: int? ~ Hi,
+	hello: Hi,
+}
+
+
+fn hi(val: Hi): Hi {
+}

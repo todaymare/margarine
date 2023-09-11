@@ -11,3 +11,4 @@ parser = { path = "../parser" }
 errors = { path = "../errors" }
 common = { path = "../common" }
 istd = { git = "https://github.com/rookieCookies/istd" }
+sti = { git = "https://github.com/leddoo/sti" }

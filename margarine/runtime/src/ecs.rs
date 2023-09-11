@@ -197,9 +197,9 @@ impl Component {
 #[derive(Debug)]
 pub struct System {
     components: Vec<ComponentIndex>,
-    code: u8,
+    _code: u8,
 }
 
 impl System {
-    pub fn new(components: Vec<ComponentIndex>, code: u8) -> Self { Self { components, code } }
+    pub fn new(components: Vec<ComponentIndex>, code: u8) -> Self { Self { components, _code: code } }
 }

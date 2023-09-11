@@ -1,6 +1,5 @@
 #![allow(non_upper_case_globals)]
 use std::mem::{size_of, ManuallyDrop};
-use std::sync::Arc;
 
 use crate::{VM, Code, ProgramCounter, FunctionDebugInfo, FunctionArgument, StructureKind, Structure, FunctionIndex, Data, TypeId, Object, DataUnion, DataMetadata, Stackframe};
 use crate::bytecode::bytecode_consts::*;
@@ -17,7 +16,6 @@ impl VM<'_> {
         loop {
             match self.current.next() {
                 Func => {
-                    dbg!(&self);
                     // PERFORMANCE: Might wanna move these to another
                     // part instead of the bytecode for cache reasons
                     let name = self.current.next_str();
@@ -33,9 +31,9 @@ impl VM<'_> {
                         let type_id = self.current.next_type();
 
                         args.push(FunctionArgument {
-                            name,
-                            data_type: type_id,
-                            is_inout,
+                            _name: name,
+                            _data_type: type_id,
+                            _is_inout: is_inout,
                         })
                     }
 

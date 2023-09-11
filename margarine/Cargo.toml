@@ -9,8 +9,8 @@ edition = "2021"
 lexer = { path = "./lexer" }
 parser = { path = "./parser" }
 semantic_analysis = { path = "./semantic_analysis" }
-ir = { path = "./ir" }
-codegen = { path = "./codegen" }
+# ir = { path = "./ir" }
+# codegen = { path = "./codegen" }
 common = { path = "./common" }
 runtime = { path = "./runtime" }
 

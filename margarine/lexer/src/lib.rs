@@ -1,10 +1,13 @@
 use std::ops::{Deref, DerefMut};
 
-use errors::{Error, CompilerError, ErrorCode, ErrorBuilder, CombineIntoError};
-use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData}, hashables::HashableF64};
+use ::errors::Errors;
+use common::{string_map::{StringMap, StringIndex},
+    source::{SourceRange, FileData}, hashables::HashableF64};
+use errors::Error;
 use sti::reader::Reader;
 
 mod tests;
+pub mod errors;
 
 
 /// A wrapper around `Vec<Token>` with
@@ -201,21 +204,21 @@ pub enum Keyword {
 pub fn lex(
     file: &FileData,
     string_map: &mut StringMap
-) -> Result<TokenList, Error> {
+) -> Result<TokenList, Errors<Error>> {
     let mut lexer = Lexer {
         reader: Reader::new(file.read().as_bytes()),
         string_map,
     };
 
     let mut tokens = Vec::new();
-    let mut errors = Vec::new();
+    let mut errors = Errors::new();
 
     loop {
         let token = lexer.next_token();
         let token = match token {
             Ok(t) => t,
             Err(e) => {
-                errors.push(e);
+                errors.with(e);
                 continue;
             },
         };
@@ -230,7 +233,7 @@ pub fn lex(
 
 
     if !errors.is_empty() {
-        return Err(errors.combine_into_error())
+        return Err(errors)
     }
 
     Ok(TokenList::new(tokens))
@@ -253,7 +256,7 @@ impl Lexer<'_> {
 
 
 impl Lexer<'_> {
-    fn next_token(&mut self) -> Result<Token, Error> {
+    fn next_token(&mut self) -> Result<Token, Errors<Error>> {
         if self.reader.starts_with(b"//") {
             self.reader.consume_while(|x| *x != b'\n');
         }
@@ -355,11 +358,10 @@ impl Lexer<'_> {
             _ if val.is_ascii_digit() => self.number(start as usize)?,
             
 
-            _ => return Err(CompilerError::new(ErrorCode::LInvalidCharacter)
-                .highlight(SourceRange::new(start, start))
-                    .note(format!("'{}'", char::from_u32(val as u32).unwrap()))
-                .build()
-            )
+            _ => return Err(Error::InvalidCharacter { 
+                character: val as char, 
+                position: SourceRange::new(start, start) 
+            }.into())
         };
 
         let end = self.reader.offset() as u32 - 1;
@@ -415,7 +417,6 @@ impl Lexer<'_> {
             "continue"  => TokenKind::Keyword(Keyword::Continue),
 
             _ => {
-                // let index = self.string_map.insert_static(unsafe { std::mem::transmute(value) });
                 let index = self.string_map.insert(value);
                 TokenKind::Identifier(index)
             }
@@ -436,29 +437,22 @@ impl Lexer<'_> {
         
         let value = unsafe { core::str::from_utf8_unchecked(value) };
 
-        let source = SourceRange::new(begin as u32, self.reader.offset() as u32);
+        let source = SourceRange::new(begin as u32, self.reader.offset() as u32 - 1);
 
         let kind = match dot_count {
             0 => {
                 match value.parse() {
                     Ok(e) => Literal::Integer(e),
-                    Err(_) => return Err(CompilerError::new(ErrorCode::LNumTooLarge)
-                        .highlight(source)
-                        .build()),
+                    Err(_) => return Err(Error::NumberTooLarge(source)),
                 }
             },
             1 => {
                 match value.parse() {
                     Ok(e) => Literal::Float(HashableF64(e)),
-                    Err(_) => return Err(CompilerError::new(ErrorCode::LNumTooLarge)
-                        .highlight(source)
-                        .build()),
+                    Err(_) => return Err(Error::NumberTooLarge(source)),
                 }
             },
-            _ =>  return Err(CompilerError::new(ErrorCode::LTooManyDots)
-                .highlight(source)
-                .build()
-            )
+            _ =>  return Err(Error::TooManyDots(source))
         };
 
 
@@ -466,34 +460,33 @@ impl Lexer<'_> {
     }
 
 
-    fn string(&mut self, start: usize) -> Result<TokenKind, Error> {
+    fn string(&mut self, start: usize) -> Result<TokenKind, Errors<Error>> {
         let str = {
             let mut is_escaped = false;
-            let (value, _) = self.reader.consume_while_slice(|at| {
+            let mut clone = self.reader.clone();
+            let (value, _) = clone.consume_while_slice(|at| {
                 let done = !is_escaped && *at == b'"';
                 is_escaped = *at == b'\\' as u8 && !is_escaped;
                 return !done;
             });
 
-            if self.reader.next() != Some(b'"') {
-                return Err(CompilerError::new(ErrorCode::LUnterminatedStr)
-                    .highlight(SourceRange::new(start as u32, self.reader.offset() as u32))
-                        .note("consider adding a quotation mark here".to_string())
-
-                    .build()
-                );
+            if clone.next() != Some(b'"') {
+                self.reader.set_offset(clone.offset());
+                return Err(Error::UnterminatedString(SourceRange::new(
+                    start as u32, 
+                    clone.offset() as u32 - 1
+                )).into());
             }
             
             value
         };
-        let mut iter = str.iter();
 
         let mut string = String::with_capacity(str.len());
 
-        let mut errors = vec![];
+        let mut errors = Errors::new();
 
         let mut is_in_escape = false;
-        while let Some(value) = iter.next() {
+        while let Some(value) = self.reader.next() {
             if is_in_escape {
                 match value {
                     b'n' => string.push('\n'),
@@ -510,7 +503,7 @@ impl Lexer<'_> {
                         },
                     },
 
-                    _ => string.push(*value as char),
+                    _ => string.push(value as char),
                 }
 
                 is_in_escape = false;
@@ -521,7 +514,7 @@ impl Lexer<'_> {
             match value {
                 b'\\' => is_in_escape = true,
                 b'"' => break,
-                _ => string.push(*value as char),
+                _ => string.push(value as char),
             }
         }
 
@@ -530,51 +523,41 @@ impl Lexer<'_> {
             return Ok(TokenKind::Literal(Literal::String(index)));
         }
 
-        Err(errors.combine_into_error())
+        Err(errors)
     }
 
 
     fn unicode_escape_character(&mut self) -> Result<char, Error> {
-        if self.reader.next() != Some(b'{') {
+        if self.reader.peek() != Some(b'{') {
             let offset = self.reader.offset() as u32;
-            return Err(CompilerError::new(ErrorCode::LCorruptUnicodeEsc)
-                .highlight(SourceRange::new(offset, offset))
-                    .note("unicode escapes are formatted like '\\u{..}'".to_string())
-
-                .build()
-            );
+            return Err(Error::CorruptUnicodeEscape(SourceRange::new(
+                offset as u32, offset as u32
+            )));
         }
 
-        let start = self.reader.offset();
+        let start = self.reader.offset()-2;
+        let _ = self.reader.next();
         
-        let (unicode, no_eoi) = self.reader.consume_while_slice(|x| x.is_ascii_hexdigit());
+        let (unicode, _) = self.reader.consume_while_slice(|x| x.is_ascii_hexdigit());
         let unicode = unsafe { core::str::from_utf8_unchecked(unicode) };
 
-
-        if !no_eoi || self.reader.next() != Some(b'}') {
-            return Err(CompilerError::new(ErrorCode::LUnterminatedUni)
-                .highlight(SourceRange::new(start as u32, self.reader.offset() as u32))
-                    .note("unicode escapes need to end with '}'".to_string())
-                .build()
-            )
+        if self.reader.peek() != Some(b'}') {
+            return Err(Error::CorruptUnicodeEscape(SourceRange::new(
+                start as u32, self.reader.offset() as u32
+            )));
         }
+        let _ = self.reader.next();
 
         let source = SourceRange::new(start as u32, self.reader.offset() as u32);
         
         let val = match u32::from_str_radix(unicode, 16) {
             Ok(v) => v,
-            Err(_) => return Err(CompilerError::new(ErrorCode::LNumTooLarge)
-                .highlight(source)
-                .build()
-            ),
+            Err(_) => return Err(Error::NumberTooLarge(source))
         };
 
         match char::from_u32(val) {
             Some(value) => Ok(value),
-            None => Err(CompilerError::new(ErrorCode::LInvalidUnicodeChr)
-                .highlight(source)
-                .build()
-            ),
+            None => Err(Error::InvalidUnicodeCharacter(source))
         }
     }
 }

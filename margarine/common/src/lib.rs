@@ -2,8 +2,12 @@ pub mod string_map;
 pub mod fuck_map;
 pub mod hashables;
 pub mod source;
+pub mod small_vec;
+pub mod static_vec;
 
-use std::{ops::{Deref, DerefMut}, time::Instant};
+use std::{ops::{Deref, DerefMut}, time::Instant, slice::Iter};
+
+use sti::{prelude::Alloc, vec::Vec};
 
 pub trait Slice: Deref {
     fn as_slice(&self) -> &<Self as Deref>::Target;
@@ -20,7 +24,6 @@ impl<A, T: Deref<Target = [A]> + DerefMut> Slice for T {
         self.deref_mut()
     }
 }
-
 
 
 pub struct DropTimer<'a> {
@@ -51,3 +54,31 @@ impl Drop for DropTimer<'_> {
         println!("droptimer: ran '{}' in {} seconds", self.message, self.time.elapsed().as_secs_f32());
     }
 }
+
+
+pub trait OptionalPlus<T> {
+    fn unwrap_ref(&self) -> &T;
+}
+
+
+impl<T> OptionalPlus<T> for Option<T> {
+    fn unwrap_ref(&self) -> &T {
+        self.as_ref().unwrap()
+    }
+}
+
+
+pub fn find_duplicate<'a, T: PartialEq, A: Alloc>(
+    fields: &'a [T], 
+    buff: &mut Vec<(&'a T, &'a T), A>
+) {
+
+    for i in 0..fields.len() {
+        for j in 0..i {
+            if fields[i] == fields[j] {
+                buff.push((&fields[i], &fields[j]))
+            }
+        }
+    }
+}
+

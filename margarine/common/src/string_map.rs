@@ -1,8 +1,6 @@
 use std::marker::PhantomData;
 
-use sti::{prelude::Arena, arena::ArenaStats, hash::{HashMap, HashFn, fxhash::FxHasher32, HashMapF}};
-
-use crate::fuck_map::FuckMap;
+use sti::{prelude::Arena, arena::ArenaStats, hash::{HashFn, fxhash::FxHasher32, HashMapF}};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Debug, Hash)]
 pub struct StringIndex(u32);
@@ -84,9 +82,7 @@ impl StringMap {
 
 impl std::fmt::Debug for StringMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StringMap")
-            .field("vec", &self.vec)
-            .finish()
+        f.debug_map().entries(self.vec.iter().enumerate()).finish()
     }
 }
 

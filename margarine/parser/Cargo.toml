@@ -10,5 +10,6 @@ common = { path = "../common" }
 lexer = { path = "../lexer" }
 errors = { path = "../errors" }
 istd = { git = "https://github.com/rookieCookies/istd" }
+sti = { git = "https://github.com/leddoo/sti" }
 
 thin-vec = "*"

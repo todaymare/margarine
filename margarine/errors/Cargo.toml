@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 colourful = { git = "https://github.com/rookieCookies/colourful" }
+display_plus = { git = "https://github.com/rookieCookies/display_plus" }
 common = { path = "../common" }

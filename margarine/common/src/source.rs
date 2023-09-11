@@ -9,22 +9,35 @@ use crate::string_map::{StringIndex, StringMap};
 pub struct FileData {
     data: String,
     name: StringIndex,
+    extension: Extension
 }
 
 
 impl FileData {
-    pub fn new(data: String, name: StringIndex) -> Self { 
+    pub fn new(data: String, name: StringIndex, extension: Extension) -> Self { 
         let data = data.replace('\t', "    ").replace('\r', "");
-        Self { data, name } 
+        Self { data, name, extension } 
     }
 
 
     pub fn open<P: AsRef<Path>>(path: P, symbol_map: &mut StringMap) -> Result<Self, std::io::Error> {
         let data = std::fs::read_to_string(&path)?;
-        let path = path.as_ref().with_extension("");
-        let name = path.to_string_lossy();
+        let new_path = path.as_ref().with_extension("");
+        let name = new_path.to_string_lossy();
 
-        Ok(Self::new(data, symbol_map.insert(&name)))
+        println!("{:?}", path.as_ref().extension());
+        let extension = match path.as_ref().extension() {
+            Some(v) => {
+                match v.to_str() {
+                    Some("mar") => Extension::Mar,
+                    Some(val) => Extension::Other(symbol_map.insert(val)),
+                    _ => Extension::None,
+                }
+            },
+            None => Extension::None,
+        };
+
+        Ok(Self::new(data, symbol_map.insert(&name), extension))
     }
 
 
@@ -33,6 +46,28 @@ impl FileData {
 
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
+
+    #[inline(always)]
+    pub fn extension(&self) -> Extension { self.extension }
+}
+
+
+#[derive(Clone, Copy, Debug)]
+pub enum Extension {
+    Mar,
+    None,
+    Other(StringIndex),
+}
+
+
+impl Extension {
+    pub fn read<'a>(&self, string_map: &'a StringMap) -> &'a str {
+        match self {
+            Extension::Mar => "mar",
+            Extension::None => "",
+            Extension::Other(v) => string_map.get(*v),
+        }
+    }
 }
 
 

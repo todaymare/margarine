@@ -2,7 +2,7 @@
 #![allow(unused)]
 use std::fmt::Debug;
 
-use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData}, Slice, hashables::HashableF64};
+use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, Slice, hashables::HashableF64};
 
 use crate::{lex, Token, TokenKind, Literal};
 
@@ -11,7 +11,7 @@ use crate::{lex, Token, TokenKind, Literal};
 fn empty() {
     let mut symbol_table = StringMap::new();
     let file_name = symbol_table.insert("test");
-    let file_data = FileData::new(String::new(), file_name);
+    let file_data = FileData::new(String::new(), file_name, Extension::None);
 
     let tokens = lex(&file_data, &mut symbol_table).unwrap();
 
@@ -31,7 +31,7 @@ fn tokens() {
         let file = symbol_table.insert("test");
         let data = "() <> {} [] % / + - * ^ : :: , . ! = _ \
                     <= >= == != || && += -= *= /= @ ?";
-        let file_data = FileData::new(data.to_string(), file);
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table).unwrap();
 
@@ -86,7 +86,7 @@ fn tokens() {
         let mut symbol_table = StringMap::new();
         let file = symbol_table.insert("test");
         let data = ";";
-        let file_data = FileData::new(data.to_string(), file);
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table);
         assert!(tokens.is_err());
@@ -101,7 +101,7 @@ fn numbers() {
         let mut symbol_table = StringMap::new();
         let file = symbol_table.insert("test");
         let data = "123456789";
-        let file_data = FileData::new(data.to_string(), file);
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table).unwrap();
 
@@ -123,7 +123,7 @@ fn numbers() {
         let mut symbol_table = StringMap::new();
         let file = symbol_table.insert("test");
         let data = "420.69";
-        let file_data = FileData::new(data.to_string(), file);
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table).unwrap();
 
@@ -145,7 +145,7 @@ fn numbers() {
         let mut symbol_table = StringMap::new();
         let file = symbol_table.insert("test");
         let data = "420.69.50";
-        let file_data = FileData::new(data.to_string(), file);
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table);
         assert!(tokens.is_err())
@@ -158,7 +158,7 @@ fn identifiers() {
     let mut symbol_table = StringMap::new();
     let file = symbol_table.insert("test");
     let data = "hello _there";
-    let file_data = FileData::new(data.to_string(), file);
+    let file_data = FileData::new(data.to_string(), file, Extension::None);
 
     let tokens = lex(&file_data, &mut symbol_table).unwrap();
 
@@ -186,7 +186,7 @@ fn string() {
         let mut symbol_table = StringMap::new();
         let file = symbol_table.insert("test");
         let data = "\"hello there\"";
-        let file_data = FileData::new(data.to_string(), file);
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
 
         let tokens = lex(&file_data, &mut symbol_table).unwrap();
 
@@ -208,7 +208,7 @@ fn string() {
         let mut symbol_table = StringMap::new();
         let file = symbol_table.insert("test");
         let data = "\"hello there";
-        let file_data = FileData::new(data.to_string(), file);
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
 
         let tokens = lex(&file_data, &mut symbol_table);
         assert!(tokens.is_err());
@@ -221,7 +221,7 @@ fn comments() {
     let mut symbol_table = StringMap::new();
     let file = symbol_table.insert("test");
     let data = "// hello there!\n";
-    let file_data = FileData::new(data.to_string(), file);
+    let file_data = FileData::new(data.to_string(), file, Extension::None);
 
     let tokens = lex(&file_data, &mut symbol_table).unwrap();
     compare_individually(tokens.as_slice(), vec![

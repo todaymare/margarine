@@ -1,31 +1,20 @@
 use common::{string_map::StringIndex, source::SourceRange};
 use lexer::Literal;
-use thin_vec::ThinVec;
 
-use crate::{DataType, DataTypeKind, Block};
+use crate::{DataType, Block};
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Node {
-    kind: NodeKind,
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct Node<'a> {
+    kind: NodeKind<'a>,
     pub(crate) source_range: SourceRange,
-    tags: ThinVec<StringIndex>,
-    pub data_kind: DataTypeKind,
 }
 
-impl Node {
-    pub fn new(kind: NodeKind, source_range: SourceRange) -> Self { 
-        Self { 
+impl<'arena> Node<'arena> {
+    pub fn new(kind: NodeKind<'arena>, source_range: SourceRange) -> Self { 
+        Self {
             kind, 
             source_range,
-            tags: ThinVec::new(),
-            data_kind: DataTypeKind::Unknown, 
         } 
-    }
-
-
-    #[inline(always)]
-    pub fn add_tag(&mut self, tag: StringIndex) {
-        self.tags.push(tag)
     }
 
 
@@ -36,51 +25,47 @@ impl Node {
 
 
     #[inline(always)]
-    pub fn kind(&self) -> &NodeKind {
+    pub fn kind(&self) -> &NodeKind<'arena> {
         &self.kind
     }
-
-
-    #[inline(always)]
-    pub fn kind_mut(&mut self) -> &mut NodeKind {
-        &mut self.kind
-    }
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum NodeKind {
-    Declaration(Declaration),
-    Statement(Statement),
-    Expression(Expression),
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum NodeKind<'a> {
+    Declaration(Declaration<'a>),
+    Statement(Statement<'a>),
+    Expression(Expression<'a>),
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Declaration {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Declaration<'a> {
     Struct {
         kind: StructKind,
         name: StringIndex,
-        fields: Vec<(StringIndex, DataType, SourceRange)>,
+        header: SourceRange,
+        fields: &'a [(StringIndex, DataType<'a>, SourceRange)],
     },
 
     Enum {
         name: StringIndex,
-        mappings: Vec<EnumMapping>,
+        header: SourceRange,
+        mappings: &'a [EnumMapping<'a>],
     },
 
     Function {
         is_system: bool,
-        is_anonymous: bool,
         name: StringIndex,
-        arguments: Vec<FunctionArgument>,
-        return_type: DataType,
-        body: Block,
+        header: SourceRange,
+        arguments: &'a [FunctionArgument<'a>],
+        return_type: DataType<'a>,
+        body: Block<'a>,
     },
     
     Impl {
-        data_type: DataType,
-        body: Block,
+        data_type: DataType<'a>,
+        body: Block<'a>,
     },
 
     Using {
@@ -89,35 +74,35 @@ pub enum Declaration {
 
     Module {
         name: StringIndex,
-        body: Block,
+        body: Block<'a>,
     },
 
     Extern {
         file: StringIndex,
-        functions: Vec<ExternFunction>,
+        functions: &'a [ExternFunction<'a>],
     }
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Statement {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Statement<'a> {
     Variable {
         name: StringIndex,
-        hint: Option<DataType>,
+        hint: Option<DataType<'a>>,
         is_mut: bool,
-        rhs: Box<Node>,
+        rhs: &'a Node<'a>,
     },
 
 
     UpdateValue {
-        lhs: Box<Node>,
-        rhs: Box<Node>,
+        lhs: &'a Node<'a>,
+        rhs: &'a Node<'a>,
     },
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Expression {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Expression<'a> {
     Unit,
     
     Literal(Literal),
@@ -126,74 +111,74 @@ pub enum Expression {
 
     BinaryOp {
         operator: BinaryOperator,
-        lhs: Box<Node>,
-        rhs: Box<Node>,
+        lhs: &'a Node<'a>,
+        rhs: &'a Node<'a>,
     },
 
     UnaryOp {
         operator: UnaryOperator,
-        rhs: Box<Node>,
+        rhs: &'a Node<'a>,
     },
 
     If {
-        condition: Box<Node>,
-        body: Block,
-        else_block: Option<Box<Node>>,
+        condition: &'a Node<'a>,
+        body: Block<'a>,
+        else_block: Option<&'a Node<'a>>,
     },
 
     Match {
-        value: Box<Node>,
-        mappings: Vec<MatchMapping>,
+        value: &'a Node<'a>,
+        mappings: &'a [MatchMapping<'a>],
     },
 
     Block {
-        block: Block,
+        block: Block<'a>,
     },
 
     CreateStruct {
-        data_type: DataType,
-        fields: Vec<(StringIndex, SourceRange, Node)>,
+        data_type: DataType<'a>,
+        fields: &'a [(StringIndex, SourceRange, Node<'a>)],
     },
 
     AccessField {
-        val: Box<Node>,
+        val: &'a Node<'a>,
         field: StringIndex,
         field_meta: (u16, bool),
     },
 
     CallFunction {
         name: StringIndex,
-        is_accessor: Option<Box<Node>>,
-        args: Vec<(Node, bool)>,
+        is_accessor: bool,
+        args: &'a [(Node<'a>, bool)],
     },
 
     WithinNamespace {
         namespace: StringIndex,
         namespace_source: SourceRange,
-        action: Box<Node>,
+        action: &'a Node<'a>,
     },
 
     WithinTypeNamespace {
-        namespace: DataType,
-        action: Box<Node>,
+        namespace: DataType<'a>,
+        action: &'a Node<'a>,
     },
 
     Loop {
-        body: Block,
+        body: Block<'a>,
     },
     
-    Return(Box<Node>),
+    Return(&'a Node<'a>),
     Continue,
     Break,
 
     CastAny {
-        lhs: Box<Node>,
-        data_type: DataType,
+        lhs: &'a Node<'a>,
+        data_type: DataType<'a>,
     },
 
-    Unwrap(Box<Node>),
+    Unwrap(&'a Node<'a>),
 
-    OrReturn(Box<Node>),
+    OrReturn(&'a Node<'a>),
 }
 
 
@@ -205,17 +190,17 @@ pub enum StructKind {
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExternFunction {
+#[derive(Debug, PartialEq)]
+pub struct ExternFunction<'arena> {
     name: StringIndex,
     path: StringIndex,
-    args: Vec<FunctionArgument>,
-    return_type: DataType,
+    args: &'arena [FunctionArgument<'arena>],
+    return_type: DataType<'arena>,
     source_range: SourceRange,
 }
 
-impl ExternFunction {
-    pub(crate) fn new(name: StringIndex, path: StringIndex, args: Vec<FunctionArgument>, return_type: DataType, source_range: SourceRange) -> Self { 
+impl<'arena> ExternFunction<'arena> {
+    pub(crate) fn new(name: StringIndex, path: StringIndex, args: &'arena [FunctionArgument<'arena>], return_type: DataType<'arena>, source_range: SourceRange) -> Self { 
         Self { name, args, return_type, source_range, path } 
     }
 
@@ -225,38 +210,32 @@ impl ExternFunction {
     #[inline(always)]
     pub fn path(&self) -> StringIndex { self.name }
     #[inline(always)]
-    pub fn args(&self) -> &[FunctionArgument] { &self.args }
+    pub fn args(&self) -> &[FunctionArgument<'arena>] { &self.args }
     #[inline(always)]
-    pub fn args_mut(&mut self) -> &mut [FunctionArgument] { &mut self.args }
-    #[inline(always)]
-    pub fn return_type(&self) -> &DataType { &self.return_type }
-    #[inline(always)]
-    pub fn return_type_mut(&mut self) -> &mut DataType { &mut self.return_type }
+    pub fn return_type(&self) -> &DataType<'arena> { &self.return_type }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
 
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct FunctionArgument {
+#[derive(Debug, PartialEq)]
+pub struct FunctionArgument<'a> {
     name: StringIndex,
-    data_type: DataType,
+    data_type: DataType<'a>,
     is_inout: bool,
     source_range: SourceRange,
 }
 
 
-impl FunctionArgument {
-    pub fn new(name: StringIndex, data_type: DataType, is_inout: bool, source_range: SourceRange) -> Self { 
+impl<'arena> FunctionArgument<'arena> {
+    pub fn new(name: StringIndex, data_type: DataType<'arena>, is_inout: bool, source_range: SourceRange) -> Self { 
         Self { name, data_type, is_inout, source_range } 
     }
 
 
     #[inline(always)]
-    pub fn data_type(&self) -> &DataType { &self.data_type }
-    #[inline(always)]
-    pub fn data_type_mut(&mut self) -> &mut DataType { &mut self.data_type }
+    pub fn data_type(&self) -> &DataType<'arena> { &self.data_type }
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
     #[inline(always)]
@@ -266,17 +245,17 @@ impl FunctionArgument {
 }
 
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct MatchMapping {
+#[derive(Debug, PartialEq)]
+pub struct MatchMapping<'a> {
     variant: StringIndex,
     binding: StringIndex,
     source_range: SourceRange,
-    expression: Node,
+    expression: Node<'a>,
 }
 
 
-impl MatchMapping {
-    pub fn new(variant: StringIndex, binding: StringIndex, source_range: SourceRange, expression: Node) -> Self { 
+impl<'arena> MatchMapping<'arena> {
+    pub fn new(variant: StringIndex, binding: StringIndex, source_range: SourceRange, expression: Node<'arena>) -> Self { 
         Self { 
             variant, 
             binding, 
@@ -291,26 +270,24 @@ impl MatchMapping {
     #[inline(always)]
     pub fn binding(&self) -> StringIndex { self.binding }
     #[inline(always)]
-    pub fn node(&self) -> &Node { &self.expression }
-    #[inline(always)]
-    pub fn node_mut(&mut self) -> &mut Node { &mut self.expression }
+    pub fn node(&self) -> &Node<'arena> { &self.expression }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
 
 }
 
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct EnumMapping {
+#[derive(Debug, PartialEq)]
+pub struct EnumMapping<'a> {
     name: StringIndex,
     number: u16,
-    data_type: DataType,
+    data_type: DataType<'a>,
     source_range: SourceRange,
     is_implicit_unit: bool,
 }
 
-impl EnumMapping {
-    pub fn new(name: StringIndex, number: u16, data_type: DataType, source_range: SourceRange, is_implicit_unit: bool) -> Self { 
+impl<'arena> EnumMapping<'arena> {
+    pub fn new(name: StringIndex, number: u16, data_type: DataType<'arena>, source_range: SourceRange, is_implicit_unit: bool) -> Self { 
         if is_implicit_unit {
             assert!(data_type.kind().is(&crate::DataTypeKind::Unit));
         }
@@ -322,9 +299,7 @@ impl EnumMapping {
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
     #[inline(always)]
-    pub fn data_type(&self) -> &DataType { &self.data_type }
-    #[inline(always)]
-    pub fn data_type_mut(&mut self) -> &mut DataType { &mut self.data_type }
+    pub fn data_type(&self) -> &DataType<'arena> { &self.data_type }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
     #[inline(always)]
@@ -334,7 +309,7 @@ impl EnumMapping {
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinaryOperator {
     /// '+'
     Add,
@@ -373,9 +348,8 @@ pub enum BinaryOperator {
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOperator {
     Not,
     Neg,
 }
-
