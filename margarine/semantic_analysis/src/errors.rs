@@ -28,6 +28,12 @@ pub enum Error {
         error_point: SourceRange,
     },
 
+    VariableValueAndHintDiffer {
+        value_type: Type,
+        hint_type: Type,
+        source: SourceRange,
+    },
+
     Bypass,
 }
 
@@ -77,6 +83,13 @@ impl ErrorType for Error {
             
             },
 
+            
+            Error::VariableValueAndHintDiffer { value_type, hint_type, source } => {
+                fmt
+                    .error("variable type & hint differ in types")
+                    .highlight(*source)
+            },
+            
             
             Error::Bypass => (),
         }

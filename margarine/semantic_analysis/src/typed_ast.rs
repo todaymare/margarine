@@ -1,4 +1,5 @@
 use common::string_map::StringIndex;
+use lexer::Literal;
 
 use crate::TypeId;
 
@@ -14,13 +15,18 @@ pub enum Type {
     Unit,
     Any,
     Never,
-    Unknown,
+
+    Error,
 }
 
 
 #[derive(Debug)]
 pub struct TypedNode<'a> {
     pub kind: TypedNodeKind<'a>,
+}
+
+impl<'a> TypedNode<'a> {
+    pub fn new(kind: TypedNodeKind<'a>) -> Self { Self { kind } }
 }
 
 
@@ -49,4 +55,5 @@ pub enum TypedStatement<'a> {
 #[derive(Debug)]
 pub enum TypedExpression {
     Unit,
+    Literal(Literal),
 }

@@ -34,6 +34,11 @@ impl<'me> ErrorFormatter<'me> {
     pub fn string(&self, string_index: StringIndex) -> &str {
         self.string_map.get(string_index)
     }
+
+
+    pub fn string_map(&self) -> &StringMap {
+        self.string_map
+    }
 }
 
 

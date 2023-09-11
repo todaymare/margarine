@@ -2,9 +2,9 @@
 
 use common::{string_map::{StringIndex, StringMap}, fuck_map::FuckMap, source::SourceRange, OptionalPlus, find_duplicate};
 use errors::Error;
-use parser::{nodes::{Node, NodeKind, Declaration, Statement}, DataType};
+use parser::{nodes::{Node, NodeKind, Declaration, Statement, Expression}, DataType};
 use sti::{define_key, keyed::KVec, arena_pool::ArenaPool, prelude::{Arena, Alloc, GlobalAlloc}, packed_option::PackedOption, vec::Vec};
-use typed_ast::{Type, TypedBlock, TypedNode, TypedStatement, TypedNodeKind};
+use typed_ast::{Type, TypedBlock, TypedNode, TypedStatement, TypedNodeKind, TypedExpression};
 
 pub mod symbol_vec;
 pub mod typed_ast;
@@ -52,6 +52,19 @@ define_key!(u32, pub TypeId);
 define_key!(u32, pub FuncId);
 define_key!(u32, pub ScopeId);
 
+
+#[derive(Debug)]
+pub struct AnalysisResult<'a> {
+    node  : TypedNode<'a>,
+    typ   : Type,
+    is_mut: bool,
+}
+
+impl<'a> AnalysisResult<'a> {
+    pub fn new(node: TypedNode<'a>, typ: Type, is_mut: bool) -> Self { Self { node, typ, is_mut } }
+}
+
+
 #[derive(Debug)]
 pub struct State<'me, 'ns, 'type_arena, 'func_arena> {
     ns_arena: &'ns Arena,
@@ -83,7 +96,7 @@ pub enum ScopeKind {
     NamedNamespace((StringIndex, NamespaceId)),
     Namespace(NamespaceId),
     Function,
-    Variable((StringIndex, Type)),
+    Variable((StringIndex, Type, bool)),
     None,
 }
 
@@ -142,6 +155,37 @@ impl Scope {
             parent,
             kind,
         }
+    }
+
+
+    #[inline(always)]
+    pub fn find_var(
+        &self,
+        name: StringIndex,
+        scopes: &KVec<ScopeId, Scope>,
+        namespaces: &KVec<NamespaceId, Namespace>,
+    ) -> Option<(StringIndex, Type, bool)> {
+
+        let mut current = self;
+        loop {
+            'ns: {
+                let ScopeKind::Variable(index) = self.kind
+                else { break 'ns };
+
+                if name == index.0 {
+                    return Some(index);
+                }
+            }
+
+            if let Some(parent) = current.parent.into() {
+                current = scopes.get(parent).unwrap();
+                continue
+            }
+
+            break
+        }
+
+        None
     }
 
 
@@ -311,7 +355,7 @@ impl<'me, 'ns, 'type_arena, 'func_arena> State<'me, 'ns, 'type_arena, 'func_aren
             | Type::Unit
             | Type::Any
             | Type::Never
-            | Type::Unknown => {
+            | Type::Error => {
                 let ns = Namespace::new(self.ns_arena);
                 let ns_index = self.create_ns(ns);
                 self.namespace_table.insert(typ, ns_index);
@@ -433,7 +477,7 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
         &mut self, 
         parent: ScopeId, 
         body: &[Node]
-    ) -> Result<(ScopeId, TypedBlock<'fa>), Errors> {
+    ) -> Result<(ScopeId, TypedBlock<'fa>, Type), Errors> {
 
         let scope = {
             let pool = ArenaPool::tls_get_rec();
@@ -467,8 +511,39 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
             }
         }
 
-        
-        Ok((scope, self.func_arena.alloc_new([])))
+        if !errors.is_empty() {
+            return Err(errors)
+        }
+
+        let mut scope = scope;
+        let pool = ArenaPool::tls_get_rec();
+        let mut typed_ast = Vec::new_in(&*pool);
+
+        let mut final_type = Type::Unit;
+        for node in body {
+            let result = match node.kind() {
+                NodeKind::Declaration(_) => continue,
+
+                _ => self.analyse_node(&mut scope, node),
+            };
+
+
+            match result {
+                Ok(e) => {
+                    typed_ast.push(e.node);
+                    final_type = e.typ;
+                },
+
+                Err(e) => errors.with(e),
+            };
+        }
+
+
+        if !errors.is_empty() {
+            return Err(errors)
+        }
+
+        Ok((scope, typed_ast.move_into(self.func_arena).leak(), final_type))
 
     }
 
@@ -733,16 +808,23 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
     }
 
 
-    fn analyse_node(&mut self, current: ScopeId, node: &Node) -> Result<TypedNode, Errors> {
-        let kind = match node.kind() {
-            NodeKind::Declaration(_) => unreachable!(),
-            NodeKind::Statement(v) => TypedNodeKind::Statement(self.analyse_statement(current, v)?),
-            NodeKind::Expression(_) => todo!(),
-        };
+    fn analyse_node(
+        &mut self, 
+        scope: &mut ScopeId, 
+        node: &Node
+    ) -> Result<AnalysisResult<'fa>, Errors> {
 
-        Ok(TypedNode {
-            kind,
-        })
+        match node.kind() {
+            NodeKind::Declaration(_) => unreachable!(),
+            NodeKind::Statement(v) => {
+                Ok(AnalysisResult::new(
+                    self.analyse_statement(scope, v)?,
+                    Type::Unit,
+                    false,
+                ))
+            },
+            NodeKind::Expression(e) => self.analyse_expression(scope, e),
+        }
     }
 
 
@@ -753,16 +835,45 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
             Declaration::Enum { name, header, mappings } => Ok(()),
             
             Declaration::Function { is_system, name, header, arguments, return_type, body } => {
+                let index = {
+                    let current = self.scopes.get(current).unwrap();
+                    let index = current.find_func(
+                        *name, 
+                        &self.scopes, 
+                        &self.namespaces
+                    ).unwrap();
+                    index
+                };
+
                 let scope = Scope::new(current.some(), ScopeKind::Function);
-                let scope = self.scopes.push(scope);
-                let body_analysis = self.analyse_body(scope, &body)?;
+                let mut scope = self.scopes.push(scope);
+                let func = self.funcs.get(index).unwrap();
 
+                for arg in func.unwrap_ref().args.iter() {
+                    scope = self.scopes.push(Scope::new(
+                        scope.some(), 
+                        ScopeKind::Variable((
+                            arg.0,
+                            arg.1,
+                            arg.2,
+                        ))
+                    ));
+                }
 
+                let body_anal = self.analyse_body(scope, &body)?;
 
-                let current = self.scopes.get(current).unwrap();
-                let index = current.find_func(*name, &self.scopes, &self.namespaces).unwrap();
-                let func = self.funcs.get_mut(index).unwrap();
-                func.as_mut().unwrap().kind = FunctionKind::Normal { body: body_analysis.1 };
+                let func = self.funcs.get_mut(index).unwrap().as_mut().unwrap();
+
+                if body_anal.2 != func.return_type {
+                    return Err(Error::FunctionBodyAndReturnMismatch {
+                        source: body.range(), 
+                        return_type: func.return_type, 
+                        body_type: body_anal.2,
+                    }.into());
+                }
+
+                func.kind = FunctionKind::Normal { body: body_anal.1 };
+
 
                 Ok(())
             },
@@ -777,15 +888,119 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
 
     fn analyse_statement(
         &mut self, 
-        current: ScopeId, 
+        scope: &mut ScopeId, 
         stmt: &Statement
-    ) -> Result<TypedStatement, Errors> {
+    ) -> Result<TypedNode<'fa>, Errors> {
         
         match stmt {
             Statement::Variable { name, hint, is_mut, rhs } => {
-                todo!()
+                let rhs_anal = self.analyse_node(scope, rhs);
+
+                let rhs_anal = match rhs_anal {
+                    Ok(typ) => typ,
+
+                    Err(e) => {
+                        *scope = self.scopes.push(Scope::new(
+                            scope.some(), 
+                            ScopeKind::Variable((*name, Type::Error, *is_mut))
+                        ));
+                        
+                        return Err(e)
+                    }
+                };
+
+
+                let hint = hint.map(|hint| {
+                    let scope = *self.scopes.get(*scope).unwrap();
+                    self.update_data_type(
+                        &hint,
+                        &scope,
+                    )
+                });
+
+                let hint = match hint {
+                    Some(Err(e)) => {                        
+                        *scope = self.scopes.push(Scope::new(
+                            scope.some(), 
+                            ScopeKind::Variable((*name, Type::Error, *is_mut))
+                        ));
+
+                        return Err(e.into());
+                    },
+
+                    Some(Ok(e)) => Some(e),
+
+                    _ => None,
+                };
+                
+
+                if let Some(hint) = hint {
+                    if hint != rhs_anal.typ {
+                        *scope = self.scopes.push(Scope::new(
+                            scope.some(), 
+                            ScopeKind::Variable((*name, Type::Error, *is_mut))
+                        ));
+                        
+                        return Err(Error::VariableValueAndHintDiffer {
+                            value_type: rhs_anal.typ,
+                            hint_type: hint,
+                            source: rhs.range(),
+                        }.into())
+                    }
+                }
+
+                *scope = self.scopes.push(Scope::new(
+                    scope.some(), 
+                    ScopeKind::Variable((*name, rhs_anal.typ, *is_mut))
+                ));
+                
+
+                Ok(TypedNode { 
+                    kind: TypedNodeKind::Statement(TypedStatement::VariableDeclaration { 
+                        name: *name, 
+                        rhs: self.func_arena.alloc_new(rhs_anal.node),
+                    }) 
+                })
             },
+
             Statement::UpdateValue { lhs, rhs } => todo!(),
+        }
+    }
+
+
+    fn analyse_expression(
+        &mut self,
+        scope: &mut ScopeId,
+        expr: &Expression,
+    ) -> Result<AnalysisResult<'fa>, Errors> {
+
+        match expr {
+            Expression::Unit => Ok(AnalysisResult { 
+                node: TypedNode::new(TypedNodeKind::Expression(TypedExpression::Unit)), 
+                typ: Type::Unit, 
+                is_mut: true
+            }),
+
+            
+            Expression::Literal(v) => todo!(),
+            Expression::Identifier(_) => todo!(),
+            Expression::BinaryOp { operator, lhs, rhs } => todo!(),
+            Expression::UnaryOp { operator, rhs } => todo!(),
+            Expression::If { condition, body, else_block } => todo!(),
+            Expression::Match { value, mappings } => todo!(),
+            Expression::Block { block } => todo!(),
+            Expression::CreateStruct { data_type, fields } => todo!(),
+            Expression::AccessField { val, field, field_meta } => todo!(),
+            Expression::CallFunction { name, is_accessor, args } => todo!(),
+            Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
+            Expression::WithinTypeNamespace { namespace, action } => todo!(),
+            Expression::Loop { body } => todo!(),
+            Expression::Return(_) => todo!(),
+            Expression::Continue => todo!(),
+            Expression::Break => todo!(),
+            Expression::CastAny { lhs, data_type } => todo!(),
+            Expression::Unwrap(_) => todo!(),
+            Expression::OrReturn(_) => todo!(),
         }
     }
 }

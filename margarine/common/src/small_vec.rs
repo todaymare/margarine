@@ -158,7 +158,7 @@ impl<T, const N: usize> Iterator for IntoIter<T, N> {
     fn next(&mut self) -> Option<Self::Item> {
         self.index += 1;
 
-        if self.index >= self.len {
+        if self.index > self.len {
             return None
         }
 
