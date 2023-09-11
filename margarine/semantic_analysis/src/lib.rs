@@ -4,7 +4,7 @@ use common::{string_map::{StringIndex, StringMap}, fuck_map::FuckMap, source::So
 use errors::Error;
 use parser::{nodes::{Node, NodeKind, Declaration, Statement}, DataType};
 use sti::{define_key, keyed::KVec, arena_pool::ArenaPool, prelude::{Arena, Alloc, GlobalAlloc}, packed_option::PackedOption, vec::Vec};
-use typed_ast::{Type, TypedBlock, TypedNode, TypedStatement};
+use typed_ast::{Type, TypedBlock, TypedNode, TypedStatement, TypedNodeKind};
 
 pub mod symbol_vec;
 pub mod typed_ast;
@@ -734,11 +734,15 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
 
 
     fn analyse_node(&mut self, current: ScopeId, node: &Node) -> Result<TypedNode, Errors> {
-        match node.kind() {
+        let kind = match node.kind() {
             NodeKind::Declaration(_) => unreachable!(),
-            NodeKind::Statement(v) => TypedNode { kind: TypedNodeKind::Statement(self.analyse_statement(current, v)) },
+            NodeKind::Statement(v) => TypedNodeKind::Statement(self.analyse_statement(current, v)?),
             NodeKind::Expression(_) => todo!(),
-        }
+        };
+
+        Ok(TypedNode {
+            kind,
+        })
     }
 
 
@@ -779,7 +783,7 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
         
         match stmt {
             Statement::Variable { name, hint, is_mut, rhs } => {
-                
+                todo!()
             },
             Statement::UpdateValue { lhs, rhs } => todo!(),
         }
