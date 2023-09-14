@@ -1,5 +1,6 @@
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
+use parser::nodes::BinaryOperator;
 
 use crate::typed_ast::Type;
 
@@ -31,6 +32,18 @@ pub enum Error {
     VariableValueAndHintDiffer {
         value_type: Type,
         hint_type: Type,
+        source: SourceRange,
+    },
+
+    VariableNotFound {
+        name: StringIndex,
+        source: SourceRange,
+    },
+
+    InvalidBinaryOp {
+        operator: BinaryOperator,
+        lhs: Type,
+        rhs: Type,
         source: SourceRange,
     },
 
@@ -92,6 +105,8 @@ impl ErrorType for Error {
             
             
             Error::Bypass => (),
+            Error::VariableNotFound { name, source } => todo!(),
+            Error::InvalidBinaryOp { operator, lhs, rhs, source } => todo!(),
         }
     }
 }

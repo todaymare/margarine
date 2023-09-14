@@ -2,9 +2,9 @@
 
 use common::{string_map::{StringIndex, StringMap}, fuck_map::FuckMap, source::SourceRange, OptionalPlus, find_duplicate};
 use errors::Error;
-use parser::{nodes::{Node, NodeKind, Declaration, Statement, Expression}, DataType};
+use parser::{nodes::{Node, NodeKind, Declaration, Statement, Expression, BinaryOperator, UnaryOperator}, DataType};
 use sti::{define_key, keyed::KVec, arena_pool::ArenaPool, prelude::{Arena, Alloc, GlobalAlloc}, packed_option::PackedOption, vec::Vec};
-use typed_ast::{Type, TypedBlock, TypedNode, TypedStatement, TypedNodeKind, TypedExpression};
+use typed_ast::{Type, TypedBlock, TypedNode, TypedStatement, TypedNodeKind, TypedExpressionKind};
 
 pub mod symbol_vec;
 pub mod typed_ast;
@@ -56,12 +56,11 @@ define_key!(u32, pub ScopeId);
 #[derive(Debug)]
 pub struct AnalysisResult<'a> {
     node  : TypedNode<'a>,
-    typ   : Type,
     is_mut: bool,
 }
 
 impl<'a> AnalysisResult<'a> {
-    pub fn new(node: TypedNode<'a>, typ: Type, is_mut: bool) -> Self { Self { node, typ, is_mut } }
+    pub fn new(node: TypedNode<'a>, is_mut: bool) -> Self { Self { node, is_mut } }
 }
 
 
@@ -163,7 +162,6 @@ impl Scope {
         &self,
         name: StringIndex,
         scopes: &KVec<ScopeId, Scope>,
-        namespaces: &KVec<NamespaceId, Namespace>,
     ) -> Option<(StringIndex, Type, bool)> {
 
         let mut current = self;
@@ -355,6 +353,7 @@ impl<'me, 'ns, 'type_arena, 'func_arena> State<'me, 'ns, 'type_arena, 'func_aren
             | Type::Unit
             | Type::Any
             | Type::Never
+            | Type::Str
             | Type::Error => {
                 let ns = Namespace::new(self.ns_arena);
                 let ns_index = self.create_ns(ns);
@@ -530,8 +529,8 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
 
             match result {
                 Ok(e) => {
+                    final_type = e.node.typ();
                     typed_ast.push(e.node);
-                    final_type = e.typ;
                 },
 
                 Err(e) => errors.with(e),
@@ -819,11 +818,10 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
             NodeKind::Statement(v) => {
                 Ok(AnalysisResult::new(
                     self.analyse_statement(scope, v)?,
-                    Type::Unit,
                     false,
                 ))
             },
-            NodeKind::Expression(e) => self.analyse_expression(scope, e),
+            NodeKind::Expression(e) => self.analyse_expression(scope, e, node.range()),
         }
     }
 
@@ -932,17 +930,17 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
 
                     _ => None,
                 };
-                
+               
 
                 if let Some(hint) = hint {
-                    if hint != rhs_anal.typ {
+                    if hint != rhs_anal.node.typ() {
                         *scope = self.scopes.push(Scope::new(
                             scope.some(), 
                             ScopeKind::Variable((*name, Type::Error, *is_mut))
                         ));
                         
                         return Err(Error::VariableValueAndHintDiffer {
-                            value_type: rhs_anal.typ,
+                            value_type: rhs_anal.node.typ(),
                             hint_type: hint,
                             source: rhs.range(),
                         }.into())
@@ -951,16 +949,16 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
 
                 *scope = self.scopes.push(Scope::new(
                     scope.some(), 
-                    ScopeKind::Variable((*name, rhs_anal.typ, *is_mut))
+                    ScopeKind::Variable((*name, rhs_anal.node.typ(), *is_mut))
                 ));
                 
 
-                Ok(TypedNode { 
-                    kind: TypedNodeKind::Statement(TypedStatement::VariableDeclaration { 
+                Ok(TypedNode::stmt(
+                    TypedStatement::VariableDeclaration { 
                         name: *name, 
                         rhs: self.func_arena.alloc_new(rhs_anal.node),
-                    }) 
-                })
+                    }
+                ))
             },
 
             Statement::UpdateValue { lhs, rhs } => todo!(),
@@ -972,20 +970,163 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
         &mut self,
         scope: &mut ScopeId,
         expr: &Expression,
+        source: SourceRange,
     ) -> Result<AnalysisResult<'fa>, Errors> {
 
         match expr {
             Expression::Unit => Ok(AnalysisResult { 
-                node: TypedNode::new(TypedNodeKind::Expression(TypedExpression::Unit)), 
-                typ: Type::Unit, 
+                node: TypedNode::expr(
+                    TypedExpressionKind::Unit, 
+                    Type::Unit,
+                ), 
                 is_mut: true
             }),
 
             
-            Expression::Literal(v) => todo!(),
-            Expression::Identifier(_) => todo!(),
-            Expression::BinaryOp { operator, lhs, rhs } => todo!(),
-            Expression::UnaryOp { operator, rhs } => todo!(),
+            Expression::Literal(v) => {
+                Ok(AnalysisResult {
+                    node: TypedNode::expr(
+                        TypedExpressionKind::Literal(*v),
+                        match v {
+                            lexer::Literal::Integer(_) => Type::Int,
+                            lexer::Literal::Float(_) => Type::Float,
+                            lexer::Literal::String(_) => Type::Str,
+                            lexer::Literal::Bool(_) => Type::Bool,
+                        }
+                    ),
+                    is_mut: true,
+                })
+            },
+
+            
+            Expression::Identifier(v) => {
+                let scope = self.scopes.get(*scope).unwrap();
+                let variable = scope.find_var(
+                    *v,
+                    &self.scopes,
+                );
+
+                let Some(variable) = variable
+                else {
+                    return Err(Error::VariableNotFound {
+                        name: *v,
+                        source,
+                    }.into())
+                };
+
+                Ok(AnalysisResult {
+                    node: TypedNode::expr(
+                        TypedExpressionKind::AccVariable(*v),
+                        variable.1,
+                    ), 
+                    is_mut: variable.2,
+                })
+            },
+
+
+            Expression::BinaryOp { operator, lhs, rhs } => {
+                let lhs_anal = self.analyse_node(scope, lhs)?;
+                let rhs_anal = self.analyse_node(scope, rhs)?;
+
+                let return_type = if operator.is_arith() {
+                    match (lhs_anal.node.typ(), rhs_anal.node.typ()) {
+                        (Type::Int, Type::Int) => Type::Int,
+                        (Type::Float, Type::Float) => Type::Float,
+                        (Type::Unit, Type::Unit) => Type::Unit,
+
+                        | (_, Type::Error)
+                        | (Type::Error, _) => return Err(Error::Bypass.into()),
+
+                        _ => return Err(Error::InvalidBinaryOp {
+                            operator: *operator, 
+                            lhs: lhs_anal.node.typ(), 
+                            rhs: rhs_anal.node.typ(),
+                            source,
+                        }.into())
+                    }
+
+                } else if operator.is_bw() {
+                    match (lhs_anal.node.typ(), rhs_anal.node.typ()) {
+                        (Type::Int, Type::Int) => Type::Int,
+                        (Type::Unit, Type::Unit) => Type::Unit,
+
+                        | (_, Type::Error)
+                        | (Type::Error, _) => return Err(Error::Bypass.into()),
+
+                        _ => return Err(Error::InvalidBinaryOp {
+                            operator: *operator, 
+                            lhs: lhs_anal.node.typ(), 
+                            rhs: rhs_anal.node.typ(),
+                            source,
+                        }.into())
+                    }
+
+                } else if operator.is_eq_comp() {
+                    match (lhs_anal.node.typ(), rhs_anal.node.typ()) {
+                        (Type::Int, Type::Int) => Type::Bool,
+                        (Type::Float, Type::Float) => Type::Bool,
+                        (Type::Unit, Type::Unit) => Type::Bool,
+                        (Type::Str, Type::Str) => Type::Bool,
+                        (Type::Any, Type::Any) => Type::Bool,
+                        (Type::Bool, Type::Bool) => Type::Bool,
+                        (Type::UserType(v1), Type::UserType(v2)) if v1 == v2
+                            => Type::Bool,
+
+                        | (_, Type::Error)
+                        | (Type::Error, _) => return Err(Error::Bypass.into()),
+
+                        _ => return Err(Error::InvalidBinaryOp {
+                            operator: *operator, 
+                            lhs: lhs_anal.node.typ(),
+                            rhs: rhs_anal.node.typ(),
+                            source,
+                        }.into())
+                    }
+
+                } else if operator.is_ord_comp() {
+                    match (lhs_anal.node.typ(), rhs_anal.node.typ()) {
+                        (Type::Int, Type::Int) => Type::Bool,
+                        (Type::Unit, Type::Unit) => Type::Bool,
+                        (Type::Float, Type::Float) => Type::Bool,
+
+                        | (_, Type::Error)
+                        | (Type::Error, _) => return Err(Error::Bypass.into()),
+
+                        _ => return Err(Error::InvalidBinaryOp {
+                            operator: *operator, 
+                            lhs: lhs_anal.node.typ(),
+                            rhs: rhs_anal.node.typ(),
+                            source,
+                        }.into())
+                    }
+                    
+                } else {
+                    unreachable!()
+                };
+
+
+                Ok(AnalysisResult {
+                    node: TypedNode::expr(TypedExpressionKind::BinaryOp {
+                        operator: *operator,
+                        lhs: self.func_arena.alloc_new(lhs_anal.node),
+                        rhs: self.func_arena.alloc_new(rhs_anal.node),
+                    }, return_type), 
+                    is_mut: true,
+                })
+            },
+
+            
+            Expression::UnaryOp { operator, rhs } => {
+                let rhs_anal = self.analyse_node(scope, rhs)?;
+
+                // let node = match operator {
+                //     UnaryOperator::Not
+                //      if rhs_anal.node.typ() == Type::Bool
+                //      => TypedNode::expr(TypedExpressionKind::Unit, ),
+                //     UnaryOperator::Neg => todo!(),
+                // }
+                todo!()
+            },
             Expression::If { condition, body, else_block } => todo!(),
             Expression::Match { value, mappings } => todo!(),
             Expression::Block { block } => todo!(),

@@ -347,6 +347,109 @@ pub enum BinaryOperator {
     Le,
 }
 
+impl BinaryOperator {
+    pub fn is_arith(self) -> bool {
+        match self {
+            | BinaryOperator::BitshiftLeft
+            | BinaryOperator::BitshiftRight
+            | BinaryOperator::BitwiseAnd
+            | BinaryOperator::BitwiseOr
+            | BinaryOperator::BitwiseXor
+            | BinaryOperator::Eq
+            | BinaryOperator::Ne
+            | BinaryOperator::Gt
+            | BinaryOperator::Ge
+            | BinaryOperator::Lt
+            | BinaryOperator::Le 
+             => false,
+            
+            | BinaryOperator::Add
+            | BinaryOperator::Sub
+            | BinaryOperator::Mul
+            | BinaryOperator::Div
+            | BinaryOperator::Rem
+             => true,
+        }
+
+    }
+
+    
+    pub fn is_bw(self) -> bool {
+        match self {
+            | BinaryOperator::Eq
+            | BinaryOperator::Ne
+            | BinaryOperator::Gt
+            | BinaryOperator::Ge
+            | BinaryOperator::Lt
+            | BinaryOperator::Le
+            | BinaryOperator::Add
+            | BinaryOperator::Sub
+            | BinaryOperator::Mul
+            | BinaryOperator::Div
+            | BinaryOperator::Rem
+             => false,
+
+            | BinaryOperator::BitshiftLeft
+            | BinaryOperator::BitshiftRight
+            | BinaryOperator::BitwiseAnd
+            | BinaryOperator::BitwiseOr
+            | BinaryOperator::BitwiseXor
+             => true,
+        }
+
+    }
+
+    
+    pub fn is_ord_comp(self) -> bool {
+        match self {
+            | BinaryOperator::Add
+            | BinaryOperator::Sub
+            | BinaryOperator::Mul
+            | BinaryOperator::Div
+            | BinaryOperator::Rem
+            | BinaryOperator::BitshiftLeft
+            | BinaryOperator::BitshiftRight
+            | BinaryOperator::BitwiseAnd
+            | BinaryOperator::BitwiseOr
+            | BinaryOperator::BitwiseXor
+            | BinaryOperator::Eq
+            | BinaryOperator::Ne
+             => false,
+
+            | BinaryOperator::Gt
+            | BinaryOperator::Ge
+            | BinaryOperator::Lt
+            | BinaryOperator::Le
+             => true,
+        }
+    }
+
+    
+    pub fn is_eq_comp(self) -> bool {
+        match self {
+            | BinaryOperator::Add
+            | BinaryOperator::Sub
+            | BinaryOperator::Mul
+            | BinaryOperator::Div
+            | BinaryOperator::Rem
+            | BinaryOperator::BitshiftLeft
+            | BinaryOperator::BitshiftRight
+            | BinaryOperator::BitwiseAnd
+            | BinaryOperator::BitwiseOr
+            | BinaryOperator::BitwiseXor
+            | BinaryOperator::Gt
+            | BinaryOperator::Ge
+            | BinaryOperator::Lt
+            | BinaryOperator::Le
+             => false,
+
+            | BinaryOperator::Eq
+            | BinaryOperator::Ne
+             => true,
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOperator {
