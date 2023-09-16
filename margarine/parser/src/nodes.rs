@@ -1,4 +1,5 @@
 use common::{string_map::StringIndex, source::SourceRange};
+use errors::ErrorId;
 use lexer::Literal;
 
 use crate::{DataType, Block};
@@ -36,6 +37,7 @@ pub enum NodeKind<'a> {
     Declaration(Declaration<'a>),
     Statement(Statement<'a>),
     Expression(Expression<'a>),
+    Error(ErrorId),
 }
 
 

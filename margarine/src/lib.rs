@@ -6,5 +6,6 @@ pub use semantic_analysis::semantic_analysis;
 pub use common::source::FileData;
 pub use common::string_map::StringMap;
 pub use common::DropTimer;
+pub use errors::display;
 pub use ::runtime::*;
 

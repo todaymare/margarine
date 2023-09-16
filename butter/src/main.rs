@@ -11,63 +11,68 @@ fn main() -> Result<(), &'static str> {
         );
         let file = [file];
 
-        let tokens = DropTimer::with_timer("tokenisation", || {
+        let (tokens, lex_errors) = DropTimer::with_timer("tokenisation", || {
             let tokens = margarine::lex(&file[0], &mut symbol_map);
-            match tokens {
-                Ok(v)  => Ok(v),
-                Err(e) => {
-                    let report = e.display(&symbol_map, &file);
-                    println!("{report}");
-                    return Err("failed to compile because of the previous errors")
-                },
-            }
-        })?;
+            tokens
+        });
 
+        println!("{tokens:?}");
 
         let mut arena = Arena::new();
-        let instructions = DropTimer::with_timer("parsing", || {
-            let instructions = margarine::parse(tokens, &mut arena, &mut symbol_map);
-            match instructions {
-                Ok(v)  => Ok(v),
-                Err(e) => {
-                    let report = e.display(&symbol_map, &file);
-                    println!("{report}");
-                    return Err("failed to compile because of the previous errors")
-                },
-            }
-            
-        })?;
+        let (ast, parse_errors) = DropTimer::with_timer("parsing", || {
+            let ast = margarine::parse(tokens, &mut arena, &mut symbol_map);
+            ast
+        });
 
+        println!("{ast:?}");
 
         let ns_arena = Arena::new();
         let scopes = Arena::new();
-        let typed_ast = {
+        let sema = {
             let _1 = DropTimer::new("semantic analysis");
             margarine::semantic_analysis(
                 &ns_arena, 
                 &ns_arena, 
                 &ns_arena, 
                 &mut symbol_map,
-                &instructions
+                &ast
             )
         };
 
-        let typed_ast = match typed_ast {
-            Ok(v)  => v,
-            Err(e) => {
-                let report = e.display(&symbol_map, &file);
-                println!("{report}");
-                return Err("failed to compile because of the previous errors")
-            },
-        };
+        println!("{sema:#?}");
 
-        dbg!(&typed_ast);
+        if !lex_errors.is_empty() {
+            let report = margarine::display(lex_errors.as_slice().inner(), &sema.string_map, &file);
+            println!("{report}");
+        }
+
+        if !parse_errors.is_empty() {
+            let report = margarine::display(parse_errors.as_slice().inner(), &sema.string_map, &file);
+            println!("{report}");
+        }
+
+        if !sema.errors.is_empty() {
+            let report = margarine::display(parse_errors.as_slice().inner(), &sema.string_map, &file);
+            println!("{report}");
+        }
 
 
-        println!("scopes {:?}", scopes.stats());
-        drop(scopes);
+        // let typed_ast = match typed_ast {
+        //     Ok(v)  => v,
+        //     Err(e) => {
+        //         let report = e.display(&symbol_map, &file);
+        //         println!("{report}");
+        //         return Err("failed to compile because of the previous errors")
+        //     },
+        // };
 
-        println!("typed ast arena {:?}", ns_arena.stats());
+        // dbg!(&typed_ast);
+
+
+        // println!("scopes {:?}", scopes.stats());
+        // drop(scopes);
+
+        // println!("typed ast arena {:?}", ns_arena.stats());
         
 
         println!("symbol map arena {:?}", symbol_map.arena_stats());

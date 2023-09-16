@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, Slice, hashables::HashableF64};
 
-use crate::{lex, Token, TokenKind, Literal};
+use crate::{lex, Token, TokenKind, Literal, errors::Error};
 
 
 #[test]
@@ -13,9 +13,9 @@ fn empty() {
     let file_name = symbol_table.insert("test");
     let file_data = FileData::new(String::new(), file_name, Extension::None);
 
-    let tokens = lex(&file_data, &mut symbol_table).unwrap();
+    let tokens = lex(&file_data, &mut symbol_table);
 
-    assert_eq!(tokens.as_slice(), vec![
+    assert_eq!(tokens.0.as_slice(), vec![
         Token {
             token_kind: TokenKind::EndOfFile,
             source_range: SourceRange::new(0, 0),
@@ -33,9 +33,9 @@ fn tokens() {
                     <= >= == != || && += -= *= /= @ ?";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
-        let tokens = lex(&file_data, &mut symbol_table).unwrap();
+        let tokens = lex(&file_data, &mut symbol_table);
 
-        compare_individually(&tokens, &vec![
+        compare_individually(&tokens.0, &vec![
             token(TokenKind::LeftParenthesis, 0, 0),
             token(TokenKind::RightParenthesis, 1, 1),
 
@@ -89,7 +89,7 @@ fn tokens() {
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table);
-        assert!(tokens.is_err());
+        assert!(matches!(tokens.1.inner()[0], Error::InvalidCharacter { .. }));
     }
 }
 
@@ -103,9 +103,9 @@ fn numbers() {
         let data = "123456789";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
-        let tokens = lex(&file_data, &mut symbol_table).unwrap();
+        let tokens = lex(&file_data, &mut symbol_table);
 
-        compare_individually(tokens.as_slice(), vec![
+        compare_individually(tokens.0.as_slice(), vec![
             Token {
                 token_kind: TokenKind::Literal(Literal::Integer(123456789)),
                 source_range: SourceRange::new(0, 8),
@@ -125,9 +125,9 @@ fn numbers() {
         let data = "420.69";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
-        let tokens = lex(&file_data, &mut symbol_table).unwrap();
+        let tokens = lex(&file_data, &mut symbol_table);
 
-        compare_individually(tokens.as_slice(), vec![
+        compare_individually(tokens.0.as_slice(), vec![
             Token {
                 token_kind: TokenKind::Literal(Literal::Float(HashableF64(420.69))),
                 source_range: SourceRange::new(0, 5),
@@ -148,7 +148,7 @@ fn numbers() {
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table);
-        assert!(tokens.is_err())
+        assert!(matches!(tokens.1.inner()[0], Error::TooManyDots(..)))
     }
 }
 
@@ -160,9 +160,9 @@ fn identifiers() {
     let data = "hello _there";
     let file_data = FileData::new(data.to_string(), file, Extension::None);
 
-    let tokens = lex(&file_data, &mut symbol_table).unwrap();
+    let tokens = lex(&file_data, &mut symbol_table);
 
-    compare_individually(tokens.as_slice(), vec![
+    compare_individually(tokens.0.as_slice(), vec![
         Token {
             token_kind: TokenKind::Identifier(symbol_table.insert("hello")),
             source_range: SourceRange::new(0, 4),
@@ -188,9 +188,9 @@ fn string() {
         let data = "\"hello there\"";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
 
-        let tokens = lex(&file_data, &mut symbol_table).unwrap();
+        let tokens = lex(&file_data, &mut symbol_table);
 
-        compare_individually(tokens.as_slice(), vec![
+        compare_individually(tokens.0.as_slice(), vec![
             Token {
                 token_kind: TokenKind::Literal(Literal::String(symbol_table.insert("hello there"))),
                 source_range: SourceRange::new(0, 12),
@@ -211,7 +211,7 @@ fn string() {
         let file_data = FileData::new(data.to_string(), file, Extension::None);
 
         let tokens = lex(&file_data, &mut symbol_table);
-        assert!(tokens.is_err());
+        assert!(matches!(tokens.1.inner()[0], Error::UnterminatedString(..)));
     }
 }
 
@@ -223,8 +223,8 @@ fn comments() {
     let data = "// hello there!\n";
     let file_data = FileData::new(data.to_string(), file, Extension::None);
 
-    let tokens = lex(&file_data, &mut symbol_table).unwrap();
-    compare_individually(tokens.as_slice(), vec![
+    let tokens = lex(&file_data, &mut symbol_table);
+    compare_individually(tokens.0.as_slice(), vec![
         Token {
             token_kind: TokenKind::EndOfFile, 
             source_range: SourceRange::new(data.len() as u32, data.len() as u32),

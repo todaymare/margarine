@@ -12,5 +12,6 @@ semantic_analysis = { path = "./semantic_analysis" }
 # ir = { path = "./ir" }
 # codegen = { path = "./codegen" }
 common = { path = "./common" }
+errors = { path = "./errors" }
 runtime = { path = "./runtime" }
 

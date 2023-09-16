@@ -5,11 +5,11 @@ use std::ops::Deref;
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}, Slice};
 use errors::Error;
-use ::errors::Errors;
+use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument,
     ExternFunction, Expression, BinaryOperator, Statement, EnumMapping};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool};
+use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec};
 
 use crate::nodes::MatchMapping;
 
@@ -47,11 +47,6 @@ pub enum DataTypeKind<'a> {
     Float,
     Unit,
     Any,
-    /// This basically means an error
-    /// occurred while trying to find the
-    /// type of a node. It bypasses all
-    /// type checks for error tolerance reasons.
-    Unknown,
     Never,
     Option(&'a DataType<'a>),
     Result(&'a DataType<'a>, &'a DataType<'a>),
@@ -63,9 +58,7 @@ impl<'a> DataTypeKind<'a> {
     /// Coersions happen from self to oth
     /// not the other way around
     pub fn is(&self, oth: &DataTypeKind<'a>) -> bool {
-           self == &DataTypeKind::Unknown
-        || oth == &DataTypeKind::Unknown
-        || self == &DataTypeKind::Never
+        self == &DataTypeKind::Never
         || oth == &DataTypeKind::Any
         || self == oth
     }
@@ -80,7 +73,6 @@ impl std::hash::Hash for DataTypeKind<'_> {
             DataTypeKind::Float => 2.hash(state),
             DataTypeKind::Unit => 3.hash(state),
             DataTypeKind::Any => 4.hash(state),
-            DataTypeKind::Unknown => 5.hash(state),
             DataTypeKind::Never => 6.hash(state),
             DataTypeKind::Option(v) => {
                 7.hash(state);
@@ -142,22 +134,26 @@ pub fn parse<'a>(
     tokens: TokenList, 
     arena: &'a mut Arena, 
     symbol_map: &mut StringMap
-) -> Result<Block<'a>, Errors<Error>> {
+) -> (Block<'a>, KVec<ParserError, Error>) {
 
     let mut parser = Parser {
         tokens: tokens.as_slice(),
         index: 0,
         symbol_map,
         arena,
+        errors: KVec::new(),
+        is_in_panic: false,
     };
 
 
-    parser.parse_till(TokenKind::EndOfFile, &ParserSettings::default())
+    let result = parser.parse_till(TokenKind::EndOfFile, &ParserSettings::default()).unwrap();
+
+    (result, parser.errors)
 }
 
 
 // Internal
-type ParseResult<'a> = Result<Node<'a>, Errors<Error>>;
+type ParseResult<'a> = Result<Node<'a>, ErrorId>;
 
 struct ParserSettings<'a> {
     is_in_impl: Option<DataType<'a>>,
@@ -181,6 +177,9 @@ struct Parser<'a, 'arena> {
 
     arena: &'arena Arena,
     symbol_map: &'a mut StringMap,
+
+    errors: KVec<ParserError, Error>,
+    is_in_panic: bool,
 }
 
 
@@ -221,6 +220,17 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
+    #[inline(always)]
+    fn is_error_token(&mut self) -> Result<(), ErrorId> {
+        if let TokenKind::Error(e) = self.current_kind() {
+            return Err(ErrorId::Lexer(e))
+        }
+
+        Ok(())
+    }
+
+
+    #[inline(always)]
     fn is_literal_str(&self) -> Option<StringIndex> {
         match self.current_kind() {
             TokenKind::Literal(Literal::String(v)) => Some(v),
@@ -229,55 +239,64 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn expect_literal_str(&self) -> Result<StringIndex, Error> {
+    #[inline(always)]
+    fn expect_literal_str(&mut self) -> Result<StringIndex, ErrorId> {
+        self.is_error_token()?;
         match self.current_kind() {
             TokenKind::Literal(Literal::String(v)) => Ok(v),
-            _ => Err(Error::ExpectedLiteralString { 
+            _ => Err(ErrorId::Parser(self.errors.push(Error::ExpectedLiteralString { 
                     source: self.current_range(), 
                     token: self.current_kind()
-                })
+                })))
         }
     }
 
 
-    fn expect_identifier(&self) -> Result<StringIndex, Error> {
+    #[inline(always)]
+    fn expect_identifier(&mut self) -> Result<StringIndex, ErrorId> {
+        self.is_error_token()?;
         match self.current_kind() {
             TokenKind::Identifier(v) => Ok(v),
-            _ => Err(Error::ExpectedIdentifier {
+            _ => Err(ErrorId::Parser(self.errors.push(Error::ExpectedIdentifier {
                 source: self.current_range(), 
                 token: self.current_kind()
-            })
+            })))
         }
     }
 
 
-    fn expect(&self, token_kind: TokenKind) -> Result<&Token, Error> {
+    #[inline(always)]
+    fn expect(&mut self, token_kind: TokenKind) -> Result<&Token, ErrorId> {
+        self.is_error_token()?;
         if self.current_kind() != token_kind {
-            return Err(Error::ExpectedXFoundY {
+            return Err(ErrorId::Parser(self.errors.push(Error::ExpectedXFoundY {
                 source: self.current_range(), 
                 found: self.current_kind(), 
                 expected: token_kind
-            })
+            })))
         }
 
         Ok(self.current())
     }
 
 
-    fn expect_multi(&self, token_kinds: &'static [TokenKind]) -> Result<&Token, Error> {
+    #[inline(always)]
+    fn expect_multi(&mut self, token_kinds: &'static [TokenKind]) -> Result<&Token, ErrorId> {
+        self.is_error_token()?;
         if !token_kinds.contains(&self.current_kind()) {
-            return Err(Error::ExpectedXFoundYMulti { 
-                source: self.current_range(), 
-                found: self.current_kind(),
-                expected: token_kinds,
-            });
+            return Err(ErrorId::Parser(self.errors.push(Error::ExpectedXFoundYMulti { 
+                            source: self.current_range(), 
+                            found: self.current_kind(),
+                            expected: token_kinds,
+                        })));
         }
 
         Ok(self.current())
     }
 
 
-    fn expect_type(&mut self) -> Result<DataType<'arena>, Error> {
+    #[inline(always)]
+    fn expect_type(&mut self) -> Result<DataType<'arena>, ErrorId> {
         if self.current_is(TokenKind::Bang) {
             return Ok(DataType::new(self.current_range(), DataTypeKind::Never))
         }
@@ -376,11 +395,9 @@ impl<'arena> Parser<'_, 'arena> {
         &mut self, 
         terminator: TokenKind, 
         settings: &ParserSettings<'arena>
-    ) -> Result<Block<'arena>, Errors<Error>> {
+    ) -> Result<Block<'arena>, ErrorId> {
 
         let mut storage = Vec::with_cap_in(self.arena, 1);
-        let mut errors = Errors::new();
-        let mut is_in_panic_mode = false;
         let start = self.current_range().start();
 
         loop {
@@ -394,22 +411,26 @@ impl<'arena> Parser<'_, 'arena> {
 
 
             if matches!(self.current_kind(), TokenKind::Keyword(_)) {
-                is_in_panic_mode = false;
+                self.is_in_panic = false;
             }
             
 
             let statement = self.statement(settings);
 
             match statement {
-                Ok (e) => if errors.is_empty() { storage.push(e) },
+                Ok (e) => storage.push(e),
                 Err(e) => {
-                    if is_in_panic_mode {
+                    storage.push(Node::new(
+                        NodeKind::Error(e), 
+                        SourceRange::new(start, self.current_range().end())
+                    ));
+
+                    if self.is_in_panic {
                         self.advance();
                         continue
                     }
 
-                    errors.with(e);
-                    is_in_panic_mode = true;
+                    self.is_in_panic = true;
                 },
             }
 
@@ -420,11 +441,7 @@ impl<'arena> Parser<'_, 'arena> {
             self.advance();
         }
 
-        if !errors.is_empty() {
-            return Err(errors.into())
-        }
-
-        self.expect(terminator)?;        
+        self.expect(terminator)?;
 
         let end = self.current_range().end();
 
@@ -1329,6 +1346,8 @@ impl<'arena> Parser<'_, 'arena> {
     
 
     fn atom(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+        self.is_error_token()?;
+
         match self.current_kind() {
             TokenKind::Literal(l) => Ok(Node::new(
                 NodeKind::Expression(Expression::Literal(l)), 
@@ -1474,7 +1493,9 @@ impl<'arena> Parser<'_, 'arena> {
             }
 
             
-            _ => Err(Error::UnexpectedToken(self.current_range()).into())
+            _ => Err(ErrorId::Parser(
+                self.errors.push(Error::UnexpectedToken(self.current_range()))
+            ))
         }
     }
 
@@ -1634,7 +1655,7 @@ impl<'arena> Parser<'_, 'arena> {
     fn parse_function_call_args(
         &mut self, 
         associated: Option<Node<'arena>>
-    ) -> Result<&'arena mut [(Node<'arena>, bool)], Errors<Error>> {
+    ) -> Result<&'arena mut [(Node<'arena>, bool)], ErrorId> {
 
         let binding = ArenaPool::tls_get_temp();
         let mut args = Vec::new_in(&*binding);

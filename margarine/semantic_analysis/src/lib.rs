@@ -1,109 +1,151 @@
 #![deny(unused_must_use)]
 
-use common::{string_map::{StringIndex, StringMap}, fuck_map::FuckMap, source::SourceRange, OptionalPlus, find_duplicate};
+use common::{string_map::{StringIndex, StringMap}, source::SourceRange, fuck_map::FuckMap, OptionalPlus};
 use errors::Error;
-use parser::{nodes::{Node, NodeKind, Declaration, Statement, Expression, BinaryOperator, UnaryOperator}, DataType};
-use sti::{define_key, keyed::KVec, arena_pool::ArenaPool, prelude::{Arena, Alloc, GlobalAlloc}, packed_option::PackedOption, vec::Vec};
-use typed_ast::{Type, TypedBlock, TypedNode, TypedStatement, TypedNodeKind, TypedExpressionKind};
+use ::errors::{SemaError, ErrorId};
+use ir::terms::{Block, EnumVariant, Reg, BlockId, IR};
+use parser::nodes::{Node, NodeKind, Declaration, Statement, Expression};
+use sema::{InferState, Namespace, NamespaceId, Scope, ScopeId, ScopeKind};
+use sti::{keyed::KVec, vec::Vec, define_key, prelude::Arena, arena_pool::ArenaPool, packed_option::PackedOption};
+
+use crate::ir::terms::Terminator;
 
 pub mod symbol_vec;
-pub mod typed_ast;
 pub mod errors;
+pub mod sema;
+pub mod ir;
 
 
-pub fn semantic_analysis<'me, 'ns, 'typ, 'func>(
-    ns_arena: &'ns Arena, 
-    type_arena: &'typ Arena, 
-    func_arena: &'func Arena, 
-    string_map: &'me mut StringMap, 
-    body: &[Node]
-) -> Result<State<'me, 'ns, 'typ, 'func>, Errors> {
-    let mut state = State {
-        ns_arena,
-        type_arena,
-        func_arena,
-
-        string_map,
-
-        types: KVec::new(),
-        funcs: KVec::new(),
-        namespaces: KVec::new(),
-        scopes: KVec::new(),
-
-        option_table: FuckMap::new(),
-        result_table: FuckMap::new(),
-        namespace_table: FuckMap::new(),
-    };
-
-    let root_scope = Scope::new(PackedOption::NONE, ScopeKind::None);
-    let root_scope = state.scopes.push(root_scope);
-    let new_scope = state.analyse_body(root_scope, body)?;
-    assert!(new_scope.1.is_empty());
-
-    Ok(state)
-}
-
-
-// ik. naming is fucking hard.
-type Errors = ::errors::Errors<errors::Error>;
-
-define_key!(u32, pub NamespaceId);
-define_key!(u32, pub TypeId);
-define_key!(u32, pub FuncId);
-define_key!(u32, pub ScopeId);
-
-
-#[derive(Debug)]
-pub struct AnalysisResult<'a> {
-    node  : TypedNode<'a>,
-    is_mut: bool,
-}
-
-impl<'a> AnalysisResult<'a> {
-    pub fn new(node: TypedNode<'a>, is_mut: bool) -> Self { Self { node, is_mut } }
-}
-
-
-#[derive(Debug)]
-pub struct State<'me, 'ns, 'type_arena, 'func_arena> {
-    ns_arena: &'ns Arena,
-    type_arena: &'type_arena Arena,
-    func_arena: &'func_arena Arena,
-
+pub fn semantic_analysis<'me, 'at, 'af, 'an>(
+    arena_type: &'at Arena,
+    arena_func: &'af Arena,
+    arena_nasp: &'an Arena,
     string_map: &'me mut StringMap,
 
-    types: KVec<TypeId, Option<TypeSymbol<'type_arena>>>,
-    funcs: KVec<FuncId, Option<Function<'func_arena>>>,
-    namespaces: KVec<NamespaceId, Namespace<'ns>>,
-    scopes: KVec<ScopeId, Scope>,
+    block: &[Node],
+) -> State<'me, 'at, 'af, 'an> {
+    let mut state = State {
+        arena_type,
+        arena_func,
+        string_map,
+        types: KVec::new(),
+        funcs: KVec::new(),
+        errors: KVec::new(),
+        sema: InferState {
+            arena_nasp,
+            namespaces: KVec::new(),
+            scopes: KVec::new(),
+            option_table: FuckMap::new(),
+            result_table: FuckMap::new(),
+            namespace_table: FuckMap::new(),
+        },
+    };
 
-    option_table: FuckMap<Type, TypeId>,
-    result_table: FuckMap<(Type, Type), TypeId>,
-    namespace_table: FuckMap<Type, NamespaceId>,
+    let temp_arena = ArenaPool::tls_get_temp();
+    let mut anal = LocalAnalyser {
+        arena: &*temp_arena,
+        fc: FunctionCounter::new(),
+        blocks: Vec::new_in(&temp_arena),
+        current: Block {
+            id: BlockId(0),
+            body: Vec::new_in(&temp_arena),
+            terminator: ir::terms::Terminator::Ret,
+        },
+    };
+    
+    'scope: {
+        let scope = {
+            let pool = ArenaPool::tls_get_temp();
+            let mut ns = Namespace::new(&*pool);
+
+            if state.collect_names(&mut anal, &mut ns, block).is_none() {
+                break 'scope;
+            }
+
+            let ns = ns.move_into(state.sema.arena_nasp);
+            let ns = state.sema.create_ns(ns);
+
+            let scope = Scope::new(PackedOption::NONE, sema::ScopeKind::Namespace(ns));
+            if state.update_types(&mut anal, &scope, block).is_none() {
+                break 'scope;
+            }
+
+            scope
+        };
+
+
+        let scope = state.sema.scopes.push(scope);
+
+        for node in block {
+            match node.kind() {
+                NodeKind::Declaration(decl) => {
+                    let Err(e) = state.declaration(scope, &decl)
+                    else { continue };
+
+                    anal.current.push(IR::Error(ErrorId::Sema(e)));
+                },
+
+                _ => (),
+            }
+        }
+    }
+    
+    state
 }
 
 
-#[derive(Debug, Clone, Copy)]
-pub struct Scope {
-    parent: PackedOption<ScopeId>,
-    kind: ScopeKind,
+define_key!(u32, pub TypeId);
+define_key!(u32, pub FuncId);
+
+
+#[derive(Clone, Copy, Debug, Eq, Hash)]
+pub enum Type {
+    UserType(TypeId),
+    Str,
+    Int,
+    Bool,
+    Float,
+    Unit,
+    Any,
+    Never,
+
+    Error,
 }
 
 
-#[derive(Debug, Clone, Copy)]
-pub enum ScopeKind {
-    NamedNamespace((StringIndex, NamespaceId)),
-    Namespace(NamespaceId),
-    Function,
-    Variable((StringIndex, Type, bool)),
-    None,
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            | (Type::UserType(_), Type::UserType(_))
+            | (Type::Str, Type::Str)
+            | (Type::Int, Type::Int)
+            | (Type::Bool, Type::Bool)
+            | (Type::Float, Type::Float)
+            | (Type::Unit, Type::Unit)
+            | (Type::Any, Type::Any)
+            | (Type::Never, _)
+            | (_, Type::Never)
+             => true,
+
+            _ => false,
+        }
+    }
 }
 
 
 #[derive(Debug)]
-pub struct Namespace<'arena> {
-    types: FuckMap<StringIndex, TypeId, &'arena Arena>,
-    funcs: FuckMap<StringIndex, FuncId, &'arena Arena>
+pub struct State<'me, 'at, 'af, 'an> {
+    arena_type: &'at Arena,
+    arena_func: &'af Arena,
+
+    pub string_map: &'me mut StringMap,
+    
+    types: KVec<TypeId, Option<TypeSymbol<'at>>>,
+    funcs: KVec<FuncId, Option<Function<'af>>>,
+
+    sema: InferState<'an>,
+
+    pub errors: KVec<SemaError, Error>,
 }
 
 
@@ -117,6 +159,8 @@ enum TypeSymbol<'a> {
     Enum {
         mappings: &'a [(StringIndex, Type, SourceRange, bool)],
     },
+
+    BuiltIn,
 }
 
 
@@ -131,747 +175,295 @@ enum StructureKind {
 #[derive(Debug)]
 struct Function<'a> {
     args: &'a [(StringIndex, Type, bool, SourceRange)],
-    kind: FunctionKind<'a>,
+    body: Vec<Block<'a>, &'a Arena>,
     return_type: Type,
 }
 
 
-#[derive(Debug)]
-enum FunctionKind<'a> {
-    Normal {
-        body: TypedBlock<'a>
-    },
-
-    Enum {
-        variant: u16,
-    },
+struct FunctionCounter {
+    regs: usize,
+    blocks: u32,
 }
 
 
-impl Scope {
-    pub fn new(parent: PackedOption<ScopeId>, kind: ScopeKind) -> Self {
+impl FunctionCounter {
+    pub fn new() -> Self {
         Self {
-            parent,
-            kind,
+            regs: 0,
+            blocks: 0,
         }
     }
 
 
-    #[inline(always)]
-    pub fn find_var(
-        &self,
-        name: StringIndex,
-        scopes: &KVec<ScopeId, Scope>,
-    ) -> Option<(StringIndex, Type, bool)> {
+    pub fn new_reg(&mut self) -> Reg {
+        self.regs += 1;
+        Reg(self.regs - 1)
+    }
 
-        let mut current = self;
-        loop {
-            'ns: {
-                let ScopeKind::Variable(index) = self.kind
-                else { break 'ns };
 
-                if name == index.0 {
-                    return Some(index);
-                }
-            }
-
-            if let Some(parent) = current.parent.into() {
-                current = scopes.get(parent).unwrap();
-                continue
-            }
-
-            break
+    pub fn new_block<'a>(&mut self, body: Vec<IR<'a>, &'a Arena>) -> Block<'a> {
+        self.blocks += 1;
+        Block {
+            id: BlockId(self.blocks-1),
+            body,
+            terminator: ir::terms::Terminator::Ret,
         }
-
-        None
-    }
-
-
-    #[inline(always)]
-    pub fn find_type(
-        &self,
-        name: StringIndex,
-        scopes: &KVec<ScopeId, Scope>,
-        namespaces: &KVec<NamespaceId, Namespace>,
-    ) -> Option<TypeId> {
-        self.over_namespaces(
-            |ns| ns.find_type(name), 
-            scopes, 
-            namespaces,
-        )
-    }
-
-
-    pub fn find_func(
-        &self,
-        name: StringIndex,
-        scopes: &KVec<ScopeId, Scope>,
-        namespaces: &KVec<NamespaceId, Namespace>,
-    ) -> Option<FuncId> {
-        self.over_namespaces(
-            |ns| ns.find_func(name), 
-            scopes, 
-            namespaces,
-        )
-    }
-
-
-    pub fn over_namespaces<T>(
-        &self,
-        f: impl Fn(&Namespace) -> Option<T>,
-        scopes: &KVec<ScopeId, Scope>,
-        namespaces: &KVec<NamespaceId, Namespace>,
-    ) -> Option<T> {
-        let mut current = self;
-
-        loop {
-            'ns: {
-                let ScopeKind::Namespace(index) = current.kind
-                else { break 'ns };
-
-                let ns = namespaces.get(index).unwrap();
-                if let Some(v) = f(ns) {
-                    return Some(v);
-                }
-            }
-
-            if let Some(parent) = current.parent.into() {
-                current = scopes.get(parent).unwrap();
-                continue
-            }
-
-            break
-        }
-
-        None
     }
 }
 
 
-impl<'arena> Namespace<'arena> {
-    pub fn new(arena: &'arena Arena) -> Self {
+pub struct LocalAnalyser<'a> {
+    arena: &'a Arena,
+
+    fc: FunctionCounter,
+    blocks: Vec<Block<'a>, &'a Arena>,
+    current: Block<'a>,
+}
+
+impl<'a> LocalAnalyser<'a> {
+    pub fn new(arena: &'a Arena) -> Self { 
+        let mut fc = FunctionCounter::new();
+        let block = fc.new_block(Vec::new_in(arena));
         Self {
-            types: FuckMap::new_in(arena),
-            funcs: FuckMap::new_in(arena),
-        }
-    }
-
-
-    pub fn add_type(
-        &mut self, 
-        name: StringIndex, 
-        typ: TypeId, 
-        source: SourceRange
-    ) -> Result<(), Errors> {
-
-        let result = self.types.insert(name, typ);
-        if result.is_some() {
-            return Err(Error::NameIsAlreadyDefined { source, name }.into())
-        }
-
-        Ok(())
-    }
-
-
-    pub fn add_func(
-        &mut self, 
-        name: StringIndex, 
-        typ: FuncId, 
-        source: SourceRange
-    ) -> Result<(), Errors> {
-
-        let result = self.funcs.insert(name, typ);
-        if result.is_some() {
-            return Err(Error::NameIsAlreadyDefined { source, name }.into())
-        }
-
-        Ok(())
-    }
-
-
-    pub fn find_type(&self, name: StringIndex) -> Option<TypeId> {
-        self.types.get(&name).copied()
-    }
-
-
-    pub fn find_func(&self, name: StringIndex) -> Option<FuncId> {
-        self.funcs.get(&name).copied()
-    }
-
-
-    pub fn move_into<'b>(self, arena: &'b Arena<GlobalAlloc>) -> Namespace<'b> {
-        Namespace {
-            types: self.types.move_into(arena),
-            funcs: self.funcs.move_into(arena),
-        }
+            arena, 
+            fc, 
+            blocks: Vec::new_in(arena), 
+            current: block,
+        } 
     }
 }
 
 
-impl<'me, 'ns, 'type_arena, 'func_arena> State<'me, 'ns, 'type_arena, 'func_arena> {
-    fn create_ns(&mut self, ns: Namespace<'ns>) -> NamespaceId {
-        self.namespaces.push(ns)
+pub struct AnalysisResult {
+    reg: Reg,
+    typ: Type,
+}
+
+impl AnalysisResult {
+    pub fn new(reg: Reg, typ: Type) -> Self { Self { reg, typ } }
+}
+
+
+impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
+    pub fn new(
+        arena_type: &'at Arena,
+        arena_func: &'af Arena,
+        arena_nasp: &'an Arena,
+
+        string_map: &'me mut StringMap,
+    ) -> Self {
+        Self {
+            arena_type,
+            arena_func,
+            string_map,
+
+            types: KVec::new(),
+            funcs: KVec::new(),
+            sema: InferState {
+                arena_nasp,
+
+                namespaces: KVec::new(),
+                scopes: KVec::new(),
+                option_table: FuckMap::new(),
+                result_table: FuckMap::new(),
+                namespace_table: FuckMap::new(),
+            },
+
+            errors: KVec::new(),
+        }
     }
 
-
-    fn create_type(&mut self, type_symbol: TypeSymbol<'type_arena>) -> TypeId {
-        let index = self.declare_type();
-        self.update_type(index, type_symbol);
-        index
-    }
-
-
-    fn create_func(&mut self, func: Function<'func_arena>) -> FuncId {
-        // self.funcs.push(None)
-        todo!()
-    }
-
-
+    
+    #[inline(always)]
     fn declare_type(&mut self) -> TypeId {
         self.types.push(None)
     }
 
 
+    #[inline(always)]
     fn declare_func(&mut self) -> FuncId {
         self.funcs.push(None)
     }
 
-
-    fn update_type(&mut self, index: TypeId, symbol: TypeSymbol<'type_arena>) {
+    
+    fn update_type(&mut self, index: TypeId, symbol: TypeSymbol<'at>) {
         let type_symbol = self.types.get_mut(index).unwrap();
         type_symbol.replace(symbol);
     }
 
 
-    fn type_namespace(&mut self, typ: Type) -> NamespaceId {
-        if let Some(v) = self.namespace_table.get(&typ) { return *v }
-
-        let index = match typ {
-            | Type::Int
-            | Type::Bool
-            | Type::Float
-            | Type::Unit
-            | Type::Any
-            | Type::Never
-            | Type::Str
-            | Type::Error => {
-                let ns = Namespace::new(self.ns_arena);
-                let ns_index = self.create_ns(ns);
-                self.namespace_table.insert(typ, ns_index);
-                return ns_index
-            },
-
-            Type::UserType(v) => v,
-        };
-        let mut ns = Namespace::new(self.ns_arena);
-        let type_symbol = &*self.types.get(index).unwrap();
-
-        match type_symbol.unwrap_ref() {
-            TypeSymbol::Enum { mappings } => {
-                for (i, m) in mappings.iter().enumerate() {
-                    let args : &[_] = if m.3 {
-                        assert_eq!(m.1, Type::Unit);
-                        self.func_arena.alloc_new([])
-                    } else {
-                        self.func_arena.alloc_new([(m.0, m.1, false, m.2)])
-                    };
-
-                    let id = self.create_func(Function {
-                        args, 
-                        kind: FunctionKind::Enum { variant: i as u16 },
-                        return_type: typ,
-                    });
-                    
-                    ns.add_func(m.0, id, m.2).unwrap();
-                }
-            },
-
-            _ => (),
-        }
-        
-        let ns_index = self.create_ns(ns);
-        self.namespace_table.insert(typ, ns_index);
-        ns_index
-        
-    }
-
-
-    pub fn update_data_type(
+    pub fn block(
         &mut self, 
-        dt: &DataType,
-        scope: &Scope,
-    ) -> Result<Type, Error> {
-        match dt.kind() {
-            parser::DataTypeKind::Int => Ok(Type::Int),
-            parser::DataTypeKind::Bool => Ok(Type::Bool),
-            parser::DataTypeKind::Float => Ok(Type::Float),
-            parser::DataTypeKind::Unit => Ok(Type::Unit),
-            parser::DataTypeKind::Any => Ok(Type::Any),
-            parser::DataTypeKind::Never => Ok(Type::Never),
+        anal: &mut LocalAnalyser,
+        scope: ScopeId,
+        nodes: &[Node]
+    ) -> AnalysisResult {
 
-            parser::DataTypeKind::Unknown => Err(Error::Bypass),
+        let scope = {
+            let pool = ArenaPool::tls_get_temp();
+            let mut ns = Namespace::new(&*pool);
 
-            parser::DataTypeKind::Option(v) => {
-                let v = self.update_data_type(v, scope)?;
-                if let Some(v) = self.option_table.get(&v) { return Ok(Type::UserType(*v)) };
+            if self.collect_names(anal, &mut ns, nodes).is_none() {
+                return AnalysisResult::new(anal.fc.new_reg(), Type::Never)
+            }
 
-                let index_some = self.string_map.insert("some");
-                let index_none = self.string_map.insert("none");
+            let ns = ns.move_into(self.sema.arena_nasp);
+            let ns = self.sema.create_ns(ns);
 
-                let index = self.declare_type();
-                let final_type = Type::UserType(index);
+            let scope = Scope::new(scope.some(), sema::ScopeKind::Namespace(ns));
+            if self.update_types(anal, &scope, nodes).is_none() {
+                return AnalysisResult::new(anal.fc.new_reg(), Type::Never)
+            }
 
-                self.update_type(index, TypeSymbol::Enum { 
-                    mappings: self.type_arena.alloc_new([
-                        (index_some, v, SourceRange::new(u32::MAX, u32::MAX), false),
-                        (index_none, Type::Unit, SourceRange::new(u32::MAX, u32::MAX), true),
-                    ]),
-                });
-
-                self.option_table.insert(v, index);
-
-                Ok(final_type)
-            },
-
-            
-            parser::DataTypeKind::Result(v1, v2) => {                
-                let v1 = self.update_data_type(v1, scope)?;
-                let v2 = self.update_data_type(v2, scope)?;
-                if let Some(v) = self.result_table.get(&(v1, v2)) { return Ok(Type::UserType(*v)) };
-
-                let index_ok   = self.string_map.insert("ok");
-                let index_err  = self.string_map.insert("err");
-
-                let index = self.declare_type();
-                let final_type = Type::UserType(index);
-
-                self.update_type(index, TypeSymbol::Enum {
-                    mappings: self.type_arena.alloc_new([
-                        (index_ok, v1, SourceRange::new(u32::MAX, u32::MAX), false),
-                        (index_err, v2, SourceRange::new(u32::MAX, u32::MAX), false),
-                    ]),
-                });
-
-                self.result_table.insert((v1, v2), index);
-
-                Ok(final_type)
-            },
+            scope
+        };
 
 
-            parser::DataTypeKind::CustomType(index) => {
-                let Some(type_index) = scope.find_type(*index, &self.scopes, &self.namespaces)
-                else { return Err(Error::UnknownType(*index, dt.range())) };
-        
-                Ok(Type::UserType(type_index))
+        let scope = self.sema.scopes.push(scope);
+
+        for node in nodes {
+            match node.kind() {
+                NodeKind::Declaration(decl) => {
+                    let Err(e) = self.declaration(scope, decl)
+                    else { continue };
+
+                    anal.current.push(IR::Error(ErrorId::Sema(e)));
+                },
+
+                _ => (),
             }
         }
+        
+        let mut scope = scope;
+        let pool = ArenaPool::tls_get_rec();
 
+        let mut final_type = Type::Unit;
+        let mut final_reg = anal.fc.new_reg();
 
+        for node in nodes {
+            let result = match node.kind() {
+                NodeKind::Declaration(_) => continue,
+
+                _ => self.node(anal, &mut scope, node),
+            };
+
+            match result {
+                Some(v) => {
+                    final_type = v.typ;
+                    final_reg = v.reg;
+                },
+
+                None => final_type = Type::Never,
+            }
+        }
+        
+
+        AnalysisResult::new(final_reg, final_type)
     }
 }
 
 
-impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
-    fn analyse_body(
-        &mut self, 
-        parent: ScopeId, 
-        body: &[Node]
-    ) -> Result<(ScopeId, TypedBlock<'fa>, Type), Errors> {
-
-        let scope = {
-            let pool = ArenaPool::tls_get_rec();
-            let mut namespace = Namespace::new(&pool);
-
-            self.collect_names(&mut namespace, body)?;
-
-            let ns = namespace.move_into(self.ns_arena);
-            let ns = self.create_ns(ns);
-
-            let scope = Scope::new(parent.some(), ScopeKind::Namespace(ns));
-            self.update_types(&scope, body)?;
-            scope
-        };
-
-        let scope = self.scopes.push(scope);
-
-        let mut errors = Errors::new();
-
-        for node in body {
-            match node.kind() {
-                NodeKind::Declaration(d) => {
-                    let result = self.analyse_declaration(scope, d);
-                    if let Err(e) = result {
-                        errors.with(e);
-                    }
-                },
-
-                NodeKind::Statement(_) => (),
-                NodeKind::Expression(_) => (),
-            }
-        }
-
-        if !errors.is_empty() {
-            return Err(errors)
-        }
-
-        let mut scope = scope;
-        let pool = ArenaPool::tls_get_rec();
-        let mut typed_ast = Vec::new_in(&*pool);
-
-        let mut final_type = Type::Unit;
-        for node in body {
-            let result = match node.kind() {
-                NodeKind::Declaration(_) => continue,
-
-                _ => self.analyse_node(&mut scope, node),
-            };
-
-
-            match result {
-                Ok(e) => {
-                    final_type = e.node.typ();
-                    typed_ast.push(e.node);
-                },
-
-                Err(e) => errors.with(e),
-            };
-        }
-
-
-        if !errors.is_empty() {
-            return Err(errors)
-        }
-
-        Ok((scope, typed_ast.move_into(self.func_arena).leak(), final_type))
-
-    }
-
-
-    fn collect_names(&mut self, ns: &mut Namespace, body: &[Node]) -> Result<(), Errors> {
-        let mut errors = Errors::new();
-        for node in body {
-            let NodeKind::Declaration(decl) = node.kind()
-            else { continue };
-
-
-            match decl {
-                parser::nodes::Declaration::Struct { header, name, fields, .. } => {
-                    let index = self.declare_type();
-                    let result = ns.add_type(*name, index, *header);
-                    if let Err(e) = result {
-                        errors.with(e)
-                    }
-
-
-                    {
-                        let pool = ArenaPool::tls_get_temp();
-                        let mut vec = Vec::with_cap_in(
-                            &*pool,
-                            fields.len(),
-                        );
-
-                        {
-                            for i in 0..fields.len() {
-                                for j in 0..i {
-                                    if fields[i].0 == fields[j].0 {
-                                        vec.push((&fields[i], &fields[j]))
-                                    }
-                                }
-                            }
-                        };
-
-                        for i in vec.iter() {
-                            errors.push(Error::DuplicateField { 
-                                declared_at: i.1.2, 
-                                error_point: i.0.2,
-                            });
-                        }
-                    }
-                },
-
-                
-                parser::nodes::Declaration::Enum { header, name, mappings, .. } => {
-                    let index = self.declare_type();
-                    let result = ns.add_type(*name, index, *header);
-                    if let Err(e) = result {
-                        errors.with(e)
-                    }
-
-
-                    {
-                        let pool = ArenaPool::tls_get_temp();
-                        let mut vec = Vec::with_cap_in(
-                            &*pool,
-                            mappings.len(),
-                        );
-
-                        {
-                            for i in 0..mappings.len() {
-                                for j in 0..i {
-                                    if mappings[i].name() == mappings[j].name() {
-                                        vec.push((&mappings[i], &mappings[j]))
-                                    }
-                                }
-                            }
-                        };
-
-                        for i in vec.iter() {
-                            errors.push(Error::DuplicateField { 
-                                declared_at: i.1.range(), 
-                                error_point: i.0.range(),
-                            });
-                        }
-                    }
-                },
-
-
-                parser::nodes::Declaration::Function { name, header, arguments, .. } => {
-                    let index = self.declare_func();
-                    let result = ns.add_func(*name, index, *header);
-                    if let Err(e) = result {
-                        errors.with(e)
-                    }
-
-                    {
-                        let pool = ArenaPool::tls_get_temp();
-                        let mut vec = Vec::with_cap_in(
-                            &*pool,
-                            arguments.len(),
-                        );
-
-                        {
-                            for i in 0..arguments.len() {
-                                for j in 0..i {
-                                    if arguments[i].name() == arguments[j].name() {
-                                        vec.push((&arguments[i], &arguments[j]))
-                                    }
-                                }
-                            }
-                        };
-
-                        for i in vec.iter() {
-                            errors.push(Error::DuplicateArg { 
-                                declared_at: i.1.range(), 
-                                error_point: i.0.range(),
-                            });
-                        }
-                    }
-                }
-                
-                
-                _ => todo!(),
-            }
-        }
-
-        if !errors.is_empty() { return Err(errors) }
-
-        Ok(())
-    }
-
-
-    fn update_types(&mut self, scope: &Scope, body: &[Node]) -> Result<(), Errors> {
-        let mut errors = Errors::new();
-        for node in body {
-            let NodeKind::Declaration(decl) = node.kind()
-            else { continue };
-
-
-            match decl {
-                parser::nodes::Declaration::Struct { kind, name, fields, .. } => {
-                    let fields = {
-                        let mut vec = Vec::with_cap_in(self.type_arena, fields.len());
-
-                        for f in fields.iter() {
-                            let updated = self.update_data_type(
-                                &f.1,
-                                scope,
-                            );
-
-                            let updated = match updated {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    errors.push(e);
-                                    continue
-                                },
-                            };
-
-                            vec.push(updated)
-                        }
-
-                        vec.leak()
-                    };
-
-
-                    let index = scope.find_type(*name, &self.scopes, &self.namespaces).unwrap();
-                    self.update_type(index, TypeSymbol::Structure { 
-                        fields, 
-                        kind: match kind {
-                            parser::nodes::StructKind::Component => StructureKind::Component,
-                            parser::nodes::StructKind::Resource => StructureKind::Resource,
-                            parser::nodes::StructKind::Normal => StructureKind::Normal,
-                        }
-                    });
-                },
-
-                
-                parser::nodes::Declaration::Enum { name, mappings, .. } => {
-                    let mappings = {                        
-                        let mut vec = Vec::with_cap_in(self.type_arena, mappings.len());
-
-                        for m in mappings.iter() {
-                            let updated = self.update_data_type(
-                                m.data_type(),
-                                scope,
-                            );
-
-                            let updated = match updated {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    errors.push(e);
-                                    continue
-                                },
-                            };
-
-                            vec.push((m.name(), updated, m.range(), m.is_implicit_unit()))
-                        }
-
-                        vec.leak()
-                    };
-                    
-                    let index = scope.find_type(*name, &self.scopes, &self.namespaces).unwrap();
-                    self.update_type(index, TypeSymbol::Enum { mappings })
-                },
-
-                
-                parser::nodes::Declaration::Function { name, arguments, return_type, .. } => {
-                    let args = {
-                        let mut vec = Vec::with_cap_in(self.func_arena, arguments.len());
-
-                        for m in arguments.iter() {
-                            let updated = self.update_data_type(
-                                m.data_type(),
-                                scope,
-                            );
-
-                            let updated = match updated {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    errors.push(e);
-                                    continue
-                                },
-                            };
-
-                            vec.push((m.name(), updated, m.is_inout(), m.range()))
-                        }
-
-                        vec.leak()
-                    };
-
-                    let return_type = self.update_data_type(return_type, scope);
-                    let return_type = match return_type {
-                        Ok(e) => e,
-                        Err(e) => {
-                            errors.push(e);
-                            continue
-                        },
-                    };
-
-
-                    // an error occurred while updating arguments
-                    if args.len() != arguments.len() {
-                        continue
-                    }
-
-
-                    let index = scope.find_func(*name, &self.scopes, &self.namespaces).unwrap();
-                    let func = self.funcs.get_mut(index).unwrap();
-                    func.replace(Function { 
-                        args, 
-                        kind: FunctionKind::Normal { body: self.func_arena.alloc_new([]) }, 
-                        return_type,
-                    });
-                },
-
-                
-                parser::nodes::Declaration::Impl { data_type, body } => todo!(),
-                parser::nodes::Declaration::Using { file } => todo!(),
-                parser::nodes::Declaration::Module { name, body } => todo!(),
-                parser::nodes::Declaration::Extern { file, functions } => todo!(),
-            }
-        }
-
-
-        if !errors.is_empty() { return Err(errors) }
-
-        Ok(())
-    }
-
-
-    fn analyse_node(
-        &mut self, 
-        scope: &mut ScopeId, 
+impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
+    pub fn node(
+        &mut self,
+        anal: &mut LocalAnalyser,
+        scope: &mut ScopeId,
         node: &Node
-    ) -> Result<AnalysisResult<'fa>, Errors> {
-
+    ) -> Option<AnalysisResult> {
         match node.kind() {
             NodeKind::Declaration(_) => unreachable!(),
-            NodeKind::Statement(v) => {
-                Ok(AnalysisResult::new(
-                    self.analyse_statement(scope, v)?,
-                    false,
-                ))
+
+            NodeKind::Statement(stmt) => {
+                self.stmt(anal, scope, stmt)?;
+                Some(AnalysisResult::new(anal.fc.new_reg(), Type::Unit))
             },
-            NodeKind::Expression(e) => self.analyse_expression(scope, e, node.range()),
+
+            NodeKind::Expression(expr) => self.expression(anal, scope, expr),
+
+            NodeKind::Error(v) => {
+                anal.current.push(IR::Error(*v));
+                Some(AnalysisResult::new(anal.fc.new_reg(), Type::Never))
+            },
         }
     }
 
+    
+    pub fn declaration(
+        &mut self, 
+        scope: ScopeId, 
+        decl: &Declaration
+    ) -> Result<(), SemaError> {
 
-    fn analyse_declaration(&mut self, current: ScopeId, decl: &Declaration) -> Result<(), Errors>{
         match decl {
-            Declaration::Struct { kind, name, header, fields } => Ok(()),
-            
-            Declaration::Enum { name, header, mappings } => Ok(()),
-            
+            Declaration::Struct { .. } => Ok(()),
+            Declaration::Enum { .. } => Ok(()),
+
             Declaration::Function { is_system, name, header, arguments, return_type, body } => {
                 let index = {
-                    let current = self.scopes.get(current).unwrap();
+                    let current = self.sema.scopes.get(scope).unwrap();
                     let index = current.find_func(
                         *name, 
-                        &self.scopes, 
-                        &self.namespaces
+                        &self.sema.scopes, 
+                        &self.sema.namespaces
                     ).unwrap();
                     index
                 };
 
-                let scope = Scope::new(current.some(), ScopeKind::Function);
-                let mut scope = self.scopes.push(scope);
-                let func = self.funcs.get(index).unwrap();
+                let mut fc = FunctionCounter::new();
 
-                for arg in func.unwrap_ref().args.iter() {
-                    scope = self.scopes.push(Scope::new(
-                        scope.some(), 
-                        ScopeKind::Variable((
+                let return_reg = fc.new_reg();
+                assert_eq!(return_reg.0, 0);
+
+                let scope = Scope::new(scope.some(), sema::ScopeKind::Function);
+                let mut scope = self.sema.scopes.push(scope);
+                let func = self.funcs.get(index).unwrap().unwrap_ref();
+
+                for arg in func.args.iter() {
+                    scope = self.sema.scopes.push(Scope::new(
+                        scope.some(),
+                        sema::ScopeKind::Variable((
                             arg.0,
                             arg.1,
                             arg.2,
+                            fc.new_reg(),
                         ))
                     ));
                 }
 
-                let body_anal = self.analyse_body(scope, &body)?;
+                let mut anal = LocalAnalyser::new(self.arena_func);
+                let start = anal.fc.new_block(Vec::new_in(self.arena_func));
+                let mut start = std::mem::replace(&mut anal.current, start);
+                
+                let (analysis, mut ir_body) = {
+                    let block_anal = self.block(
+                        &mut anal, 
+                        scope, 
+                        &body,
+                    );
+
+                    let mut vec = anal.blocks;
+                    vec.push(anal.current);
+
+                    (block_anal, vec)
+                };
 
                 let func = self.funcs.get_mut(index).unwrap().as_mut().unwrap();
 
-                if body_anal.2 != func.return_type {
-                    return Err(Error::FunctionBodyAndReturnMismatch {
-                        source: body.range(), 
-                        return_type: func.return_type, 
-                        body_type: body_anal.2,
-                    }.into());
+                if analysis.typ != func.return_type {
+                    start.push(IR::Error(ErrorId::Sema(self.errors.push(
+                        Error::FunctionBodyAndReturnMismatch {
+                            source: body.range(), 
+                            return_type: func.return_type, 
+                            body_type: analysis.typ,
+                        }
+                    ))));
                 }
 
-                func.kind = FunctionKind::Normal { body: body_anal.1 };
+                start.terminator = Terminator::Jmp(ir_body.last().unwrap().id);
+                ir_body.push(start);
+                ir_body.sort_unstable_by_key(|b| b.id.0);
 
+                func.body = ir_body;
 
                 Ok(())
             },
@@ -884,32 +476,39 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
     }
 
 
-    fn analyse_statement(
-        &mut self, 
-        scope: &mut ScopeId, 
-        stmt: &Statement
-    ) -> Result<TypedNode<'fa>, Errors> {
-        
+    pub fn stmt(
+        &mut self,
+        anal: &mut LocalAnalyser,
+        scope: &mut ScopeId,
+        stmt: &Statement,
+    ) -> Option<()> {
+
         match stmt {
             Statement::Variable { name, hint, is_mut, rhs } => {
-                let rhs_anal = self.analyse_node(scope, rhs);
+                let reg = anal.fc.new_reg();
+                let rhs_anal = self.node(anal, scope, rhs);
 
                 let rhs_anal = match rhs_anal {
-                    Ok(typ) => typ,
+                    Some(v) => v,
 
-                    Err(e) => {
-                        *scope = self.scopes.push(Scope::new(
-                            scope.some(), 
-                            ScopeKind::Variable((*name, Type::Error, *is_mut))
+                    None => {
+                        *scope = self.sema.scopes.push(Scope::new(
+                            scope.some(),
+                            ScopeKind::Variable((
+                                *name,
+                                Type::Error,
+                                *is_mut,
+                                reg,
+                            ))
                         ));
-                        
-                        return Err(e)
-                    }
+
+                        return None
+                    },
                 };
 
-
+            
                 let hint = hint.map(|hint| {
-                    let scope = *self.scopes.get(*scope).unwrap();
+                    let scope = *self.sema.scopes.get(*scope).unwrap();
                     self.update_data_type(
                         &hint,
                         &scope,
@@ -918,12 +517,13 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
 
                 let hint = match hint {
                     Some(Err(e)) => {                        
-                        *scope = self.scopes.push(Scope::new(
+                        *scope = self.sema.scopes.push(Scope::new(
                             scope.some(), 
-                            ScopeKind::Variable((*name, Type::Error, *is_mut))
+                            ScopeKind::Variable((*name, Type::Error, *is_mut, reg))
                         ));
 
-                        return Err(e.into());
+                        anal.current.push(IR::Error(ErrorId::Sema(e)));
+                        return None;
                     },
 
                     Some(Ok(e)) => Some(e),
@@ -933,200 +533,53 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
                
 
                 if let Some(hint) = hint {
-                    if hint != rhs_anal.node.typ() {
-                        *scope = self.scopes.push(Scope::new(
+                    if hint != rhs_anal.typ {
+                        *scope = self.sema.scopes.push(Scope::new(
                             scope.some(), 
-                            ScopeKind::Variable((*name, Type::Error, *is_mut))
+                            ScopeKind::Variable((*name, Type::Error, *is_mut, reg))
+                        ));
+
+                        let error_id = ErrorId::Sema(self.errors.push(
+                            Error::VariableValueAndHintDiffer {
+                                value_type: rhs_anal.typ,
+                                hint_type: hint,
+                                source: rhs.range(),
+                            }
                         ));
                         
-                        return Err(Error::VariableValueAndHintDiffer {
-                            value_type: rhs_anal.node.typ(),
-                            hint_type: hint,
-                            source: rhs.range(),
-                        }.into())
+                        anal.current.push(IR::Error(error_id));
+                        return None;
                     }
                 }
 
-                *scope = self.scopes.push(Scope::new(
+                *scope = self.sema.scopes.push(Scope::new(
                     scope.some(), 
-                    ScopeKind::Variable((*name, rhs_anal.node.typ(), *is_mut))
+                    ScopeKind::Variable((*name, rhs_anal.typ, *is_mut, reg))
                 ));
-                
-
-                Ok(TypedNode::stmt(
-                    TypedStatement::VariableDeclaration { 
-                        name: *name, 
-                        rhs: self.func_arena.alloc_new(rhs_anal.node),
-                    }
-                ))
+                    
             },
 
+            
             Statement::UpdateValue { lhs, rhs } => todo!(),
-        }
+        };
+
+        Some(())
     }
 
+    
+    pub fn expression(
+        &mut self, 
+        anal: &mut LocalAnalyser,
+        scope: &mut ScopeId, 
+        expr: &Expression
+    ) -> Option<AnalysisResult> {
 
-    fn analyse_expression(
-        &mut self,
-        scope: &mut ScopeId,
-        expr: &Expression,
-        source: SourceRange,
-    ) -> Result<AnalysisResult<'fa>, Errors> {
-
-        match expr {
-            Expression::Unit => Ok(AnalysisResult { 
-                node: TypedNode::expr(
-                    TypedExpressionKind::Unit, 
-                    Type::Unit,
-                ), 
-                is_mut: true
-            }),
-
-            
-            Expression::Literal(v) => {
-                Ok(AnalysisResult {
-                    node: TypedNode::expr(
-                        TypedExpressionKind::Literal(*v),
-                        match v {
-                            lexer::Literal::Integer(_) => Type::Int,
-                            lexer::Literal::Float(_) => Type::Float,
-                            lexer::Literal::String(_) => Type::Str,
-                            lexer::Literal::Bool(_) => Type::Bool,
-                        }
-                    ),
-                    is_mut: true,
-                })
-            },
-
-            
-            Expression::Identifier(v) => {
-                let scope = self.scopes.get(*scope).unwrap();
-                let variable = scope.find_var(
-                    *v,
-                    &self.scopes,
-                );
-
-                let Some(variable) = variable
-                else {
-                    return Err(Error::VariableNotFound {
-                        name: *v,
-                        source,
-                    }.into())
-                };
-
-                Ok(AnalysisResult {
-                    node: TypedNode::expr(
-                        TypedExpressionKind::AccVariable(*v),
-                        variable.1,
-                    ), 
-                    is_mut: variable.2,
-                })
-            },
-
-
-            Expression::BinaryOp { operator, lhs, rhs } => {
-                let lhs_anal = self.analyse_node(scope, lhs)?;
-                let rhs_anal = self.analyse_node(scope, rhs)?;
-
-                let return_type = if operator.is_arith() {
-                    match (lhs_anal.node.typ(), rhs_anal.node.typ()) {
-                        (Type::Int, Type::Int) => Type::Int,
-                        (Type::Float, Type::Float) => Type::Float,
-                        (Type::Unit, Type::Unit) => Type::Unit,
-
-                        | (_, Type::Error)
-                        | (Type::Error, _) => return Err(Error::Bypass.into()),
-
-                        _ => return Err(Error::InvalidBinaryOp {
-                            operator: *operator, 
-                            lhs: lhs_anal.node.typ(), 
-                            rhs: rhs_anal.node.typ(),
-                            source,
-                        }.into())
-                    }
-
-                } else if operator.is_bw() {
-                    match (lhs_anal.node.typ(), rhs_anal.node.typ()) {
-                        (Type::Int, Type::Int) => Type::Int,
-                        (Type::Unit, Type::Unit) => Type::Unit,
-
-                        | (_, Type::Error)
-                        | (Type::Error, _) => return Err(Error::Bypass.into()),
-
-                        _ => return Err(Error::InvalidBinaryOp {
-                            operator: *operator, 
-                            lhs: lhs_anal.node.typ(), 
-                            rhs: rhs_anal.node.typ(),
-                            source,
-                        }.into())
-                    }
-
-                } else if operator.is_eq_comp() {
-                    match (lhs_anal.node.typ(), rhs_anal.node.typ()) {
-                        (Type::Int, Type::Int) => Type::Bool,
-                        (Type::Float, Type::Float) => Type::Bool,
-                        (Type::Unit, Type::Unit) => Type::Bool,
-                        (Type::Str, Type::Str) => Type::Bool,
-                        (Type::Any, Type::Any) => Type::Bool,
-                        (Type::Bool, Type::Bool) => Type::Bool,
-                        (Type::UserType(v1), Type::UserType(v2)) if v1 == v2
-                            => Type::Bool,
-
-                        | (_, Type::Error)
-                        | (Type::Error, _) => return Err(Error::Bypass.into()),
-
-                        _ => return Err(Error::InvalidBinaryOp {
-                            operator: *operator, 
-                            lhs: lhs_anal.node.typ(),
-                            rhs: rhs_anal.node.typ(),
-                            source,
-                        }.into())
-                    }
-
-                } else if operator.is_ord_comp() {
-                    match (lhs_anal.node.typ(), rhs_anal.node.typ()) {
-                        (Type::Int, Type::Int) => Type::Bool,
-                        (Type::Unit, Type::Unit) => Type::Bool,
-                        (Type::Float, Type::Float) => Type::Bool,
-
-                        | (_, Type::Error)
-                        | (Type::Error, _) => return Err(Error::Bypass.into()),
-
-                        _ => return Err(Error::InvalidBinaryOp {
-                            operator: *operator, 
-                            lhs: lhs_anal.node.typ(),
-                            rhs: rhs_anal.node.typ(),
-                            source,
-                        }.into())
-                    }
-                    
-                } else {
-                    unreachable!()
-                };
-
-
-                Ok(AnalysisResult {
-                    node: TypedNode::expr(TypedExpressionKind::BinaryOp {
-                        operator: *operator,
-                        lhs: self.func_arena.alloc_new(lhs_anal.node),
-                        rhs: self.func_arena.alloc_new(rhs_anal.node),
-                    }, return_type), 
-                    is_mut: true,
-                })
-            },
-
-            
-            Expression::UnaryOp { operator, rhs } => {
-                let rhs_anal = self.analyse_node(scope, rhs)?;
-
-                // let node = match operator {
-                //     UnaryOperator::Not
-                //      if rhs_anal.node.typ() == Type::Bool
-                //      => TypedNode::expr(TypedExpressionKind::Unit, ),
-                //     UnaryOperator::Neg => todo!(),
-                // }
-                todo!()
-            },
+        let result = match expr {
+            Expression::Unit => AnalysisResult::new(anal.fc.new_reg(), Type::Unit),
+            Expression::Literal(_) => todo!(),
+            Expression::Identifier(_) => todo!(),
+            Expression::BinaryOp { operator, lhs, rhs } => todo!(),
+            Expression::UnaryOp { operator, rhs } => todo!(),
             Expression::If { condition, body, else_block } => todo!(),
             Expression::Match { value, mappings } => todo!(),
             Expression::Block { block } => todo!(),
@@ -1142,6 +595,8 @@ impl<'me, 'nsa, 'ta, 'fa> State<'me, 'nsa, 'ta, 'fa> {
             Expression::CastAny { lhs, data_type } => todo!(),
             Expression::Unwrap(_) => todo!(),
             Expression::OrReturn(_) => todo!(),
-        }
+        };
+
+        Some(result)
     }
 }

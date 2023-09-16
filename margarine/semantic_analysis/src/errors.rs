@@ -2,7 +2,7 @@ use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
 use parser::nodes::BinaryOperator;
 
-use crate::typed_ast::Type;
+use crate::Type;
 
 #[derive(Clone, Debug)]
 pub enum Error {

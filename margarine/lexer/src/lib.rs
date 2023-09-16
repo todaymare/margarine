@@ -1,10 +1,10 @@
 use std::ops::{Deref, DerefMut};
 
-use ::errors::Errors;
+use ::errors::{ErrorId, LexerError};
 use common::{string_map::{StringMap, StringIndex},
     source::{SourceRange, FileData}, hashables::HashableF64};
 use errors::Error;
-use sti::reader::Reader;
+use sti::{reader::Reader, keyed::KVec};
 
 mod tests;
 pub mod errors;
@@ -165,6 +165,8 @@ pub enum TokenKind {
     Arrow,
     
     EndOfFile,
+
+    Error(LexerError),
 }
 
 
@@ -204,24 +206,16 @@ pub enum Keyword {
 pub fn lex(
     file: &FileData,
     string_map: &mut StringMap
-) -> Result<TokenList, Errors<Error>> {
+) -> (TokenList, KVec<LexerError, Error>) {
     let mut lexer = Lexer {
         reader: Reader::new(file.read().as_bytes()),
         string_map,
+        errors: KVec::new(),
     };
 
     let mut tokens = Vec::new();
-    let mut errors = Errors::new();
-
     loop {
         let token = lexer.next_token();
-        let token = match token {
-            Ok(t) => t,
-            Err(e) => {
-                errors.with(e);
-                continue;
-            },
-        };
 
         let is_eof = token.token_kind == TokenKind::EndOfFile;
         tokens.push(token);
@@ -231,12 +225,7 @@ pub fn lex(
         }
     }
 
-
-    if !errors.is_empty() {
-        return Err(errors)
-    }
-
-    Ok(TokenList::new(tokens))
+    (TokenList::new(tokens), lexer.errors)
 
 }
 
@@ -245,6 +234,7 @@ pub fn lex(
 struct Lexer<'a> {
     reader: Reader<'a, u8>,
     string_map: &'a mut StringMap,
+    errors: KVec<LexerError, Error>,
 }
 
 
@@ -256,7 +246,7 @@ impl Lexer<'_> {
 
 
 impl Lexer<'_> {
-    fn next_token(&mut self) -> Result<Token, Errors<Error>> {
+    fn next_token(&mut self) -> Token {
         if self.reader.starts_with(b"//") {
             self.reader.consume_while(|x| *x != b'\n');
         }
@@ -265,7 +255,7 @@ impl Lexer<'_> {
 
 
         let start = self.reader.offset() as u32;
-        let Some(val) = self.reader.next() else { return Ok(self.eof()) };
+        let Some(val) = self.reader.next() else { return self.eof() };
 
         let kind = match val {
             b'(' => TokenKind::LeftParenthesis,
@@ -350,27 +340,28 @@ impl Lexer<'_> {
             }
 
 
-            b'"' => self.string(start as usize)?,
+            b'"' => self.string(start as usize),
 
             _ if val.is_ascii_alphabetic() || val == b'_' => self.identifier(start as usize),
 
 
-            _ if val.is_ascii_digit() => self.number(start as usize)?,
+            _ if val.is_ascii_digit() => self.number(start as usize),
             
 
-            _ => return Err(Error::InvalidCharacter { 
-                character: val as char, 
-                position: SourceRange::new(start, start) 
-            }.into())
+            _ => TokenKind::Error(
+                self.errors.push(Error::InvalidCharacter { 
+                    character: val as char, 
+                    position: SourceRange::new(start, start) 
+                }))
         };
 
         let end = self.reader.offset() as u32 - 1;
         let source_range = SourceRange::new(start, end);
 
-        Ok(Token {
+        Token {
             token_kind: kind,
             source_range,
-        })
+        }
     }
 
 
@@ -424,7 +415,7 @@ impl Lexer<'_> {
     }
 
 
-    fn number(&mut self, begin: usize) -> Result<TokenKind, Error> {
+    fn number(&mut self, begin: usize) -> TokenKind {
         let mut dot_count = 0;
         let (value, _) = self.reader.consume_while_slice_from(begin, |x| {
             if *x == b'.' {
@@ -443,25 +434,28 @@ impl Lexer<'_> {
             0 => {
                 match value.parse() {
                     Ok(e) => Literal::Integer(e),
-                    Err(_) => return Err(Error::NumberTooLarge(source)),
+                    Err(_) => return TokenKind::Error(
+                        self.errors.push(Error::NumberTooLarge(source))),
                 }
             },
             1 => {
                 match value.parse() {
                     Ok(e) => Literal::Float(HashableF64(e)),
-                    Err(_) => return Err(Error::NumberTooLarge(source)),
+                    Err(_) => return TokenKind::Error(
+                        self.errors.push(Error::NumberTooLarge(source))),
                 }
             },
-            _ =>  return Err(Error::TooManyDots(source))
+            _ =>  return TokenKind::Error(
+                self.errors.push(Error::TooManyDots(source)))
         };
 
 
-        Ok(TokenKind::Literal(kind))
+        TokenKind::Literal(kind)
     }
 
 
-    fn string(&mut self, start: usize) -> Result<TokenKind, Errors<Error>> {
-        let str = {
+    fn string(&mut self, start: usize) -> TokenKind {
+        let (str, recover) = {
             let mut is_escaped = false;
             let mut clone = self.reader.clone();
             let (value, _) = clone.consume_while_slice(|at| {
@@ -472,18 +466,19 @@ impl Lexer<'_> {
 
             if clone.next() != Some(b'"') {
                 self.reader.set_offset(clone.offset());
-                return Err(Error::UnterminatedString(SourceRange::new(
+                let err = Error::UnterminatedString(SourceRange::new(
                     start as u32, 
                     clone.offset() as u32 - 1
-                )).into());
+                ));
+
+                let err = self.errors.push(err);
+                return TokenKind::Error(err)
             }
             
-            value
+            (value, clone)
         };
 
         let mut string = String::with_capacity(str.len());
-
-        let mut errors = Errors::new();
 
         let mut is_in_escape = false;
         while let Some(value) = self.reader.next() {
@@ -497,9 +492,10 @@ impl Lexer<'_> {
                     b'"' => string.push('"'),
 
                     b'u' => match self.unicode_escape_character() {
-                        Ok(val) => string.push(val),
-                        Err(err) => {
-                            errors.push(err);
+                        Ok(v) => string.push(v),
+                        Err(e) => {
+                            self.reader = recover;
+                            return TokenKind::Error(self.errors.push(e));
                         },
                     },
 
@@ -518,12 +514,8 @@ impl Lexer<'_> {
             }
         }
 
-        if errors.is_empty() {
-            let index = self.string_map.insert(&string);
-            return Ok(TokenKind::Literal(Literal::String(index)));
-        }
-
-        Err(errors)
+        let index = self.string_map.insert(&string);
+        return TokenKind::Literal(Literal::String(index));
     }
 
 
