@@ -1,9 +1,9 @@
 use common::{string_map::{StringMap, StringIndex}, fuck_map::FuckMap, source::SourceRange};
 use errors::{SemaError, ErrorId};
 use parser::{nodes::{NodeKind, Node}, DataType};
-use sti::{define_key, prelude::Arena, keyed::KVec, packed_option::PackedOption, arena_pool::ArenaPool, vec::Vec};
+use sti::{define_key, prelude::Arena, keyed::KVec, packed_option::PackedOption, arena_pool::ArenaPool, vec::Vec, format_in};
 
-use crate::{Type, errors::Error, TypeId, FuncId, ir::terms::{Reg, IR}, State, TypeSymbol, StructureKind, Function, LocalAnalyser};
+use crate::{Type, errors::Error, TypeId, FuncId, ir::terms::{Reg, IR}, State, TypeSymbol, StructureKind, Function, LocalAnalyser, TypeSymbolKind};
 
 define_key!(u32, pub NamespaceId);
 define_key!(u32, pub ScopeId);
@@ -230,15 +230,27 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
             parser::DataTypeKind::Option(v) => {
                 let v = self.update_data_type(v, scope)?;
-                if let Some(v) = self.sema.option_table.get(&v) { return Ok(Type::UserType(*v)) };
+                println!("{v:?}");
+                if let Some(val) = self.sema.option_table.get(&v) { panic!("{v:?} {:#?}", self.sema.option_table); return Ok(Type::UserType(*val)) };
+                println!("no cache {v:?}");
 
                 let index_some = self.string_map.insert("some");
                 let index_none = self.string_map.insert("none");
 
-                let index = self.declare_type();
+                let name = {
+                    let pool = ArenaPool::tls_get_temp();
+                    let v = self.nameof(v);
+                    let msg = format_in!(
+                        &*pool, "{}?", 
+                        self.string_map.get(v),
+                    );
+                    self.string_map.insert(&msg)
+                };
+                
+                let index = self.declare_type(SourceRange::new(u32::MAX, u32::MAX), name);
                 let final_type = Type::UserType(index);
 
-                self.update_type(index, TypeSymbol::Enum { 
+                self.update_type(index, TypeSymbolKind::Enum { 
                     mappings: self.arena_type.alloc_new([
                         (index_some, v, SourceRange::new(u32::MAX, u32::MAX), false),
                         (index_none, Type::Unit, SourceRange::new(u32::MAX, u32::MAX), true),
@@ -254,16 +266,28 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             parser::DataTypeKind::Result(v1, v2) => {                
                 let v1 = self.update_data_type(v1, scope)?;
                 let v2 = self.update_data_type(v2, scope)?;
+                
                 if let Some(v) = self.sema.result_table.get(&(v1, v2))
                 { return Ok(Type::UserType(*v)) };
 
                 let index_ok   = self.string_map.insert("ok");
                 let index_err  = self.string_map.insert("err");
 
-                let index = self.declare_type();
+                let name = {
+                    let pool = ArenaPool::tls_get_temp();
+                    let v1 = self.nameof(v1);
+                    let v2 = self.nameof(v2);
+                    let msg = format_in!(
+                        &*pool, "{}~{}", 
+                        self.string_map.get(v1), self.string_map.get(v2),
+                    );
+                    self.string_map.insert(&msg)
+                };
+                
+                let index = self.declare_type(SourceRange::new(u32::MAX, u32::MAX), name);
                 let final_type = Type::UserType(index);
 
-                self.update_type(index, TypeSymbol::Enum {
+                self.update_type(index, TypeSymbolKind::Enum {
                     mappings: self.arena_type.alloc_new([
                         (index_ok, v1, SourceRange::new(u32::MAX, u32::MAX), false),
                         (index_err, v2, SourceRange::new(u32::MAX, u32::MAX), false),
@@ -290,6 +314,21 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
 
     }
+
+
+    pub fn nameof(&mut self, typ: Type) -> StringIndex {
+        match typ {
+            Type::UserType(v) => self.types.get(v).unwrap().name,
+            Type::Str => self.string_map.insert("str"),
+            Type::Int => self.string_map.insert("int"),
+            Type::Bool => self.string_map.insert("bool"),
+            Type::Float => self.string_map.insert("float"),
+            Type::Unit => self.string_map.insert("unit"),
+            Type::Any => self.string_map.insert("any"),
+            Type::Never => self.string_map.insert("!"),
+            Type::Error => self.string_map.insert("error"),
+        }
+    }
 }
 
 
@@ -303,13 +342,14 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
         let errors_len = self.errors.len();
         
         for node in body {
+            let source = node.range();
             let NodeKind::Declaration(decl) = node.kind()
             else { continue };
 
 
             match decl {
                 parser::nodes::Declaration::Struct { header, name, fields, .. } => {
-                    let index = self.declare_type();
+                    let index = self.declare_type(source, *name);
                     let result = ns.add_type(*name, index, *header);
                     if let Err(e) = result {
                         anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(e))))
@@ -346,7 +386,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                 
                 parser::nodes::Declaration::Enum { header, name, mappings, .. } => {
-                    let index = self.declare_type();
+                    let index = self.declare_type(source, *name);
                     let result = ns.add_type(*name, index, *header);
                     if let Err(e) = result {
                         anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(e))))
@@ -472,7 +512,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                         &self.sema.namespaces
                     ).unwrap();
                     
-                    self.update_type(index, TypeSymbol::Structure { 
+                    self.update_type(index, TypeSymbolKind::Structure { 
                         fields, 
                         kind: match kind {
                             parser::nodes::StructKind::Component => StructureKind::Component,
@@ -512,7 +552,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                         &self.sema.scopes, 
                         &self.sema.namespaces
                     ).unwrap();
-                    self.update_type(index, TypeSymbol::Enum { mappings })
+                    self.update_type(index, TypeSymbolKind::Enum { mappings })
                 },
 
                 

@@ -1,3 +1,5 @@
+use std::fmt::{Display, Write};
+
 use common::{string_map::StringIndex, source::SourceRange};
 use errors::ErrorId;
 use lexer::Literal;
@@ -402,7 +404,7 @@ impl BinaryOperator {
     }
 
     
-    pub fn is_ord_comp(self) -> bool {
+    pub fn is_ocomp(self) -> bool {
         match self {
             | BinaryOperator::Add
             | BinaryOperator::Sub
@@ -427,7 +429,7 @@ impl BinaryOperator {
     }
 
     
-    pub fn is_eq_comp(self) -> bool {
+    pub fn is_ecomp(self) -> bool {
         match self {
             | BinaryOperator::Add
             | BinaryOperator::Sub
@@ -453,8 +455,42 @@ impl BinaryOperator {
 }
 
 
+impl Display for BinaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            BinaryOperator::Add => "+",
+            BinaryOperator::Sub => "-",
+            BinaryOperator::Mul => "*",
+            BinaryOperator::Div => "/",
+            BinaryOperator::Rem => "%",
+            BinaryOperator::BitshiftLeft => ">>",
+            BinaryOperator::BitshiftRight => "<<",
+            BinaryOperator::BitwiseAnd => "&",
+            BinaryOperator::BitwiseOr => "|",
+            BinaryOperator::BitwiseXor => "^",
+            BinaryOperator::Eq => "==",
+            BinaryOperator::Ne => "!=",
+            BinaryOperator::Gt => ">",
+            BinaryOperator::Ge => ">=",
+            BinaryOperator::Lt => "<",
+            BinaryOperator::Le => "<=",
+        })
+    }
+}
+
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOperator {
     Not,
     Neg,
+}
+
+
+impl Display for UnaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            UnaryOperator::Not => "!",
+            UnaryOperator::Neg => "-",
+        })
+    }
 }

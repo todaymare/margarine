@@ -1,5 +1,5 @@
 pub mod fmt;
-
+ 
 use std::fmt::Write;
 
 use common::{string_map::StringMap, source::FileData};
@@ -21,12 +21,12 @@ define_key!(u32, pub SemaError);
 
 pub struct ErrorCode(u32);
 
-pub trait ErrorType {
-    fn display(&self, fmt: &mut ErrorFormatter);
+pub trait ErrorType<T> {
+    fn display(&self, fmt: &mut ErrorFormatter, data: &T);
 }
 
 
-pub fn display(errors: &[impl ErrorType], string_map: &StringMap, file: &[FileData]) -> String {
+pub fn display<T>(errors: &[impl ErrorType<T>], string_map: &StringMap, file: &[FileData], data: &T) -> String {
     let mut string = String::new();
     for e in errors.iter() {
         if !string.is_empty() {
@@ -34,7 +34,7 @@ pub fn display(errors: &[impl ErrorType], string_map: &StringMap, file: &[FileDa
         }
 
         let mut fmt = ErrorFormatter::new(&mut string, string_map, file);
-        e.display(&mut fmt);
+        e.display(&mut fmt, data);
     }
 
     string

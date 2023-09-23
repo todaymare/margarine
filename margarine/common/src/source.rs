@@ -25,7 +25,6 @@ impl FileData {
         let new_path = path.as_ref().with_extension("");
         let name = new_path.to_string_lossy();
 
-        println!("{:?}", path.as_ref().extension());
         let extension = match path.as_ref().extension() {
             Some(v) => {
                 match v.to_str() {

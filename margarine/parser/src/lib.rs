@@ -297,41 +297,40 @@ impl<'arena> Parser<'_, 'arena> {
 
     #[inline(always)]
     fn expect_type(&mut self) -> Result<DataType<'arena>, ErrorId> {
-        if self.current_is(TokenKind::Bang) {
-            return Ok(DataType::new(self.current_range(), DataTypeKind::Never))
-        }
 
         
-        if self.current_is(TokenKind::LeftParenthesis) {
+
+        let start = self.current_range().start();
+        let mut result = 
+        if self.current_is(TokenKind::Bang) {
+            DataType::new(self.current_range(), DataTypeKind::Never)
+        } else if self.current_is(TokenKind::LeftParenthesis) {
             self.advance();
             if self.current_is(TokenKind::RightParenthesis) {
-                return Ok(DataType::new(self.current_range(), DataTypeKind::Unit))
+                DataType::new(self.current_range(), DataTypeKind::Unit)
+            } else {
+                let typ = self.expect_type()?;
+                self.advance();
+                self.expect(TokenKind::RightParenthesis)?;
+                typ
             }
+        } else {
+            let identifier = self.expect_identifier()?;
 
-            let typ = self.expect_type()?;
-            self.advance();
-            self.expect(TokenKind::RightParenthesis)?;
+            let result = match self.symbol_map.get(identifier) {
+                "int" => DataTypeKind::Int,
+                "float" => DataTypeKind::Float,
+                "bool" => DataTypeKind::Bool,
+                "any" => DataTypeKind::Any,
+                _ => DataTypeKind::CustomType(identifier),
+            };
 
-            return Ok(typ)
-        }
-
-        
-        let start = self.current_range().start();
-        
-        let identifier = self.expect_identifier()?;
-
-        let result = match self.symbol_map.get(identifier) {
-            "int" => DataTypeKind::Int,
-            "float" => DataTypeKind::Float,
-            "bool" => DataTypeKind::Bool,
-            "any" => DataTypeKind::Any,
-            _ => DataTypeKind::CustomType(identifier),
+            DataType::new(
+                SourceRange::new(start, self.current_range().end()), 
+                result
+            )
         };
-
-        let mut result = DataType::new(
-            SourceRange::new(start, self.current_range().end()), 
-            result
-        );
+        
 
         loop {
             let mut has_updated = false;
@@ -1182,7 +1181,7 @@ impl<'arena> Parser<'_, 'arena> {
     fn comparisson(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
         self.binary_operation(
             Self::bitwise_or, 
-            Self::bitwise_or, 
+            Self::expression, 
             &[
                 TokenKind::LeftAngle, TokenKind::RightAngle,
                 TokenKind::GreaterEquals, TokenKind::LesserEquals,

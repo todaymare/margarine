@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use ::errors::{ErrorId, LexerError};
 use common::{string_map::{StringMap, StringIndex},
     source::{SourceRange, FileData}, hashables::HashableF64};
-use errors::Error;
+use crate::errors::Error;
 use sti::{reader::Reader, keyed::KVec};
 
 mod tests;
@@ -406,6 +406,9 @@ impl Lexer<'_> {
             "return"    => TokenKind::Keyword(Keyword::Return),
             "break"     => TokenKind::Keyword(Keyword::Break),
             "continue"  => TokenKind::Keyword(Keyword::Continue),
+
+            "true"      => TokenKind::Literal(Literal::Bool(true)),
+            "false"     => TokenKind::Literal(Literal::Bool(false)),
 
             _ => {
                 let index = self.string_map.insert(value);

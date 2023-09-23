@@ -105,6 +105,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
             " ".repeated(max_line_padding), 
             "|".orange(), 
         );
+        
         dbg!(source, start_line, end_line);
 
         {

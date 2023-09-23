@@ -1,22 +1,23 @@
-use margarine::{FileData, StringMap, DropTimer};
+use margarine::{FileData, StringMap, DropTimer, Extension};
 use sti::prelude::Arena;
 
 fn main() -> Result<(), &'static str> {
-    let arg = std::env::args().skip(1).next().unwrap_or(0.to_string());
     DropTimer::with_timer("compilation", || {
         let mut symbol_map = StringMap::new();
-        let file = DropTimer::with_timer(
-            "opening file", 
-            || FileData::open(format!("text{arg}.txt"), &mut symbol_map).unwrap()
-        );
-        let file = [file];
+        let file = [
+            FileData::new(
+                include_str!("../../text0.txt").to_string(), 
+                symbol_map.insert("test"), 
+                Extension::Mar
+            )
+        ];
 
         let (tokens, lex_errors) = DropTimer::with_timer("tokenisation", || {
             let tokens = margarine::lex(&file[0], &mut symbol_map);
             tokens
         });
 
-        println!("{tokens:?}");
+        println!("{tokens:#?}");
 
         let mut arena = Arena::new();
         let (ast, parse_errors) = DropTimer::with_timer("parsing", || {
@@ -24,7 +25,7 @@ fn main() -> Result<(), &'static str> {
             ast
         });
 
-        println!("{ast:?}");
+        println!("{ast:#?}");
 
         let ns_arena = Arena::new();
         let scopes = Arena::new();
@@ -40,19 +41,20 @@ fn main() -> Result<(), &'static str> {
         };
 
         println!("{sema:#?}");
+        println!("{:#?}", sema.funcs);
 
         if !lex_errors.is_empty() {
-            let report = margarine::display(lex_errors.as_slice().inner(), &sema.string_map, &file);
+            let report = margarine::display(lex_errors.as_slice().inner(), &sema.string_map, &file, &());
             println!("{report}");
         }
 
         if !parse_errors.is_empty() {
-            let report = margarine::display(parse_errors.as_slice().inner(), &sema.string_map, &file);
+            let report = margarine::display(parse_errors.as_slice().inner(), &sema.string_map, &file, &());
             println!("{report}");
         }
 
         if !sema.errors.is_empty() {
-            let report = margarine::display(parse_errors.as_slice().inner(), &sema.string_map, &file);
+            let report = margarine::display(sema.errors.as_slice().inner(), &sema.string_map, &file, &sema.types);
             println!("{report}");
         }
 

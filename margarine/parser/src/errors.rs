@@ -32,8 +32,8 @@ pub enum Error {
 }
 
 
-impl ErrorType for Error {
-    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter) {
+impl ErrorType<()> for Error {
+    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, _: &()) {
         match self {
             Error::ExpectedLiteralString { source, token } => {
                 fmt.error("expected literal")
