@@ -66,6 +66,33 @@ pub enum Error {
         else_block: (SourceRange, Type),
     },
     
+    MatchValueIsntEnum {
+        source: SourceRange,
+        typ: Type,
+    },
+    
+    StructCreationOnNonStruct {
+        source: SourceRange,
+        typ: Type,
+    },
+
+    FunctionNotFound {
+        source: SourceRange,
+        name: StringIndex,
+    },
+
+    BindedFunctionNotFound {
+        source: SourceRange,
+        name: StringIndex,
+        bind: Type,
+    },
+
+    FunctionArgsMismatch {
+        source: SourceRange,
+        sig_len: usize,
+        call_len: usize,
+    },
+    
     Bypass,
 }
 
@@ -194,6 +221,51 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                 err.highlight_with_note(else_block.0, &msg2);
             },
             
+            
+            Error::MatchValueIsntEnum { source, typ } => {
+                let msg = format!("is of type '{}' which is not an enum", 
+                    typ.to_string(types, fmt.string_map()));
+
+                fmt.error("match value isn't an enum")
+                    .highlight_with_note(*source, &msg);
+            },
+            
+            Error::StructCreationOnNonStruct { source, typ } => {
+                let msg = format!("is of type '{}'", 
+                    typ.to_string(types, fmt.string_map()));
+
+                fmt.error("struct creation on a type which is not an enum")
+                    .highlight_with_note(*source, &msg);
+            }
+            
+            Error::FunctionNotFound { name, source } => {
+                let msg = format!("there's no function named '{}' in the current scope",
+                    fmt.string(*name),
+                );
+
+                fmt.error("function not found")
+                    .highlight_with_note(*source, &msg)
+            },
+            
+            Error::BindedFunctionNotFound { name, bind, source } => {                
+                let msg = format!("there's no function named '{}' in the namespace of '{}'",
+                    fmt.string(*name),
+                    bind.to_string(types, fmt.string_map())
+                );
+
+                fmt.error("associated function not found")
+                    .highlight_with_note(*source, &msg)
+            },
+            
+            Error::FunctionArgsMismatch { source, sig_len, call_len } => {
+                let msg = format!("function has {} argument(s) but you've provided {} argument(s)",
+                    sig_len,
+                    call_len,
+                );
+
+                fmt.error("function argument count mismatch")
+                    .highlight_with_note(*source, &msg)
+            },
             
             Error::Bypass => (),
         }

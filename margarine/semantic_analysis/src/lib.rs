@@ -1,3 +1,4 @@
+#![feature(if_let_guard)]
 #![deny(unused_must_use)]
 
 use common::{string_map::{StringIndex, StringMap}, source::SourceRange, fuck_map::FuckMap, OptionalPlus};
@@ -325,7 +326,16 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
         self.funcs.push(None)
     }
 
+
+    #[inline(always)]
+    fn create_func(&mut self, func: Function<'af>) -> FuncId {
+        let id = self.declare_func();
+        self.funcs.get_mut(id).unwrap().replace(func);
+        id
+    }
+
     
+    #[inline(always)]
     fn update_type(&mut self, index: TypeId, symbol: TypeSymbolKind<'at>) {
         let type_symbol = self.types.get_mut(index).unwrap();
         type_symbol.kind = symbol;
@@ -393,6 +403,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
         AnalysisResult::new(final_reg, final_type)
     }
+
 }
 
 
@@ -738,10 +749,12 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     anal.fc.new_block(Vec::new_in(anal.arena)),
                 );
 
+                let body_id = anal.current.id;
+
                 let continue_block = anal.fc.new_block(Vec::new_in(anal.arena));
 
-                anal.current.terminator = prev_block.terminator;
-                let mut body_anal = self.block(anal, *scope, &body);
+                anal.current.terminator = prev_block.terminator.clone();
+                let body_anal = self.block(anal, *scope, &body);
                 anal.current.terminator = Terminator::Jmp(continue_block.id);
                 
                 let dst = body_anal.reg;
@@ -764,6 +777,12 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                     else_block.terminator = Terminator::Jmp(anal.current.id);
 
+                    prev_block.terminator = Terminator::Jif {
+                        cond: condition_anal.reg, 
+                        if_true: body_id, 
+                        if_false: id,
+                    };
+
                     if !body_anal.typ.is(else_res.typ) {
                         let error = self.errors.push(Error::IfBodyAndElseMismatch {
                             body: (body.range(), body_anal.typ), 
@@ -772,12 +791,6 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                         else_block.push(IR::Error(ErrorId::Sema(error)));
 
-                        prev_block.terminator = Terminator::Jif {
-                            cond: condition_anal.reg, 
-                            if_true: body_block.id, 
-                            if_false: else_block.id,
-                        };
-
                         anal.blocks.push(prev_block);
                         anal.blocks.push(body_block);
                         anal.blocks.push(else_block);
@@ -785,7 +798,11 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                         return anal.empty_error()
                     }
 
+
                     else_block.push(IR::Copy { dst, src: else_res.reg });
+                    anal.blocks.push(prev_block);
+                    anal.blocks.push(body_block);
+                    anal.blocks.push(else_block);
                     
 
                 } else {
@@ -796,7 +813,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                     prev_block.terminator = Terminator::Jif {
                         cond: condition_anal.reg, 
-                        if_true: body_block.id, 
+                        if_true: body_id, 
                         if_false: anal.current.id,
                     };
 
@@ -806,13 +823,144 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                 AnalysisResult::new(dst, body_anal.typ)
             },
-            Expression::Match { value, mappings } => todo!(),
+
+            
+            Expression::Match { value, mappings } => {
+                let value_anal = self.node(anal, scope, &value);
+                let enum_mappings = match value_anal.typ {
+                    Type::UserType(v) 
+                     if let TypeSymbolKind::Enum { mappings } = self.types.get(v).unwrap().kind
+                     => mappings,
+
+                    Type::Error => return anal.empty_error(),
+
+                    _ => {
+                        let error = self.errors.push(Error::MatchValueIsntEnum {
+                            source: value.range(), 
+                            typ: value_anal.typ
+                        });
+
+                        return anal.error(ErrorId::Sema(error))
+                    }
+                };
+                todo!()
+            },
+
+            
             Expression::Block { block } => self.block(anal, *scope, &block),
-            Expression::CreateStruct { data_type, fields } => todo!(),
+
+            
+            Expression::CreateStruct { data_type, fields } => {
+                let typ = {
+                    let scope = *self.sema.scopes.get(*scope).unwrap();
+                    let typ = self.update_data_type(data_type, &scope);
+                    match typ {
+                        Ok(v) => v,
+                        Err(e) => return anal.error(ErrorId::Sema(e)),
+                    }
+                };
+
+
+                let struct_fields = match typ {
+                    Type::UserType(v) 
+                     if let TypeSymbolKind::Structure { fields, .. } = self.types.get(v).unwrap().kind
+                     => fields,
+                    
+                    Type::Error => return anal.empty_error(),
+
+                    _ => {
+                        let error = self.errors.push(Error::StructCreationOnNonStruct {
+                            source: data_type.range(), 
+                            typ
+                        });
+
+                        return anal.error(ErrorId::Sema(error))
+                    }
+                };
+
+                todo!()
+            },
+
+            
             Expression::AccessField { val, field, field_meta } => todo!(),
-            Expression::CallFunction { name, is_accessor, args } => todo!(),
+            Expression::CallFunction { name, is_accessor, args } => {
+                let temp_arena = ArenaPool::tls_get_temp();
+                let mut args_anal = Vec::with_cap_in(&*temp_arena, args.len());
+                for arg in args.iter() {
+                    args_anal.push(self.node(anal, scope, &arg.0))
+                }
+
+                let call_scope = if *is_accessor {
+                    let typ_namespace = self.namespaceof(args_anal[0].typ);
+                    let scope = Scope::new(scope.some(), ScopeKind::Namespace(typ_namespace));
+                    self.sema.scopes.push(scope)
+                } else { *scope };
+
+                let func_id = {
+                    let scope = self.sema.scopes.get(call_scope).unwrap();
+                    let Some(func) = scope.find_func(*name, &self.sema.scopes, &self.sema.namespaces)
+                    else {
+                        let error = if *is_accessor {
+                            Error::BindedFunctionNotFound { name: *name, bind: args_anal[0].typ, source }
+                        } else { Error::FunctionNotFound { name: *name, source }};
+
+                        return anal.error(ErrorId::Sema(self.errors.push(error)))
+                    };
+                    
+                    func
+                };
+
+                let func = self.funcs.get(func_id).unwrap().unwrap_ref();
+
+                if args.len() != func.args.len() {
+                    let error = self.errors.push(Error::FunctionArgsMismatch {
+                        source, 
+                        sig_len: func.args.len(), 
+                        call_len: args.len(),
+                    });
+
+                    return anal.error(ErrorId::Sema(error))
+                }
+
+
+                let dst = anal.fc.new_reg();
+                let mut args_vec = Vec::with_cap_in(anal.arena, args.len());
+                for (arg_anal, arg) in args_anal.iter().zip(args.iter()) {
+                    args_vec.push((
+                        arg_anal.reg, 
+                        if arg.1 { anal.fc.new_reg() } else { arg_anal.reg}
+                    ))
+                }
+
+                
+                anal.current.push(IR::Call {
+                    dst, 
+                    function: func_id, 
+                    args: args_vec.leak()
+                });
+
+                AnalysisResult::new(dst, func.return_type)
+            },
+
+            
             Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
-            Expression::WithinTypeNamespace { namespace, action } => todo!(),
+            Expression::WithinTypeNamespace { namespace, action } => {                
+                let typ = {
+                    let scope = *self.sema.scopes.get(*scope).unwrap();
+                    let typ = self.update_data_type(namespace, &scope);
+                    match typ {
+                        Ok(v) => v,
+                        Err(e) => return anal.error(ErrorId::Sema(e)),
+                    }
+                };
+
+                let namespace = self.namespaceof(typ);
+                {
+                    let scope = Scope::new(scope.some(), ScopeKind::Namespace(namespace));
+                    let mut scope = self.sema.scopes.push(scope);
+                    self.node(anal, &mut scope, action)
+                }
+            },
             Expression::Loop { body } => todo!(),
             Expression::Return(_) => todo!(),
             Expression::Continue => todo!(),

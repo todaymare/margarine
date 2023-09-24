@@ -5,7 +5,7 @@ use errors::ErrorId;
 use parser::nodes::BinaryOperator;
 use sti::prelude::{Arena, Vec};
 
-use crate::Type;
+use crate::{Type, FuncId};
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -28,8 +28,8 @@ pub enum IR<'a> {
     AccEnumVariant { dst: Reg, src: Reg, variant: EnumVariant },
     SetEnumVariant { dst: Reg, src: Reg, variant: EnumVariant },
 
-    Call { dst: Reg, function: StringIndex, args: &'a [(Reg, Reg)] },    
-    ExternCall { dst: Reg, function: StringIndex, args: &'a [(Reg, Reg)] },
+    Call { dst: Reg, function: FuncId, args: &'a [(Reg, Reg)] },    
+    ExternCall { dst: Reg, function: FuncId, args: &'a [(Reg, Reg)] },
     
     Unwrap { src: Reg },
     OrReturn { src: Reg },
@@ -53,7 +53,7 @@ pub enum Terminator {
 
 
 #[derive(Debug, Clone, Copy)]
-pub struct EnumVariant(u16);
+pub struct EnumVariant(pub u16);
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeId(pub u32);

@@ -1,8 +1,8 @@
-enum Hi {
-	some_field: int? ~ Hi,
-	hello: Hi,
+enum Vector {
+	x: float,
+	y: float,
 }
 
-
-fn hi(val: Hi): Hi {
+fn hi() {
+	[Vector]::x(59.3)
 }

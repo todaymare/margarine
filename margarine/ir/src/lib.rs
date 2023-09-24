@@ -802,7 +802,7 @@ impl Block {
                 IR::SetEnumVariant { dst, src, variant } => write!(f, "setvariant {dst} {src} index({variant})"),
                 IR::Call { dst, function, args } => {
                     let _ = write!(f, "call {dst} {} (", symbol_map.get(*function));
-                    for i in args.iter().enumerate() {
+                    for i in args.iter().enumerate()5 {
                         if i.0 != 0 {
                             let _ = write!(f, ", ");
                         }

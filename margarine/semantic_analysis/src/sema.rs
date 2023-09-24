@@ -3,7 +3,7 @@ use errors::{SemaError, ErrorId};
 use parser::{nodes::{NodeKind, Node}, DataType};
 use sti::{define_key, prelude::Arena, keyed::KVec, packed_option::PackedOption, arena_pool::ArenaPool, vec::Vec, format_in};
 
-use crate::{Type, errors::Error, TypeId, FuncId, ir::terms::{Reg, IR}, State, TypeSymbol, StructureKind, Function, LocalAnalyser, TypeSymbolKind};
+use crate::{Type, errors::Error, TypeId, FuncId, ir::terms::{Reg, IR, Block, BlockId, EnumVariant, Terminator}, State, TypeSymbol, StructureKind, Function, LocalAnalyser, TypeSymbolKind};
 
 define_key!(u32, pub NamespaceId);
 define_key!(u32, pub ScopeId);
@@ -328,6 +328,56 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             Type::Never => self.string_map.insert("!"),
             Type::Error => self.string_map.insert("error"),
         }
+    }
+
+
+    pub fn namespaceof(&mut self, typ: Type) -> NamespaceId {
+        let namespace = *self.sema.namespace_table.kget_or_insert_with(typ, || {
+            self.sema.namespaces.push(Namespace::new(self.sema.arena_nasp))
+        });
+
+        let typesym = match typ {
+            Type::UserType(v) => self.types.get(v).unwrap(),
+            _ => return namespace,
+        };
+
+        let TypeSymbolKind::Enum { mappings } = typesym.kind
+        else { return namespace };
+
+        {
+            let mut owned_namespace = Namespace::new(self.sema.arena_nasp);
+
+            let sym_value = self.string_map.insert("value");
+            
+            for (i, m) in mappings.iter().enumerate() {
+                let func = self.create_func(
+                    Function {
+                        args: if m.3 { self.arena_func.alloc_new([]) }
+                            else { self.arena_func.alloc_new([(sym_value, m.1, false, m.2)]) }, 
+                        body: Vec::from_array_in(self.arena_func, [
+                            Block {
+                                id: BlockId(0),
+                                body: Vec::from_array_in(self.arena_func, [
+                                    IR::SetEnumVariant {
+                                        dst: Reg(0), 
+                                        src: Reg(1), 
+                                        variant: EnumVariant(i as u16)
+                                    }
+                                ]),
+                                terminator: Terminator::Ret,
+                            }
+                        ]), 
+                        return_type: typ
+                    }
+                );
+
+                owned_namespace.add_func(m.0, func, m.2).unwrap()
+            }
+
+            *self.sema.namespaces.get_mut(namespace).unwrap() = owned_namespace;
+        }
+
+        namespace
     }
 }
 

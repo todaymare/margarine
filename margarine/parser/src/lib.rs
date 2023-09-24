@@ -146,7 +146,11 @@ pub fn parse<'a>(
     };
 
 
-    let result = parser.parse_till(TokenKind::EndOfFile, &ParserSettings::default()).unwrap();
+    let result = parser.parse_till(
+        TokenKind::EndOfFile, 
+        0, 
+        &ParserSettings::default()
+    ).unwrap();
 
     (result, parser.errors)
 }
@@ -393,11 +397,11 @@ impl<'arena> Parser<'_, 'arena> {
     fn parse_till(
         &mut self, 
         terminator: TokenKind, 
+        start: u32,
         settings: &ParserSettings<'arena>
     ) -> Result<Block<'arena>, ErrorId> {
 
         let mut storage = Vec::with_cap_in(self.arena, 1);
-        let start = self.current_range().start();
 
         loop {
             if self.current_kind() == TokenKind::EndOfFile {
@@ -687,9 +691,10 @@ impl<'arena> Parser<'_, 'arena> {
 
         let header = SourceRange::new(start, return_type.range().end());
         self.expect(TokenKind::LeftBracket)?;
+        let body_start = self.current_range().start();
         self.advance();
 
-        let body = self.parse_till(TokenKind::RightBracket, &ParserSettings::default())?;
+        let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
         let end = self.current_range().end();
 
         Ok(Node::new(
@@ -715,6 +720,7 @@ impl<'arena> Parser<'_, 'arena> {
         let data_type = self.expect_type()?;
         self.advance();
 
+        let body_start = self.current_range().start();
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
@@ -723,7 +729,7 @@ impl<'arena> Parser<'_, 'arena> {
             ..Default::default()
         };
         
-        let body = self.parse_till(TokenKind::RightBracket, &settings)?;
+        let body = self.parse_till(TokenKind::RightBracket, body_start, &settings)?;
         let end = self.current_range().end();
 
         Ok(Node::new(
@@ -744,10 +750,11 @@ impl<'arena> Parser<'_, 'arena> {
         let name = self.expect_identifier()?;
         self.advance();
 
+        let body_start = self.current_range().start();
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
-        let body = self.parse_till(TokenKind::RightBracket, &ParserSettings::default())?;
+        let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
         let end = self.current_range().end();
 
         Ok(Node::new(
@@ -1456,9 +1463,11 @@ impl<'arena> Parser<'_, 'arena> {
             TokenKind::Keyword(Keyword::Loop) => {
                 let start = self.current_range().start();
                 self.advance();
+
+                let body_start = self.current_range().start();
                 self.expect(TokenKind::LeftBracket)?;
                 self.advance();
-                let body = self.parse_till(TokenKind::RightBracket, &ParserSettings::default())?;
+                let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
 
                 Ok(Node::new(
                     NodeKind::Expression(Expression::Loop { body }),
@@ -1586,7 +1595,7 @@ impl<'arena> Parser<'_, 'arena> {
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
-        let block = self.parse_till(TokenKind::RightBracket, &ParserSettings::default())?;
+        let block = self.parse_till(TokenKind::RightBracket, start, &ParserSettings::default())?;
 
         Ok(Node::new(
             NodeKind::Expression(Expression::Block { block }),
@@ -1604,10 +1613,11 @@ impl<'arena> Parser<'_, 'arena> {
         let condition = self.expression(&settings)?;
         self.advance();
 
+        let body_start = self.current_range().start();
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
-        let body = self.parse_till(TokenKind::RightBracket, &ParserSettings::default())?;
+        let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
 
         let else_block = 
             if self.peek_kind() == Some(TokenKind::Keyword(Keyword::Else)) {
@@ -1620,6 +1630,7 @@ impl<'arena> Parser<'_, 'arena> {
                     self.block_expression()?
                 })
             } else { None };
+
         
         Ok(Node::new(
             NodeKind::Expression(Expression::If {
