@@ -943,7 +943,42 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             },
 
             
-            Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
+            Expression::WithinNamespace { namespace, namespace_source, action } => {
+                let namespace = {
+                    let scope = self.sema.scopes.get(*scope).unwrap();
+                    let ns = scope.find_namespace(*namespace, &self.sema.scopes);
+                    match ns {
+                        Some(v) => v,
+                        None => {
+                            let typ_namespace = scope.find_type(
+                                *namespace, 
+                                &self.sema.scopes, 
+                                &self.sema.namespaces
+                            );
+
+                            match typ_namespace {
+                                Some(v) => self.namespaceof(Type::UserType(v)),
+                                None => {
+                                    let error = self.errors.push(Error::NamespaceNotFound {
+                                        source: *namespace_source, 
+                                        namespace: *namespace
+                                    });
+
+                                    return anal.error(ErrorId::Sema(error))
+                                },
+                            }
+                        },
+                    }
+                };
+
+                {
+                    let scope = Scope::new(scope.some(), ScopeKind::Namespace(namespace));
+                    let mut scope = self.sema.scopes.push(scope);
+                    self.node(anal, &mut scope, action)
+                }
+            },
+
+            
             Expression::WithinTypeNamespace { namespace, action } => {                
                 let typ = {
                     let scope = *self.sema.scopes.get(*scope).unwrap();

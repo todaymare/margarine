@@ -92,6 +92,11 @@ pub enum Error {
         sig_len: usize,
         call_len: usize,
     },
+
+    NamespaceNotFound {
+        source: SourceRange,
+        namespace: StringIndex,
+    },
     
     Bypass,
 }
@@ -264,6 +269,15 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                 );
 
                 fmt.error("function argument count mismatch")
+                    .highlight_with_note(*source, &msg)
+            },
+            
+            Error::NamespaceNotFound { source, namespace } => {
+                let msg = format!("there's no namespace named '{}'in the current scope",
+                    fmt.string(*namespace),
+                );
+
+                fmt.error("namespace not found")
                     .highlight_with_note(*source, &msg)
             },
             

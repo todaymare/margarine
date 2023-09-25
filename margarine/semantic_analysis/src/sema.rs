@@ -31,6 +31,7 @@ pub struct Scope {
 #[derive(Debug, Clone, Copy)]
 pub enum ScopeKind {
     NamedNamespace((StringIndex, NamespaceId)),
+    TypeNamespace((Type, NamespaceId)),
     Namespace(NamespaceId),
     Function,
     Variable((StringIndex, Type, bool, Reg)),
@@ -69,6 +70,37 @@ impl Scope {
 
                 if name == index.0 {
                     return Some(index);
+                }
+            }
+
+            if let Some(parent) = current.parent.into() {
+                current = scopes.get(parent).unwrap();
+                continue
+            }
+
+            break
+        }
+
+        None
+    }
+
+
+    #[inline(always)]
+    pub fn find_namespace(
+        &self,
+        name: StringIndex,
+        scopes: &KVec<ScopeId, Scope>,
+    ) -> Option<NamespaceId> {
+
+        let mut current = self;
+        
+        loop {
+            'ns: {
+                let ScopeKind::NamedNamespace(index) = self.kind
+                else { break 'ns };
+
+                if name == index.0 {
+                    return Some(index.1);
                 }
             }
 
@@ -332,9 +364,15 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
 
     pub fn namespaceof(&mut self, typ: Type) -> NamespaceId {
-        let namespace = *self.sema.namespace_table.kget_or_insert_with(typ, || {
-            self.sema.namespaces.push(Namespace::new(self.sema.arena_nasp))
-        });
+        let namespace = self.sema.namespace_table.get(&typ);
+        let namespace = match namespace {
+            Some(v) => return *v,
+            None => {
+                let key = self.sema.namespaces.push(Namespace::new(self.sema.arena_nasp));
+                self.sema.namespace_table.insert(typ, key);
+                key
+            }
+        };
 
         let typesym = match typ {
             Type::UserType(v) => self.types.get(v).unwrap(),
