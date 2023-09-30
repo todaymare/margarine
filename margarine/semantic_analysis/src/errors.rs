@@ -71,8 +71,26 @@ pub enum Error {
         typ: Type,
     },
     
+    MatchBranchesDifferInReturnType {
+        initial_source: SourceRange,
+        initial_typ: Type,
+        branch_source: SourceRange,
+        branch_typ: Type,
+    },
+    
     StructCreationOnNonStruct {
         source: SourceRange,
+        typ: Type,
+    },
+    
+    FieldAccessOnNonEnumOrStruct {
+        source: SourceRange,
+        typ: Type,
+    },
+
+    FieldDoesntExist {
+        source: SourceRange,
+        field: StringIndex,
         typ: Type,
     },
 
@@ -280,6 +298,48 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                 fmt.error("namespace not found")
                     .highlight_with_note(*source, &msg)
             },
+
+            
+            Error::FieldAccessOnNonEnumOrStruct { source, typ } => {                
+                let msg = format!("..is of type '{}' which is neither a struct or an enum",
+                    typ.to_string(types, fmt.string_map()),
+                );
+
+                fmt.error("can't access fields on this type")
+                    .highlight_with_note(*source, &msg)
+            },
+
+            
+            Error::FieldDoesntExist { source, field, typ } => {                
+                let msg = format!("the type '{}' doesn't have a field named '{}'",
+                    typ.to_string(types, fmt.string_map()),
+                    fmt.string(*field),
+                );
+
+                fmt.error("field doesn't exist")
+                    .highlight_with_note(*source, &msg)
+            },
+            
+            
+            Error::MatchBranchesDifferInReturnType { 
+                initial_source, initial_typ, 
+                branch_source, branch_typ 
+            } => {
+                let msg1 = format!("..returns '{}'",
+                    initial_typ.to_string(types, fmt.string_map()),
+                );
+
+                let msg2 = format!("..but this returns '{}'",
+                    branch_typ.to_string(types, fmt.string_map()),
+                );
+
+                let mut err = fmt.error("match branches differ in return types");
+                err
+                    .highlight_with_note(*initial_source, &msg1);
+                err
+                    .highlight_with_note(*branch_source, &msg2);
+            },
+            
             
             Error::Bypass => (),
         }

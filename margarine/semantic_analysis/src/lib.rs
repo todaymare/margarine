@@ -1,14 +1,14 @@
 #![feature(if_let_guard)]
 #![deny(unused_must_use)]
 
-use common::{string_map::{StringIndex, StringMap}, source::SourceRange, fuck_map::FuckMap, OptionalPlus};
+use common::{string_map::{StringIndex, StringMap}, source::SourceRange, fuck_map::FuckMap, OptionalPlus, warn};
 use errors::Error;
 use ::errors::{SemaError, ErrorId};
 use ir::terms::{Block, EnumVariant, Reg, BlockId, IR, StrConstId};
 use lexer::Literal;
-use parser::nodes::{Node, NodeKind, Declaration, Statement, Expression, BinaryOperator, UnaryOperator};
+use parser::{nodes::{Node, NodeKind, Declaration, Statement, Expression, BinaryOperator, UnaryOperator}, DataType};
 use sema::{InferState, Namespace, NamespaceId, Scope, ScopeId, ScopeKind};
-use sti::{keyed::KVec, vec::Vec, define_key, prelude::Arena, arena_pool::ArenaPool, packed_option::PackedOption};
+use sti::{keyed::KVec, vec::Vec, define_key, prelude::Arena, arena_pool::ArenaPool, packed_option::PackedOption, traits::FromIn};
 
 use crate::ir::terms::Terminator;
 
@@ -126,6 +126,22 @@ impl Type {
     }
 
 
+    pub fn as_typeid(self) -> TypeId {
+        match self {
+            Type::UserType(v) => v,
+            Type::Unit => TypeId(0),
+            Type::Int => TypeId(1),
+            Type::Float => TypeId(2),
+            // TODO: Add UInt
+            Type::Bool => TypeId(4),
+            Type::Str => TypeId(5),
+            Type::Any => TypeId(6),
+            Type::Never => TypeId(7),
+            Type::Error => TypeId(8),
+        }
+    }
+
+
     fn is(self, other: Self) -> bool {
         match (self, other) {
             | (Type::Str, Type::Str)
@@ -175,13 +191,13 @@ pub struct TypeSymbol<'a> {
 
 #[derive(Debug)]
 enum TypeSymbolKind<'a> {
-    Structure {
+    Struct {
         kind: StructureKind,
-        fields: &'a [Type],
+        fields: &'a [(StringIndex, Type)],
     },
 
     Enum {
-        mappings: &'a [(StringIndex, Type, SourceRange, bool)],
+        mappings: &'a [(StringIndex, Type, SourceRange, bool, EnumVariant)],
     },
 
     BuiltIn,
@@ -288,12 +304,80 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
         string_map: &'me mut StringMap,
     ) -> Self {
+        let types = {
+            let mut kvec = KVec::with_cap(256);
+            kvec.push(TypeSymbol {
+                name: string_map.insert("unit"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            kvec.push(TypeSymbol {
+                name: string_map.insert("int"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            kvec.push(TypeSymbol {
+                name: string_map.insert("float"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            kvec.push(TypeSymbol {
+                name: string_map.insert("uint"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            kvec.push(TypeSymbol {
+                name: string_map.insert("bool"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            kvec.push(TypeSymbol {
+                name: string_map.insert("str"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            kvec.push(TypeSymbol {
+                name: string_map.insert("any"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            kvec.push(TypeSymbol {
+                name: string_map.insert("never"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            kvec.push(TypeSymbol {
+                name: string_map.insert("error"),
+                source: SourceRange::new(0, 0),
+                kind: TypeSymbolKind::BuiltIn,
+            });
+
+            let reserved = string_map.insert("reserved");
+            for _ in (256 - kvec.len())..kvec.len() {
+                kvec.push(TypeSymbol {
+                    name: reserved,
+                    source: SourceRange::new(0, 0),
+                    kind: TypeSymbolKind::BuiltIn,
+                });
+            }
+
+            kvec
+        };
+        
         Self {
             arena_type,
             arena_func,
             string_map,
 
-            types: KVec::new(),
+            types,
             funcs: KVec::new(),
             sema: InferState {
                 arena_nasp,
@@ -583,7 +667,14 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             },
 
             
-            Statement::UpdateValue { lhs, rhs } => todo!(),
+            Statement::UpdateValue { lhs, rhs } => {
+                warn("updating values aren't type checked yet");
+                let lhs_anal = self.node(anal, scope, lhs);
+                let rhs_anal = self.node(anal, scope, rhs);
+
+                anal.current.push(IR::Copy { dst: lhs_anal.reg, src: rhs_anal.reg });
+
+            },
         };
 
         Some(())
@@ -843,7 +934,103 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                         return anal.error(ErrorId::Sema(error))
                     }
                 };
-                todo!()
+
+                warn("match expressions aren't type checked yet");
+                
+                let temp = ArenaPool::tls_get_temp();
+                let mut blocks = Vec::with_cap_in(&*temp, mappings.len());
+                
+                let continue_block = anal.fc.new_block(Vec::new_in(anal.arena));
+                let continue_block_id = continue_block.id;
+                let mut entry_block = std::mem::replace(
+                    &mut anal.current,
+                    continue_block,
+                );
+
+                let mut return_type = None;
+                let return_reg = anal.fc.new_reg();
+                for m in mappings.iter() {
+
+                    let mapping_in_enum = enum_mappings.iter().find(|x| x.0 == m.name()).unwrap();
+
+                    let binding_reg = anal.fc.new_reg();
+                    let binding_scope = Scope::new(scope.some(), ScopeKind::Variable((
+                        m.binding(), 
+                        mapping_in_enum.1,
+                        false,
+                        binding_reg,
+                    )));
+
+                    let mut binding_scope = self.sema.scopes.push(binding_scope);
+
+                    let mut block_start = anal.fc.new_block(Vec::new_in(anal.arena));
+                    let block_start_id = block_start.id;
+
+                    if m.is_inout() {
+                    block_start.push(IR::AccUnwrapEnumVariant {
+                        dst: binding_reg, 
+                        src: value_anal.reg, 
+                        variant: mapping_in_enum.4, 
+                        typ: mapping_in_enum.1.as_typeid(),
+                    });
+                        
+                    }
+                    
+                    let swapped = std::mem::replace(
+                        &mut anal.current,
+                        block_start,
+                    );
+
+                    let result = self.node(anal, &mut binding_scope, m.node());
+
+                    let mut block_end = std::mem::replace(
+                        &mut anal.current,
+                        swapped,
+                    );
+
+                    block_end.push(IR::Copy { dst: return_reg, src: result.reg });
+                    if m.is_inout() {
+                        block_end.push(IR::CopyData { dst: value_anal.reg, src: binding_reg });
+                    }
+
+                    block_end.terminator = Terminator::Jmp(continue_block_id);
+
+                    match (return_type, result.typ) {
+                        | (Some((Type::Error | Type::Never, _)), _) 
+                        | (None, _) 
+                         => return_type = Some((result.typ, m.node().range())),
+
+                        (Some(v), _) if v.0 == result.typ => (),
+                        (Some(v), _) => {
+                            let error = self.errors.push(Error::MatchBranchesDifferInReturnType { 
+                                initial_source: v.1, 
+                                initial_typ: v.0, 
+                                branch_source: m.node().range(), 
+                                branch_typ: result.typ,
+                            });
+
+                            block_end.push(IR::Error(ErrorId::Sema(error)))
+                        },
+                    }
+
+                    anal.blocks.push(block_end);
+                    blocks.push(block_start_id);
+
+                }
+
+                let entry_block_term = std::mem::replace(
+                    &mut entry_block.terminator,
+                    Terminator::Match { src: value_anal.reg, jumps: blocks.move_into(anal.arena).leak() }
+                );
+
+                anal.current.terminator = entry_block_term;
+                anal.blocks.push(entry_block);
+
+                AnalysisResult::new(
+                    return_reg, 
+                    return_type.map(|x| x.0)
+                        .unwrap_or(Type::Unit)
+                )
             },
 
             
@@ -861,10 +1048,10 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 };
 
 
-                let struct_fields = match typ {
+                let (type_id, struct_fields) = match typ {
                     Type::UserType(v) 
-                     if let TypeSymbolKind::Structure { fields, .. } = self.types.get(v).unwrap().kind
-                     => fields,
+                     if let TypeSymbolKind::Struct { fields, .. } = self.types.get(v).unwrap().kind
+                     => (v, fields),
                     
                     Type::Error => return anal.empty_error(),
 
@@ -878,11 +1065,100 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     }
                 };
 
-                todo!()
+                warn("structure creation isn't type checked yet");
+
+                let temp = ArenaPool::tls_get_temp();
+                let mut fields_anal = Vec::with_cap_in(&*temp, fields.len());
+                for f in fields.iter() {
+                    fields_anal.push(self.node(anal, scope, &f.2))
+                }
+
+                let dst = anal.fc.new_reg();
+                anal.current.push(IR::CreateStruct { 
+                    dst, 
+                    type_id, 
+                    fields: Vec::from_in(
+                        anal.arena, 
+                        fields_anal.iter().map(|x| x.reg)
+                    ).leak() 
+                });
+
+                AnalysisResult::new(dst, typ)
             },
 
-            
-            Expression::AccessField { val, field, field_meta } => todo!(),
+
+            Expression::AccessField { val, field } => {
+                let val_anal = self.node(anal, scope, val);
+
+                match val_anal.typ {
+                    Type::UserType(v) 
+                     if let TypeSymbolKind::Struct { fields, .. } = self.types.get(v).unwrap().kind
+                     => {
+                        for (i, f) in fields.iter().enumerate() {
+                            if f.0 == *field {
+                                let dst = anal.fc.new_reg();
+                                anal.current.push(IR::AccField { 
+                                    dst, 
+                                    src: val_anal.reg, 
+                                    field_index: i.try_into().unwrap(),
+                                });
+
+                                return AnalysisResult::new(dst, f.1)
+                            }
+                        }
+
+                        let error = self.errors.push(Error::FieldDoesntExist {
+                            source: val.range(), 
+                            field: *field, 
+                            typ: val_anal.typ,
+                        });
+
+                        anal.error(ErrorId::Sema(error))
+                    },
+
+                    
+                    Type::UserType(v) 
+                     if let TypeSymbolKind::Enum { mappings, .. } = self.types.get(v).unwrap().kind
+                     => {
+                        for (i, f) in mappings.iter().enumerate() {
+                            if f.0 == *field {
+                                let dst = anal.fc.new_reg();
+                                anal.current.push(IR::AccEnumVariant { 
+                                    dst, 
+                                    src: val_anal.reg,
+                                    variant: EnumVariant(i as u16),
+                                    typ: f.1.as_typeid(), 
+                                });
+
+                                let option = self.create_option(f.1);
+
+                                return AnalysisResult::new(dst, option)
+                            }
+                        }
+
+                        let error = self.errors.push(Error::FieldDoesntExist {
+                            source: val.range(), 
+                            field: *field, 
+                            typ: val_anal.typ,
+                        });
+
+                        anal.error(ErrorId::Sema(error))
+                    },
+                    
+                    Type::Error => anal.empty_error(),
+
+                    _ => {
+                        let error = self.errors.push(Error::FieldAccessOnNonEnumOrStruct {
+                            source: val.range(),
+                            typ: val_anal.typ
+                        });
+
+                        anal.error(ErrorId::Sema(error))
+                    }
+                }
+            },
+
+
             Expression::CallFunction { name, is_accessor, args } => {
                 let temp_arena = ArenaPool::tls_get_temp();
                 let mut args_anal = Vec::with_cap_in(&*temp_arena, args.len());
@@ -932,7 +1208,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     ))
                 }
 
-                
+
                 anal.current.push(IR::Call {
                     dst, 
                     function: func_id, 
@@ -942,7 +1218,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 AnalysisResult::new(dst, func.return_type)
             },
 
-            
+
             Expression::WithinNamespace { namespace, namespace_source, action } => {
                 let namespace = {
                     let scope = self.sema.scopes.get(*scope).unwrap();
@@ -996,6 +1272,8 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     self.node(anal, &mut scope, action)
                 }
             },
+
+            
             Expression::Loop { body } => todo!(),
             Expression::Return(_) => todo!(),
             Expression::Continue => todo!(),

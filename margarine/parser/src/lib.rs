@@ -297,13 +297,9 @@ impl<'arena> Parser<'_, 'arena> {
 
         Ok(self.current())
     }
+    
 
-
-    #[inline(always)]
     fn expect_type(&mut self) -> Result<DataType<'arena>, ErrorId> {
-
-        
-
         let start = self.current_range().start();
         let mut result = 
         if self.current_is(TokenKind::Bang) {
@@ -524,6 +520,7 @@ impl<'arena> Parser<'_, 'arena> {
         self.advance();
 
         let name = self.expect_identifier()?;
+
         let header = SourceRange::new(start, self.current_range().end());
         self.advance();
 
@@ -572,9 +569,11 @@ impl<'arena> Parser<'_, 'arena> {
         self.expect(TokenKind::RightBracket)?;
         let end = self.current_range().end();
 
+        let node = Declaration::Struct { kind, name, header, fields: fields.leak() };
+
         Ok(Node::new(
-            NodeKind::Declaration(Declaration::Struct { kind, name, fields: fields.leak(), header }),
-            SourceRange::new(start, end),
+            NodeKind::Declaration(node), 
+            SourceRange::new(start, end)
         ))
     }
 
@@ -1340,7 +1339,6 @@ impl<'arena> Parser<'_, 'arena> {
                     NodeKind::Expression(Expression::AccessField { 
                         val: self.arena.alloc_new(result), 
                         field: ident,
-                        field_meta: (u16::MAX, false),
                     }),
                     SourceRange::new(start, self.current_range().end())
                 )
@@ -1359,6 +1357,13 @@ impl<'arena> Parser<'_, 'arena> {
                 NodeKind::Expression(Expression::Literal(l)), 
                 self.current_range(),
             )),
+
+            TokenKind::Underscore => {
+                 return Ok(Node::new(
+                    NodeKind::Expression(Expression::Unit), 
+                    self.current_range(),
+                ))
+            }
 
 
             TokenKind::LeftParenthesis => {
@@ -1556,24 +1561,30 @@ impl<'arena> Parser<'_, 'arena> {
             let source_range = SourceRange::new(start, self.current_range().end());
             self.advance();
 
-            let bind_to =
+            let (bind_to, is_inout) =
                 if self.current_is(TokenKind::Colon) {
                     self.advance();
+
+                    let is_inout = if self.current_is(TokenKind::Ampersand) {
+                        self.advance();
+                        true
+                    } else { false };
+                    
                     let name = self.expect_identifier()?;
                     self.advance();
-                    name
+                    (name, is_inout)
                 } else {
-                    self.symbol_map.insert("_")
+                    (self.symbol_map.insert("_"), false)
                 };
 
 
             self.expect(TokenKind::Arrow)?;
             self.advance();
 
-            let expr = self.expression(&ParserSettings::default())?;
+            let expr = self.statement(&ParserSettings::default())?;
             self.advance();
 
-            mappings.push(MatchMapping::new(name, bind_to, source_range, expr));
+            mappings.push(MatchMapping::new(name, bind_to, source_range, expr, is_inout));
         }
         let mappings = mappings;
 

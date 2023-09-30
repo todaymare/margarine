@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 sti = { git = "https://github.com/leddoo/sti"}
 istd = { git = "https://github.com/rookieCookies/istd" }
+colourful = "*"

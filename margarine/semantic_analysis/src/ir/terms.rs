@@ -5,7 +5,7 @@ use errors::ErrorId;
 use parser::nodes::BinaryOperator;
 use sti::prelude::{Arena, Vec};
 
-use crate::{Type, FuncId};
+use crate::{Type, FuncId, TypeId};
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -14,6 +14,7 @@ pub enum IR<'a> {
 
     Unit { dst: Reg },
     Copy { dst: Reg, src: Reg },
+    CopyData { dst: Reg, src: Reg },
     
     LitS { dst: Reg, lit: StrConstId },
     LitI { dst: Reg, lit: i64 },
@@ -22,10 +23,11 @@ pub enum IR<'a> {
 
     CastAny { dst: Reg, src: Reg, target: TypeId },
 
-    CreateStruct { dst: Reg, type_id: TypeId, fields: Vec<Reg> },
+    CreateStruct { dst: Reg, type_id: TypeId, fields: &'a [Reg] },
     AccField { dst: Reg, src: Reg, field_index: u16 },
-    SetField { dst: Reg, val: Reg, field_indexes: Vec<u16> },
-    AccEnumVariant { dst: Reg, src: Reg, variant: EnumVariant },
+    SetField { dst: Reg, val: Reg, field_indexes: &'a [Reg] },
+    AccEnumVariant { dst: Reg, src: Reg, variant: EnumVariant, typ: TypeId },
+    AccUnwrapEnumVariant { dst: Reg, src: Reg, variant: EnumVariant, typ: TypeId },
     SetEnumVariant { dst: Reg, src: Reg, variant: EnumVariant },
 
     Call { dst: Reg, function: FuncId, args: &'a [(Reg, Reg)] },    
@@ -43,20 +45,17 @@ pub enum IR<'a> {
 }
 
 
-#[derive(Debug, Clone)]
-pub enum Terminator {
+#[derive(Debug, Clone, Copy)]
+pub enum Terminator<'a> {
     Ret,
     Jmp(BlockId),
     Jif { cond: Reg, if_true: BlockId, if_false: BlockId },
-    Match { src: Reg, jumps: Vec<BlockId> },
+    Match { src: Reg, jumps: &'a [BlockId] },
 }
 
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnumVariant(pub u16);
-
-#[derive(Debug, Clone, Copy)]
-pub struct TypeId(pub u32);
 
 #[derive(Debug, Clone, Copy)]
 pub struct BlockId(pub u32);
@@ -71,7 +70,7 @@ pub struct Reg(pub usize);
 pub struct Block<'a> {
     pub id: BlockId,
     pub body: Vec<IR<'a>, &'a Arena>,
-    pub terminator: Terminator,
+    pub terminator: Terminator<'a>,
 }
 
 
@@ -95,6 +94,7 @@ impl core::fmt::Debug for IR<'_> {
             IR::Error(e) => write!(f, "err {e:?}"),
             IR::Unit { dst } => write!(f, "unit {dst}"),
             IR::Copy { dst, src } => write!(f, "copy {dst} {src}"),
+            IR::CopyData { dst, src } => write!(f, "copyd {dst} {src}"),
             IR::LitS { dst, lit } => write!(f, "lits {dst} {lit:?}"),
             IR::LitI { dst, lit } => write!(f, "liti {dst} {lit}"),
             IR::LitF { dst, lit } => write!(f, "litf {dst} {lit}"),
@@ -103,7 +103,8 @@ impl core::fmt::Debug for IR<'_> {
             IR::CreateStruct { dst, type_id, fields } => write!(f, "cstrct {dst} {type_id:?} {fields:?}"),
             IR::AccField { dst, src, field_index } => write!(f, "astrct {dst} {src} {field_index}"),
             IR::SetField { dst, val, field_indexes } => write!(f, "sstrct {dst} {val} {field_indexes:?}"),
-            IR::AccEnumVariant { dst, src, variant } => write!(f, "aev {dst} {src} {variant:?}"),
+            IR::AccEnumVariant { dst, src, variant, typ } => write!(f, "aev {dst} {src} {variant:?} {typ:?}"),
+            IR::AccUnwrapEnumVariant { dst, src, variant, typ } => write!(f, "auev {dst} {src} {variant:?} {typ:?}"),
             IR::SetEnumVariant { dst, src, variant } => write!(f, "sev {dst} {src} {variant:?}"),
             IR::Call { dst, function, args } => write!(f, "call {dst} {function:?} {args:?}"),
             IR::ExternCall { dst, function, args } => write!(f, "ecall {dst} {function:?} {args:?}"),

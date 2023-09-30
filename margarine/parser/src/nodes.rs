@@ -85,6 +85,7 @@ pub enum Declaration<'a> {
         file: StringIndex,
         functions: &'a [ExternFunction<'a>],
     }
+
 }
 
 
@@ -147,7 +148,6 @@ pub enum Expression<'a> {
     AccessField {
         val: &'a Node<'a>,
         field: StringIndex,
-        field_meta: (u16, bool),
     },
 
     CallFunction {
@@ -255,16 +255,24 @@ pub struct MatchMapping<'a> {
     binding: StringIndex,
     source_range: SourceRange,
     expression: Node<'a>,
+    is_inout: bool,
 }
 
 
 impl<'arena> MatchMapping<'arena> {
-    pub fn new(variant: StringIndex, binding: StringIndex, source_range: SourceRange, expression: Node<'arena>) -> Self { 
+    pub fn new(
+        variant: StringIndex, 
+        binding: StringIndex, 
+        source_range: SourceRange, 
+        expression: Node<'arena>,
+        is_inout: bool,
+    ) -> Self { 
         Self { 
             variant, 
             binding, 
             expression,
             source_range, 
+            is_inout,
         } 
     }
 
@@ -277,6 +285,8 @@ impl<'arena> MatchMapping<'arena> {
     pub fn node(&self) -> &Node<'arena> { &self.expression }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
+    #[inline(always)]
+    pub fn is_inout(&self) -> bool { self.is_inout }
 
 }
 
@@ -494,3 +504,4 @@ impl Display for UnaryOperator {
         })
     }
 }
+

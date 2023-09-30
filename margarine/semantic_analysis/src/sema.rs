@@ -262,36 +262,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
             parser::DataTypeKind::Option(v) => {
                 let v = self.update_data_type(v, scope)?;
-                println!("{v:?}");
-                if let Some(val) = self.sema.option_table.get(&v) { panic!("{v:?} {:#?}", self.sema.option_table); return Ok(Type::UserType(*val)) };
-                println!("no cache {v:?}");
-
-                let index_some = self.string_map.insert("some");
-                let index_none = self.string_map.insert("none");
-
-                let name = {
-                    let pool = ArenaPool::tls_get_temp();
-                    let v = self.nameof(v);
-                    let msg = format_in!(
-                        &*pool, "{}?", 
-                        self.string_map.get(v),
-                    );
-                    self.string_map.insert(&msg)
-                };
-                
-                let index = self.declare_type(SourceRange::new(u32::MAX, u32::MAX), name);
-                let final_type = Type::UserType(index);
-
-                self.update_type(index, TypeSymbolKind::Enum { 
-                    mappings: self.arena_type.alloc_new([
-                        (index_some, v, SourceRange::new(u32::MAX, u32::MAX), false),
-                        (index_none, Type::Unit, SourceRange::new(u32::MAX, u32::MAX), true),
-                    ]),
-                });
-
-                self.sema.option_table.insert(v, index);
-
-                Ok(final_type)
+                Ok(self.create_option(v))
             },
 
             
@@ -321,8 +292,8 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                 self.update_type(index, TypeSymbolKind::Enum {
                     mappings: self.arena_type.alloc_new([
-                        (index_ok, v1, SourceRange::new(u32::MAX, u32::MAX), false),
-                        (index_err, v2, SourceRange::new(u32::MAX, u32::MAX), false),
+                        (index_ok, v1, SourceRange::new(u32::MAX, u32::MAX), false, EnumVariant(0)),
+                        (index_err, v2, SourceRange::new(u32::MAX, u32::MAX), false, EnumVariant(1)),
                     ]),
                 });
 
@@ -345,6 +316,39 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
         }
 
 
+    }
+
+
+    pub fn create_option(&mut self, typ: Type) -> Type {
+        if let Some(val) = self.sema.option_table.get(&typ) { return Type::UserType(*val) };
+        println!("no cache {typ:?}");
+
+        let index_some = self.string_map.insert("some");
+        let index_none = self.string_map.insert("none");
+
+        let name = {
+            let pool = ArenaPool::tls_get_temp();
+            let typ = self.nameof(typ);
+            let msg = format_in!(
+                &*pool, "{}?", 
+                self.string_map.get(typ),
+            );
+            self.string_map.insert(&msg)
+        };
+
+        let index = self.declare_type(SourceRange::new(u32::MAX, u32::MAX), name);
+        let final_type = Type::UserType(index);
+
+        self.update_type(index, TypeSymbolKind::Enum { 
+            mappings: self.arena_type.alloc_new([
+                (index_some, typ, SourceRange::new(u32::MAX, u32::MAX), false, EnumVariant(0)),
+                (index_none, Type::Unit, SourceRange::new(u32::MAX, u32::MAX), true, EnumVariant(1)),
+            ]),
+        });
+
+        self.sema.option_table.insert(typ, index);
+
+        final_type
     }
 
 
@@ -587,7 +591,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                                 },
                             };
 
-                            vec.push(updated)
+                            vec.push((f.0, updated))
                         }
 
                         vec.leak()
@@ -600,7 +604,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                         &self.sema.namespaces
                     ).unwrap();
                     
-                    self.update_type(index, TypeSymbolKind::Structure { 
+                    self.update_type(index, TypeSymbolKind::Struct { 
                         fields, 
                         kind: match kind {
                             parser::nodes::StructKind::Component => StructureKind::Component,
@@ -615,7 +619,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     let mappings = {                        
                         let mut vec = Vec::with_cap_in(self.arena_type, mappings.len());
 
-                        for m in mappings.iter() {
+                        for (i, m) in mappings.iter().enumerate() {
                             let updated = self.update_data_type(
                                 m.data_type(),
                                 scope,
@@ -629,7 +633,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                                 },
                             };
 
-                            vec.push((m.name(), updated, m.range(), m.is_implicit_unit()))
+                            vec.push((m.name(), updated, m.range(), m.is_implicit_unit(), EnumVariant(i as u16)))
                         }
 
                         vec.leak()

@@ -8,6 +8,7 @@ pub mod static_vec;
 use std::{ops::{Deref, DerefMut}, time::Instant, slice::Iter};
 
 use sti::{prelude::Alloc, vec::Vec};
+use colourful::*;
 
 pub trait Slice: Deref {
     fn as_slice(&self) -> &<Self as Deref>::Target;
@@ -82,3 +83,7 @@ pub fn find_duplicate<'a, T: PartialEq, A: Alloc>(
     }
 }
 
+
+pub fn warn(string: &str) {
+    println!("{}: {string}", "warn".colour(Colour::rgb(207, 188, 148)).bold())
+}

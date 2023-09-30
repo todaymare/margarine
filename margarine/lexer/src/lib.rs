@@ -247,11 +247,11 @@ impl Lexer<'_> {
 
 impl Lexer<'_> {
     fn next_token(&mut self) -> Token {
-        if self.reader.starts_with(b"//") {
-            self.reader.consume_while(|x| *x != b'\n');
-        }
-
         self.skip_whitespace();
+        while self.reader.starts_with(b"//") {
+            self.reader.consume_while(|x| *x != b'\n');
+            self.skip_whitespace();
+        }
 
 
         let start = self.reader.offset() as u32;
