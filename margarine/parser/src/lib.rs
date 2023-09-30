@@ -1338,7 +1338,7 @@ impl<'arena> Parser<'_, 'arena> {
                 result = Node::new(
                     NodeKind::Expression(Expression::AccessField { 
                         val: self.arena.alloc_new(result), 
-                        field: ident,
+                        field_name: ident,
                     }),
                     SourceRange::new(start, self.current_range().end())
                 )
@@ -1519,6 +1519,8 @@ impl<'arena> Parser<'_, 'arena> {
         self.expect(TokenKind::Keyword(Keyword::Match))?;
         self.advance();
 
+        let taken_as_inout = if self.current_is(TokenKind::Ampersand) { self.advance(); true }
+                             else { false };
         let val = {
             let settings = ParserSettings {
                 can_parse_struct_creation: false,
@@ -1561,20 +1563,23 @@ impl<'arena> Parser<'_, 'arena> {
             let source_range = SourceRange::new(start, self.current_range().end());
             self.advance();
 
-            let (bind_to, is_inout) =
+            let (bind_to, is_inout, binding_range) =
                 if self.current_is(TokenKind::Colon) {
                     self.advance();
 
+                    let binding_start = self.current_range().start();
                     let is_inout = if self.current_is(TokenKind::Ampersand) {
                         self.advance();
                         true
                     } else { false };
                     
                     let name = self.expect_identifier()?;
+                    let binding_range = SourceRange::new(binding_start, self.current_range().end());
                     self.advance();
-                    (name, is_inout)
+                    (name, is_inout, binding_range)
+
                 } else {
-                    (self.symbol_map.insert("_"), false)
+                    (self.symbol_map.insert("_"), false, self.current_range())
                 };
 
 
@@ -1584,7 +1589,7 @@ impl<'arena> Parser<'_, 'arena> {
             let expr = self.statement(&ParserSettings::default())?;
             self.advance();
 
-            mappings.push(MatchMapping::new(name, bind_to, source_range, expr, is_inout));
+            mappings.push(MatchMapping::new(name, bind_to, binding_range, source_range, expr, is_inout));
         }
         let mappings = mappings;
 
@@ -1594,6 +1599,7 @@ impl<'arena> Parser<'_, 'arena> {
         Ok(Node::new(
             NodeKind::Expression(Expression::Match { 
                 value: self.arena.alloc_new(val), 
+                taken_as_inout,
                 mappings: mappings.leak()
             }),
             SourceRange::new(start, end)

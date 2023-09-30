@@ -3,7 +3,7 @@ use errors::{SemaError, ErrorId};
 use parser::{nodes::{NodeKind, Node}, DataType};
 use sti::{define_key, prelude::Arena, keyed::KVec, packed_option::PackedOption, arena_pool::ArenaPool, vec::Vec, format_in};
 
-use crate::{Type, errors::Error, TypeId, FuncId, ir::terms::{Reg, IR, Block, BlockId, EnumVariant, Terminator}, State, TypeSymbol, StructureKind, Function, LocalAnalyser, TypeSymbolKind};
+use crate::{Type, errors::Error, TypeId, FuncId, ir::terms::{Reg, IR, Block, BlockId, EnumVariant, Terminator}, State, TypeSymbol, StructureKind, Function, LocalAnalyser, TypeSymbolKind, TypeEnumMapping};
 
 define_key!(u32, pub NamespaceId);
 define_key!(u32, pub ScopeId);
@@ -273,8 +273,8 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 if let Some(v) = self.sema.result_table.get(&(v1, v2))
                 { return Ok(Type::UserType(*v)) };
 
-                let index_ok   = self.string_map.insert("ok");
-                let index_err  = self.string_map.insert("err");
+                let ok   = self.string_map.insert("ok");
+                let err  = self.string_map.insert("err");
 
                 let name = {
                     let pool = ArenaPool::tls_get_temp();
@@ -287,13 +287,13 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     self.string_map.insert(&msg)
                 };
                 
-                let index = self.declare_type(SourceRange::new(u32::MAX, u32::MAX), name);
+                let index = self.declare_type(SourceRange::MAX, name);
                 let final_type = Type::UserType(index);
 
                 self.update_type(index, TypeSymbolKind::Enum {
                     mappings: self.arena_type.alloc_new([
-                        (index_ok, v1, SourceRange::new(u32::MAX, u32::MAX), false, EnumVariant(0)),
-                        (index_err, v2, SourceRange::new(u32::MAX, u32::MAX), false, EnumVariant(1)),
+                        TypeEnumMapping::new(ok, v1, SourceRange::MAX, false, EnumVariant(0)),
+                        TypeEnumMapping::new(err, v2, SourceRange::MAX, false, EnumVariant(1)),
                     ]),
                 });
 
@@ -323,8 +323,8 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
         if let Some(val) = self.sema.option_table.get(&typ) { return Type::UserType(*val) };
         println!("no cache {typ:?}");
 
-        let index_some = self.string_map.insert("some");
-        let index_none = self.string_map.insert("none");
+        let some = self.string_map.insert("some");
+        let none = self.string_map.insert("none");
 
         let name = {
             let pool = ArenaPool::tls_get_temp();
@@ -336,13 +336,13 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             self.string_map.insert(&msg)
         };
 
-        let index = self.declare_type(SourceRange::new(u32::MAX, u32::MAX), name);
+        let index = self.declare_type(SourceRange::MAX, name);
         let final_type = Type::UserType(index);
 
         self.update_type(index, TypeSymbolKind::Enum { 
             mappings: self.arena_type.alloc_new([
-                (index_some, typ, SourceRange::new(u32::MAX, u32::MAX), false, EnumVariant(0)),
-                (index_none, Type::Unit, SourceRange::new(u32::MAX, u32::MAX), true, EnumVariant(1)),
+                TypeEnumMapping::new(some, typ, SourceRange::MAX, false, EnumVariant(0)),
+                TypeEnumMapping::new(none, Type::Unit, SourceRange::MAX, true, EnumVariant(1)),
             ]),
         });
 
@@ -394,8 +394,9 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             for (i, m) in mappings.iter().enumerate() {
                 let func = self.create_func(
                     Function {
-                        args: if m.3 { self.arena_func.alloc_new([]) }
-                            else { self.arena_func.alloc_new([(sym_value, m.1, false, m.2)]) }, 
+                        args: if m.is_implicit_unit { self.arena_func.alloc_new([]) }
+                            else { self.arena_func.alloc_new([(sym_value, m.typ, false, m.range)]) }, 
+                        
                         body: Vec::from_array_in(self.arena_func, [
                             Block {
                                 id: BlockId(0),
@@ -413,7 +414,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     }
                 );
 
-                owned_namespace.add_func(m.0, func, m.2).unwrap()
+                owned_namespace.add_func(m.name, func, m.range).unwrap()
             }
 
             *self.sema.namespaces.get_mut(namespace).unwrap() = owned_namespace;
@@ -455,15 +456,13 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                             fields.len(),
                         );
 
-                        {
-                            for i in 0..fields.len() {
-                                for j in 0..i {
-                                    if fields[i].0 == fields[j].0 {
-                                        vec.push((&fields[i], &fields[j]))
-                                    }
+                        for i in 0..fields.len() {
+                            for j in 0..i {
+                                if fields[i].0 == fields[j].0 {
+                                    vec.push((&fields[i], &fields[j]))
                                 }
                             }
-                        };
+                        }
 
                         for i in vec.iter() {
                             anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
@@ -492,15 +491,13 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                             mappings.len(),
                         );
 
-                        {
-                            for i in 0..mappings.len() {
-                                for j in 0..i {
-                                    if mappings[i].name() == mappings[j].name() {
-                                        vec.push((&mappings[i], &mappings[j]))
-                                    }
+                        for i in 0..mappings.len() {
+                            for j in 0..i {
+                                if mappings[i].name() == mappings[j].name() {
+                                    vec.push((&mappings[i], &mappings[j]))
                                 }
                             }
-                        };
+                        }
 
                         for i in vec.iter() {
                             anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
@@ -527,16 +524,14 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                             &*pool,
                             arguments.len(),
                         );
-
-                        {
-                            for i in 0..arguments.len() {
-                                for j in 0..i {
-                                    if arguments[i].name() == arguments[j].name() {
-                                        vec.push((&arguments[i], &arguments[j]))
-                                    }
+                        
+                        for i in 0..arguments.len() {
+                            for j in 0..i {
+                                if arguments[i].name() == arguments[j].name() {
+                                    vec.push((&arguments[i], &arguments[j]))
                                 }
                             }
-                        };
+                        }
 
                         for i in vec.iter() {
                             anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
@@ -633,18 +628,17 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                                 },
                             };
 
-                            vec.push((m.name(), updated, m.range(), m.is_implicit_unit(), EnumVariant(i as u16)))
+                            vec.push(TypeEnumMapping::new(
+                                m.name(), updated, m.range(), 
+                                m.is_implicit_unit(), EnumVariant(i as u16)));
                         }
 
                         vec.leak()
                     };
                     
                     let index = scope.find_type(
-                        *name, 
-                        &self.sema.scopes, 
-                        &self.sema.namespaces
-                    ).unwrap();
-                    self.update_type(index, TypeSymbolKind::Enum { mappings })
+                        *name, &self.sema.scopes, &self.sema.namespaces).unwrap();
+                    self.update_type(index, TypeSymbolKind::Enum { mappings });
                 },
 
                 
@@ -689,10 +683,8 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
 
                     let index = scope.find_func(
-                        *name, 
-                        &self.sema.scopes, 
-                        &self.sema.namespaces
-                    ).unwrap();
+                        *name, &self.sema.scopes, &self.sema.namespaces).unwrap();
+                    
                     let func = self.funcs.get_mut(index).unwrap();
                     func.replace(Function { 
                         args, 

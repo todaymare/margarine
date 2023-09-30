@@ -8,7 +8,7 @@ use ir::terms::{Block, EnumVariant, Reg, BlockId, IR, StrConstId};
 use lexer::Literal;
 use parser::{nodes::{Node, NodeKind, Declaration, Statement, Expression, BinaryOperator, UnaryOperator}, DataType};
 use sema::{InferState, Namespace, NamespaceId, Scope, ScopeId, ScopeKind};
-use sti::{keyed::KVec, vec::Vec, define_key, prelude::Arena, arena_pool::ArenaPool, packed_option::PackedOption, traits::FromIn};
+use sti::{keyed::KVec, vec::Vec, define_key, prelude::{Arena, GlobalAlloc}, arena_pool::ArenaPool, packed_option::PackedOption, traits::FromIn};
 
 use crate::ir::terms::Terminator;
 
@@ -197,11 +197,25 @@ enum TypeSymbolKind<'a> {
     },
 
     Enum {
-        mappings: &'a [(StringIndex, Type, SourceRange, bool, EnumVariant)],
+        mappings: &'a [TypeEnumMapping],
     },
 
     BuiltIn,
     Unknown,
+}
+
+
+#[derive(Debug)]
+struct TypeEnumMapping {
+    name: StringIndex,
+    typ: Type,
+    range: SourceRange,
+    is_implicit_unit: bool,
+    variant: EnumVariant
+}
+
+impl TypeEnumMapping {
+    fn new(name: StringIndex, typ: Type, range: SourceRange, is_implicit_unit: bool, variant: EnumVariant) -> Self { Self { name, typ, range, is_implicit_unit, variant } }
 }
 
 
@@ -228,6 +242,7 @@ struct FunctionCounter {
 
 
 impl FunctionCounter {
+    #[inline(always)]
     pub fn new() -> Self {
         Self {
             regs: 0,
@@ -236,17 +251,19 @@ impl FunctionCounter {
     }
 
 
+    #[inline(always)]
     pub fn new_reg(&mut self) -> Reg {
         self.regs += 1;
         Reg(self.regs - 1)
     }
 
 
-    pub fn new_block<'a>(&mut self, body: Vec<IR<'a>, &'a Arena>) -> Block<'a> {
+    #[inline(always)]
+    pub fn new_block<'a>(&mut self, arena: &'a Arena) -> Block<'a> {
         self.blocks += 1;
         Block {
             id: BlockId(self.blocks-1),
-            body,
+            body: Vec::new_in(arena),
             terminator: ir::terms::Terminator::Ret,
         }
     }
@@ -262,9 +279,10 @@ pub struct LocalAnalyser<'a> {
 }
 
 impl<'a> LocalAnalyser<'a> {
+    #[inline(always)]
     pub fn new(arena: &'a Arena) -> Self { 
         let mut fc = FunctionCounter::new();
-        let block = fc.new_block(Vec::new_in(arena));
+        let block = fc.new_block(arena);
         Self {
             arena, 
             fc, 
@@ -274,14 +292,28 @@ impl<'a> LocalAnalyser<'a> {
     }
 
 
+    #[inline(always)]
     pub fn error(&mut self, error: ErrorId) -> AnalysisResult {
         self.current.push(IR::Error(error));
         AnalysisResult::new(self.fc.new_reg(), Type::Error)
     }
 
 
+    #[inline(always)]
     pub fn empty_error(&mut self) -> AnalysisResult {
         AnalysisResult::new(self.fc.new_reg(), Type::Error)
+    }
+
+
+    #[inline(always)]
+    pub fn new_block(&mut self) -> Block<'a> {
+        self.fc.new_block(self.arena)
+    }
+
+
+    #[inline(always)]
+    pub fn new_current(&mut self) -> Block<'a> {
+        self.current.swap(self.fc.new_block(self.arena))
     }
 }
 
@@ -289,10 +321,11 @@ impl<'a> LocalAnalyser<'a> {
 pub struct AnalysisResult {
     reg: Reg,
     typ: Type,
+    is_mut: bool,
 }
 
 impl AnalysisResult {
-    pub fn new(reg: Reg, typ: Type) -> Self { Self { reg, typ } }
+    pub fn new(reg: Reg, typ: Type) -> Self { Self { reg, typ, is_mut: false } }
 }
 
 
@@ -306,67 +339,33 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
     ) -> Self {
         let types = {
             let mut kvec = KVec::with_cap(256);
-            kvec.push(TypeSymbol {
-                name: string_map.insert("unit"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            kvec.push(TypeSymbol {
-                name: string_map.insert("int"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            kvec.push(TypeSymbol {
-                name: string_map.insert("float"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            kvec.push(TypeSymbol {
-                name: string_map.insert("uint"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            kvec.push(TypeSymbol {
-                name: string_map.insert("bool"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            kvec.push(TypeSymbol {
-                name: string_map.insert("str"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            kvec.push(TypeSymbol {
-                name: string_map.insert("any"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            kvec.push(TypeSymbol {
-                name: string_map.insert("never"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            kvec.push(TypeSymbol {
-                name: string_map.insert("error"),
-                source: SourceRange::new(0, 0),
-                kind: TypeSymbolKind::BuiltIn,
-            });
-
-            let reserved = string_map.insert("reserved");
-            for _ in (256 - kvec.len())..kvec.len() {
+            let mut func = |x: StringIndex| {
                 kvec.push(TypeSymbol {
-                    name: reserved,
-                    source: SourceRange::new(0, 0),
+                    name: x,
+                    source: SourceRange::ZERO,
                     kind: TypeSymbolKind::BuiltIn,
                 });
+            };
+
+            func(string_map.insert("int"));
+            func(string_map.insert("float"));
+            func(string_map.insert("uint"));
+            func(string_map.insert("bool"));
+            func(string_map.insert("str"));
+            func(string_map.insert("any"));
+            func(string_map.insert("never"));
+            func(string_map.insert("error"));
+            let reserved = string_map.insert("reserved");
+            let kvec_len = kvec.len();
+            let mut func = |x: StringIndex| {
+                kvec.push(TypeSymbol {
+                    name: x,
+                    source: SourceRange::ZERO,
+                    kind: TypeSymbolKind::BuiltIn,
+                });
+            };
+            for _ in (256 - kvec_len)..kvec_len {
+                func(reserved);
             }
 
             kvec
@@ -733,7 +732,9 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     return anal.error(ErrorId::Sema(error));
                 };
 
-                AnalysisResult::new(var.3, var.1)
+                let mut result = AnalysisResult::new(var.3, var.1);
+                result.is_mut = var.2;
+                result
             },
 
             
@@ -779,10 +780,8 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 };
 
                 anal.current.push(IR::BinaryOp {
-                    op: *operator, 
-                    typ, 
-                    dst, 
-                    lhs: lhs_anal.reg, 
+                    op: *operator, typ, dst, 
+                    lhs: lhs_anal.reg,
                     rhs: rhs_anal.reg,
                 });
 
@@ -835,14 +834,11 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 }
                 
                 
-                let mut prev_block = std::mem::replace(
-                    &mut anal.current,
-                    anal.fc.new_block(Vec::new_in(anal.arena)),
-                );
+                let mut prev_block = anal.new_current();
 
                 let body_id = anal.current.id;
 
-                let continue_block = anal.fc.new_block(Vec::new_in(anal.arena));
+                let continue_block = anal.new_block();
 
                 anal.current.terminator = prev_block.terminator.clone();
                 let body_anal = self.block(anal, *scope, &body);
@@ -851,13 +847,10 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 let dst = body_anal.reg;
 
                 if let Some(else_node) = else_block {
-                    let new_block = anal.fc.new_block(Vec::new_in(anal.arena));
+                    let new_block = anal.new_block();
                     let id = new_block.id;
 
-                    let body_block = std::mem::replace (
-                        &mut anal.current,
-                        new_block,
-                    );
+                    let body_block = anal.current.swap(new_block);
 
                     let else_res = self.node(anal, &mut *scope, &else_node);
 
@@ -916,8 +909,14 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             },
 
             
-            Expression::Match { value, mappings } => {
+            Expression::Match { value, mappings, taken_as_inout } => {
                 let value_anal = self.node(anal, scope, &value);
+                if *taken_as_inout && !value_anal.is_mut {
+                    anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                        Error::InOutValueIsntMut(value.range())
+                    ))))
+                }
+
                 let enum_mappings = match value_anal.typ {
                     Type::UserType(v) 
                      if let TypeSymbolKind::Enum { mappings } = self.types.get(v).unwrap().kind
@@ -935,44 +934,108 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     }
                 };
 
-                warn("match expressions aren't type checked yet");
+                let err_count = self.errors.len();
+                // duplicates
+                {
+                    for i in 0..mappings.len() {
+                        for j in 0..i {
+                            if mappings[i].name() == mappings[j].name() {
+                                anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                                    Error::DuplicateMatch { 
+                                        declared_at: mappings[j].range(), 
+                                        error_point: mappings[i].range(),
+                                    }
+                                ))));
+                            }
+                        }
+                    }
+                }
+
+                // invalids
+                {
+                    for i in mappings.iter() {
+                        if !enum_mappings.iter().any(|x| x.name == i.name()) {
+                            anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                                Error::InvalidMatch {
+                                    name: i.name(), range: i.range(), value: value_anal.typ }
+                            ))))
+                        }
+                    }
+                }
+
+                // missings
+                {
+                    let pool = ArenaPool::tls_get_temp();
+                    let mut vec = Vec::with_cap_in(
+                        &*pool,
+                        mappings.len(),
+                    );
+
+                    for i in enum_mappings.iter() {
+                        if !mappings.iter().any(|x| x.name() == i.name) {
+                            vec.push(i.name)
+                        }
+                    }
+
+                    if !vec.is_empty() {
+                        anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                            Error::MissingMatch {
+                                name: vec.move_into(GlobalAlloc), 
+                                range: source, 
+                            }
+                        ))))
+                    }
+                }
+
+                if err_count != self.errors.len() {
+                    return anal.empty_error()
+                }
+                let err_count = ();
                 
                 let temp = ArenaPool::tls_get_temp();
                 let mut blocks = Vec::with_cap_in(&*temp, mappings.len());
                 
-                let continue_block = anal.fc.new_block(Vec::new_in(anal.arena));
+                let continue_block = anal.new_block();
                 let continue_block_id = continue_block.id;
-                let mut entry_block = std::mem::replace(
-                    &mut anal.current,
-                    continue_block,
-                );
+                let mut entry_block = anal.current.swap(continue_block);
 
                 let mut return_type = None;
                 let return_reg = anal.fc.new_reg();
                 for m in mappings.iter() {
 
-                    let mapping_in_enum = enum_mappings.iter().find(|x| x.0 == m.name()).unwrap();
+                    let mapping_in_enum = 
+                        enum_mappings.iter()
+                        .find(|x| x.name == m.name()).unwrap();
 
                     let binding_reg = anal.fc.new_reg();
                     let binding_scope = Scope::new(scope.some(), ScopeKind::Variable((
                         m.binding(), 
-                        mapping_in_enum.1,
+                        mapping_in_enum.typ,
                         false,
                         binding_reg,
                     )));
 
                     let mut binding_scope = self.sema.scopes.push(binding_scope);
 
-                    let mut block_start = anal.fc.new_block(Vec::new_in(anal.arena));
+                    let mut block_start = anal.new_block();
                     let block_start_id = block_start.id;
 
                     if m.is_inout() {
-                    block_start.push(IR::AccUnwrapEnumVariant {
-                        dst: binding_reg, 
-                        src: value_anal.reg, 
-                        variant: mapping_in_enum.4, 
-                        typ: mapping_in_enum.1.as_typeid(),
-                    });
+                        if !*taken_as_inout {
+                            block_start.push(IR::Error(ErrorId::Sema(self.errors.push(
+                                Error::InOutBindingWithoutInOutValue {
+                                    value_range: value.range(), 
+                                    binding_range: m.binding_range()
+                                }
+                            ))))
+                        }
+
+                        block_start.push(IR::AccUnwrapEnumVariant {
+                            dst: binding_reg, 
+                            src: value_anal.reg, 
+                            variant: mapping_in_enum.variant, 
+                            typ: mapping_in_enum.typ.as_typeid(),
+                        });
                         
                     }
                     
@@ -1087,7 +1150,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             },
 
 
-            Expression::AccessField { val, field } => {
+            Expression::AccessField { val, field_name } => {
                 let val_anal = self.node(anal, scope, val);
 
                 match val_anal.typ {
@@ -1095,7 +1158,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                      if let TypeSymbolKind::Struct { fields, .. } = self.types.get(v).unwrap().kind
                      => {
                         for (i, f) in fields.iter().enumerate() {
-                            if f.0 == *field {
+                            if f.0 == *field_name {
                                 let dst = anal.fc.new_reg();
                                 anal.current.push(IR::AccField { 
                                     dst, 
@@ -1109,7 +1172,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                         let error = self.errors.push(Error::FieldDoesntExist {
                             source: val.range(), 
-                            field: *field, 
+                            field: *field_name, 
                             typ: val_anal.typ,
                         });
 
@@ -1121,16 +1184,16 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                      if let TypeSymbolKind::Enum { mappings, .. } = self.types.get(v).unwrap().kind
                      => {
                         for (i, f) in mappings.iter().enumerate() {
-                            if f.0 == *field {
+                            if f.name == *field_name {
                                 let dst = anal.fc.new_reg();
                                 anal.current.push(IR::AccEnumVariant { 
                                     dst, 
                                     src: val_anal.reg,
                                     variant: EnumVariant(i as u16),
-                                    typ: f.1.as_typeid(), 
+                                    typ: f.typ.as_typeid(), 
                                 });
 
-                                let option = self.create_option(f.1);
+                                let option = self.create_option(f.typ);
 
                                 return AnalysisResult::new(dst, option)
                             }
@@ -1138,7 +1201,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                         let error = self.errors.push(Error::FieldDoesntExist {
                             source: val.range(), 
-                            field: *field, 
+                            field: *field_name, 
                             typ: val_anal.typ,
                         });
 

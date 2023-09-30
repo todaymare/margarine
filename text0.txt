@@ -5,10 +5,10 @@ enum Vector {
 
 
 fn hi() {
-	let vec = Vector::x(420.0)
-	match vec {
+	let mut vec = Vector::x(420.0)
+	match &vec {
 		x: &val => val += 3.0,
-		y => 5,
+		y: &val => val += 8.0,
 	}
 
 }

@@ -1,7 +1,9 @@
+use std::fmt::Write;
+
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
 use parser::nodes::{BinaryOperator, UnaryOperator};
-use sti::keyed::{KSlice, KVec};
+use sti::{keyed::{KSlice, KVec}, vec::Vec};
 
 use crate::{Type, TypeId, TypeSymbolKind, TypeSymbol};
 
@@ -77,6 +79,27 @@ pub enum Error {
         branch_source: SourceRange,
         branch_typ: Type,
     },
+
+    DuplicateMatch {
+        declared_at: SourceRange,
+        error_point: SourceRange,
+    },
+    
+    InvalidMatch {
+        name: StringIndex,
+        range: SourceRange,
+        value: Type,
+    },
+    
+    MissingMatch {
+        name: Vec<StringIndex>,
+        range: SourceRange,
+    },
+    
+    InOutBindingWithoutInOutValue {
+        value_range: SourceRange,
+        binding_range: SourceRange,
+    },
     
     StructCreationOnNonStruct {
         source: SourceRange,
@@ -115,6 +138,8 @@ pub enum Error {
         source: SourceRange,
         namespace: StringIndex,
     },
+
+    InOutValueIsntMut(SourceRange),
     
     Bypass,
 }
@@ -185,6 +210,15 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                 let mut error = fmt.error("duplicate argument");
                 error
                     .highlight_with_note(*declared_at, "the argument is declared here");
+                error.highlight_with_note(*error_point, "..but it's redeclared here");
+            
+            },
+
+            
+            Error::DuplicateMatch { declared_at, error_point } => {
+                let mut error = fmt.error("duplicate match variant");
+                error
+                    .highlight_with_note(*declared_at, "the variant is first declared here");
                 error.highlight_with_note(*error_point, "..but it's redeclared here");
             
             },
@@ -338,6 +372,47 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                     .highlight_with_note(*initial_source, &msg1);
                 err
                     .highlight_with_note(*branch_source, &msg2);
+            },
+            
+            
+            Error::InvalidMatch { name, range, value } => {
+                let msg = format!("there's no variant named '{}' in '{}'",
+                    fmt.string(*name),
+                    value.to_string(types, fmt.string_map()),
+                );
+
+                fmt.error("invalid match variant")
+                    .highlight_with_note(*range, &msg)
+            },
+
+            
+            Error::MissingMatch { name, range } => {
+                let mut msg = format!("missing variants: ");
+                let mut is_first = true;
+                for n in name {
+                    if !is_first {
+                        let _ = write!(msg, ", ");
+                    }
+
+                    is_first = false;
+                    let _ = write!(msg, "{}", fmt.string(*n));
+                }
+
+                fmt.error("invalid match variant")
+                    .highlight_with_note(*range, &msg)
+            },
+            
+            
+            Error::InOutValueIsntMut(r) => {
+                fmt.error("in-out value isn't mutable")
+                    .highlight(*r)
+            },
+            
+            
+            Error::InOutBindingWithoutInOutValue { value_range, binding_range } => {
+                let mut err = fmt.error("in-out binding without in-out value");
+                err.highlight_with_note(*binding_range, "..this branch takes the value as in-out");
+                err.highlight_with_note(*value_range, "consider adding a '&' at the start of this");
             },
             
             

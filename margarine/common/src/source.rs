@@ -83,7 +83,10 @@ pub struct SourceRange {
 
 
 impl SourceRange {
-    pub fn new(start: u32, end: u32) -> Self {
+    pub const MAX : SourceRange = SourceRange::new(u32::MAX, u32::MAX);
+    pub const ZERO : SourceRange = SourceRange::new(0, 0);
+
+    pub const fn new(start: u32, end: u32) -> Self {
         Self {
             start,
             end,
@@ -92,19 +95,19 @@ impl SourceRange {
 
 
     #[inline(always)]
-    pub fn range(self) -> (u32, u32) {
+    pub const fn range(self) -> (u32, u32) {
         (self.start, self.end)
     }
 
 
     #[inline(always)]
-    pub fn start(self) -> u32 {
+    pub const fn start(self) -> u32 {
         self.start
     }
 
 
     #[inline(always)]
-    pub fn end(self) -> u32 {
+    pub const fn end(self) -> u32 {
         self.end
     }
 

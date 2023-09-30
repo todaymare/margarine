@@ -133,6 +133,7 @@ pub enum Expression<'a> {
 
     Match {
         value: &'a Node<'a>,
+        taken_as_inout: bool,
         mappings: &'a [MatchMapping<'a>],
     },
 
@@ -147,7 +148,7 @@ pub enum Expression<'a> {
 
     AccessField {
         val: &'a Node<'a>,
-        field: StringIndex,
+        field_name: StringIndex,
     },
 
     CallFunction {
@@ -253,6 +254,7 @@ impl<'arena> FunctionArgument<'arena> {
 pub struct MatchMapping<'a> {
     variant: StringIndex,
     binding: StringIndex,
+    binding_range: SourceRange,
     source_range: SourceRange,
     expression: Node<'a>,
     is_inout: bool,
@@ -263,6 +265,7 @@ impl<'arena> MatchMapping<'arena> {
     pub fn new(
         variant: StringIndex, 
         binding: StringIndex, 
+        binding_range: SourceRange,
         source_range: SourceRange, 
         expression: Node<'arena>,
         is_inout: bool,
@@ -273,6 +276,7 @@ impl<'arena> MatchMapping<'arena> {
             expression,
             source_range, 
             is_inout,
+            binding_range,
         } 
     }
 
@@ -285,6 +289,8 @@ impl<'arena> MatchMapping<'arena> {
     pub fn node(&self) -> &Node<'arena> { &self.expression }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
+    #[inline(always)]
+    pub fn binding_range(&self) -> SourceRange { self.binding_range }
     #[inline(always)]
     pub fn is_inout(&self) -> bool { self.is_inout }
 

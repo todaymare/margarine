@@ -1,6 +1,3 @@
-use std::fmt::write;
-
-use common::string_map::StringIndex;
 use errors::ErrorId;
 use parser::nodes::BinaryOperator;
 use sti::prelude::{Arena, Vec};
@@ -75,8 +72,18 @@ pub struct Block<'a> {
 
 
 impl<'a> Block<'a> {
+    #[inline(always)]
     pub fn push(&mut self, ir: IR<'a>) {
         self.body.push(ir)
+    }
+
+
+    #[inline(always)]
+    pub fn swap(&mut self, block: Block<'a>) -> Block<'a> {
+        std::mem::replace(
+            self, 
+            block,
+        )
     }
 }
 
