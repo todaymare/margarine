@@ -117,6 +117,11 @@ pub enum Error {
         typ: Type,
     },
 
+    MissingFields {
+        source: SourceRange,
+        fields: Vec<StringIndex>,
+    },
+
     FunctionNotFound {
         source: SourceRange,
         name: StringIndex,
@@ -140,6 +145,12 @@ pub enum Error {
     },
 
     InOutValueIsntMut(SourceRange),
+
+    ValueUpdateTypeMismatch {
+        lhs: Type,
+        rhs: Type,
+        source: SourceRange,
+    },
     
     Bypass,
 }
@@ -398,8 +409,26 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                     let _ = write!(msg, "{}", fmt.string(*n));
                 }
 
-                fmt.error("invalid match variant")
+                fmt.error("non-exhaustive match")
                     .highlight_with_note(*range, &msg)
+            },
+            
+            
+            Error::MissingFields { source, fields } => {
+                let mut msg = format!("missing fields: ");
+                let mut is_first = true;
+                for n in fields {
+                    if !is_first {
+                        let _ = write!(msg, ", ");
+                    }
+
+                    is_first = false;
+                    let _ = write!(msg, "{}", fmt.string(*n));
+                }
+
+                fmt.error("missing fields")
+                    .highlight_with_note(*source, &msg)
+                
             },
             
             
@@ -413,6 +442,17 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                 let mut err = fmt.error("in-out binding without in-out value");
                 err.highlight_with_note(*binding_range, "..this branch takes the value as in-out");
                 err.highlight_with_note(*value_range, "consider adding a '&' at the start of this");
+            },
+            
+            
+            Error::ValueUpdateTypeMismatch { lhs, rhs, source } => {
+                let msg = format!("lhs is '{}' while the rhs is '{}'",
+                    lhs.to_string(types, fmt.string_map()),
+                    rhs.to_string(types, fmt.string_map()),
+                );
+
+                fmt.error("can't update a value with a different type")
+                    .highlight_with_note(*source, &msg)
             },
             
             

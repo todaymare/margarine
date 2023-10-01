@@ -364,7 +364,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     kind: TypeSymbolKind::BuiltIn,
                 });
             };
-            for _ in (256 - kvec_len)..kvec_len {
+            for _ in 0..(256 - kvec_len) {
                 func(reserved);
             }
 
@@ -501,7 +501,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             NodeKind::Declaration(_) => unreachable!(),
 
             NodeKind::Statement(stmt) => {
-                self.stmt(anal, scope, stmt);
+                self.stmt(anal, scope, stmt, node.range());
                 AnalysisResult::new(anal.fc.new_reg(), Type::Unit)
             },
 
@@ -603,6 +603,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
         anal: &mut LocalAnalyser,
         scope: &mut ScopeId,
         stmt: &Statement,
+        source: SourceRange,
     ) -> Option<()> {
 
         match stmt {
@@ -667,9 +668,15 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
             
             Statement::UpdateValue { lhs, rhs } => {
-                warn("updating values aren't type checked yet");
                 let lhs_anal = self.node(anal, scope, lhs);
                 let rhs_anal = self.node(anal, scope, rhs);
+
+                if !lhs_anal.typ.is(rhs_anal.typ) {
+                    anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                        Error::ValueUpdateTypeMismatch { 
+                            lhs: lhs_anal.typ, rhs: rhs_anal.typ, source }
+                    ))))
+                }
 
                 anal.current.push(IR::Copy { dst: lhs_anal.reg, src: rhs_anal.reg });
 
@@ -1128,7 +1135,62 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     }
                 };
 
-                warn("structure creation isn't type checked yet");
+                let err_count = self.errors.len();
+                // duplicates
+                {
+                    for i in 0..fields.len() {
+                        for j in 0..i {
+                            if fields[i].0 == fields[j].0 {
+                                anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                                    Error::DuplicateField { 
+                                        declared_at: fields[j].1, 
+                                        error_point: fields[i].1,
+                                    }
+                                ))));
+                            }
+                        }
+                    }
+                }
+
+                // invalids
+                {
+                    for i in fields.iter() {
+                        if !struct_fields.iter().any(|x| x.0 == i.0) {
+                            anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                                Error::FieldDoesntExist {
+                                    field: i.0, source: i.1, typ }
+                            ))))
+                        }
+                    }
+                }
+
+                // missings
+                {
+                    let pool = ArenaPool::tls_get_temp();
+                    let mut vec = Vec::with_cap_in(
+                        &*pool,
+                        fields.len(),
+                    );
+
+                    for i in struct_fields.iter() {
+                        if !fields.iter().any(|x| x.0 == i.0) {
+                            vec.push(i.0)
+                        }
+                    }
+
+                    if !vec.is_empty() {
+                        anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                            Error::MissingMatch {
+                                name: vec.move_into(GlobalAlloc), 
+                                range: source, 
+                            }
+                        ))))
+                    }
+                }
+
+                if err_count != self.errors.len() {
+                    return anal.empty_error()
+                }
 
                 let temp = ArenaPool::tls_get_temp();
                 let mut fields_anal = Vec::with_cap_in(&*temp, fields.len());
