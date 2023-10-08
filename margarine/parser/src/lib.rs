@@ -425,8 +425,16 @@ impl<'arena> Parser<'_, 'arena> {
                     ));
 
                     if self.is_in_panic {
+                        if self.current_kind() == TokenKind::EndOfFile {
+                            break
+                        }
+
                         self.advance();
                         continue
+                    }
+
+                    if self.current_kind() == TokenKind::EndOfFile {
+                        break
                     }
 
                     self.is_in_panic = true;
@@ -1439,9 +1447,12 @@ impl<'arena> Parser<'_, 'arena> {
 
 
             TokenKind::Keyword(Keyword::Return) => {
+                dbg!(self.current_kind());
                 let start = self.current_range().start();
                 self.advance();
+                dbg!(self.current_kind());
                 let expr = self.expression(&ParserSettings::default())?;
+                dbg!(self.current_kind());
                 Ok(Node::new(
                     NodeKind::Expression(Expression::Return(self.arena.alloc_new(expr))), 
                     SourceRange::new(start, self.current_range().end())

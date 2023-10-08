@@ -1,7 +1,7 @@
 #![feature(if_let_guard)]
 #![deny(unused_must_use)]
 
-use common::{string_map::{StringIndex, StringMap}, source::SourceRange, fuck_map::FuckMap, OptionalPlus, warn};
+use common::{string_map::{StringIndex, StringMap}, source::SourceRange, fuck_map::FuckMap, OptionalPlus, warn, Swap};
 use errors::Error;
 use ::errors::{SemaError, ErrorId};
 use ir::terms::{Block, EnumVariant, Reg, BlockId, IR, StrConstId};
@@ -126,7 +126,7 @@ impl Type {
     }
 
 
-    pub fn as_typeid(self) -> TypeId {
+    pub fn typeid(self) -> TypeId {
         match self {
             Type::UserType(v) => v,
             Type::Unit => TypeId(0),
@@ -198,10 +198,19 @@ enum TypeSymbolKind<'a> {
 
     Enum {
         mappings: &'a [TypeEnumMapping],
+        typ: EnumType,
     },
 
     BuiltIn,
     Unknown,
+}
+
+
+#[derive(Debug)]
+enum EnumType {
+    UserDefined,
+    Option,
+    Result,
 }
 
 
@@ -292,6 +301,10 @@ impl<'a> LocalAnalyser<'a> {
     }
 
 
+    ///
+    /// Creates an `AnalysisResult` instance of type Error with a unused
+    /// register and issues an error in the bytecode of the current block
+    ///
     #[inline(always)]
     pub fn error(&mut self, error: ErrorId) -> AnalysisResult {
         self.current.push(IR::Error(error));
@@ -299,18 +312,29 @@ impl<'a> LocalAnalyser<'a> {
     }
 
 
+    ///
+    /// Creates an `AnalysisResult` of type Error with a unused register
+    /// without issuing an error in the bytecode of the current block
+    ///
     #[inline(always)]
     pub fn empty_error(&mut self) -> AnalysisResult {
         AnalysisResult::new(self.fc.new_reg(), Type::Error)
     }
 
 
+    ///
+    /// Creates a new block with a unique (to the analyser instance) id
+    ///
     #[inline(always)]
     pub fn new_block(&mut self) -> Block<'a> {
         self.fc.new_block(self.arena)
     }
 
 
+    ///
+    /// Replaces the current block with a new one
+    /// returning the old current block
+    ///
     #[inline(always)]
     pub fn new_current(&mut self) -> Block<'a> {
         self.current.swap(self.fc.new_block(self.arena))
@@ -495,7 +519,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
         &mut self,
         anal: &mut LocalAnalyser,
         scope: &mut ScopeId,
-        node: &Node
+        node: &Node,
     ) -> AnalysisResult {
         match node.kind() {
             NodeKind::Declaration(_) => unreachable!(),
@@ -538,9 +562,9 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 let return_reg = fc.new_reg();
                 assert_eq!(return_reg.0, 0);
 
-                let scope = Scope::new(scope.some(), sema::ScopeKind::Function);
-                let mut scope = self.sema.scopes.push(scope);
                 let func = self.funcs.get(index).unwrap().unwrap_ref();
+                let scope = Scope::new(scope.some(), sema::ScopeKind::Function((func.return_type, return_type.range())));
+                let mut scope = self.sema.scopes.push(scope);
 
                 for arg in func.args.iter() {
                     scope = self.sema.scopes.push(Scope::new(
@@ -581,7 +605,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     ))));
                 }
 
-                let mut ir_body = std::mem::replace(&mut anal.blocks, Vec::new_in(self.arena_func));
+                let mut ir_body = anal.blocks.swap(Vec::new_in(self.arena_func));
                 ir_body.push(anal.current);
                 ir_body.sort_unstable_by_key(|b| b.id.0);
 
@@ -860,12 +884,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     let body_block = anal.current.swap(new_block);
 
                     let else_res = self.node(anal, &mut *scope, &else_node);
-
-                    let mut else_block = std::mem::replace (
-                        &mut anal.current,
-                        continue_block,
-                    );
-
+                    let mut else_block = anal.current.swap(continue_block);
                     else_block.terminator = Terminator::Jmp(anal.current.id);
 
                     prev_block.terminator = Terminator::Jif {
@@ -897,10 +916,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     
 
                 } else {
-                    let body_block = std::mem::replace (
-                        &mut anal.current,
-                        continue_block,
-                    );
+                    let body_block = anal.current.swap(continue_block);
 
                     prev_block.terminator = Terminator::Jif {
                         cond: condition_anal.reg, 
@@ -926,7 +942,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                 let enum_mappings = match value_anal.typ {
                     Type::UserType(v) 
-                     if let TypeSymbolKind::Enum { mappings } = self.types.get(v).unwrap().kind
+                     if let TypeSymbolKind::Enum { mappings, .. } = self.types.get(v).unwrap().kind
                      => mappings,
 
                     Type::Error => return anal.empty_error(),
@@ -941,63 +957,64 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     }
                 };
 
-                let err_count = self.errors.len();
-                // duplicates
                 {
-                    for i in 0..mappings.len() {
-                        for j in 0..i {
-                            if mappings[i].name() == mappings[j].name() {
-                                anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
-                                    Error::DuplicateMatch { 
-                                        declared_at: mappings[j].range(), 
-                                        error_point: mappings[i].range(),
-                                    }
-                                ))));
+                    let err_count = self.errors.len();
+                    // duplicates
+                    {
+                        for i in 0..mappings.len() {
+                            for j in 0..i {
+                                if mappings[i].name() == mappings[j].name() {
+                                    anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                                        Error::DuplicateMatch { 
+                                            declared_at: mappings[j].range(), 
+                                            error_point: mappings[i].range(),
+                                        }
+                                    ))));
+                                }
                             }
                         }
                     }
-                }
 
-                // invalids
-                {
-                    for i in mappings.iter() {
-                        if !enum_mappings.iter().any(|x| x.name == i.name()) {
+                    // invalids
+                    {
+                        for i in mappings.iter() {
+                            if !enum_mappings.iter().any(|x| x.name == i.name()) {
+                                anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
+                                    Error::InvalidMatch {
+                                        name: i.name(), range: i.range(), value: value_anal.typ }
+                                ))))
+                            }
+                        }
+                    }
+
+                    // missings
+                    {
+                        let pool = ArenaPool::tls_get_temp();
+                        let mut vec = Vec::with_cap_in(
+                            &*pool,
+                            mappings.len(),
+                        );
+
+                        for i in enum_mappings.iter() {
+                            if !mappings.iter().any(|x| x.name() == i.name) {
+                                vec.push(i.name)
+                            }
+                        }
+
+                        if !vec.is_empty() {
                             anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
-                                Error::InvalidMatch {
-                                    name: i.name(), range: i.range(), value: value_anal.typ }
+                                Error::MissingMatch {
+                                    name: vec.move_into(GlobalAlloc), 
+                                    range: source, 
+                                }
                             ))))
                         }
                     }
-                }
 
-                // missings
-                {
-                    let pool = ArenaPool::tls_get_temp();
-                    let mut vec = Vec::with_cap_in(
-                        &*pool,
-                        mappings.len(),
-                    );
-
-                    for i in enum_mappings.iter() {
-                        if !mappings.iter().any(|x| x.name() == i.name) {
-                            vec.push(i.name)
-                        }
-                    }
-
-                    if !vec.is_empty() {
-                        anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
-                            Error::MissingMatch {
-                                name: vec.move_into(GlobalAlloc), 
-                                range: source, 
-                            }
-                        ))))
+                    if err_count != self.errors.len() {
+                        return anal.empty_error()
                     }
                 }
-
-                if err_count != self.errors.len() {
-                    return anal.empty_error()
-                }
-                let err_count = ();
                 
                 let temp = ArenaPool::tls_get_temp();
                 let mut blocks = Vec::with_cap_in(&*temp, mappings.len());
@@ -1041,22 +1058,16 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                             dst: binding_reg, 
                             src: value_anal.reg, 
                             variant: mapping_in_enum.variant, 
-                            typ: mapping_in_enum.typ.as_typeid(),
+                            typ: mapping_in_enum.typ.typeid(),
                         });
                         
                     }
                     
-                    let swapped = std::mem::replace(
-                        &mut anal.current,
-                        block_start,
-                    );
+                    let swapped = anal.current.swap(block_start);
 
                     let result = self.node(anal, &mut binding_scope, m.node());
 
-                    let mut block_end = std::mem::replace(
-                        &mut anal.current,
-                        swapped,
-                    );
+                    let mut block_end = anal.current.swap(swapped);
 
                     block_end.push(IR::Copy { dst: return_reg, src: result.reg });
                     if m.is_inout() {
@@ -1088,10 +1099,9 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                 }
 
-                let entry_block_term = std::mem::replace(
-                    &mut entry_block.terminator,
-                    Terminator::Match { src: value_anal.reg, jumps: blocks.move_into(anal.arena).leak() }
-                );
+                let entry_block_term = entry_block.terminator.swap(Terminator::Match {
+                    src: value_anal.reg, jumps: blocks.move_into(anal.arena).leak() 
+                });
 
                 anal.current.terminator = entry_block_term;
                 anal.blocks.push(entry_block);
@@ -1252,7 +1262,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                                     dst, 
                                     src: val_anal.reg,
                                     variant: EnumVariant(i as u16),
-                                    typ: f.typ.as_typeid(), 
+                                    typ: f.typ.typeid(), 
                                 });
 
                                 let option = self.create_option(f.typ);
@@ -1399,13 +1409,235 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             },
 
             
-            Expression::Loop { body } => todo!(),
-            Expression::Return(_) => todo!(),
-            Expression::Continue => todo!(),
-            Expression::Break => todo!(),
-            Expression::CastAny { lhs, data_type } => todo!(),
-            Expression::Unwrap(_) => todo!(),
-            Expression::OrReturn(_) => todo!(),
+            Expression::Loop { body } => {
+                let mut previous_block = anal.new_current();
+                let start_block_id = anal.current.id;
+                let continue_block = anal.new_block();
+
+                let scope = Scope::new(scope.some(), ScopeKind::Loop {
+                    start: start_block_id, 
+                    end: continue_block.id,
+                });
+
+                let scope = self.sema.scopes.push(scope);
+
+                let body_anal = self.block(anal, scope, body);
+                let mut body_end_block = anal.current.swap(continue_block);
+
+                let terminator = previous_block.terminator.swap(Terminator::Jmp(start_block_id));
+                body_end_block.terminator = Terminator::Jmp(start_block_id);
+                anal.current.terminator = terminator;
+
+                anal.blocks.push(previous_block);
+                anal.blocks.push(body_end_block);
+
+                AnalysisResult::new(anal.fc.new_reg(), Type::Unit)
+            },
+
+            
+            Expression::Return(v) => {
+                let val_anal = self.node(anal, scope, v);
+                let (func_ret, func_src) = {
+                    let scope = self.sema.scopes.get(*scope).unwrap();
+                    scope.current_func_return_type(&self.sema.scopes)
+                };
+
+                if !val_anal.typ.is(func_ret) {
+                    let err = self.errors.push(Error::ReturnAndFuncTypDiffer {
+                        source,
+                        func_source: func_src,
+                        typ: val_anal.typ,
+                        func_typ: func_ret,
+                    });
+
+                    return anal.error(ErrorId::Sema(err))
+                }
+
+                let mut prev_block = anal.new_current();
+                prev_block.terminator = Terminator::Ret;
+                anal.blocks.push(prev_block);
+
+                AnalysisResult::new(anal.fc.new_reg(), Type::Never)
+            },
+
+
+            Expression::Continue => {
+                let scope = self.sema.scopes.get(*scope).unwrap();
+                let Some((loop_start, _)) = scope.find_loop(&self.sema.scopes)
+                else {
+                    let err = self.errors.push(Error::ContinueOutsideOfLoop(source));
+                    return anal.error(ErrorId::Sema(err))
+                };
+
+                let mut prev_block = anal.new_current();
+                prev_block.terminator = Terminator::Jmp(loop_start);
+                anal.blocks.push(prev_block);
+
+                AnalysisResult::new(anal.fc.new_reg(), Type::Never)
+            },
+
+
+            Expression::Break => {
+                let scope = self.sema.scopes.get(*scope).unwrap();
+                let Some((_, loop_end)) = scope.find_loop(&self.sema.scopes)
+                else {
+                    let err = self.errors.push(Error::ContinueOutsideOfLoop(source));
+                    return anal.error(ErrorId::Sema(err))
+                };
+
+                let mut prev_block = anal.new_current();
+                prev_block.terminator = Terminator::Jmp(loop_end);
+                anal.blocks.push(prev_block);
+
+                AnalysisResult::new(anal.fc.new_reg(), Type::Never)
+            },
+
+
+            Expression::CastAny { lhs, data_type } => {
+                let lhs_anal = self.node(anal, scope, lhs);
+                let scope = *self.sema.scopes.get(*scope).unwrap();
+                let typ = self.update_data_type(data_type, &scope);
+                let typ = match typ {
+                    Ok(v) => v,
+                    Err(e) => return anal.error(ErrorId::Sema(e)),
+                };
+
+                let opt_typ = self.create_option(typ);
+                let dst = anal.fc.new_reg();
+
+                anal.current.push(IR::CastAny { dst, src: lhs_anal.reg, target: typ.typeid() });
+
+                AnalysisResult::new(dst, opt_typ)
+            },
+
+            
+            Expression::Unwrap(v) => {
+                let val_anal = self.node(anal, scope, v);
+                match val_anal.typ {
+                    Type::UserType(v) 
+                     if let TypeSymbolKind::Enum { 
+                        typ: EnumType::Option | EnumType::Result, 
+                        mappings 
+                    } = self.types.get(v).unwrap().kind
+                     => {
+                        let typ = mappings[0].typ;
+                        let dst = anal.fc.new_reg();
+
+                        anal.current.push(IR::Unwrap { src: val_anal.reg, dst });
+                        
+                        AnalysisResult::new(dst, typ)
+                    },
+
+                    | Type::Never
+                    | Type::Error => return anal.empty_error(),
+
+                    _ => {
+                        let error = self.errors.push(
+                            Error::CantUnwrapOnGivenType(source, val_anal.typ));
+
+                        return anal.error(ErrorId::Sema(error))
+                    }
+                }
+            },
+
+            
+            Expression::OrReturn(v) => {
+                let val_anal = self.node(anal, scope, v);
+                match val_anal.typ {
+                    Type::UserType(v) 
+                     if let TypeSymbolKind::Enum { 
+                        typ: EnumType::Option, 
+                        mappings 
+                    } = self.types.get(v).unwrap().kind
+                     => {
+                        let typ = mappings[0].typ;
+                        let dst = anal.fc.new_reg();
+                        let (func_ret, func_src) = {
+                            let scope = self.sema.scopes.get(*scope).unwrap();
+                            scope.current_func_return_type(&self.sema.scopes)
+                        };
+
+                        match func_ret {
+                            Type::UserType(v) 
+                             if let TypeSymbolKind::Enum { 
+                                typ: EnumType::Option, 
+                                ..
+                            } = self.types.get(v).unwrap().kind
+                             => {}
+
+                            _ => {
+                                let error = self.errors.push(Error::FunctionDoesntReturnAnOption {
+                                    source, func_typ: func_ret });
+
+                                return anal.error(ErrorId::Sema(error))
+                            }
+                        }
+
+                        anal.current.push(IR::OrReturn { src: val_anal.reg, dst });
+                        
+                        AnalysisResult::new(dst, typ)
+                    },
+
+                    
+                    Type::UserType(v) 
+                     if let TypeSymbolKind::Enum { 
+                        typ: EnumType::Result, 
+                        mappings 
+                    } = self.types.get(v).unwrap().kind
+                     => {
+                        let typ = mappings[0].typ;
+                        let err = mappings[1].typ;
+                        let dst = anal.fc.new_reg();
+                        let (func_ret, func_src) = {
+                            let scope = self.sema.scopes.get(*scope).unwrap();
+                            scope.current_func_return_type(&self.sema.scopes)
+                        };
+
+                        match func_ret {
+                            Type::UserType(v) 
+                             if let TypeSymbolKind::Enum { 
+                                typ: EnumType::Result, 
+                                mappings: &[_, TypeEnumMapping { typ, .. }],
+                            } = self.types.get(v).unwrap().kind
+                             => {
+                                if !err.is(typ) {
+                                    let func_err_typ = self.types.get(func_ret.typeid()).unwrap();
+                                    let TypeSymbolKind::Enum { mappings: &[_, TypeEnumMapping { typ: func_err_typ, .. }], .. } = func_err_typ.kind
+                                    else { unreachable!() };
+
+                                    let error = self.errors.push(Error::FunctionReturnsAResultButTheErrIsntTheSame { 
+                                        source, func_source: func_src, 
+                                        func_err_typ, err_typ: err
+                                    });
+
+                                    return anal.error(ErrorId::Sema(error))
+                                }
+                            }
+
+                            _ => {
+                                let error = self.errors.push(Error::FunctionDoesntReturnAResult {
+                                    source, func_typ: func_ret });
+
+                                return anal.error(ErrorId::Sema(error))
+                            }
+                        }
+
+                        anal.current.push(IR::OrReturn { src: val_anal.reg, dst });
+                        
+                        AnalysisResult::new(dst, typ)
+                    },
+
+                    | Type::Never
+                    | Type::Error => return anal.empty_error(),
+
+                    _ => {
+                        let error = self.errors.push(
+                            Error::CantTryOnGivenType(source, val_anal.typ));
+
+                        return anal.error(ErrorId::Sema(error))
+                    }
+                }
+            }
         }
     }
 }

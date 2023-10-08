@@ -151,6 +151,38 @@ pub enum Error {
         rhs: Type,
         source: SourceRange,
     },
+
+    ContinueOutsideOfLoop(SourceRange),
+
+    BreakOutsideOfLoop(SourceRange),
+
+    CantUnwrapOnGivenType(SourceRange, Type),
+
+    CantTryOnGivenType(SourceRange, Type),
+
+    FunctionDoesntReturnAnOption {
+        source: SourceRange,
+        func_typ: Type,
+    },
+
+    FunctionDoesntReturnAResult {
+        source: SourceRange,
+        func_typ: Type,
+    },
+    
+    FunctionReturnsAResultButTheErrIsntTheSame {
+        source: SourceRange,
+        func_source: SourceRange,
+        func_err_typ: Type,
+        err_typ: Type,
+    },
+
+    ReturnAndFuncTypDiffer {
+        source: SourceRange,
+        func_source: SourceRange,
+        typ: Type,
+        func_typ: Type,
+    },
     
     Bypass,
 }
@@ -454,6 +486,94 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                 fmt.error("can't update a value with a different type")
                     .highlight_with_note(*source, &msg)
             },
+            
+            
+            Error::ContinueOutsideOfLoop(v) => {
+                fmt.error("continue outside of loop")
+                    .highlight(*v);
+            },
+            
+            
+            Error::BreakOutsideOfLoop(v) => {
+                fmt.error("break outside of loop")
+                    .highlight(*v);
+            },
+            
+            
+            Error::CantUnwrapOnGivenType(s, t) => {
+                let typ_name = t.to_string(types, fmt.string_map());
+                let msg = format!("..is of type '{typ_name}'");
+                
+                fmt.error("can't unwrap on given type")
+                    .highlight_with_note(*s, &msg)
+            },
+            
+            
+            Error::CantTryOnGivenType(s, t) => {
+                let typ_name = t.to_string(types, fmt.string_map());
+                let msg = format!("..is of type '{typ_name}'");
+                
+                fmt.error("can't try on given type")
+                    .highlight_with_note(*s, &msg)
+            },
+            
+            
+            Error::FunctionDoesntReturnAnOption { source, func_typ } => {
+                let msg = format!(
+                    "..because of this expected the function to return an option but the function returns '{}'",
+                    func_typ.to_string(types, fmt.string_map())
+                );
+
+                fmt.error("function doesn't return an option")
+                    .highlight_with_note(*source, &msg)
+            },
+            
+            
+            Error::FunctionDoesntReturnAResult { source, func_typ } => {
+                let msg = format!(
+                    "..because of this expected the function to return a result but the function returns '{}'",
+                    func_typ.to_string(types, fmt.string_map())
+                );
+
+                fmt.error("function doesn't return a result ")
+                    .highlight_with_note(*source, &msg)
+            },
+            
+            
+            Error::FunctionReturnsAResultButTheErrIsntTheSame { source, func_err_typ, err_typ, func_source } => {
+                let msg = format!(
+                    "the error type is '{}'",
+                    err_typ.to_string(types, fmt.string_map())
+                );
+                
+                let msg2 = format!(
+                    "..but the error type of the function is '{}'",
+                    func_err_typ.to_string(types, fmt.string_map())
+                );
+
+                let mut err = fmt.error("result error types differ");
+
+                err.highlight_with_note(*source, &msg);
+                err.highlight_with_note(*func_source, &msg2);
+            },
+            
+            
+            Error::ReturnAndFuncTypDiffer { source, func_source, typ, func_typ } => {
+                let msg = format!(
+                    "..is of type '{}'",
+                    typ.to_string(types, fmt.string_map())
+                );
+                
+                let msg2 = format!(
+                    "..but the function returns '{}'",
+                    func_typ.to_string(types, fmt.string_map())
+                );
+
+                let mut err = fmt.error("return and function return type differ");
+
+                err.highlight_with_note(*source, &msg);
+                err.highlight_with_note(*func_source, &msg2);
+            }
             
             
             Error::Bypass => (),

@@ -33,8 +33,12 @@ pub enum ScopeKind {
     NamedNamespace((StringIndex, NamespaceId)),
     TypeNamespace((Type, NamespaceId)),
     Namespace(NamespaceId),
-    Function,
+    Function((Type, SourceRange)),
     Variable((StringIndex, Type, bool, Reg)),
+    Loop {
+        start: BlockId,
+        end  : BlockId,
+    },
     None,
 }
 
@@ -82,6 +86,52 @@ impl Scope {
         }
 
         None
+    }
+
+
+    #[inline(always)]
+    pub fn find_loop(
+        &self,
+        scopes: &KVec<ScopeId, Scope>,
+    ) -> Option<(BlockId, BlockId)> {
+
+        let mut current = self;
+        
+        loop {
+            if let ScopeKind::Loop { start, end } = current.kind { return Some((start, end)) }
+            
+            if let Some(parent) = current.parent.into() {
+                current = scopes.get(parent).unwrap();
+                continue
+            }
+
+            break
+        }
+
+        None
+    }
+
+
+    #[inline(always)]
+    pub fn current_func_return_type(
+        &self,
+        scopes: &KVec<ScopeId, Scope>,
+    ) -> (Type, SourceRange) {
+
+        let mut current = self;
+        
+        loop {
+            if let ScopeKind::Function(typ) = current.kind { return typ }
+            
+            if let Some(parent) = current.parent.into() {
+                current = scopes.get(parent).unwrap();
+                continue
+            }
+
+            break
+        }
+
+        unreachable!()
     }
 
 
@@ -295,6 +345,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                         TypeEnumMapping::new(ok, v1, SourceRange::MAX, false, EnumVariant(0)),
                         TypeEnumMapping::new(err, v2, SourceRange::MAX, false, EnumVariant(1)),
                     ]),
+                    typ: crate::EnumType::Result,
                 });
 
                 self.sema.result_table.insert((v1, v2), index);
@@ -319,9 +370,18 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
     }
 
 
+    ///
+    /// If an option type has already been created for the given type:
+    ///     - Return that type
+    ///
+    /// Otherwise create a new enum with the variants being:
+    ///     - some, which is of the given type,
+    ///     - none, which is implicitly unit,
+    /// and place it into the option table, then returns the newly created
+    /// type
+    ///
     pub fn create_option(&mut self, typ: Type) -> Type {
         if let Some(val) = self.sema.option_table.get(&typ) { return Type::UserType(*val) };
-        println!("no cache {typ:?}");
 
         let some = self.string_map.insert("some");
         let none = self.string_map.insert("none");
@@ -344,6 +404,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 TypeEnumMapping::new(some, typ, SourceRange::MAX, false, EnumVariant(0)),
                 TypeEnumMapping::new(none, Type::Unit, SourceRange::MAX, true, EnumVariant(1)),
             ]),
+            typ: crate::EnumType::Option,
         });
 
         self.sema.option_table.insert(typ, index);
@@ -352,6 +413,9 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
     }
 
 
+    ///
+    /// Returns the string representation of a type
+    ///
     pub fn nameof(&mut self, typ: Type) -> StringIndex {
         match typ {
             Type::UserType(v) => self.types.get(v).unwrap().name,
@@ -367,6 +431,10 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
     }
 
 
+    ///
+    /// Returns the namespace of a type, if the type doesn't already
+    /// have a namespace creates & initialises it.
+    ///
     pub fn namespaceof(&mut self, typ: Type) -> NamespaceId {
         let namespace = self.sema.namespace_table.get(&typ);
         let namespace = match namespace {
@@ -383,7 +451,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             _ => return namespace,
         };
 
-        let TypeSymbolKind::Enum { mappings } = typesym.kind
+        let TypeSymbolKind::Enum { mappings, .. } = typesym.kind
         else { return namespace };
 
         {
@@ -638,7 +706,9 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     
                     let index = scope.find_type(
                         *name, &self.sema.scopes, &self.sema.namespaces).unwrap();
-                    self.update_type(index, TypeSymbolKind::Enum { mappings });
+                    self.update_type(index, TypeSymbolKind::Enum { 
+                        mappings, typ: crate::EnumType::UserDefined 
+                    });
                 },
 
                 

@@ -30,8 +30,8 @@ pub enum IR<'a> {
     Call { dst: Reg, function: FuncId, args: &'a [(Reg, Reg)] },    
     ExternCall { dst: Reg, function: FuncId, args: &'a [(Reg, Reg)] },
     
-    Unwrap { src: Reg },
-    OrReturn { src: Reg },
+    Unwrap { src: Reg, dst: Reg },
+    OrReturn { src: Reg, dst: Reg },
 
     Not { dst: Reg, src: Reg },
     NegI { dst: Reg, src: Reg },
@@ -54,7 +54,7 @@ pub enum Terminator<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct EnumVariant(pub u16);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct BlockId(pub u32);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -63,7 +63,7 @@ pub struct StrConstId(pub u32);
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Reg(pub usize);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Block<'a> {
     pub id: BlockId,
     pub body: Vec<IR<'a>, &'a Arena>,
@@ -76,27 +76,55 @@ impl<'a> Block<'a> {
     pub fn push(&mut self, ir: IR<'a>) {
         self.body.push(ir)
     }
-
-
-    #[inline(always)]
-    pub fn swap(&mut self, block: Block<'a>) -> Block<'a> {
-        std::mem::replace(
-            self, 
-            block,
-        )
-    }
 }
 
 
 impl core::fmt::Display for Reg {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "#{}", self.0)
     }
 }
 
 
+impl core::fmt::Display for BlockId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "bb{}", self.0)
+    }
+}
+
+
+impl core::fmt::Debug for BlockId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+        <Self as core::fmt::Display>::fmt(self, f)
+    }
+}
+
+
+impl core::fmt::Debug for Block<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}:", self.id)?;
+
+
+        for ir in self.body.iter() {
+            writeln!(f, "  {ir:?}")?;
+        }
+        
+        
+        write!(f, "  -> ")?;
+        match self.terminator {
+            Terminator::Ret => write!(f, "ret"),
+            Terminator::Jmp(v) => write!(f, "jmp {v}"),
+            Terminator::Jif { cond, if_true, if_false } => write!(f, "jif {cond} {if_true} {if_false}"),
+            Terminator::Match { src, jumps } => write!(f, "match {src} {jumps:?}"),
+        }?;
+        
+        writeln!(f)
+    }
+}
+
+
 impl core::fmt::Debug for IR<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             IR::Error(e) => write!(f, "err {e:?}"),
             IR::Unit { dst } => write!(f, "unit {dst}"),
@@ -115,8 +143,8 @@ impl core::fmt::Debug for IR<'_> {
             IR::SetEnumVariant { dst, src, variant } => write!(f, "sev {dst} {src} {variant:?}"),
             IR::Call { dst, function, args } => write!(f, "call {dst} {function:?} {args:?}"),
             IR::ExternCall { dst, function, args } => write!(f, "ecall {dst} {function:?} {args:?}"),
-            IR::Unwrap { src } => write!(f, "unwrap {src}"),
-            IR::OrReturn { src } => write!(f, "try {src}"),
+            IR::Unwrap { dst, src } => write!(f, "unwrap {dst} {src}"),
+            IR::OrReturn { dst, src } => write!(f, "try {dst} {src}"),
             IR::Not { dst, src } => write!(f, "not {dst} {src}"),
             IR::NegI { dst, src } => write!(f, "negi {dst} {src}"),
             IR::NegF { dst, src } => write!(f, "negf {dst} {src}"),

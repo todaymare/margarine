@@ -69,6 +69,21 @@ impl<T> OptionalPlus<T> for Option<T> {
 }
 
 
+pub trait Swap {
+    ///
+    /// Swaps the current value with the given value
+    /// returning the current value
+    ///
+    #[inline(always)]
+    fn swap(&mut self, val: Self) -> Self where Self: Sized {
+        core::mem::replace(self, val)
+    }
+}
+
+
+impl<T> Swap for T {}
+
+
 pub fn find_duplicate<'a, T: PartialEq, A: Alloc>(
     fields: &'a [T], 
     buff: &mut Vec<(&'a T, &'a T), A>

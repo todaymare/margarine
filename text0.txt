@@ -1,14 +1,5 @@
-enum Vector {
-	x: float,
-	y: float,
-}
-
-
 fn hi() {
-	let mut vec = Vector::x(420.0)
-	match &vec {
-		x: &val => val += 3.0,
-		y: &val => val += 8.0,
-	}
+	(5).cast(float)!
 
+	return ()
 }
