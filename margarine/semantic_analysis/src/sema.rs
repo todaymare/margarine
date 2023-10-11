@@ -1,9 +1,9 @@
-use common::{string_map::{StringMap, StringIndex}, fuck_map::FuckMap, source::SourceRange};
+use common::{string_map::StringIndex, fuck_map::FuckMap, source::SourceRange};
 use errors::{SemaError, ErrorId};
 use parser::{nodes::{NodeKind, Node}, DataType};
 use sti::{define_key, prelude::Arena, keyed::KVec, packed_option::PackedOption, arena_pool::ArenaPool, vec::Vec, format_in};
 
-use crate::{Type, errors::Error, TypeId, FuncId, ir::terms::{Reg, IR, Block, BlockId, EnumVariant, Terminator}, State, TypeSymbol, StructureKind, Function, LocalAnalyser, TypeSymbolKind, TypeEnumMapping};
+use crate::{Type, errors::Error, TypeId, FuncId, ir::terms::{Reg, IR, Block, BlockId, EnumVariant, Terminator}, State, StructureKind, Function, LocalAnalyser, TypeSymbolKind, TypeEnumMapping};
 
 define_key!(u32, pub NamespaceId);
 define_key!(u32, pub ScopeId);
@@ -756,18 +756,18 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                         *name, &self.sema.scopes, &self.sema.namespaces).unwrap();
                     
                     let func = self.funcs.get_mut(index).unwrap();
-                    func.replace(Function { 
+                    *func = Function { 
                         args, 
                         body: Vec::new_in(self.arena_func),
                         return_type,
-                    });
+                    };
                 },
 
                 
-                parser::nodes::Declaration::Impl { data_type, body } => todo!(),
-                parser::nodes::Declaration::Using { file } => todo!(),
-                parser::nodes::Declaration::Module { name, body } => todo!(),
-                parser::nodes::Declaration::Extern { file, functions } => todo!(),
+                parser::nodes::Declaration::Impl { data_type: _, body: _ } => todo!(),
+                parser::nodes::Declaration::Using { file: _ } => todo!(),
+                parser::nodes::Declaration::Module { name: _, body: _ } => todo!(),
+                parser::nodes::Declaration::Extern { file: _, functions: _ } => todo!(),
             }
         }
 

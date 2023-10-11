@@ -5,7 +5,7 @@ pub mod source;
 pub mod small_vec;
 pub mod static_vec;
 
-use std::{ops::{Deref, DerefMut}, time::Instant, slice::Iter};
+use std::{ops::{Deref, DerefMut}, time::Instant};
 
 use sti::{prelude::Alloc, vec::Vec};
 use colourful::*;
@@ -53,18 +53,6 @@ impl<'a> DropTimer<'a> {
 impl Drop for DropTimer<'_> {
     fn drop(&mut self) {
         println!("droptimer: ran '{}' in {} seconds", self.message, self.time.elapsed().as_secs_f32());
-    }
-}
-
-
-pub trait OptionalPlus<T> {
-    fn unwrap_ref(&self) -> &T;
-}
-
-
-impl<T> OptionalPlus<T> for Option<T> {
-    fn unwrap_ref(&self) -> &T {
-        self.as_ref().unwrap()
     }
 }
 

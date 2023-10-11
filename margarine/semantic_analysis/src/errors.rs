@@ -3,9 +3,9 @@ use std::fmt::Write;
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
 use parser::nodes::{BinaryOperator, UnaryOperator};
-use sti::{keyed::{KSlice, KVec}, vec::Vec};
+use sti::{keyed::{KVec}, vec::Vec};
 
-use crate::{Type, TypeId, TypeSymbolKind, TypeSymbol};
+use crate::{Type, TypeId, TypeSymbol};
 
 #[derive(Clone, Debug)]
 pub enum Error {

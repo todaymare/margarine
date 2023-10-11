@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use ::errors::{ErrorId, LexerError};
+use ::errors::{LexerError};
 use common::{string_map::{StringMap, StringIndex},
     source::{SourceRange, FileData}, hashables::HashableF64};
 use crate::errors::Error;

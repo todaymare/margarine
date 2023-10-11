@@ -1,13 +1,13 @@
 #![feature(if_let_guard)]
 #![deny(unused_must_use)]
 
-use common::{string_map::{StringIndex, StringMap}, source::SourceRange, fuck_map::FuckMap, OptionalPlus, warn, Swap};
+use common::{string_map::{StringIndex, StringMap}, source::SourceRange, fuck_map::FuckMap, Swap};
 use errors::Error;
 use ::errors::{SemaError, ErrorId};
 use ir::terms::{Block, EnumVariant, Reg, BlockId, IR, StrConstId};
 use lexer::Literal;
-use parser::{nodes::{Node, NodeKind, Declaration, Statement, Expression, BinaryOperator, UnaryOperator}, DataType};
-use sema::{InferState, Namespace, NamespaceId, Scope, ScopeId, ScopeKind};
+use parser::nodes::{Node, NodeKind, Declaration, Statement, Expression, UnaryOperator};
+use sema::{InferState, Namespace, Scope, ScopeId, ScopeKind};
 use sti::{keyed::KVec, vec::Vec, define_key, prelude::{Arena, GlobalAlloc}, arena_pool::ArenaPool, packed_option::PackedOption, traits::FromIn};
 
 use crate::ir::terms::Terminator;
@@ -172,7 +172,7 @@ pub struct State<'me, 'at, 'af, 'an> {
     pub string_map: &'me mut StringMap,
     
     pub types: KVec<TypeId, TypeSymbol<'at>>,
-    pub funcs: KVec<FuncId, Option<Function<'af>>>,
+    pub funcs: KVec<FuncId, Function<'af>>,
 
     sema: InferState<'an>,
     str_consts: FuckMap<StringIndex, StrConstId>,
@@ -430,14 +430,14 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
     #[inline(always)]
     fn declare_func(&mut self) -> FuncId {
-        self.funcs.push(None)
+        self.funcs.push(Function { args: self.arena_func.alloc_new([]), body: Vec::new_in(self.arena_func), return_type: Type::Error })
     }
 
 
     #[inline(always)]
     fn create_func(&mut self, func: Function<'af>) -> FuncId {
         let id = self.declare_func();
-        self.funcs.get_mut(id).unwrap().replace(func);
+        self.funcs.get_mut(id).unwrap().swap(func);
         id
     }
 
@@ -546,7 +546,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
             Declaration::Struct { .. } => Ok(()),
             Declaration::Enum { .. } => Ok(()),
 
-            Declaration::Function { is_system, name, header, arguments, return_type, body } => {
+            Declaration::Function { is_system: _, name, header, arguments: _, return_type, body } => {
                 let index = {
                     let current = self.sema.scopes.get(scope).unwrap();
                     let index = current.find_func(
@@ -562,7 +562,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 let return_reg = fc.new_reg();
                 assert_eq!(return_reg.0, 0);
 
-                let func = self.funcs.get(index).unwrap().unwrap_ref();
+                let func = self.funcs.get(index).unwrap();
                 let scope = Scope::new(scope.some(), sema::ScopeKind::Function((func.return_type, return_type.range())));
                 let mut scope = self.sema.scopes.push(scope);
 
@@ -592,7 +592,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     block_anal
                 };
 
-                let func = self.funcs.get_mut(index).unwrap().as_mut().unwrap();
+                let func = self.funcs.get_mut(index).unwrap();
 
                 if !analysis.typ.is(func.return_type) {
                     anal.current.push(IR::Error(ErrorId::Sema(self.errors.push(
@@ -614,10 +614,10 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                 Ok(())
             },
 
-            Declaration::Impl { data_type, body } => todo!(),
-            Declaration::Using { file } => todo!(),
-            Declaration::Module { name, body } => todo!(),
-            Declaration::Extern { file, functions } => todo!(),
+            Declaration::Impl { data_type: _, body: _ } => todo!(),
+            Declaration::Using { file: _ } => todo!(),
+            Declaration::Module { name: _, body: _ } => todo!(),
+            Declaration::Extern { file: _, functions: _ } => todo!(),
         }
     }
 
@@ -1321,7 +1321,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                     func
                 };
 
-                let func = self.funcs.get(func_id).unwrap().unwrap_ref();
+                let func = self.funcs.get(func_id).unwrap();
 
                 if args.len() != func.args.len() {
                     let error = self.errors.push(Error::FunctionArgsMismatch {
@@ -1421,7 +1421,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 
                 let scope = self.sema.scopes.push(scope);
 
-                let body_anal = self.block(anal, scope, body);
+                let _body_anal = self.block(anal, scope, body);
                 let mut body_end_block = anal.current.swap(continue_block);
 
                 let terminator = previous_block.terminator.swap(Terminator::Jmp(start_block_id));
@@ -1552,7 +1552,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
                      => {
                         let typ = mappings[0].typ;
                         let dst = anal.fc.new_reg();
-                        let (func_ret, func_src) = {
+                        let (func_ret, _func_src) = {
                             let scope = self.sema.scopes.get(*scope).unwrap();
                             scope.current_func_return_type(&self.sema.scopes)
                         };

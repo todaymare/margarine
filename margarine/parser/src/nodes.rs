@@ -1,4 +1,4 @@
-use std::fmt::{Display, Write};
+use std::fmt::Display;
 
 use common::{string_map::StringIndex, source::SourceRange};
 use errors::ErrorId;

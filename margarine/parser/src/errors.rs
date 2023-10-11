@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use common::source::SourceRange;
-use errors::{ErrorType, ErrorId};
+use errors::{ErrorType};
 use lexer::TokenKind;
 
 #[derive(Clone, Debug)]
