@@ -1,25 +1,40 @@
 use pc::{ProgramCounter, Code};
 use register_stack::RegisterStack;
+use data_stack::{DataStack, Data, StackFrame, StackFramePointer};
 
 pub mod pc;
 pub mod register_stack;
+pub mod data_stack;
 
 
 pub struct VM<'consts> {
-    pub constants: &'consts [Data],
+    pub const_strs: &'consts [&'consts str],
     pub pc: ProgramCounter,
     pub register_stack: RegisterStack,
+    pub data_stack: DataStack,
+
+
+    ///
+    /// A stack of `StackFramePointer`s used for debug assertions
+    ///
+    #[cfg(debug_assertions)]
+    stackframe_stack: Vec<StackFramePointer>,
 }
 
 impl<'consts> VM<'consts> {
     pub fn new(
-        constants: &'consts [Data], 
+        const_strs: &'consts [&'consts str], 
         register_stack: RegisterStack
     ) -> Self { 
         Self { 
-            constants, 
-            pc: ProgramCounter::new(unsafe { Code::from_raw(core::ptr::null(), core::ptr::null()) }), 
-            register_stack 
+            const_strs, 
+            pc: ProgramCounter::new(unsafe { 
+                Code::from_raw(core::ptr::null(), #[cfg(debug_assertions)] core::ptr::null()) }), 
+            register_stack,
+            data_stack: DataStack::new(),
+
+            #[cfg(debug_assertions)]
+            stackframe_stack: Vec::new(), 
         } 
     }
 }
@@ -38,23 +53,4 @@ impl TypeId {
     pub const UINT_TAG : TypeId = TypeId(3);
     pub const BOOL_TAG : TypeId = TypeId(4);
     pub const STR_TAG  : TypeId = TypeId(5);
-}
-
-
-
-pub union Data {
-    pub int  : i64,
-    pub float: f64,
-    pub uint : u64,
-    pub unit : (),
-    pub bool : bool,
-    
-    pub obj  : *mut Data,
-    pub frame: *const StackFrame,
-}
-
-
-#[derive(Clone, Debug)]
-pub struct StackFrame {
-    pub pc: ProgramCounter,
 }

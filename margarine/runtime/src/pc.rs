@@ -23,7 +23,8 @@ impl Code {
         #[cfg(debug_assertions)]
         end: *const u8,
     ) -> Self {
-        debug_assert!(start <= end);
+        #[cfg(debug_assertions)]
+        assert!(start <= end);
         
         Self {
             start,
