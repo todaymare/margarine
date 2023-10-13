@@ -1,8 +1,8 @@
-use sti::{prelude::Arena, arena::ArenaSavePoint};
+use sti::{prelude::Arena, arena::ArenaSavePoint, static_assert};
 use core::ptr::NonNull;
 use std::collections::HashMap;
 
-use crate::{pc::ProgramCounter, VM};
+use crate::{pc::ProgramCounter, VM, TypeId};
 
 pub struct DataStack {
     arena: Arena,
@@ -80,7 +80,18 @@ pub struct StackFramePointer(*const StackFrame);
 
 
 #[derive(Clone, Copy)]
-pub union Data {
+pub struct Data {
+    #[cfg(debug_assertions)]
+    typ: TypeId,
+    
+    data: DataUnion,
+}
+
+
+static_assert!(core::mem::size_of::<DataUnion>() <= 8);
+
+#[derive(Clone, Copy)]
+pub union DataUnion {
     pub int  : i64,
     pub float: f64,
     pub uint : u64,
@@ -94,7 +105,11 @@ pub union Data {
 
 impl Data {
     pub fn new_unit() -> Data {
-        Data { unit: () }
+        Data {
+            #[cfg(debug_assertions)]
+            typ: TypeId::UNIT_TAG,
+            data: DataUnion { unit: () },
+        }
     }
 }
 

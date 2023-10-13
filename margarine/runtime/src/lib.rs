@@ -1,10 +1,12 @@
 use pc::{ProgramCounter, Code};
 use register_stack::RegisterStack;
 use data_stack::{DataStack, Data, StackFrame, StackFramePointer};
+use sti::static_assert;
 
 pub mod pc;
 pub mod register_stack;
 pub mod data_stack;
+pub mod bytecode;
 
 
 pub struct VM<'consts> {
@@ -40,6 +42,7 @@ impl<'consts> VM<'consts> {
 }
 
 
+static_assert!(core::mem::size_of::<TypeId>() <= 4);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
