@@ -1,4 +1,4 @@
-use sti::prelude::{Arena, Vec};
+use sti::{reader::Reader, prelude::{Arena, Vec}};
 
 macro_rules! bytecode {
     ($($opcode: literal : $name: ident ( $($field: ident : $ty: ty),* ));* ;) => {
@@ -23,13 +23,11 @@ macro_rules! bytecode {
             /// Calls `Self::parse_one` with `data` and puts the result in
             /// the buffer until the iterator is exhausted
             ///
-            pub fn parse<I>(
-                data: &mut I, 
+            pub fn parse(
+                data: &mut sti::reader::Reader<u8>, 
                 buffer: &mut Vec<Bytecode<'a>>, 
                 arena: &'a sti::prelude::Arena
-            )
-            where I: Iterator<Item=u8>
-            {
+            ) {
                 while let Some(op) = Self::parse_one(data, arena) {
                     buffer.push(op);
                 }
@@ -41,9 +39,11 @@ macro_rules! bytecode {
             /// This function will return `None` if the iterator is empty
             /// but it will panic if the bytecode instruction is corrupt
             ///
-            pub fn parse_one<I>(data: &mut I, arena: &'a Arena) -> Option<Bytecode<'a>>
-            where I: Iterator<Item=u8> 
-            {
+            pub fn parse_one(
+                data: &mut sti::reader::Reader<u8>,
+                arena: &'a Arena
+            ) -> Option<Bytecode<'a>> {
+                
                 Some(match data.next()? {
                     $(consts::$name => Bytecode::$name { $($field: <$ty>::parse(data, arena)),* },)*
 
@@ -112,7 +112,7 @@ bytecode!(
 
 pub trait BytecodeType<'a>: Sized {
     type Output;
-    fn parse(iter: &mut impl Iterator<Item=u8>, arena: &'a Arena) -> Self::Output;
+    fn parse(iter: &mut Reader<u8>, arena: &'a Arena) -> Self::Output;
     fn generate(&self, buffer: &mut Vec<u8>); 
 }
 
@@ -123,7 +123,7 @@ pub struct Reg(pub u8);
 impl BytecodeType<'_> for Reg {
     type Output = Self;
 
-    fn parse(iter: &mut impl Iterator<Item=u8>, arena: &Arena) -> Self::Output {
+    fn parse(iter: &mut Reader<u8>, arena: &Arena) -> Self::Output {
         Reg(u8::parse(iter, arena))
     }
 
@@ -133,24 +133,10 @@ impl BytecodeType<'_> for Reg {
 }
 
 
-impl BytecodeType<'_> for u8 {
-    type Output = Self;
-
-    fn parse(iter: &mut impl Iterator<Item=u8>, _: &Arena) -> Self::Output {
-        iter.next().unwrap()
-    }
-    
-    #[inline(always)]
-    fn generate(&self, buffer: &mut Vec<u8>) {
-        buffer.push(*self)
-    }
-}
-
-
 impl<'r, 'a, A: 'a, T: BytecodeType<'a, Output=A>> BytecodeType<'a> for &'r [T] {
     type Output = &'a [A];
 
-    fn parse(iter: &mut impl Iterator<Item=u8>, arena: &'a Arena) -> Self::Output {
+    fn parse(iter: &mut Reader<u8>, arena: &'a Arena) -> Self::Output {
         let len = u32::parse(iter, arena);
         let mut vec = Vec::new_in(arena);
 
@@ -173,13 +159,25 @@ impl<'r, 'a, A: 'a, T: BytecodeType<'a, Output=A>> BytecodeType<'a> for &'r [T] 
 }
 
 
+impl BytecodeType<'_> for u8 {
+    type Output = Self;
+
+    fn parse(iter: &mut Reader<u8>, _: &Arena) -> Self::Output {
+        iter.next().unwrap()
+    }
+    
+    #[inline(always)]
+    fn generate(&self, buffer: &mut Vec<u8>) {
+        buffer.push(*self)
+    }
+}
+
+
 impl BytecodeType<'_> for u16 {
     type Output = Self;
 
-    fn parse(iter: &mut impl Iterator<Item=u8>, _: &Arena) -> Self::Output {
-        u16::from_le_bytes([
-            iter.next().unwrap(), iter.next().unwrap(),
-        ])
+    fn parse(iter: &mut Reader<u8>, _: &Arena) -> Self::Output {
+        u16::from_le_bytes(iter.next_array().unwrap())
     }
 
     fn generate(&self, buffer: &mut Vec<u8>) {
@@ -193,11 +191,8 @@ impl BytecodeType<'_> for u16 {
 impl BytecodeType<'_> for u32 {
     type Output = Self;
 
-    fn parse(iter: &mut impl Iterator<Item=u8>, _: &Arena) -> Self::Output {
-        u32::from_le_bytes([
-            iter.next().unwrap(), iter.next().unwrap(),
-            iter.next().unwrap(), iter.next().unwrap(),
-        ])
+    fn parse(iter: &mut Reader<u8>, _: &Arena) -> Self::Output {
+        u32::from_le_bytes(iter.next_array().unwrap())
     }
 
     fn generate(&self, buffer: &mut Vec<u8>) {
@@ -211,13 +206,8 @@ impl BytecodeType<'_> for u32 {
 impl BytecodeType<'_> for u64 {
     type Output = Self;
 
-    fn parse(iter: &mut impl Iterator<Item=u8>, _: &Arena) -> Self::Output {
-        u64::from_le_bytes([
-            iter.next().unwrap(), iter.next().unwrap(),
-            iter.next().unwrap(), iter.next().unwrap(),
-            iter.next().unwrap(), iter.next().unwrap(),
-            iter.next().unwrap(), iter.next().unwrap(),
-        ])
+    fn parse(iter: &mut Reader<u8>, _: &Arena) -> Self::Output {
+        u64::from_le_bytes(iter.next_array().unwrap())
     }
 
     fn generate(&self, buffer: &mut Vec<u8>) {
