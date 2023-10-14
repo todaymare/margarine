@@ -7,40 +7,72 @@ macro_rules! bytecode {
         }
 
 
+        ///
+        /// A bytecode instruction
+        ///
         pub enum Bytecode {
             $($name { $($field: $ty,)* },)*
         }
 
 
         impl Bytecode {
+            ///
+            /// Calls `Self::parse_one` with `data` and puts the result in
+            /// the buffer until the iterator is exhausted
+            ///
             pub fn parse<I>(data: &mut I, buffer: &mut Vec<Bytecode>)
             where I: Iterator<Item=u8>
             {
-                while let Some(op_code) = data.next() {
-                    let op = match op_code {
-                        $(consts::$name => Bytecode::$name { $($field: <$ty>::parse(data)),* },)*
-
-                        _ => panic!("invalid bytecode op-code"),
-                    };
-
+                while let Some(op) = Self::parse_one(data) {
                     buffer.push(op);
                 }
             }
 
 
+            ///
+            /// Parses a single bytecode instruction given an iterator
+            /// This function will return `None` if the iterator is empty
+            /// but it will panic if the bytecode instruction is corrupt
+            ///
+            pub fn parse_one<I>(data: &mut I) -> Option<Bytecode>
+            where I: Iterator<Item=u8> 
+            {
+                Some(match data.next()? {
+                    $(consts::$name => Bytecode::$name { $($field: <$ty>::parse(data)),* },)*
+
+                    _ => panic!("invalid bytecode op-code"),
+                })
+                
+            }
+
+            
+            ///
+            /// Calls `Self::generate_one` for each element in `data`
+            /// putting the result into the `buffer`
+            ///
             pub fn generate<I>(data: &mut I, buffer: &mut Vec<u8>)
             where I: Iterator<Item=Bytecode>
             {
                 while let Some(op) = data.next() {
-                    match op {
-                        $(
-                            Bytecode::$name { $($field),* } => { 
-                                buffer.push(consts::$name); 
-                                $(<$ty>::generate(&$field, buffer);)*
-                            },
-                        )*
-                    }
+                    op.generate_one(buffer);
                 }
+            }
+
+            
+            ///
+            /// Generates compact bytes from a bytecode instruction
+            /// and puts the data in the `buffer`
+            ///
+            pub fn generate_one(self, buffer: &mut Vec<u8>) {
+                match self {
+                    $(
+                        Bytecode::$name { $($field),* } => { 
+                            buffer.push(consts::$name); 
+                            $(<$ty>::generate(&$field, buffer);)*
+                        },
+                    )*
+                }
+                
             }
         }
     };
