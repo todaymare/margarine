@@ -86,27 +86,69 @@ macro_rules! bytecode {
 }
 
 
+macro_rules! wrapper {
+    (
+        $(
+            $(#[$trait: ident ($($ident: ident),*)])*
+            struct $name: ident ($ty: ty);
+        )*
+    ) => {
+        
+        $(
+            $(#[$trait($($ident),*)])*
+            pub struct $name(pub $ty);
+
+            impl BytecodeType<'_> for $name {
+                type Output = Self;
+
+                fn parse(iter: &mut Reader<u8>, arena: &Arena) -> Self::Output {
+                    Self(<$ty>::parse(iter, arena))
+                }
+
+                fn generate(&self, buffer: &mut Vec<u8>) {
+                    self.0.generate(buffer)
+                }
+            }
+        )*
+    };
+}
+
+
 bytecode!(
-    100 : Call(dst: Reg, func: u64, regs: &'a [Reg]);
-    200 : AddI(dst: Reg, lhs: Reg, rhs: Reg);
-    201 : AddF(dst: Reg, lhs: Reg, rhs: Reg);
-    202 : AddU(dst: Reg, lhs: Reg, rhs: Reg);
+      0 :  Ret ();
+      // 1 :  Jmp (at: JumpIndex);
+      // 2 :  Jif (cnd: Reg, if_true: JumpIndex, if_false: JumpIndex);
+      // 3 : Match(cnd: Reg, jmps: &'a [JumpIndex]);
     
-    203 : SubI(dst: Reg, lhs: Reg, rhs: Reg);
-    204 : SubF(dst: Reg, lhs: Reg, rhs: Reg);
-    205 : SubU(dst: Reg, lhs: Reg, rhs: Reg);
+    100 :  Call(dst: Reg, func: u64, regs: &'a [Reg]);
+
+    150 :  Unit(dst: Reg);
+    151 :  LitS(dst: Reg, lit: u64);
+    152 :  LitI(dst: Reg, lit: i64);
+    153 :  LitF(dst: Reg, lit: f64);
+    154 :  LitB(dst: Reg, lit: bool);
     
-    206 : MulI(dst: Reg, lhs: Reg, rhs: Reg);
-    207 : MulF(dst: Reg, lhs: Reg, rhs: Reg);
-    208 : MulU(dst: Reg, lhs: Reg, rhs: Reg);
+    200 :  AddI(dst: Reg, lhs: Reg, rhs: Reg);
+    201 :  AddF(dst: Reg, lhs: Reg, rhs: Reg);
+    202 :  AddU(dst: Reg, lhs: Reg, rhs: Reg);
     
-    209 : DivI(dst: Reg, lhs: Reg, rhs: Reg);
-    210 : DivF(dst: Reg, lhs: Reg, rhs: Reg);
-    211 : DivU(dst: Reg, lhs: Reg, rhs: Reg);
+    203 :  SubI(dst: Reg, lhs: Reg, rhs: Reg);
+    204 :  SubF(dst: Reg, lhs: Reg, rhs: Reg);
+    205 :  SubU(dst: Reg, lhs: Reg, rhs: Reg);
     
-    212 : RemI(dst: Reg, lhs: Reg, rhs: Reg);
-    213 : RemF(dst: Reg, lhs: Reg, rhs: Reg);
-    214 : RemU(dst: Reg, lhs: Reg, rhs: Reg);
+    206 :  MulI(dst: Reg, lhs: Reg, rhs: Reg);
+    207 :  MulF(dst: Reg, lhs: Reg, rhs: Reg);
+    208 :  MulU(dst: Reg, lhs: Reg, rhs: Reg);
+    
+    209 :  DivI(dst: Reg, lhs: Reg, rhs: Reg);
+    210 :  DivF(dst: Reg, lhs: Reg, rhs: Reg);
+    211 :  DivU(dst: Reg, lhs: Reg, rhs: Reg);
+    
+    212 :  RemI(dst: Reg, lhs: Reg, rhs: Reg);
+    213 :  RemF(dst: Reg, lhs: Reg, rhs: Reg);
+    214 :  RemU(dst: Reg, lhs: Reg, rhs: Reg);
+
+    255 :  Error(err_index: u64);
 );
 
 
@@ -116,21 +158,13 @@ pub trait BytecodeType<'a>: Sized {
     fn generate(&self, buffer: &mut Vec<u8>); 
 }
 
-
-#[derive(Debug, Clone, Copy)]
-pub struct Reg(pub u8);
-
-impl BytecodeType<'_> for Reg {
-    type Output = Self;
-
-    fn parse(iter: &mut Reader<u8>, arena: &Arena) -> Self::Output {
-        Reg(u8::parse(iter, arena))
-    }
-
-    fn generate(&self, buffer: &mut Vec<u8>) {
-        self.0.generate(buffer)
-    }
-}
+wrapper!(
+    #[derive(Debug, Clone, Copy)] 
+    struct Reg(u8);
+    
+    #[derive(Debug, Clone, Copy)] 
+    struct JumpIndex(u8);
+);
 
 
 impl<'r, 'a, A: 'a, T: BytecodeType<'a, Output=A>> BytecodeType<'a> for &'r [T] {
@@ -214,5 +248,48 @@ impl BytecodeType<'_> for u64 {
         for i in self.to_le_bytes().iter() {
             buffer.push(*i)
         }
+    }
+}
+
+
+impl BytecodeType<'_> for i64 {
+    type Output = Self;
+
+    fn parse(iter: &mut Reader<u8>, _: &Arena) -> Self::Output {
+        i64::from_le_bytes(iter.next_array().unwrap())
+    }
+
+    fn generate(&self, buffer: &mut Vec<u8>) {
+        for i in self.to_le_bytes().iter() {
+            buffer.push(*i)
+        }
+    }
+}
+
+
+impl BytecodeType<'_> for f64 {
+    type Output = Self;
+
+    fn parse(iter: &mut Reader<u8>, _: &Arena) -> Self::Output {
+        f64::from_le_bytes(iter.next_array().unwrap())
+    }
+
+    fn generate(&self, buffer: &mut Vec<u8>) {
+        for i in self.to_le_bytes().iter() {
+            buffer.push(*i)
+        }
+    }
+}
+
+
+impl BytecodeType<'_> for bool {
+    type Output = Self;
+
+    fn parse(iter: &mut Reader<u8>, _: &Arena) -> Self::Output {
+        iter.next().unwrap() == 1
+    }
+
+    fn generate(&self, buffer: &mut Vec<u8>) {
+        buffer.push(*self as u8)
     }
 }
