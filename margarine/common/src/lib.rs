@@ -90,3 +90,9 @@ pub fn find_duplicate<'a, T: PartialEq, A: Alloc>(
 pub fn warn(string: &str) {
     println!("{}: {string}", "warn".colour(Colour::rgb(207, 188, 148)).bold())
 }
+
+#[inline(always)]
+pub fn num_size(num: u32) -> u32 {
+    num.checked_ilog10().unwrap_or(0) + 1
+}
+

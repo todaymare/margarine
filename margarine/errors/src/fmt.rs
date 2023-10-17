@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use colourful::ColourBrush;
-use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData}};
+use common::{num_size, string_map::{StringMap, StringIndex}, source::{SourceRange, FileData}};
 use display_plus::DisplayPlus;
 
 pub struct ErrorFormatter<'me> {
@@ -242,8 +242,4 @@ fn characters_between(data: &str, start: usize, end: usize) -> usize {
     slice.len()
 }
 
-
-pub fn num_size(num: u32) -> u32 {
-    num.checked_ilog10().unwrap_or(0) + 1
-}
 

@@ -37,7 +37,6 @@ pub enum IR<'a> {
     NegI { dst: Reg, src: Reg },
     NegF { dst: Reg, src: Reg },
 
-
     BinaryOp { op: BinaryOperator, typ: Type, dst: Reg, lhs: Reg, rhs: Reg },
 }
 

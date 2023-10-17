@@ -10,7 +10,7 @@ lexer = { path = "./lexer" }
 parser = { path = "./parser" }
 semantic_analysis = { path = "./semantic_analysis" }
 codegen = { path = "./codegen" }
+wasm = { path = "./wasm" }
 common = { path = "./common" }
 errors = { path = "./errors" }
-runtime = { path = "./runtime" }
 

@@ -7,5 +7,4 @@ edition = "2021"
 
 [dependencies]
 semantic_analysis = { path = "../semantic_analysis" }
-runtime = { path = "../runtime" }
 errors = { path = "../errors" }
