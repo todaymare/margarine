@@ -6,28 +6,28 @@ use sti::{prelude::Arena, arena::ArenaStats, hash::{HashFn, fxhash::FxHasher32, 
 pub struct StringIndex(u32);
 
 
-pub struct StringMap {
-    arena: Arena,
-    map: sti::hash::HashMapF<HashStr<'static>, StringIndex, HashStrHashFn>,
+pub struct StringMap<'a> {
+    arena: &'a Arena,
+    map: sti::hash::HashMapF<HashStr<'a>, StringIndex, HashStrHashFn>,
     // map: FuckMap<&'static str, StringIndex>,
-    vec: Vec<&'static str>,
+    vec: Vec<&'a str>,
 }
 
 
-impl StringMap {
+impl<'a> StringMap<'a> {
     #[inline(always)]
-    pub fn new() -> Self {
-        Self::with_capacity(0)
+    pub fn new(arena: &'a Arena) -> Self {
+        Self::with_capacity(0, arena)
     }
 
     
     #[inline(always)]
-    pub fn with_capacity(cap: usize) -> Self {
+    pub fn with_capacity(cap: usize, arena: &'a Arena) -> Self {
         Self {
             map: HashMapF::fwith_cap(cap),
             // map: FuckMap::with_capacity(cap),
             vec: Vec::with_capacity(cap),
-            arena: Arena::new(),
+            arena,
         }
     }
 
@@ -40,23 +40,16 @@ impl StringMap {
 
             let alloc = self.arena.alloc_str(value);
 
-            //
-            // This is fine to do since arena is
-            // owned by StringMap and thus as long
-            // as the API doesn't give out `'static str`s
-            // around carelessly it should be fine
-            //
-            let string = unsafe { std::mem::transmute::<&str, &'static str>(alloc) };
-
             let index = StringIndex(self.vec.len() as u32);
-            self.vec.push(string);
-            (HashStr::with_hash(string, key.hash()), index)
+            self.vec.push(alloc);
+
+            (HashStr::with_hash(alloc, key.hash()), index)
         })
     }
 
 
     #[inline(always)]
-    pub fn get<'a>(&'a self, index: StringIndex) -> &'a str {
+    pub fn get(&self, index: StringIndex) -> &'a str {
         &self.vec[index.0 as usize]
     }
 
@@ -80,21 +73,21 @@ impl StringMap {
 }
 
 
-impl std::fmt::Debug for StringMap {
+impl std::fmt::Debug for StringMap<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_map().entries(self.vec.iter().enumerate()).finish()
     }
 }
 
 
-impl PartialEq for StringMap {
+impl PartialEq for StringMap<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.vec == other.vec
     }
 }
 
 
-impl Drop for StringMap {
+impl Drop for StringMap<'_> {
     fn drop(&mut self) {
         // self.map.clear();
     }

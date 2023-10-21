@@ -175,19 +175,19 @@ impl Default for ParserSettings<'_> {
 }
 
 
-struct Parser<'a, 'arena> {
+struct Parser<'a, 'ta, 'sa> {
     tokens: &'a [Token],
     index: usize,
 
-    arena: &'arena Arena,
-    symbol_map: &'a mut StringMap,
+    arena: &'ta Arena,
+    symbol_map: &'a mut StringMap<'sa>,
 
     errors: KVec<ParserError, Error>,
     is_in_panic: bool,
 }
 
 
-impl<'arena> Parser<'_, 'arena> {
+impl<'ta> Parser<'_, 'ta, '_> {
     #[inline(always)]
     fn advance(&mut self) {
         self.index += 1;
@@ -299,7 +299,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
     
 
-    fn expect_type(&mut self) -> Result<DataType<'arena>, ErrorId> {
+    fn expect_type(&mut self) -> Result<DataType<'ta>, ErrorId> {
         let start = self.current_range().start();
         let mut result = 
         if self.current_is(TokenKind::Bang) {
@@ -389,13 +389,13 @@ impl<'arena> Parser<'_, 'arena> {
 }
 
 
-impl<'arena> Parser<'_, 'arena> {
+impl<'ta> Parser<'_, 'ta, '_> {
     fn parse_till(
         &mut self, 
         terminator: TokenKind, 
         start: u32,
-        settings: &ParserSettings<'arena>
-    ) -> Result<Block<'arena>, ErrorId> {
+        settings: &ParserSettings<'ta>
+    ) -> Result<Block<'ta>, ErrorId> {
 
         let mut storage = Vec::with_cap_in(self.arena, 1);
 
@@ -465,16 +465,16 @@ impl<'arena> Parser<'_, 'arena> {
 
     fn parse_with_tag<'b>(
         &mut self, 
-        _settings: &'b ParserSettings<'arena>,
-        _func: fn(&mut Self, &'b ParserSettings<'arena>) -> ParseResult<'arena>,
-    ) -> ParseResult<'arena> {
+        _settings: &'b ParserSettings<'ta>,
+        _func: fn(&mut Self, &'b ParserSettings<'ta>) -> ParseResult<'ta>,
+    ) -> ParseResult<'ta> {
         todo!();
     }
 }
 
 
-impl<'arena> Parser<'_, 'arena> {
-    fn statement(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+impl<'ta> Parser<'_, 'ta, '_> {
+    fn statement(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         match self.current_kind() {
             | TokenKind::Keyword(Keyword::Struct)
             | TokenKind::Keyword(Keyword::Resource)
@@ -508,7 +508,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn struct_declaration(&mut self) -> ParseResult<'arena> {
+    fn struct_declaration(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         let kind = match self.current_kind() {
             TokenKind::Keyword(Keyword::Struct) => StructKind::Normal,
@@ -590,8 +590,8 @@ impl<'arena> Parser<'_, 'arena> {
     fn function_declaration(
         &mut self, 
         is_system: bool, 
-        settings: &ParserSettings<'arena>
-    ) -> ParseResult<'arena> {
+        settings: &ParserSettings<'ta>
+    ) -> ParseResult<'ta> {
 
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Fn))?;
@@ -719,7 +719,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn impl_declaration(&mut self) -> ParseResult<'arena> {
+    fn impl_declaration(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Impl))?;
         self.advance();
@@ -749,7 +749,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn mod_declaration(&mut self) -> ParseResult<'arena> {
+    fn mod_declaration(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Mod))?;
         self.advance();
@@ -771,7 +771,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn extern_declaration(&mut self) -> ParseResult<'arena> {
+    fn extern_declaration(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
         self.advance();
@@ -898,7 +898,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn enum_declaration(&mut self) -> ParseResult<'arena> {
+    fn enum_declaration(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Enum))?;
         self.advance();
@@ -979,7 +979,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn using_declaration(&mut self) -> ParseResult<'arena> {
+    fn using_declaration(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Using))?;
         self.advance();
@@ -994,7 +994,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn let_statement(&mut self) -> ParseResult<'arena> {
+    fn let_statement(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Let))?;
         self.advance();
@@ -1036,13 +1036,13 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn assignment(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
-        fn binary_op_assignment<'arena>(
-            parser: &mut Parser<'_, 'arena>, 
+    fn assignment(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
+        fn binary_op_assignment<'la>(
+            parser: &mut Parser<'_, 'la, '_>, 
             operator: BinaryOperator, 
-            lhs: Node<'arena>, 
-            settings: &ParserSettings<'arena>
-        ) -> ParseResult<'arena> {
+            lhs: Node<'la>, 
+            settings: &ParserSettings<'la>
+        ) -> ParseResult<'la> {
 
             parser.advance();
             parser.advance();
@@ -1097,13 +1097,13 @@ impl<'arena> Parser<'_, 'arena> {
 }
 
 
-impl<'arena> Parser<'_, 'arena> {
-    fn expression(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+impl<'ta> Parser<'_, 'ta, '_> {
+    fn expression(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.logical_or(settings)
     }
 
 
-    fn logical_or(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn logical_or(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         let lhs = self.logical_and(settings)?;
 
         if self.peek_kind() != Some(TokenKind::LogicalOr) {
@@ -1140,7 +1140,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn logical_and(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn logical_and(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         let lhs = self.unary_not(settings)?;
 
         if self.peek_kind() != Some(TokenKind::LogicalAnd) {
@@ -1174,7 +1174,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn unary_not(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn unary_not(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         if self.current_is(TokenKind::Bang) {
             let start = self.current_range().start();
             self.advance();
@@ -1192,7 +1192,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn comparisson(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn comparisson(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.binary_operation(
             Self::bitwise_or, 
             Self::expression, 
@@ -1206,7 +1206,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
     
 
-    fn bitwise_or(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn bitwise_or(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.binary_operation(
             Self::bitwise_xor, 
             Self::bitwise_xor, 
@@ -1217,7 +1217,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn bitwise_xor(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn bitwise_xor(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.binary_operation(
             Self::bitwise_and, 
             Self::bitwise_and, 
@@ -1228,7 +1228,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn bitwise_and(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn bitwise_and(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.binary_operation(
             Self::bitshifts, 
             Self::bitshifts, 
@@ -1239,7 +1239,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
     
 
-    fn bitshifts(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn bitshifts(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.binary_operation(
             Self::arithmetic, 
             Self::arithmetic, 
@@ -1250,7 +1250,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
     
 
-    fn arithmetic(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn arithmetic(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.binary_operation(
             Self::product, 
             Self::product, 
@@ -1260,7 +1260,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn product(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn product(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.binary_operation(
             Self::unary_neg, 
             Self::unary_neg, 
@@ -1270,7 +1270,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
     
 
-    fn unary_neg(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn unary_neg(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         if self.current_is(TokenKind::Minus) {
             let start = self.current_range().start();
             self.advance();
@@ -1288,7 +1288,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn accessors(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn accessors(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         let mut result = self.atom(settings)?;
 
         while 
@@ -1357,7 +1357,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
     
 
-    fn atom(&mut self, settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn atom(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         self.is_error_token()?;
 
         match self.current_kind() {
@@ -1525,7 +1525,7 @@ impl<'arena> Parser<'_, 'arena> {
 
 
 
-    fn match_expression(&mut self, _settings: &ParserSettings<'arena>) -> ParseResult<'arena> {
+    fn match_expression(&mut self, _settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Match))?;
         self.advance();
@@ -1618,7 +1618,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn block_expression(&mut self) -> ParseResult<'arena> {
+    fn block_expression(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
@@ -1632,7 +1632,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn if_expression(&mut self) -> ParseResult<'arena> {
+    fn if_expression(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::If))?;
         self.advance();
@@ -1671,7 +1671,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn function_call_expression(&mut self) -> ParseResult<'arena> {
+    fn function_call_expression(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         let name = self.expect_identifier()?;
         self.advance();
@@ -1692,8 +1692,8 @@ impl<'arena> Parser<'_, 'arena> {
 
     fn parse_function_call_args(
         &mut self, 
-        associated: Option<Node<'arena>>
-    ) -> Result<&'arena mut [(Node<'arena>, bool)], ErrorId> {
+        associated: Option<Node<'ta>>
+    ) -> Result<&'ta mut [(Node<'ta>, bool)], ErrorId> {
 
         let binding = ArenaPool::tls_get_temp();
         let mut args = Vec::new_in(&*binding);
@@ -1738,7 +1738,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn struct_creation_expression(&mut self) -> ParseResult<'arena> {
+    fn struct_creation_expression(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
         let data_type = self.expect_type()?;
         self.advance();
@@ -1796,7 +1796,7 @@ impl<'arena> Parser<'_, 'arena> {
     }
 
 
-    fn cast_expr(&mut self, lhs: Node<'arena>) -> ParseResult<'arena> {
+    fn cast_expr(&mut self, lhs: Node<'ta>) -> ParseResult<'ta> {
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();
 
@@ -1817,14 +1817,14 @@ impl<'arena> Parser<'_, 'arena> {
 }
 
 
-impl<'arena> Parser<'_, 'arena> {
+impl<'ta> Parser<'_, 'ta, '_> {
     fn binary_operation(
         &mut self,
-        lhs: fn(&mut Self, &ParserSettings<'arena>) -> ParseResult<'arena>,
-        rhs: fn(&mut Self, &ParserSettings<'arena>) -> ParseResult<'arena>,
+        lhs: fn(&mut Self, &ParserSettings<'ta>) -> ParseResult<'ta>,
+        rhs: fn(&mut Self, &ParserSettings<'ta>) -> ParseResult<'ta>,
         tokens: &[TokenKind],
-        settings: &ParserSettings<'arena>,
-    ) -> ParseResult<'arena> {
+        settings: &ParserSettings<'ta>,
+    ) -> ParseResult<'ta> {
         let mut lhs = lhs(self, settings)?;
 
         while self.peek_kind()

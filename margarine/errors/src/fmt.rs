@@ -6,7 +6,7 @@ use display_plus::DisplayPlus;
 
 pub struct ErrorFormatter<'me> {
     writer: &'me mut String,
-    string_map: &'me StringMap,
+    string_map: &'me StringMap<'me>,
     files: &'me [FileData],
 }
 

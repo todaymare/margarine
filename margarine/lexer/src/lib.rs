@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use ::errors::{LexerError};
+use ::errors::LexerError;
 use common::{string_map::{StringMap, StringIndex},
     source::{SourceRange, FileData}, hashables::HashableF64};
 use crate::errors::Error;
@@ -203,9 +203,9 @@ pub enum Keyword {
     Continue,
 }
 
-pub fn lex(
-    file: &FileData,
-    string_map: &mut StringMap
+pub fn lex<'a, 'arena>(
+    file: &'a FileData,
+    string_map: &'a mut StringMap<'arena>
 ) -> (TokenList, KVec<LexerError, Error>) {
     let mut lexer = Lexer {
         reader: Reader::new(file.read().as_bytes()),
@@ -231,21 +231,21 @@ pub fn lex(
 
 
 #[derive(Debug)]
-struct Lexer<'a> {
+struct Lexer<'a, 's> {
     reader: Reader<'a, u8>,
-    string_map: &'a mut StringMap,
+    string_map: &'a mut StringMap<'s>,
     errors: KVec<LexerError, Error>,
 }
 
 
-impl Lexer<'_> {
+impl Lexer<'_, '_> {
     fn skip_whitespace(&mut self) {
         self.reader.consume_while(|x| x.is_ascii_whitespace());
     }
 }
 
 
-impl Lexer<'_> {
+impl Lexer<'_, '_> {
     fn next_token(&mut self) -> Token {
         self.skip_whitespace();
         while self.reader.starts_with(b"//") {

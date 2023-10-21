@@ -296,7 +296,7 @@ impl<'an> InferState<'an> {
 }
 
 
-impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
+impl<'me, 'at, 'af, 'an, 'ass> State<'me, 'at, 'af, 'an, 'ass> {
     pub fn update_data_type(
         &mut self, 
         dt: &DataType,
@@ -493,7 +493,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 }
 
 
-impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
+impl<'me, 'at, 'af, 'an, 'ass> State<'me, 'at, 'af, 'an, 'ass> {
    pub fn collect_names(
         &mut self, 
         anal: &mut LocalAnalyser,

@@ -1,15 +1,16 @@
-
 #![allow(unused)]
 use std::fmt::Debug;
 
 use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, Slice, hashables::HashableF64};
+use sti::prelude::Arena;
 
 use crate::{lex, Token, TokenKind, Literal, errors::Error};
 
 
 #[test]
 fn empty() {
-    let mut symbol_table = StringMap::new();
+    let arena = Arena::new();
+    let mut symbol_table = StringMap::new(&arena);
     let file_name = symbol_table.insert("test");
     let file_data = FileData::new(String::new(), file_name, Extension::None);
 
@@ -27,7 +28,8 @@ fn empty() {
 #[test]
 fn tokens() {
     {
-        let mut symbol_table = StringMap::new();
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
         let data = "() <> {} [] % / + - * ^ : :: , . ! = _ \
                     <= >= == != || && += -= *= /= @ ?";
@@ -83,7 +85,8 @@ fn tokens() {
 
     // Invalid character
     {
-        let mut symbol_table = StringMap::new();
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
         let data = ";";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
@@ -98,7 +101,8 @@ fn tokens() {
 fn numbers() {
     // valid integer
     {
-        let mut symbol_table = StringMap::new();
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
         let data = "123456789";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
@@ -120,7 +124,8 @@ fn numbers() {
 
     // valid float
     {
-        let mut symbol_table = StringMap::new();
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
         let data = "420.69";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
@@ -142,7 +147,8 @@ fn numbers() {
 
     // too many dots
     {
-        let mut symbol_table = StringMap::new();
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
         let data = "420.69.50";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
@@ -155,7 +161,8 @@ fn numbers() {
 
 #[test]
 fn identifiers() {
-    let mut symbol_table = StringMap::new();
+    let arena = Arena::new();
+    let mut symbol_table = StringMap::new(&arena);
     let file = symbol_table.insert("test");
     let data = "hello _there";
     let file_data = FileData::new(data.to_string(), file, Extension::None);
@@ -183,7 +190,8 @@ fn identifiers() {
 fn string() {
     // valid string
     {
-        let mut symbol_table = StringMap::new();
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
         let data = "\"hello there\"";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
@@ -205,7 +213,8 @@ fn string() {
 
     // unterminated string
     {
-        let mut symbol_table = StringMap::new();
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
         let data = "\"hello there";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
@@ -218,7 +227,8 @@ fn string() {
 
 #[test]
 fn comments() {
-    let mut symbol_table = StringMap::new();
+    let arena = Arena::new();
+    let mut symbol_table = StringMap::new(&arena);
     let file = symbol_table.insert("test");
     let data = "// hello there!\n";
     let file_data = FileData::new(data.to_string(), file, Extension::None);

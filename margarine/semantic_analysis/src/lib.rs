@@ -18,14 +18,14 @@ pub mod sema;
 pub mod ir;
 
 
-pub fn semantic_analysis<'me, 'at, 'af, 'an>(
+pub fn semantic_analysis<'me, 'at, 'af, 'an, 'ass>(
     arena_type: &'at Arena,
     arena_func: &'af Arena,
     arena_nasp: &'an Arena,
-    string_map: &'me mut StringMap,
+    string_map: &'me mut StringMap<'ass>,
 
     block: &[Node],
-) -> State<'me, 'at, 'af, 'an> {
+) -> State<'me, 'at, 'af, 'an, 'ass> {
     let mut state = State::new(
         arena_type,
         arena_func,
@@ -165,11 +165,11 @@ impl Type {
 
 
 #[derive(Debug)]
-pub struct State<'me, 'at, 'af, 'an> {
+pub struct State<'me, 'at, 'af, 'an, 'ass> {
     arena_type: &'at Arena,
     arena_func: &'af Arena,
 
-    pub string_map: &'me mut StringMap,
+    pub string_map: &'me mut StringMap<'ass>,
     
     pub types: KVec<TypeId, TypeSymbol<'at>>,
     pub funcs: KVec<FuncId, Function<'af>>,
@@ -353,13 +353,13 @@ impl AnalysisResult {
 }
 
 
-impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
+impl<'me, 'at, 'af, 'an, 'ass> State<'me, 'at, 'af, 'an, 'ass> {
     pub fn new(
         arena_type: &'at Arena,
         arena_func: &'af Arena,
         arena_nasp: &'an Arena,
 
-        string_map: &'me mut StringMap,
+        string_map: &'me mut StringMap<'ass>,
     ) -> Self {
         let types = {
             let mut kvec = KVec::with_cap(256);
@@ -514,7 +514,7 @@ impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
 }
 
 
-impl<'me, 'at, 'af, 'an> State<'me, 'at, 'af, 'an> {
+impl<'me, 'at, 'af, 'an, 'ass> State<'me, 'at, 'af, 'an, 'ass> {
     pub fn node(
         &mut self,
         anal: &mut LocalAnalyser,
