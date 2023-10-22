@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{fmt::Write, ops::{DerefMut, Deref}};
 
 use common::string_map::{StringIndex, StringMap};
 use sti::{write, vec::Vec, string::String, arena::Arena};
@@ -9,6 +9,15 @@ pub enum WasmType {
     I64,
     F32,
     F64,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum WasmConstant {
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
 }
 
 
@@ -29,13 +38,20 @@ impl WasmType {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct FunctionId(u32);
 
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct LocalId(u32);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct GlobalId(u32);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct BlockId(u32);
 
 
 pub struct WasmModuleBuilder<'a> {
     functions: std::vec::Vec<WasmFunctionBuilder<'a>>,
+    globals: Vec<WasmConstant>,
+    memory: usize,
 
     function_id_counter: u32,
 }
@@ -45,7 +61,9 @@ impl<'a> WasmModuleBuilder<'a> {
     pub fn new() -> Self { 
         Self {
             functions: std::vec::Vec::new(),
-            function_id_counter: 0
+            function_id_counter: 0,
+            globals: Vec::new(),
+            memory: 0,
         }
     }
 
@@ -61,11 +79,35 @@ impl<'a> WasmModuleBuilder<'a> {
     }
 
 
+    pub fn global(&mut self, constant: WasmConstant) -> GlobalId {
+        self.globals.push(constant);
+        GlobalId(self.globals.len() as u32 - 1)
+    }
+
+
+    pub fn memory(&mut self, init: usize) {
+        self.memory = init;
+    }
+
+
     pub fn build(mut self, string_map: &mut StringMap) -> Vec<u8> {
         self.functions.sort_unstable_by_key(|x| x.function_id.0);
 
         let mut buffer = String::new();
         write!(buffer, "(module ");
+        
+        write!(buffer, "(memory {})", self.memory);
+
+        for g in self.globals.iter() {
+            write!(buffer, "(global");
+            match g {
+                WasmConstant::I32(v) => write!(buffer, "i32 (i32.const {v})"),
+                WasmConstant::I64(v) => write!(buffer, "i64 (i64.const {v})"),
+                WasmConstant::F32(v) => write!(buffer, "f32 (f32.const {v})"),
+                WasmConstant::F64(v) => write!(buffer, "f64 (f64.const {v})"),
+            }
+        }
+
         for f in self.functions.into_iter() {
             f.build(string_map, &mut buffer)
         }
@@ -96,7 +138,7 @@ impl<'a> WasmFunctionBuilder<'a> {
             locals: Vec::new_in(arena), 
             params: Vec::new_in(arena), 
             function_id: id,
-        } 
+        }
     }
 
     #[inline(always)]
@@ -129,27 +171,56 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 impl WasmFunctionBuilder<'_> {
     #[inline(always)]
-    pub fn local_get(&mut self, index: LocalId) {
-        write!(self.body, "local.get {} ", index.0);
+    pub fn ite(
+        &mut self,
+        then_body: fn(&mut WasmFunctionBuilder),
+        else_body: fn(&mut WasmFunctionBuilder),
+    ) {
+        write!(self.body, "(if (then ");
+        then_body(self);
+        write!(self.body, ")(else ");
+        else_body(self);
+        write!(self.body, "))");
     }
+}
 
+
+impl WasmFunctionBuilder<'_> {
+    #[inline(always)]
+    pub fn local_get(&mut self, index: LocalId) { write!(self.body, "local.get {} ", index.0); }
     
     #[inline(always)]
-    pub fn local_set(&mut self, index: LocalId) {
-        write!(self.body, "local.set {} ", index.0);
-    }
-
+    pub fn local_set(&mut self, index: LocalId) { write!(self.body, "local.set {} ", index.0); }
+    
+    #[inline(always)]
+    pub fn local_tee(&mut self, index: LocalId) { write!(self.body, "local.tee {} ", index.0); }
+    
+    #[inline(always)]
+    pub fn memory_size(&mut self) { write!(self.body, "memory.size "); }
 
     #[inline(always)]
-    pub fn call(&mut self, func: FunctionId) {
-        write!(self.body, "call {} ", func.0);
-    }
-
+    pub fn read_i32(&mut self) { write!(self.body, "i32.load "); }
 
     #[inline(always)]
-    pub fn pop(&mut self) {
-        write!(self.body, "drop ");
-    }
+    pub fn read_f32(&mut self) { write!(self.body, "f32.load "); }
+
+    #[inline(always)]
+    pub fn read_i64(&mut self) { write!(self.body, "i64.load "); }
+
+    #[inline(always)]
+    pub fn read_f64(&mut self) { write!(self.body, "f64.load "); }
+
+    #[inline(always)]
+    pub fn write_i32(&mut self) { write!(self.body, "i32.store "); }
+
+    #[inline(always)]
+    pub fn write_f32(&mut self) { write!(self.body, "f32.store "); }
+
+    #[inline(always)]
+    pub fn write_i64(&mut self) { write!(self.body, "i64.store "); }
+
+    #[inline(always)]
+    pub fn write_f64(&mut self) { write!(self.body, "f64.store "); }
 }
 
 
@@ -183,9 +254,26 @@ impl WasmFunctionBuilder<'_> {
 }
 
 
+impl<'a> WasmFunctionBuilder<'a> {
+    #[inline(always)]
+    pub fn global_get(&mut self, index: GlobalId) { write!(self.body, "global.get {}", index.0); }
+
+    #[inline(always)]
+    pub fn global_set(&mut self, index: GlobalId) { write!(self.body, "global.set {}", index.0); }
+
+    #[inline(always)]
+    pub fn call(&mut self, func: FunctionId) {
+        write!(self.body, "call {} ", func.0);
+    }
+
+    #[inline(always)]
+    pub fn pop(&mut self) { write!(self.body, "drop "); }
+}
+
+
 impl WasmFunctionBuilder<'_> {
     #[inline(always)]
-    pub fn i32_const(&mut self, num: i32) { write!(self.body, "i32.const {num}"); }
+    pub fn i32_const(&mut self, num: i32) { write!(self.body, "i32.const {num} "); }
 
     #[inline(always)]
     pub fn i32_eq(&mut self) { write!(self.body, "i32.eq "); }
@@ -306,7 +394,7 @@ impl WasmFunctionBuilder<'_> {
 
 impl WasmFunctionBuilder<'_> {
     #[inline(always)]
-    pub fn i64_const(&mut self, num: i64) { write!(self.body, "i32.const {num}"); }
+    pub fn i64_const(&mut self, num: i64) { write!(self.body, "i64.const {num} "); }
 
     #[inline(always)]
     pub fn i64_eq(&mut self) { write!(self.body, "i64.eq "); }
@@ -424,6 +512,9 @@ impl WasmFunctionBuilder<'_> {
 
 impl WasmFunctionBuilder<'_> {
     #[inline(always)]
+    pub fn f32_const(&mut self, val: f32) { write!(self.body, "f32.const {val}"); }
+
+    #[inline(always)]
     pub fn f32_eq(&mut self) { write!(self.body, "f32.eq "); }
 
     #[inline(always)]
@@ -510,6 +601,9 @@ impl WasmFunctionBuilder<'_> {
 
 
 impl WasmFunctionBuilder<'_> {
+    #[inline(always)]
+    pub fn f64_const(&mut self, val: f32) { write!(self.body, "f64.const {val}"); }
+
     #[inline(always)]
     pub fn f64_eq(&mut self) { write!(self.body, "f64.eq "); }
 
