@@ -45,7 +45,10 @@ pub struct LocalId(u32);
 pub struct GlobalId(u32);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct BlockId(u32);
+pub struct BlockId(usize);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct LoopId(usize);
 
 
 pub struct WasmModuleBuilder<'a> {
@@ -124,6 +127,9 @@ pub struct WasmFunctionBuilder<'a> {
     ret: Option<WasmType>,
     body: String<&'a Arena>,
 
+    loop_nest: usize,
+    block_nest: usize,
+
     locals: Vec<WasmType, &'a Arena>,
     params: Vec<WasmType, &'a Arena>,
 }
@@ -138,6 +144,8 @@ impl<'a> WasmFunctionBuilder<'a> {
             locals: Vec::new_in(arena), 
             params: Vec::new_in(arena), 
             function_id: id,
+            loop_nest: 0,
+            block_nest: 0,
         }
     }
 
@@ -157,7 +165,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     #[inline(always)]
-    pub fn ret(&mut self, ty: WasmType) {
+    pub fn return_value(&mut self, ty: WasmType) {
         self.ret.replace(ty);
     }
 
@@ -170,18 +178,32 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
 impl WasmFunctionBuilder<'_> {
-    #[inline(always)]
-    pub fn ite(
-        &mut self,
-        then_body: fn(&mut WasmFunctionBuilder),
-        else_body: fn(&mut WasmFunctionBuilder),
-    ) {
-        write!(self.body, "(if (then ");
-        then_body(self);
-        write!(self.body, ")(else ");
-        else_body(self);
-        write!(self.body, "))");
-    }
+    pub fn build(self, string_map: &StringMap, buffer: &mut String) {
+        write!(buffer, "(func ");
+
+        if let Some(export) = self.export {
+            write!(buffer, "(export \"{}\") ", string_map.get(export));
+        }
+
+        for p in &self.params {
+            write!(buffer, "(param {}) ", p.name());
+        }
+
+        for l in &self.locals {
+            write!(buffer, "(local {}) ", l.name());
+        }
+
+        if let Some(ret) = self.ret {
+            write!(buffer, "(result {})", ret.name());
+        }
+
+        buffer.reserve_exact(self.body.len() + 1);
+        for i in self.body.trim_end().chars() {
+            buffer.push_char(i)
+        }
+
+        buffer.push_char(')');
+   }
 }
 
 
@@ -224,36 +246,6 @@ impl WasmFunctionBuilder<'_> {
 }
 
 
-impl WasmFunctionBuilder<'_> {
-    pub fn build(self, string_map: &StringMap, buffer: &mut String) {
-        write!(buffer, "(func ");
-
-        if let Some(export) = self.export {
-            write!(buffer, "(export \"{}\") ", string_map.get(export));
-        }
-
-        for p in &self.params {
-            write!(buffer, "(param {}) ", p.name());
-        }
-
-        for l in &self.locals {
-            write!(buffer, "(local {}) ", l.name());
-        }
-
-        if let Some(ret) = self.ret {
-            write!(buffer, "(result {})", ret.name());
-        }
-
-        buffer.reserve_exact(self.body.len() + 1);
-        for i in self.body.trim_end().chars() {
-            buffer.push_char(i)
-        }
-
-        buffer.push_char(')');
-   }
-}
-
-
 impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn global_get(&mut self, index: GlobalId) { write!(self.body, "global.get {}", index.0); }
@@ -268,7 +260,63 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     #[inline(always)]
     pub fn pop(&mut self) { write!(self.body, "drop "); }
+
+        
+    #[inline(always)]
+    pub fn ite(
+        &mut self,
+        then_body: impl Fn(&mut WasmFunctionBuilder),
+        else_body: impl Fn(&mut WasmFunctionBuilder),
+    ) {
+        write!(self.body, "(if (then ");
+        then_body(self);
+        write!(self.body, ")(else ");
+        else_body(self);
+        write!(self.body, "))");
+    }
+
+
+    #[inline(always)]
+    pub fn do_loop(
+        &mut self,
+        body: impl Fn(&mut Self, LoopId),
+    ) {
+        write!(self.body, "(loop $l{} ", self.loop_nest);
+        self.loop_nest += 1;
+
+        body(self, LoopId(self.loop_nest-1));
+
+        self.loop_nest += 1;
+        write!(self.body, ")");
+    }
+
+
+    #[inline(always)]
+    pub fn block(
+        &mut self,
+        body: impl Fn(&mut Self, BlockId),
+    ) { 
+        write!(self.body, "(block $b{} ", self.block_nest);
+        self.block_nest += 1;
+
+        body(self, BlockId(self.block_nest-1));
+
+        self.block_nest -= 1;
+    }
+
+
+    #[inline(always)]
+    pub fn break_block(&mut self, block: BlockId) { write!(self.body, "br $b{} ", block.0); }
+
+
+    #[inline(always)]
+    pub fn continue_loop(&mut self, loop_id: LoopId) { write!(self.body, "br $l{} ", loop_id.0); }
+
+
+    #[inline(always)]
+    pub fn ret(&mut self) { write!(self.body, "return "); }
 }
+
 
 
 impl WasmFunctionBuilder<'_> {
