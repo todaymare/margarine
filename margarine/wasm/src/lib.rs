@@ -261,6 +261,9 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn pop(&mut self) { write!(self.body, "drop "); }
 
+    #[inline(always)]
+    pub fn unreachable(&mut self) { write!(self.body, "unreachable "); }
+
         
     #[inline(always)]
     pub fn ite(
