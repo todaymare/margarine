@@ -37,7 +37,7 @@ impl Type {
 
 pub struct TypeSymbol<'a> {
     display_name: StringIndex, 
-    fields: &'a mut [Field],
+    fields: &'a [Field],
 
     align_and_size: Cell<Option<(usize, usize)>>,
 }
@@ -85,14 +85,13 @@ impl<'a> TypeMap<'a> {
 
     pub fn initialise(&mut self, id: TypeId, display_name: StringIndex, fields: &'a mut [Field]) {
         let val = self.map.get_mut(id).unwrap();
-        let Some(val) = val
-        else { panic!("value is already initialised"); };
+        assert!(val.is_none(), "value is already initialised");
 
-        *val = TypeSymbol {
+        val.replace(TypeSymbol {
             display_name,
             fields,
             align_and_size: None.into(),
-        }
+        });
     }
 
 
@@ -176,13 +175,12 @@ mod tests {
         let test = string_map.insert("test");
         let mut binding = [Field::new(test, Type::Int), Field::new(test, Type::Float)];
         let mut type_map = TypeMap::new();
-        let id = type_map.insert(test, &mut binding);
-        let ty = type_map.get(id).unwrap();
+        let id = type_map.uninit();
+        type_map.initialise(id, test, &mut binding);
 
         #[repr(C)]
         struct TestAgainst { _v1: i64, _v2: f64 }
 
-        assert_eq!(ty.align, core::mem::align_of::<TestAgainst>());
-        assert_eq!(ty.size , core::mem::size_of::<TestAgainst>());
+        assert_eq!(type_map.calc_size(id), (core::mem::align_of::<TestAgainst>(), core::mem::size_of::<TestAgainst>()));
     }
 }
