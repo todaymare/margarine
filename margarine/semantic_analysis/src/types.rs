@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use common::string_map::{StringMap, StringIndex};
 use sti::{define_key, hash::HashMap, keyed::KVec, traits::MapIt};
 
@@ -26,7 +28,7 @@ impl Type {
             Type::Float => "float",
             Type::Any => "any",
             Type::Unit => "unit",
-            Type::Custom(t) => string_map.get(types.map.get(t).unwrap().display_name),
+            Type::Custom(t) => string_map.get(types.get(t).display_name),
         }
     }
 
@@ -35,15 +37,14 @@ impl Type {
 
 pub struct TypeSymbol<'a> {
     display_name: StringIndex, 
-    fields: &'a [Field],
+    fields: &'a mut [Field],
 
-    align: usize,
-    size : usize,
+    align_and_size: Cell<Option<(usize, usize)>>,
 }
 
 
 pub struct TypeMap<'a> {
-    map: KVec<TypeId, TypeSymbol<'a>>,
+    map: KVec<TypeId, Option<TypeSymbol<'a>>>,
 }
 
 
@@ -53,6 +54,7 @@ impl<'a> TypeMap<'a> {
     }
 
 
+    /*
     pub fn insert(&mut self, display_name: StringIndex, fields: &'a mut [Field]) -> TypeId {
         let align = fields.map_it(|f| self.align(f.ty)).max().unwrap_or(1);
 
@@ -72,34 +74,79 @@ impl<'a> TypeMap<'a> {
             size,
         })
     }
+    */
+
+
+    #[inline(always)]
+    pub fn uninit(&mut self) -> TypeId {
+        self.map.push(None)
+    }
+
+
+    pub fn initialise(&mut self, id: TypeId, display_name: StringIndex, fields: &'a mut [Field]) {
+        let val = self.map.get_mut(id).unwrap();
+        let Some(val) = val
+        else { panic!("value is already initialised"); };
+
+        *val = TypeSymbol {
+            display_name,
+            fields,
+            align_and_size: None.into(),
+        }
+    }
+
+
+    pub fn calc_size(&self, id: TypeId) -> (usize, usize) {
+        let val = self.get(id);
+        let fields = &*val.fields;
+
+        let align = fields.map_it(|f| self.align(f.ty)).max().unwrap_or(1);
+
+        let mut cursor = 0;
+        for f in fields.iter() {
+            cursor = sti::num::ceil_to_multiple_pow2(cursor, self.align(f.ty));
+            f.offset.replace(cursor);
+            cursor += self.size(f.ty);
+        }
+
+        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+
+        let val = self.map.get(id).unwrap().as_ref().unwrap();
+        val.align_and_size.replace(Some((align, size)).into());
+        (align, size)
+    }
+
+
+    pub fn align_and_size(&self, ty: Type) -> (usize, usize) {
+        match ty {
+            Type::Int => (core::mem::align_of::<i64>(), core::mem::size_of::<i64>()),
+            Type::UInt => (core::mem::align_of::<u64>(), core::mem::size_of::<u64>()),
+            Type::Float => (core::mem::align_of::<f64>(), core::mem::size_of::<f64>()),
+            Type::Any => todo!(),
+            Type::Unit => (1, 1),
+            Type::Custom(v) => {
+                let val = self.get(v).align_and_size.get();
+                match val {
+                    Some(v) => v,
+                    None => self.calc_size(v),
+                }
+            },
+        }
+    }
 
 
     pub fn align(&self, ty: Type) -> usize {
-        match ty {
-            Type::Int => core::mem::align_of::<i64>(),
-            Type::UInt => core::mem::align_of::<u64>(),
-            Type::Float => core::mem::align_of::<f64>(),
-            Type::Any => todo!(),
-            Type::Unit => 1,
-            Type::Custom(v) => self.get(v).unwrap().align,
-        }
+        self.align_and_size(ty).0
     }
 
 
     pub fn size(&self, ty: Type) -> usize {
-        match ty {
-            Type::Int => core::mem::size_of::<i64>(),
-            Type::UInt => core::mem::size_of::<u64>(),
-            Type::Float => core::mem::size_of::<f64>(),
-            Type::Any => todo!(),
-            Type::Unit => 1,
-            Type::Custom(v) => self.get(v).unwrap().size,
-        }
+        self.align_and_size(ty).1
     }
 
 
-    pub fn get(&self, val: TypeId) -> Option<&TypeSymbol> {
-        self.map.get(val)
+    pub fn get(&self, val: TypeId) -> &TypeSymbol {
+        self.map.get(val).map(|v| v.as_ref().expect("value is not initialised")).unwrap()
     }
 }
 
@@ -107,11 +154,11 @@ impl<'a> TypeMap<'a> {
 pub struct Field {
     name: StringIndex,
     ty: Type,
-    offset: usize,
+    offset: Cell<usize>,
 }
 
 impl Field {
-    pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty, offset: 0 } }
+    pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty, offset: 0.into() } }
 }
 
 
