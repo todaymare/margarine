@@ -1,5 +1,4 @@
-fn hi() {
-	(5).cast(float)!
-
-	return ()
+struct Ello {
+    val: int,
 }
+

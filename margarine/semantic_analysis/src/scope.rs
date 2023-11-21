@@ -14,6 +14,14 @@ pub struct Scope {
 
 impl Scope {
     #[inline(always)]
+    pub fn new(kind: ScopeKind, parent: PackedOption<ScopeId>) -> Self {
+        Self {
+            parent,
+            kind,
+        }
+    }
+
+    #[inline(always)]
     pub fn parent(self) -> PackedOption<ScopeId> { self.parent }
 
     #[inline(always)]
@@ -22,14 +30,14 @@ impl Scope {
     pub fn get_type(
         self,
         name: StringIndex,
-        scopes: ScopeMap,
-        namespaces: NamespaceMap,
+        scopes: &ScopeMap,
+        namespaces: &NamespaceMap,
     ) -> Option<TypeId> {
         let mut current = self;
         loop {
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
                 let ns = namespaces.get(ns);
-                if let Some(val) = ns.find_type(name) { return Some(val) }
+                if let Some(val) = ns.get_type(name) { return Some(val) }
             }
 
             let Some(parent) = current.parent().to_option()
@@ -49,7 +57,7 @@ pub enum ScopeKind {
     ImplicitNamespace(NamespaceId),
     FunctionDefinition(FunctionDefinitionScope),
     Variable(VariableScope),
-    None,
+    Root,
 }
 
 

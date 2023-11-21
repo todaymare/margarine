@@ -5,7 +5,7 @@ use errors::ErrorType;
 use parser::nodes::{BinaryOperator, UnaryOperator};
 use sti::{keyed::{KVec}, vec::Vec};
 
-use crate::{Type, TypeId, TypeSymbol};
+use crate::types::{Type, TypeId, TypeSymbol, TypeMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {
@@ -188,8 +188,8 @@ pub enum Error {
 }
 
 
-impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
-    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, types: &KVec<TypeId, TypeSymbol<'a>>) {
+impl<'a> ErrorType<TypeMap<'_>> for Error {
+    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, types: &TypeMap) {
         match self {
             Error::NameIsAlreadyDefined { source, name } => {
                 let name = fmt.string(*name).to_string();
@@ -213,8 +213,8 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::InvalidType { source, found, expected } => {
                 let msg = format!("expected a value of type '{}' but found '{}'",
-                    expected.to_string(types, fmt.string_map()),
-                    found.to_string(types, fmt.string_map()),
+                    expected.display(fmt.string_map(), types),
+                    found.display(fmt.string_map(), types),
                 );
                 
                 fmt.error("invalid type")
@@ -227,11 +227,11 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::FunctionBodyAndReturnMismatch { header, item, return_type, body_type } => {
                 let msg = format!("the function returns '{}'",
-                    return_type.to_string(types, fmt.string_map()),
+                    return_type.display(fmt.string_map(), types),
                 );
                 
                 let msg2 = format!("but the body returns '{}'",
-                    body_type.to_string(types, fmt.string_map()),
+                    body_type.display(fmt.string_map(), types),
                 );
 
                 let mut err = fmt.error("function's return type and the body mismatch");
@@ -269,8 +269,8 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::VariableValueAndHintDiffer { value_type, hint_type, source } => {
                 let msg = format!("the value is '{}' but the hint is '{}'",
-                    value_type.to_string(types, fmt.string_map()),
-                    hint_type.to_string(types, fmt.string_map()),
+                    value_type.display(fmt.string_map(), types),
+                    hint_type.display(fmt.string_map(), types),
                 );
                 
                 fmt
@@ -289,8 +289,8 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             Error::InvalidBinaryOp { operator, lhs, rhs, source } => {
                 let msg = format!("can't apply the binary op '{}' between the types '{}' and '{}'",
                     operator,
-                    lhs.to_string(types, fmt.string_map()),
-                    rhs.to_string(types, fmt.string_map()),
+                    lhs.display(fmt.string_map(), types),
+                    rhs.display(fmt.string_map(), types),
                 );
 
                 fmt.error("invalid binary operation")
@@ -301,7 +301,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             Error::InvalidUnaryOp { operator, rhs, source } => {                
                 let msg = format!("can't apply the unary op '{}' on type '{}'",
                     operator,
-                    rhs.to_string(types, fmt.string_map()),
+                    rhs.display(fmt.string_map(), types),
                 );
 
                 fmt.error("invalid binary operation")
@@ -311,10 +311,10 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::IfBodyAndElseMismatch { body, else_block } => {
                 let msg = format!("the main branch returns '{}'", 
-                    body.1.to_string(types, fmt.string_map()));
+                    body.1.display(fmt.string_map(), types));
                 
                 let msg2 = format!("but the else branch returns '{}'", 
-                    else_block.1.to_string(types, fmt.string_map()));
+                    else_block.1.display(fmt.string_map(), types));
 
                 let mut err = fmt.error("if branches differ in types");
                 err.highlight_with_note(body.0, &msg);
@@ -324,7 +324,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::MatchValueIsntEnum { source, typ } => {
                 let msg = format!("is of type '{}' which is not an enum", 
-                    typ.to_string(types, fmt.string_map()));
+                    typ.display(fmt.string_map(), types));
 
                 fmt.error("match value isn't an enum")
                     .highlight_with_note(*source, &msg);
@@ -332,7 +332,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::StructCreationOnNonStruct { source, typ } => {
                 let msg = format!("is of type '{}'", 
-                    typ.to_string(types, fmt.string_map()));
+                    typ.display(fmt.string_map(), types));
 
                 fmt.error("struct creation on a type which is not an enum")
                     .highlight_with_note(*source, &msg);
@@ -350,7 +350,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             Error::BindedFunctionNotFound { name, bind, source } => {                
                 let msg = format!("there's no function named '{}' in the namespace of '{}'",
                     fmt.string(*name),
-                    bind.to_string(types, fmt.string_map())
+                    bind.display(fmt.string_map(), types)
                 );
 
                 fmt.error("associated function not found")
@@ -379,7 +379,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::FieldAccessOnNonEnumOrStruct { source, typ } => {                
                 let msg = format!("..is of type '{}' which is neither a struct or an enum",
-                    typ.to_string(types, fmt.string_map()),
+                    typ.display(fmt.string_map(), types),
                 );
 
                 fmt.error("can't access fields on this type")
@@ -389,7 +389,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::FieldDoesntExist { source, field, typ } => {                
                 let msg = format!("the type '{}' doesn't have a field named '{}'",
-                    typ.to_string(types, fmt.string_map()),
+                    typ.display(fmt.string_map(), types),
                     fmt.string(*field),
                 );
 
@@ -403,11 +403,11 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
                 branch_source, branch_typ 
             } => {
                 let msg1 = format!("..returns '{}'",
-                    initial_typ.to_string(types, fmt.string_map()),
+                    initial_typ.display(fmt.string_map(), types),
                 );
 
                 let msg2 = format!("..but this returns '{}'",
-                    branch_typ.to_string(types, fmt.string_map()),
+                    branch_typ.display(fmt.string_map(), types),
                 );
 
                 let mut err = fmt.error("match branches differ in return types");
@@ -421,7 +421,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             Error::InvalidMatch { name, range, value } => {
                 let msg = format!("there's no variant named '{}' in '{}'",
                     fmt.string(*name),
-                    value.to_string(types, fmt.string_map()),
+                    value.display(fmt.string_map(), types),
                 );
 
                 fmt.error("invalid match variant")
@@ -479,8 +479,8 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             Error::ValueUpdateTypeMismatch { lhs, rhs, source } => {
                 let msg = format!("lhs is '{}' while the rhs is '{}'",
-                    lhs.to_string(types, fmt.string_map()),
-                    rhs.to_string(types, fmt.string_map()),
+                    lhs.display(fmt.string_map(), types),
+                    rhs.display(fmt.string_map(), types),
                 );
 
                 fmt.error("can't update a value with a different type")
@@ -501,7 +501,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             
             Error::CantUnwrapOnGivenType(s, t) => {
-                let typ_name = t.to_string(types, fmt.string_map());
+                let typ_name = t.display(fmt.string_map(), types);
                 let msg = format!("..is of type '{typ_name}'");
                 
                 fmt.error("can't unwrap on given type")
@@ -510,7 +510,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             
             
             Error::CantTryOnGivenType(s, t) => {
-                let typ_name = t.to_string(types, fmt.string_map());
+                let typ_name = t.display(fmt.string_map(), types);
                 let msg = format!("..is of type '{typ_name}'");
                 
                 fmt.error("can't try on given type")
@@ -521,7 +521,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             Error::FunctionDoesntReturnAnOption { source, func_typ } => {
                 let msg = format!(
                     "..because of this expected the function to return an option but the function returns '{}'",
-                    func_typ.to_string(types, fmt.string_map())
+                    func_typ.display(fmt.string_map(), types)
                 );
 
                 fmt.error("function doesn't return an option")
@@ -532,7 +532,7 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             Error::FunctionDoesntReturnAResult { source, func_typ } => {
                 let msg = format!(
                     "..because of this expected the function to return a result but the function returns '{}'",
-                    func_typ.to_string(types, fmt.string_map())
+                    func_typ.display(fmt.string_map(), types)
                 );
 
                 fmt.error("function doesn't return a result ")
@@ -543,12 +543,12 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             Error::FunctionReturnsAResultButTheErrIsntTheSame { source, func_err_typ, err_typ, func_source } => {
                 let msg = format!(
                     "the error type is '{}'",
-                    err_typ.to_string(types, fmt.string_map())
+                    err_typ.display(fmt.string_map(), types)
                 );
                 
                 let msg2 = format!(
                     "..but the error type of the function is '{}'",
-                    func_err_typ.to_string(types, fmt.string_map())
+                    func_err_typ.display(fmt.string_map(), types)
                 );
 
                 let mut err = fmt.error("result error types differ");
@@ -561,12 +561,12 @@ impl<'a> ErrorType<KVec<TypeId, TypeSymbol<'a>>> for Error {
             Error::ReturnAndFuncTypDiffer { source, func_source, typ, func_typ } => {
                 let msg = format!(
                     "..is of type '{}'",
-                    typ.to_string(types, fmt.string_map())
+                    typ.display(fmt.string_map(), types)
                 );
                 
                 let msg2 = format!(
                     "..but the function returns '{}'",
-                    func_typ.to_string(types, fmt.string_map())
+                    func_typ.display(fmt.string_map(), types)
                 );
 
                 let mut err = fmt.error("return and function return type differ");

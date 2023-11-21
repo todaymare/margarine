@@ -1,6 +1,7 @@
 use std::{fmt::Write, ops::{DerefMut, Deref}};
 
 use common::string_map::{StringIndex, StringMap};
+use errors::ErrorId;
 use sti::{write, vec::Vec, string::String, arena::Arena};
 
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +36,7 @@ impl WasmType {
 }
 
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct FunctionId(u32);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub struct BlockId(usize);
 pub struct LoopId(usize);
 
 
+#[derive(Debug)]
 pub struct WasmModuleBuilder<'a> {
     functions: std::vec::Vec<WasmFunctionBuilder<'a>>,
     globals: Vec<WasmConstant>,
@@ -121,6 +123,7 @@ impl<'a> WasmModuleBuilder<'a> {
 }
 
 
+#[derive(Debug)]
 pub struct WasmFunctionBuilder<'a> {
     function_id: FunctionId,
     export: Option<StringIndex>,
@@ -173,6 +176,12 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn export(&mut self, string_index: StringIndex) {
         self.export.replace(string_index);
+    }
+
+
+    #[inline(always)]
+    pub fn error(&mut self, err: ErrorId) {
+        self.body.push("unreachable ");
     }
 }
 
