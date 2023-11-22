@@ -12,7 +12,7 @@ use funcs::FunctionMap;
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{Node, NodeKind}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind};
-use types::{Type, TypeMap, PartialField};
+use types::{Type, TypeMap, FieldBlueprint};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool};
 
@@ -200,7 +200,7 @@ impl Analyzer<'_> {
                                 },
                             };
 
-                            vec.push(PartialField::new(*name, ty))
+                            vec.push(FieldBlueprint::new(*name, ty))
                         }
 
                         vec.leak()

@@ -147,7 +147,7 @@ pub struct TypeBuilder<'storage> {
 enum PartialType<'a> {
     Uninit {
         name: StringIndex,
-        fields: Option<&'a mut [PartialField]>,
+        fields: Option<&'a mut [FieldBlueprint]>,
     },
 
     Processing,
@@ -155,14 +155,13 @@ enum PartialType<'a> {
 
 
 #[derive(Debug)]
-pub struct PartialField {
+pub struct FieldBlueprint {
     name: StringIndex,
     ty: Type,
-    offset: Option<usize>,
 }
 
-impl PartialField {
-    pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty, offset: None } }
+impl FieldBlueprint {
+    pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty } }
 }
 
 
@@ -180,7 +179,7 @@ impl<'storage> TypeBuilder<'storage> {
     }
 
 
-    pub fn add_fields(&mut self, ty: TypeId, new_fields: &'storage mut [PartialField]) {
+    pub fn add_fields(&mut self, ty: TypeId, new_fields: &'storage mut [FieldBlueprint]) {
         let PartialType::Uninit { fields, name } = self.types.get_mut(&ty).unwrap()
         else { panic!() };
 
@@ -283,29 +282,3 @@ impl<'storage> TypeBuilder<'storage> {
 
 }
 
-
-#[cfg(test)]
-mod tests {
-    use common::string_map::StringMap;
-    use sti::prelude::Arena;
-
-    use super::{TypeMap, Type, Field};
-
-/*
-    #[test]
-    fn structure_c_repr() {
-        let arena = Arena::new();
-        let mut string_map = StringMap::new(&arena);
-        let test = string_map.insert("test");
-        let mut binding = [Field::new(test, Type::Int), Field::new(test, Type::Float)];
-        let mut type_map = TypeMap::new();
-        let id = type_map.uninit();
-        type_map.initialise(id, test, &mut binding);
-
-        #[repr(C)]
-        struct TestAgainst { _v1: i64, _v2: f64 }
-
-        assert_eq!(type_map.calc_size(id), (core::mem::align_of::<TestAgainst>(), core::mem::size_of::<TestAgainst>()));
-    }
-*/
-}
