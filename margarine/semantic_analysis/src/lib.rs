@@ -4,15 +4,19 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
+use std::task::Wake;
+
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::FunctionMap;
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{Node, NodeKind}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind};
-use types::{Type, TypeMap};
+use types::{Type, TypeMap, PartialField};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder};
-use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption};
+use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool};
+
+use crate::types::TypeBuilder;
 
 #[derive(Debug)]
 pub struct Analyzer<'out> {
@@ -20,6 +24,7 @@ pub struct Analyzer<'out> {
     namespaces: NamespaceMap,
     pub types: TypeMap<'out>,
     pub funcs: FunctionMap<'out>,
+    output: &'out Arena,
 
     module_builder: WasmModuleBuilder<'out>,
     pub errors: KVec<SemaError, Error>
@@ -32,7 +37,7 @@ pub struct AnalysisResult {
 
 
 impl Analyzer<'_> {
-    pub fn convert_ty(&self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
+     pub fn convert_ty(&self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
         let ty = match dt.kind() {
             DataTypeKind::Int => Type::Int,
             DataTypeKind::Bool => todo!(),
@@ -73,6 +78,7 @@ impl<'out> Analyzer<'out> {
             funcs: FunctionMap::new(),
             module_builder: WasmModuleBuilder::new(),
             errors: KVec::new(),
+            output,
         };
 
         let mut func = WasmFunctionBuilder::new(output, slf.module_builder.function_id());
@@ -93,18 +99,21 @@ impl<'out> Analyzer<'out> {
         scope: ScopeId,
         nodes: &[Node],
     ) -> AnalysisResult {
+        let pool = ArenaPool::tls_get_rec();
+        let mut ty_builder = TypeBuilder::new(&*pool); 
         let scope = {
-            let mut namespace = Namespace::new(); 
+            let mut namespace = Namespace::new();
 
-            {
-                let scope = self.scopes.get(scope);
-                self.collect_names(builder, nodes, &mut namespace);
-            }
+            self.collect_names(builder, nodes, &mut ty_builder, &mut namespace);
 
-            dbg!(&namespace);
             let namespace_id = self.namespaces.put(namespace);
             Scope::new(ScopeKind::ImplicitNamespace(namespace_id), scope.some())
         };
+        
+        let scope = self.scopes.push(scope);
+
+        self.resolve_names(nodes, &mut ty_builder, scope);
+        ty_builder.finalise(self.output, &mut self.types);
 
         AnalysisResult { ty: Type::Unit }
     }
@@ -117,6 +126,7 @@ impl Analyzer<'_> {
         builder: &mut WasmFunctionBuilder,
         nodes: &[Node],
         
+        type_builder: &mut TypeBuilder,
         namespace: &mut Namespace,
     ) {
         for node in nodes {
@@ -135,16 +145,14 @@ impl Analyzer<'_> {
                         continue
                     }
 
-
-                    /*
-                    let placeholder = self.types.uninit();
-                    namespace.add_type(name, placeholder);
-                    */
+                    let ty = self.types.pending();
+                    namespace.add_type(name, ty);
+                    type_builder.add_ty(ty, name)
                 },
 
 
                 parser::nodes::Declaration::Function { is_system, name, header, arguments, return_type, body } => {
-                    if namespace.get_func(name).is_some() {
+                    if namespace.get_type(name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
                            source: header, name }));
 
@@ -168,7 +176,8 @@ impl Analyzer<'_> {
         &mut self,
         nodes: &[Node],
 
-        namespace: &mut Namespace
+        type_builder: &mut TypeBuilder,
+        scope: ScopeId,
     ) {
         for node in nodes {
             let source = node.range();
@@ -178,7 +187,27 @@ impl Analyzer<'_> {
 
             match decl {
                 parser::nodes::Declaration::Struct { kind, name, header, fields } => {
+                    let fields = {
+                        let mut vec = Vec::with_cap_in(type_builder.alloc(), fields.len());
+                        
+                        for (name, ty, source) in fields.iter() {
+                            let ty = self.convert_ty(scope, *ty);
+                            let ty = match ty {
+                                Ok(v) => v,
+                                Err(v) => {
+                                    self.error(v);
+                                    continue;
+                                },
+                            };
 
+                            vec.push(PartialField::new(*name, ty))
+                        }
+
+                        vec.leak()
+                    };
+
+                    let ty = self.scopes.get(scope).get_type(*name, &self.scopes, &self.namespaces).unwrap();
+                    type_builder.add_fields(ty, fields)
                 },
                 parser::nodes::Declaration::Enum { name, header, mappings } => todo!(),
                 parser::nodes::Declaration::Function { is_system, name, header, arguments, return_type, body } => todo!(),

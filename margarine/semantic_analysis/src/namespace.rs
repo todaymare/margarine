@@ -15,9 +15,24 @@ pub struct Namespace {
 
 impl Namespace {
     pub fn new() -> Self {
+        Namespace::with_ty_and_fn_cap(0, 0)
+    }
+
+
+    pub fn with_fn_cap(fn_cap: usize) -> Self {
+        Self::with_ty_and_fn_cap(0, fn_cap)
+    }
+
+
+    pub fn with_ty_cap(ty_cap: usize) -> Self {
+        Self::with_ty_and_fn_cap(ty_cap, 0)
+    }
+
+
+    pub fn with_ty_and_fn_cap(ty_cap: usize, fn_cap: usize) -> Self {
         Namespace {
-            types: HashMap::new(),
-            funcs: HashMap::new(),
+            types: HashMap::with_cap(ty_cap),
+            funcs: HashMap::with_cap(fn_cap),
         }
     }
     

@@ -1,7 +1,11 @@
-use std::cell::Cell;
+use std::{cell::Cell, marker::PhantomData};
 
 use common::string_map::{StringMap, StringIndex};
-use sti::{define_key, vec::Vec, hash::HashMap, keyed::KVec, traits::MapIt, prelude::Arena};
+use parser::DataType;
+use polonius_the_crab::{polonius, polonius_return};
+use sti::{define_key, vec::Vec, hash::HashMap, keyed::KVec, traits::MapIt, prelude::Arena, arena_pool::ArenaPool};
+
+use crate::namespace::Namespace;
 
 define_key!(u32, pub TypeId);
 
@@ -49,102 +53,73 @@ pub struct TypeSymbol<'a> {
 
 #[derive(Debug)]
 pub struct TypeMap<'a> {
-    map: KVec<TypeId, TypeSymbol<'a>>,
+    map: KVec<TypeId, Option<TypeSymbol<'a>>>,
 }
 
 
 impl<'a> TypeMap<'a> {
     pub fn new() -> Self {
-        Self { map: KVec::new() }
+        let mut map = KVec::new();
+
+        Self { map  }
     }
 
 
+    ///
+    /// Reserves a spot in the type map and
+    /// gives a `TypeId` to that spot
     #[inline(always)]
-    pub fn put(&mut self, ty: TypeSymbol<'a>) -> TypeId {
-        self.map.push(ty)
+    pub fn pending(&mut self) -> TypeId {
+        self.map.push(None)
     }
 
 
-    /*
-    pub fn calc_size(&self, id: TypeId) -> (usize, usize) {
-        let val = self.get(id);
-        let fields = &*val.fields;
-
-        let align = fields.map_it(|f| self.align(f.ty)).max().unwrap_or(1);
-
-        let mut cursor = 0;
-        for f in fields.iter() {
-            cursor = sti::num::ceil_to_multiple_pow2(cursor, self.align(f.ty));
-            f.offset.replace(cursor);
-            cursor += self.size(f.ty);
-        }
-
-        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
-
-        let val = self.map.get(id).unwrap().as_ref().unwrap();
-        val.align_and_size.replace(Some((align, size)).into());
-        (align, size)
+    ///
+    /// Initialises a pending type
+    ///
+    /// # Panics
+    /// - If the given type is already initialised
+    /// - If the `TypeId` is out of bounds
+    ///
+    #[inline(always)]
+    pub fn initialise(&mut self, ty: TypeId, sym: TypeSymbol<'a>) {
+        assert!(self.map[ty].replace(sym).is_none(), "type is already initialised")
     }
 
 
-    pub fn align_and_size(&self, ty: Type) -> (usize, usize) {
-        match ty {
-            Type::Int => (core::mem::align_of::<i64>(), core::mem::size_of::<i64>()),
-            Type::UInt => (core::mem::align_of::<u64>(), core::mem::size_of::<u64>()),
-            Type::Float => (core::mem::align_of::<f64>(), core::mem::size_of::<f64>()),
-            Type::Any => todo!(),
-            Type::Unit => (1, 1),
-            Type::Never => (0, 0),
-            Type::Custom(v) => {
-                let val = self.get(v).align_and_size.get();
-                match val {
-                    Some(v) => v,
-                    None => self.calc_size(v),
-                }
-            },
-        }
+    pub fn get(&self, val: TypeId) -> &TypeSymbol<'a> {
+        self.get_opt(val).unwrap()
     }
 
 
-    pub fn align(&self, ty: Type) -> usize {
-        self.align_and_size(ty).0
+    pub fn get_opt(&self, val: TypeId) -> Option<&TypeSymbol<'a>> {
+        self.map.get(val).unwrap().as_ref()
     }
 
 
-    pub fn size(&self, ty: Type) -> usize {
-        self.align_and_size(ty).1
-    }
-    */
-
-
-    pub fn get(&self, val: TypeId) -> &TypeSymbol {
-        self.map.get(val).unwrap()
-    }
-
-
-    pub fn align(&self, ty: Type) -> usize {
-        match ty {
+    pub fn align(&self, ty: Type) -> Option<usize> {
+        Some(match ty {
             Type::Int => 8,
             Type::UInt => 8,
             Type::Float => 8,
             Type::Any => todo!(),
             Type::Unit => 1,
             Type::Never => todo!(),
-            Type::Custom(v) => self.get(v).align,
-        }
+            Type::Custom(v) => self.get_opt(v)?.align,
+        })
     }
 
 
-    pub fn size(&self, ty: Type) -> usize {
-        match ty {
+    pub fn size(&self, ty: Type) -> Option<usize> {
+        Some(match ty {
             Type::Int => 8,
             Type::UInt => 8,
             Type::Float => 8,
             Type::Any => todo!(),
             Type::Unit => 1,
             Type::Never => todo!(),
-            Type::Custom(v) => self.get(v).size,
-        }
+            Type::Custom(v) => self.get_opt(v)?.size,
+        })
     }
 }
 
@@ -161,105 +136,151 @@ impl Field {
 }
 
 
-struct TypeBuilder<'a> {
-    mappings: HashMap<StringIndex, Option<(&'a [(StringIndex, BuilderType)], Cell<Option<TypeId>>)>>,
+#[derive(Debug)]
+pub struct TypeBuilder<'storage> {
+    types: HashMap<TypeId, PartialType<'storage>>,
+    storage: &'storage Arena,
 }
 
 
-impl TypeBuilder<'_> {
-    pub fn finish(mut self, map: &mut TypeMap) {
-        for (name, _) in self.mappings.iter() {
-            self.resolve_type(*name, map)
+#[derive(Debug)]
+enum PartialType<'a> {
+    Uninit {
+        name: StringIndex,
+        fields: Option<&'a mut [PartialField]>,
+    },
+
+    Processing,
+}
+
+
+#[derive(Debug)]
+pub struct PartialField {
+    name: StringIndex,
+    ty: Type,
+    offset: Option<usize>,
+}
+
+impl PartialField {
+    pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty, offset: None } }
+}
+
+
+impl<'storage> TypeBuilder<'storage> {
+    pub fn new(storage: &'storage Arena) -> Self {
+        Self {
+            types: HashMap::new(),
+            storage,
         }
     }
-    /*
-         let align = fields.map_it(|f| self.align(f.ty)).max().unwrap_or(1);
 
-        let mut cursor = 0;
-        for f in fields.iter() {
-            cursor = sti::num::ceil_to_multiple_pow2(cursor, self.align(f.ty));
-            f.offset.replace(cursor);
-            cursor += self.size(f.ty);
+
+    pub fn add_ty(&mut self, ty: TypeId, name: StringIndex) {
+        self.types.insert(ty, PartialType::Uninit { name, fields: None });
+    }
+
+
+    pub fn add_fields(&mut self, ty: TypeId, new_fields: &'storage mut [PartialField]) {
+        let PartialType::Uninit { fields, name } = self.types.get_mut(&ty).unwrap()
+        else { panic!() };
+
+        assert!(fields.is_none());
+        fields.replace(new_fields);
+    }
+
+
+    pub fn finalise<'a>(mut self, out: &'a Arena, map: &mut TypeMap<'a>) {
+        let pool = ArenaPool::tls_get_temp();
+        let mut vec = Vec::with_cap_in(&*pool, self.types.len());
+        self.types.iter().for_each(|x| vec.push(*x.0));
+
+        for ty in &vec {
+            self.resolve_type(out, map, *ty);
         }
 
-        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+    }
 
-        let val = self.map.get(id).unwrap().as_ref().unwrap();
-        val.align_and_size.replace(Some((align, size)).into());
-        
-    */
 
-    pub fn resolve_type(&mut self, name: StringIndex, map: &mut TypeMap) {
-        let Some((fields, _)) = self.mappings.get(&name).unwrap()
-        else { panic!("the type is not fully initialised") };
+    pub fn alloc(&self) -> &'storage Arena {
+        self.storage
+    }
+}
 
-        let align = fields.map_it(|f| self.align(f.1, map)).max().unwrap_or(1);
+
+impl<'storage> TypeBuilder<'storage> {
+    fn resolve_type<'a, 'b>(&mut self, out: &'a Arena, mut map: &'b mut TypeMap<'a>, ty: TypeId) -> &'b TypeSymbol<'a> {
+        polonius! {
+            |map| -> &'polonius TypeSymbol<'a> {
+                if let Some(v) = map.map.get(ty).unwrap().as_ref() {
+                    polonius_return!(v);
+                }
+            }
+        }
+
+        let partial_ty = self.types.insert(ty, PartialType::Processing).unwrap();
+        let (fields, name) = match partial_ty {
+            PartialType::Uninit { fields, name } => (fields.expect("fields are not initialised"), name),
+
+            PartialType::Processing => panic!("cyclic type"),
+        };
+        println!("{:#?}", self.types);
+
+        let align = fields.map_it(|f| self.align(out, map, f.ty)).max().unwrap_or(1);
 
         let mut cursor = 0;
-        let mut new_fields = Vec::with_cap_in(map.map.inner().alloc(), fields.len());
-        for f in fields.iter() {
-            cursor = sti::num::ceil_to_multiple_pow2(cursor, self.align(f.1, map));
+        let mut new_fields = Vec::with_cap_in(out, fields.len());
+
+        for field in fields.iter_mut() {
+            let align = self.align(out, map, field.ty);
+            cursor = sti::num::ceil_to_multiple_pow2(cursor, align);
+
             let offset = cursor;
-            cursor += self.size(f.1, map);
-            
-            let ty = match f.1 {
-                BuilderType::Type(v) => v,
-                BuilderType::SelfRef(v) => Type::Custom(self.mappings.get(&v).unwrap().unwrap().1.unwrap()),
-            };
+            cursor += self.size(out, map, field.ty);
 
-            new_fields.push(Field::new(name, ty, offset))
+            new_fields.push(Field::new(field.name, field.ty, offset));
         }
 
         let size = sti::num::ceil_to_multiple_pow2(cursor, align);
 
-        let val = self.mappings.get_mut(&name).unwrap();
-        val.unwrap().1.replace(map.put(TypeSymbol {
+        let symbol = TypeSymbol {
             display_name: name,
             fields: new_fields.leak(),
             align,
-            size,  
-        }));
+            size,
+        };
 
+        map.initialise(ty, symbol);
+        map.get(ty)
     }
 
 
-    pub fn align(&mut self, ty: BuilderType, map: &mut TypeMap) -> usize {
-        let ty = match ty {
-            BuilderType::Type(v) => v,
-            BuilderType::SelfRef(v) => Type::Custom(match self.mappings.get(&v).unwrap().unwrap().1 {
-                Some(v) => v,
-                None => {
-                    self.resolve_type(v, map);
-                    self.mappings.get(&v).unwrap().unwrap().1.unwrap()
-                }
-            }),
+    fn align<'a>(&mut self, out: &'a Arena, map: &mut TypeMap<'a>, ty: Type) -> usize {
+        if let Some(v) = map.align(ty) {
+            return v
+        }
+
+        let ty_id = match ty {
+            Type::Custom(v) => v,
+            _ => unreachable!()
         };
 
-        map.align(ty)
+        self.resolve_type(out, map, ty_id).align
     }
 
 
-    pub fn size(&mut self, ty: BuilderType, map: &mut TypeMap) -> usize {
-        let ty = match ty {
-            BuilderType::Type(v) => v,
-            BuilderType::SelfRef(v) => Type::Custom(match self.mappings.get(&v).unwrap().unwrap().1 {
-                Some(v) => v,
-                None => {
-                    self.resolve_type(v, map);
-                    self.mappings.get(&v).unwrap().unwrap().1.unwrap()
-                }
-            }),
+    fn size<'a>(&mut self, out: &'a Arena, map: &mut TypeMap<'a>, ty: Type) -> usize {
+        if let Some(v) = map.size(ty) {
+            return v
+        }
+
+        let ty_id = match ty {
+            Type::Custom(v) => v,
+            _ => unreachable!()
         };
 
-        map.size(ty)
-   }
-}
+        self.resolve_type(out, map, ty_id).size
+    }
 
-
-#[derive(Clone, Copy)]
-pub enum BuilderType {
-    Type(Type),
-    SelfRef(StringIndex),
 }
 
 
@@ -270,6 +291,7 @@ mod tests {
 
     use super::{TypeMap, Type, Field};
 
+/*
     #[test]
     fn structure_c_repr() {
         let arena = Arena::new();
@@ -285,4 +307,5 @@ mod tests {
 
         assert_eq!(type_map.calc_size(id), (core::mem::align_of::<TestAgainst>(), core::mem::size_of::<TestAgainst>()));
     }
+*/
 }

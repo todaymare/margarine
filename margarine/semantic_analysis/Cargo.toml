@@ -13,3 +13,6 @@ common = { path = "../common" }
 wasm = { path = "../wasm" }
 istd = { git = "https://github.com/rookieCookies/istd" }
 sti = { git = "https://github.com/leddoo/sti" }
+
+
+polonius-the-crab = "*"

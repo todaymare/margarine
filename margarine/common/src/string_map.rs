@@ -1,10 +1,8 @@
 use std::marker::PhantomData;
 
-use sti::{prelude::Arena, arena::ArenaStats, hash::{HashFn, fxhash::FxHasher32, HashMapF}};
+use sti::{prelude::Arena, arena::ArenaStats, hash::{HashFn, fxhash::FxHasher32, HashMapF}, define_key};
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Debug, Hash)]
-pub struct StringIndex(u32);
-
+define_key!(u32, pub StringIndex);
 
 pub struct StringMap<'a> {
     arena: &'a Arena,
