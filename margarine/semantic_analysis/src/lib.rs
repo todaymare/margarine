@@ -113,7 +113,15 @@ impl<'out> Analyzer<'out> {
         let scope = self.scopes.push(scope);
 
         self.resolve_names(nodes, &mut ty_builder, scope);
-        ty_builder.finalise(self.output, &mut self.types);
+        {
+            let err_len = self.errors.len();
+
+            ty_builder.finalise(self.output, &mut self.types, &mut self.errors);
+
+            for i in err_len..self.errors.len() {
+                builder.error(ErrorId::Sema(SemaError::new((err_len + i) as u32).unwrap()))
+            }
+        }
 
         AnalysisResult { ty: Type::Unit }
     }
@@ -147,7 +155,7 @@ impl Analyzer<'_> {
 
                     let ty = self.types.pending();
                     namespace.add_type(name, ty);
-                    type_builder.add_ty(ty, name)
+                    type_builder.add_ty(ty, name, header)
                 },
 
 
@@ -190,7 +198,7 @@ impl Analyzer<'_> {
                     let fields = {
                         let mut vec = Vec::with_cap_in(type_builder.alloc(), fields.len());
                         
-                        for (name, ty, source) in fields.iter() {
+                        for (name, ty, _) in fields.iter() {
                             let ty = self.convert_ty(scope, *ty);
                             let ty = match ty {
                                 Ok(v) => v,
@@ -209,6 +217,8 @@ impl Analyzer<'_> {
                     let ty = self.scopes.get(scope).get_type(*name, &self.scopes, &self.namespaces).unwrap();
                     type_builder.add_fields(ty, fields)
                 },
+
+
                 parser::nodes::Declaration::Enum { name, header, mappings } => todo!(),
                 parser::nodes::Declaration::Function { is_system, name, header, arguments, return_type, body } => todo!(),
                 parser::nodes::Declaration::Impl { data_type, body } => todo!(),

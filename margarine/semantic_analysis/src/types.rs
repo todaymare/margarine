@@ -1,11 +1,12 @@
-use std::{cell::Cell, marker::PhantomData};
+use std::{cell::Cell, marker::PhantomData, backtrace};
 
-use common::string_map::{StringMap, StringIndex};
+use common::{string_map::{StringMap, StringIndex}, source::SourceRange};
+use errors::{ErrorId, SemaError};
 use parser::DataType;
 use polonius_the_crab::{polonius, polonius_return};
-use sti::{define_key, vec::Vec, hash::HashMap, keyed::KVec, traits::MapIt, prelude::Arena, arena_pool::ArenaPool};
+use sti::{define_key, vec::Vec, hash::{HashMap, DefaultSeed}, keyed::{KVec, KSlice}, traits::MapIt, prelude::Arena, arena_pool::ArenaPool, alloc::GlobalAlloc};
 
-use crate::namespace::Namespace;
+use crate::{namespace::Namespace, errors::Error};
 
 define_key!(u32, pub TypeId);
 
@@ -41,7 +42,7 @@ impl Type {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct TypeSymbol<'a> {
     display_name: StringIndex, 
     fields: &'a [Field],
@@ -87,13 +88,13 @@ impl<'a> TypeMap<'a> {
     }
 
 
-    pub fn get(&self, val: TypeId) -> &TypeSymbol<'a> {
+    pub fn get(&self, val: TypeId) -> TypeSymbol<'a> {
         self.get_opt(val).unwrap()
     }
 
 
-    pub fn get_opt(&self, val: TypeId) -> Option<&TypeSymbol<'a>> {
-        self.map.get(val).unwrap().as_ref()
+    pub fn get_opt(&self, val: TypeId) -> Option<TypeSymbol<'a>> {
+        self.map[val]
     }
 
 
@@ -138,19 +139,26 @@ impl Field {
 
 #[derive(Debug)]
 pub struct TypeBuilder<'storage> {
-    types: HashMap<TypeId, PartialType<'storage>>,
+    types: HashMap<TypeId, PartialType<'storage>, DefaultSeed, &'storage Arena>,
     storage: &'storage Arena,
+    processing: Vec<StringIndex, &'storage Arena>
 }
 
 
 #[derive(Debug)]
-enum PartialType<'a> {
-    Uninit {
-        name: StringIndex,
-        fields: Option<&'a mut [FieldBlueprint]>,
-    },
+struct PartialType<'a> {
+    name: StringIndex,
+    fields: Option<&'a mut [FieldBlueprint]>,
+    state: PartialTypeState,
+    source: SourceRange,
+}
 
+
+#[derive(Debug)]
+enum PartialTypeState {
+    Uninit,
     Processing,
+    Errored,
 }
 
 
@@ -168,19 +176,20 @@ impl FieldBlueprint {
 impl<'storage> TypeBuilder<'storage> {
     pub fn new(storage: &'storage Arena) -> Self {
         Self {
-            types: HashMap::new(),
+            types: HashMap::new_in(storage),
+            processing: Vec::new_in(storage),
             storage,
         }
     }
 
 
-    pub fn add_ty(&mut self, ty: TypeId, name: StringIndex) {
-        self.types.insert(ty, PartialType::Uninit { name, fields: None });
+    pub fn add_ty(&mut self, ty: TypeId, name: StringIndex, source: SourceRange) {
+        self.types.insert(ty, PartialType { name, fields: None, state: PartialTypeState::Uninit, source });
     }
 
 
     pub fn add_fields(&mut self, ty: TypeId, new_fields: &'storage mut [FieldBlueprint]) {
-        let PartialType::Uninit { fields, name } = self.types.get_mut(&ty).unwrap()
+        let PartialType { fields, name, .. } = self.types.get_mut(&ty).unwrap()
         else { panic!() };
 
         assert!(fields.is_none());
@@ -188,15 +197,22 @@ impl<'storage> TypeBuilder<'storage> {
     }
 
 
-    pub fn finalise<'a>(mut self, out: &'a Arena, map: &mut TypeMap<'a>) {
+    pub fn finalise<'a>(
+        mut self, 
+        out: &'a Arena, 
+        map: &mut TypeMap<'a>, 
+        errors: &mut KVec<SemaError, Error>,
+    ) {
+
         let pool = ArenaPool::tls_get_temp();
         let mut vec = Vec::with_cap_in(&*pool, self.types.len());
         self.types.iter().for_each(|x| vec.push(*x.0));
 
         for ty in &vec {
-            self.resolve_type(out, map, *ty);
+            if let Err(err) = self.resolve_type(out, map, *ty) {
+                errors.push(err);
+            }
         }
-
     }
 
 
@@ -207,55 +223,103 @@ impl<'storage> TypeBuilder<'storage> {
 
 
 impl<'storage> TypeBuilder<'storage> {
-    fn resolve_type<'a, 'b>(&mut self, out: &'a Arena, mut map: &'b mut TypeMap<'a>, ty: TypeId) -> &'b TypeSymbol<'a> {
+    fn resolve_type<'a, 'b>(
+        &mut self, 
+        out: &'a Arena, 
+        mut map: &'b mut TypeMap<'a>, 
+        ty: TypeId
+    ) -> Result<TypeSymbol<'a>, Error> {
+
         polonius! {
-            |map| -> &'polonius TypeSymbol<'a> {
-                if let Some(v) = map.map.get(ty).unwrap().as_ref() {
-                    polonius_return!(v);
+            |map| -> Result<TypeSymbol<'a>, Error> {
+                if let Some(v) = map.get_opt(ty) {
+                    polonius_return!(Ok(v));
                 }
             }
         }
 
-        let partial_ty = self.types.insert(ty, PartialType::Processing).unwrap();
-        let (fields, name) = match partial_ty {
-            PartialType::Uninit { fields, name } => (fields.expect("fields are not initialised"), name),
+        let partial_ty = self.types.get_mut(&ty).unwrap();
+        let PartialType { fields, name, state, .. } = match partial_ty.state {
+            PartialTypeState::Uninit => partial_ty,
 
-            PartialType::Processing => panic!("cyclic type"),
+            PartialTypeState::Processing => {
+                partial_ty.state = PartialTypeState::Errored;
+                
+                let backtrace = self.processing.iter().enumerate()
+                    .find(|x| *x.1 == partial_ty.name).unwrap().0;
+
+                let backtrace = self.processing[backtrace..].to_vec();
+
+                return Err(Error::CyclicType {
+                    source: partial_ty.source,
+                    backtrace, 
+                    name: partial_ty.name,
+                })
+            },
+
+            PartialTypeState::Errored => return Err(Error::Bypass),
         };
-        println!("{:#?}", self.types);
 
-        let align = fields.map_it(|f| self.align(out, map, f.ty)).max().unwrap_or(1);
+        *state = PartialTypeState::Processing;
+        let fields = fields.take().expect("fields are not initialised");
+        let name = *name;
 
-        let mut cursor = 0;
-        let mut new_fields = Vec::with_cap_in(out, fields.len());
+        self.processing.push(name);
 
-        for field in fields.iter_mut() {
-            let align = self.align(out, map, field.ty);
-            cursor = sti::num::ceil_to_multiple_pow2(cursor, align);
+        let mut process = || -> Result<(), Error> {
+            let align = {
+                let mut max = 1;
+                for f in fields.iter() {
+                    let align = self.align(out, map, f.ty)?;
+                    if align > max {
+                        max = align;
+                    }
+                }
+                max
+            };
 
-            let offset = cursor;
-            cursor += self.size(out, map, field.ty);
+            let mut cursor = 0;
+            let mut new_fields = Vec::with_cap_in(out, fields.len());
 
-            new_fields.push(Field::new(field.name, field.ty, offset));
+            for field in fields.iter_mut() {
+                let align = self.align(out, map, field.ty)?;
+                cursor = sti::num::ceil_to_multiple_pow2(cursor, align);
+
+                let offset = cursor;
+                cursor += self.size(out, map, field.ty)?;
+
+                new_fields.push(Field::new(field.name, field.ty, offset));
+            }
+
+            let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+
+            let symbol = TypeSymbol {
+                display_name: name,
+                fields: new_fields.leak(),
+                align,
+                size,
+            };
+
+            map.initialise(ty, symbol);
+            Ok(())
+        };
+
+        let ret = process();
+
+        self.processing.pop();
+
+        if let Err(e) = ret {
+            self.types.get_mut(&ty).unwrap().state = PartialTypeState::Errored;
+            return Err(e);
         }
 
-        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
-
-        let symbol = TypeSymbol {
-            display_name: name,
-            fields: new_fields.leak(),
-            align,
-            size,
-        };
-
-        map.initialise(ty, symbol);
-        map.get(ty)
+        Ok(map.get(ty))
     }
 
 
-    fn align<'a>(&mut self, out: &'a Arena, map: &mut TypeMap<'a>, ty: Type) -> usize {
+    fn align<'a>(&mut self, out: &'a Arena, map: &mut TypeMap<'a>, ty: Type) -> Result<usize, Error> {
         if let Some(v) = map.align(ty) {
-            return v
+            return Ok(v)
         }
 
         let ty_id = match ty {
@@ -263,13 +327,18 @@ impl<'storage> TypeBuilder<'storage> {
             _ => unreachable!()
         };
 
-        self.resolve_type(out, map, ty_id).align
+        Ok(self.resolve_type(out, map, ty_id)?.align)
     }
 
 
-    fn size<'a>(&mut self, out: &'a Arena, map: &mut TypeMap<'a>, ty: Type) -> usize {
+    fn size<'a>(
+        &mut self, 
+        out: &'a Arena, 
+        map: &mut TypeMap<'a>, 
+        ty: Type
+    ) -> Result<usize, Error> {
         if let Some(v) = map.size(ty) {
-            return v
+            return Ok(v)
         }
 
         let ty_id = match ty {
@@ -277,7 +346,7 @@ impl<'storage> TypeBuilder<'storage> {
             _ => unreachable!()
         };
 
-        self.resolve_type(out, map, ty_id).size
+        Ok(self.resolve_type(out, map, ty_id)?.size)
     }
 
 }
