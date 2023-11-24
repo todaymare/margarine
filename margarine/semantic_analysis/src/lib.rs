@@ -8,8 +8,8 @@ use std::task::Wake;
 
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
-use funcs::FunctionMap;
-use namespace::{Namespace, NamespaceMap};
+use funcs::{FunctionMap, Function};
+use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind};
 use types::{Type, TypeMap, FieldBlueprint};
@@ -101,18 +101,18 @@ impl<'out> Analyzer<'out> {
     ) -> AnalysisResult {
         let pool = ArenaPool::tls_get_rec();
         let mut ty_builder = TypeBuilder::new(&*pool); 
-        let scope = {
+        let (scope, ns_id) = {
             let mut namespace = Namespace::new();
 
-            self.collect_names(builder, nodes, &mut ty_builder, &mut namespace);
+            self.collect_type_names(builder, nodes, &mut ty_builder, &mut namespace);
 
             let namespace_id = self.namespaces.put(namespace);
-            Scope::new(ScopeKind::ImplicitNamespace(namespace_id), scope.some())
+            (Scope::new(ScopeKind::ImplicitNamespace(namespace_id), scope.some()), namespace_id)
         };
         
         let scope = self.scopes.push(scope);
 
-        self.resolve_names(nodes, &mut ty_builder, scope);
+        self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
         {
             let err_len = self.errors.len();
 
@@ -129,7 +129,7 @@ impl<'out> Analyzer<'out> {
 
 
 impl Analyzer<'_> {
-    pub fn collect_names(
+    pub fn collect_type_names(
         &mut self,
         builder: &mut WasmFunctionBuilder,
         nodes: &[Node],
@@ -159,17 +159,7 @@ impl Analyzer<'_> {
                 },
 
 
-                parser::nodes::Declaration::Function { is_system, name, header, arguments, return_type, body } => {
-                    if namespace.get_type(name).is_some() {
-                        builder.error(self.error(Error::NameIsAlreadyDefined { 
-                           source: header, name }));
-
-                        continue
-                    }
-
-                    todo!();
-                },
-
+                parser::nodes::Declaration::Function { .. } => {},
 
                 parser::nodes::Declaration::Impl { data_type, body } => todo!(),
                 parser::nodes::Declaration::Using { file } => todo!(),
@@ -184,8 +174,10 @@ impl Analyzer<'_> {
         &mut self,
         nodes: &[Node],
 
+        builder: &mut WasmFunctionBuilder,
         type_builder: &mut TypeBuilder,
         scope: ScopeId,
+        ns_id: NamespaceId,
     ) {
         for node in nodes {
             let source = node.range();
@@ -214,13 +206,57 @@ impl Analyzer<'_> {
                         vec.leak()
                     };
 
-                    let ty = self.scopes.get(scope).get_type(*name, &self.scopes, &self.namespaces).unwrap();
+                    let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
                     type_builder.add_fields(ty, fields)
                 },
 
 
                 parser::nodes::Declaration::Enum { name, header, mappings } => todo!(),
-                parser::nodes::Declaration::Function { is_system, name, header, arguments, return_type, body } => todo!(),
+
+
+                parser::nodes::Declaration::Function { is_system, name, header, arguments, return_type, body } => {
+                    let ns = self.namespaces.get(ns_id);
+                    if ns.get_func(*name).is_some() {
+                        builder.error(self.error(Error::NameIsAlreadyDefined { 
+                           source: *header, name: *name }));
+
+                        continue
+                    }
+
+                    let args = {
+                        let mut args = Vec::with_cap_in(self.output, arguments.len());
+
+                        for arg in arguments.iter() {
+                            let ty = self.convert_ty(scope, arg.data_type());
+                            let ty = match ty {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    builder.error(self.error(e));
+                                    Type::Error
+                                },
+                            };
+
+                            args.push(ty);
+                        }
+
+                        args
+                    };
+
+                    let ret = match self.convert_ty(scope, *return_type) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            builder.error(self.error(e));
+                            Type::Error
+                        },
+                    };
+
+                    let ns = self.namespaces.get_mut(ns_id);
+                    let func = Function::new(*name, args.leak(), ret);
+                    let func = self.funcs.put(func);
+                    ns.add_func(*name, func);
+                },
+
+
                 parser::nodes::Declaration::Impl { data_type, body } => todo!(),
                 parser::nodes::Declaration::Using { file } => todo!(),
                 parser::nodes::Declaration::Module { name, body } => todo!(),

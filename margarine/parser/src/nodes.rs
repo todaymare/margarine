@@ -217,7 +217,7 @@ impl<'arena> ExternFunction<'arena> {
     #[inline(always)]
     pub fn args(&self) -> &[FunctionArgument<'arena>] { &self.args }
     #[inline(always)]
-    pub fn return_type(&self) -> &DataType<'arena> { &self.return_type }
+    pub fn return_type(&self) -> DataType<'arena> { self.return_type }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
 
@@ -240,7 +240,7 @@ impl<'arena> FunctionArgument<'arena> {
 
 
     #[inline(always)]
-    pub fn data_type(&self) -> &DataType<'arena> { &self.data_type }
+    pub fn data_type(&self) -> DataType<'arena> { self.data_type }
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
     #[inline(always)]

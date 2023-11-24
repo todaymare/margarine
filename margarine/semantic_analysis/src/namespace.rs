@@ -77,7 +77,13 @@ impl NamespaceMap {
 
     #[inline(always)]
     pub fn get(&self, id: NamespaceId) -> &Namespace {
-        self.map.get(id).unwrap()
+        &self.map[id]
+    }
+
+
+    #[inline(always)]
+    pub fn get_mut(&mut self, id: NamespaceId) -> &mut Namespace {
+        &mut self.map[id]
     }
 
 

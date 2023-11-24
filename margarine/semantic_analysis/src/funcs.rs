@@ -13,6 +13,10 @@ pub struct Function<'a> {
     ret : Type,
 }
 
+impl<'a> Function<'a> {
+    pub fn new(name: StringIndex, args: &'a [Type], ret: Type) -> Self { Self { name, args, ret } }
+}
+
 
 #[derive(Debug)]
 pub struct FunctionMap<'a> {

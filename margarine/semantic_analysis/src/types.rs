@@ -18,6 +18,7 @@ pub enum Type {
     Any,
     Unit,
     Never,
+    Error,
     Custom(TypeId),
 }
 
@@ -35,6 +36,7 @@ impl Type {
             Type::Any => "any",
             Type::Unit => "unit",
             Type::Never => "never",
+            Type::Error => "error",
             Type::Custom(t) => string_map.get(types.get(t).display_name),
         }
     }
@@ -103,9 +105,10 @@ impl<'a> TypeMap<'a> {
             Type::Int => 8,
             Type::UInt => 8,
             Type::Float => 8,
-            Type::Any => todo!(),
+            Type::Any => 16,
+            Type::Never => 0,
+            Type::Error => 0,
             Type::Unit => 1,
-            Type::Never => todo!(),
             Type::Custom(v) => self.get_opt(v)?.align,
         })
     }
@@ -116,9 +119,10 @@ impl<'a> TypeMap<'a> {
             Type::Int => 8,
             Type::UInt => 8,
             Type::Float => 8,
-            Type::Any => todo!(),
+            Type::Any => 16,
             Type::Unit => 1,
-            Type::Never => todo!(),
+            Type::Never => 0,
+            Type::Error => 0,
             Type::Custom(v) => self.get_opt(v)?.size,
         })
     }
