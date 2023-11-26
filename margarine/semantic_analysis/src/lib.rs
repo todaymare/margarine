@@ -11,7 +11,7 @@ use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator}, DataTypeKind, DataType};
+use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
 use types::{Type, TypeMap, FieldBlueprint};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
@@ -39,6 +39,10 @@ pub struct AnalysisResult {
 
 impl AnalysisResult {
     pub fn new(ty: Type, is_mut: bool) -> Self { Self { ty, is_mut } }
+
+    pub fn error() -> Self {
+        Self::new(Type::Error, true)
+    }
 }
 
 
@@ -306,7 +310,7 @@ impl Analyzer<'_> {
             NodeKind::Error(err) => {
                 wasm.error(*err);
                 wasm.i64_const(0);
-                AnalysisResult::new(Type::Error, true)
+                AnalysisResult::error()
             },
         }
     }
@@ -406,7 +410,7 @@ impl Analyzer<'_> {
                 let Some(variable) = self.scopes.get(scope).get_var(*ident, &self.scopes)
                 else {
                     wasm.error(self.error(Error::VariableNotFound { name: *ident, source }));
-                    return AnalysisResult::new(Type::Error, true)
+                    return AnalysisResult::error()
                 };
 
                 wasm.local_get(variable.local_id);
@@ -422,7 +426,7 @@ impl Analyzer<'_> {
                     if lhs_anal.ty.eq_lit(Type::Error)
                         || rhs_anal.ty.eq_lit(Type::Error)
                         {
-                            return Err(AnalysisResult::new(Type::Error, true))
+                            return Err(())
                     }
 
                     if operator.is_arith() 
@@ -432,17 +436,17 @@ impl Analyzer<'_> {
                             rhs: rhs_anal.ty, source 
                         }));
 
-                        return Err(AnalysisResult::new(Type::Error, true))
+                        return Err(())
                     }
 
                     Ok(())
                 };
 
-                if let Err(e) = type_check() {
+                if type_check().is_err() {
                     wasm.pop();
                     wasm.pop();
                     wasm.i64_const(0);
-                    return e;
+                    return AnalysisResult::error();
                 }
 
                 macro_rules! wfunc {
@@ -545,7 +549,61 @@ impl Analyzer<'_> {
                 AnalysisResult::new(ty, true)
             },
 
-            Expression::UnaryOp { operator, rhs } => todo!(),
+
+            Expression::UnaryOp { operator, rhs } => {
+                let rhs_anal = self.node(scope, wasm, rhs);
+                
+                let mut type_check = || {
+                    if rhs_anal.ty.eq_lit(Type::Error) {
+                        return Err(())
+                    }
+
+                    if *operator == UnaryOperator::Not
+                        && !rhs_anal.ty.eq_sem(self.types.bool()) {
+
+                        wasm.error(self.error(Error::InvalidUnaryOp {
+                            operator: *operator, rhs: rhs_anal.ty, source
+                        }));
+
+                        return Err(())
+
+                    } else if *operator == UnaryOperator::Neg
+                        && !rhs_anal.ty.is_number() {
+
+                        wasm.error(self.error(Error::InvalidUnaryOp {
+                            operator: *operator, rhs: rhs_anal.ty, source
+                        }));
+
+                        return Err(())
+                    }
+
+                    Ok(())
+                };
+
+                if type_check().is_err() {
+                    wasm.pop();
+                    wasm.i64_const(0);
+                    return AnalysisResult::error();
+                }
+
+                match (operator, rhs_anal.ty) {
+                    (UnaryOperator::Not, Type::Custom(_)) => todo!(),
+
+                    (UnaryOperator::Neg, Type::Int) => {
+                        // thanks wasm.
+                        wasm.i64_const(-1);
+                        wasm.i64_mul();
+                    },
+
+                    (UnaryOperator::Neg, Type::Float) => wasm.f64_neg(),
+
+                    _ => unreachable!()
+                }
+
+                AnalysisResult::new(rhs_anal.ty, true)
+            },
+
+
             Expression::If { condition, body, else_block } => todo!(),
             Expression::Match { value, taken_as_inout, mappings } => todo!(),
             Expression::Block { block } => todo!(),

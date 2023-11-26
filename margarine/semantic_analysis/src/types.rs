@@ -125,7 +125,14 @@ impl<'a> TypeMap<'a> {
     pub fn new() -> Self {
         let mut map = KVec::new();
 
+        map.push(None);
+
         Self { map  }
+    }
+
+
+    pub fn bool(&self) -> Type {
+        Type::Custom(TypeId(0))
     }
 
 
