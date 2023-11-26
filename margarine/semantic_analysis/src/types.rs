@@ -5,6 +5,7 @@ use errors::{ErrorId, SemaError};
 use parser::DataType;
 use polonius_the_crab::{polonius, polonius_return};
 use sti::{define_key, vec::Vec, hash::{HashMap, DefaultSeed}, keyed::{KVec, KSlice}, traits::MapIt, prelude::Arena, arena_pool::ArenaPool, alloc::GlobalAlloc};
+use wasm::WasmType;
 
 use crate::{namespace::Namespace, errors::Error};
 
@@ -41,6 +42,66 @@ impl Type {
         }
     }
 
+
+    pub fn to_wasm_ty(self) -> WasmType {
+        match self {
+            Type::Int => WasmType::I64,
+            Type::UInt => WasmType::I64,
+            Type::Float => WasmType::F64,
+            Type::Unit => WasmType::I64,
+            Type::Never => WasmType::I64,
+
+            // Pointers
+            | Type::Error
+            | Type::Custom(_)
+            | Type::Any => WasmType::I64,
+        }
+    }
+
+
+    pub fn eq_lit(self, ty: Type) -> bool {
+        match (self, ty) {
+            | (Type::Int, Type::Int) 
+            | (Type::UInt, Type::UInt) 
+            | (Type::Float, Type::Float) 
+            | (Type::Any, Type::Any) 
+            | (Type::Unit, Type::Unit) 
+            | (Type::Never, Type::Never) 
+            | (Type::Error, Type::Error) 
+             => true,
+
+            (Type::Custom(v1), Type::Custom(v2)) => v1 == v2,
+
+            _ => false,
+        }
+    }
+
+
+    pub fn eq_sem(self, ty: Type) -> bool {
+        match (self, ty) {
+            | (Type::Error, _) | (_, Type::Error)
+            | (Type::Never, _) | (_, Type::Never)
+             => true,
+
+            | (Type::Int, Type::Int) 
+            | (Type::UInt, Type::UInt) 
+            | (Type::Float, Type::Float) 
+            | (Type::Any, Type::Any) 
+            | (Type::Unit, Type::Unit) 
+             => true,
+
+            (Type::Custom(v1), Type::Custom(v2)) => v1 == v2,
+
+            _ => false,
+        }
+    }
+
+
+    pub fn is_number(self) -> bool {
+        self.eq_sem(Type::Int)
+        || self.eq_sem(Type::Float)
+        || self.eq_sem(Type::UInt)
+    }
 }
 
 

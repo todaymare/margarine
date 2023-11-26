@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use ::errors::LexerError;
 use common::{string_map::{StringMap, StringIndex},
-    source::{SourceRange, FileData}, hashables::HashableF64};
+    source::{SourceRange, FileData}, hashables::NonNaNF64};
 use crate::errors::Error;
 use sti::{reader::Reader, keyed::KVec};
 
@@ -173,7 +173,7 @@ pub enum TokenKind {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Literal {
     Integer(i64),
-    Float(HashableF64),
+    Float(NonNaNF64),
     String(StringIndex),
     Bool(bool),
 }
@@ -443,7 +443,7 @@ impl Lexer<'_, '_> {
             },
             1 => {
                 match value.parse() {
-                    Ok(e) => Literal::Float(HashableF64(e)),
+                    Ok(e) => Literal::Float(NonNaNF64::new(e)),
                     Err(_) => return TokenKind::Error(
                         self.errors.push(Error::NumberTooLarge(source))),
                 }

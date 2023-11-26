@@ -1,7 +1,8 @@
 use common::string_map::StringIndex;
 use sti::{packed_option::PackedOption, define_key, keyed::KVec};
+use wasm::LocalId;
 
-use crate::{namespace::{NamespaceId, NamespaceMap}, types::{Type, TypeId, TypeMap}};
+use crate::{namespace::{NamespaceId, NamespaceMap}, types::{Type, TypeId, TypeMap}, funcs::FuncId};
 
 define_key!(u32, pub ScopeId);
 
@@ -33,15 +34,72 @@ impl Scope {
         scopes: &ScopeMap,
         namespaces: &NamespaceMap,
     ) -> Option<TypeId> {
-        let mut current = self;
-        loop {
+        self.over(scopes, |current| {
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
                 let ns = namespaces.get(ns);
                 if let Some(val) = ns.get_type(name) { return Some(val) }
             }
 
+            None
+        })
+    }
+
+
+    pub fn get_func(
+        self,
+        name: StringIndex,
+        scopes: &ScopeMap,
+        namespaces: &NamespaceMap,
+    ) -> Option<FuncId> {
+        self.over(scopes, |current| {
+            if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
+                let ns = namespaces.get(ns);
+                if let Some(val) = ns.get_func(name) { return Some(val) }
+            }
+
+            None
+        })
+    }
+
+
+    pub fn get_var(
+        self,
+        name: StringIndex,
+        scopes: &ScopeMap,
+    ) -> Option<VariableScope> {
+        self.over(scopes, |current| {
+            if let ScopeKind::Variable(var) = current.kind() {
+                if var.name == name {
+                    return Some(var)
+                }
+            }
+
+            None
+        })
+    }
+
+
+    ///
+    /// Iterates over the current scope and all of its
+    /// parents, calling `func` on each of them. If `func`
+    /// returns `Some` it will return that value, short-circuiting.
+    /// 
+    /// If `func` does not return `Some` and there are no more parents
+    /// left, this function will return `None`
+    ///
+    pub fn over<T>(
+        self,
+        scopes: &ScopeMap,
+        func: impl Fn(Self) -> Option<T>
+    ) -> Option<T> {
+        let mut current = self;
+        loop {
+            if let Some(val) = func(current) {
+                return Some(val)
+            }
+
             let Some(parent) = current.parent().to_option()
-            else { break };
+                else { break };
 
             current = scopes.get(parent);
         }
@@ -63,8 +121,15 @@ pub enum ScopeKind {
 
 #[derive(Debug, Clone, Copy)]
 pub struct VariableScope {
-    name: StringIndex,
-    is_mutable: bool,
+    pub name: StringIndex,
+    pub is_mutable: bool,
+    pub ty: Type,
+    pub local_id: LocalId,
+}
+
+impl VariableScope {
+    pub fn new(name: StringIndex, is_mutable: bool, ty: Type, local_id: LocalId) -> Self { Self { name, is_mutable, ty, local_id } }
+
 }
 
 
@@ -77,7 +142,11 @@ pub struct ExplicitNamespace {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FunctionDefinitionScope {
-    return_type: Type,
+    pub return_type: Type,
+}
+
+impl FunctionDefinitionScope {
+    pub fn new(return_type: Type) -> Self { Self { return_type } }
 }
 
 

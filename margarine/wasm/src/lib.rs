@@ -39,7 +39,7 @@ impl WasmType {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct FunctionId(u32);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalId(u32);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -154,7 +154,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     #[inline(always)]
     pub fn param(&mut self, ty: WasmType) -> LocalId {
-        assert!(!self.locals.is_empty());
+        assert!(self.locals.is_empty());
         self.params.push(ty);
         LocalId(self.params.len() as u32 - 1)
     }
@@ -181,7 +181,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     #[inline(always)]
     pub fn error(&mut self, err: ErrorId) {
-        self.body.push("unreachable ");
+        self.body.push(&format!("unreachable (; {err:?} ;)"));
     }
 }
 
@@ -277,8 +277,8 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn ite(
         &mut self,
-        then_body: impl Fn(&mut WasmFunctionBuilder),
-        else_body: impl Fn(&mut WasmFunctionBuilder),
+        then_body: impl FnOnce(&mut WasmFunctionBuilder),
+        else_body: impl FnOnce(&mut WasmFunctionBuilder),
     ) {
         write!(self.body, "(if (then ");
         then_body(self);
@@ -291,7 +291,7 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn do_loop(
         &mut self,
-        body: impl Fn(&mut Self, LoopId),
+        body: impl FnOnce(&mut Self, LoopId),
     ) {
         write!(self.body, "(loop $l{} ", self.loop_nest);
         self.loop_nest += 1;
@@ -306,7 +306,7 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn block(
         &mut self,
-        body: impl Fn(&mut Self, BlockId),
+        body: impl FnOnce(&mut Self, BlockId),
     ) { 
         write!(self.body, "(block $b{} ", self.block_nest);
         self.block_nest += 1;
@@ -662,7 +662,7 @@ impl WasmFunctionBuilder<'_> {
 
 impl WasmFunctionBuilder<'_> {
     #[inline(always)]
-    pub fn f64_const(&mut self, val: f32) { write!(self.body, "f64.const {val}"); }
+    pub fn f64_const(&mut self, val: f64) { write!(self.body, "f64.const {val}"); }
 
     #[inline(always)]
     pub fn f64_eq(&mut self) { write!(self.body, "f64.eq "); }

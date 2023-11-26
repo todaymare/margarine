@@ -6,15 +6,15 @@ use crate::types::Type;
 define_key!(u32, pub FuncId);
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Function<'a> {
-    name: StringIndex,
-    args: &'a [Type],
-    ret : Type,
+    pub name: StringIndex,
+    pub args: &'a [(StringIndex, bool, Type)],
+    pub ret : Type,
 }
 
 impl<'a> Function<'a> {
-    pub fn new(name: StringIndex, args: &'a [Type], ret: Type) -> Self { Self { name, args, ret } }
+    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type) -> Self { Self { name, args, ret } }
 }
 
 
@@ -33,8 +33,8 @@ impl<'a> FunctionMap<'a> {
 
 
     #[inline(always)]
-    pub fn get(&self, id: FuncId) -> &Function {
-        self.map.get(id).unwrap()
+    pub fn get(&self, id: FuncId) -> Function {
+        *self.map.get(id).unwrap()
     }
 
 

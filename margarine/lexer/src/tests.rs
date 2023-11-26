@@ -1,7 +1,7 @@
 #![allow(unused)]
 use std::fmt::Debug;
 
-use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, Slice, hashables::HashableF64};
+use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, Slice, hashables::NonNaNF64};
 use sti::prelude::Arena;
 
 use crate::{lex, Token, TokenKind, Literal, errors::Error};
@@ -134,7 +134,7 @@ fn numbers() {
 
         compare_individually(tokens.0.as_slice(), vec![
             Token {
-                token_kind: TokenKind::Literal(Literal::Float(HashableF64(420.69))),
+                token_kind: TokenKind::Literal(Literal::Float(NonNaNF64::new(420.69))),
                 source_range: SourceRange::new(0, 5),
             },
             Token {
