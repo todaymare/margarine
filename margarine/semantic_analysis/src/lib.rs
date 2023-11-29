@@ -179,7 +179,7 @@ impl Analyzer<'_> {
 
                     let ty = self.types.pending();
                     namespace.add_type(name, ty);
-                    type_builder.add_ty(ty, name, header)
+                    type_builder.add_ty(ty, name, header, false)
                 },
 
 

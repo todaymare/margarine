@@ -1,4 +1,4 @@
-use std::{cell::Cell, marker::PhantomData, backtrace};
+use std::{cell::Cell, marker::PhantomData, backtrace, mem::{align_of, size_of}};
 
 use common::{string_map::{StringMap, StringIndex}, source::SourceRange};
 use errors::{ErrorId, SemaError};
@@ -107,11 +107,32 @@ impl Type {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeSymbol<'a> {
-    display_name: StringIndex, 
-    fields: &'a [Field],
-
+    display_name: StringIndex,
+    
     align: usize,
     size : usize,
+
+    kind: TypeSymbolKind<'a>,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum TypeSymbolKind<'a> {
+    Struct(TypeStruct<'a>),
+    Enum(TypeEnum<'a>),
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct TypeStruct<'a> {
+    fields: &'a [Field],
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct TypeEnum<'a> {
+    offset: usize,
+    fields: &'a [Field],
 }
 
 
@@ -223,6 +244,7 @@ struct PartialType<'a> {
     fields: Option<&'a mut [FieldBlueprint]>,
     state: PartialTypeState,
     source: SourceRange,
+    is_enum: bool,
 }
 
 
@@ -255,8 +277,8 @@ impl<'storage> TypeBuilder<'storage> {
     }
 
 
-    pub fn add_ty(&mut self, ty: TypeId, name: StringIndex, source: SourceRange) {
-        self.types.insert(ty, PartialType { name, fields: None, state: PartialTypeState::Uninit, source });
+    pub fn add_ty(&mut self, ty: TypeId, name: StringIndex, source: SourceRange, is_enum: bool) {
+        self.types.insert(ty, PartialType { name, fields: None, state: PartialTypeState::Uninit, source, is_enum });
     }
 
 
@@ -311,7 +333,7 @@ impl<'storage> TypeBuilder<'storage> {
         }
 
         let partial_ty = self.types.get_mut(&ty).unwrap();
-        let PartialType { fields, name, state, .. } = match partial_ty.state {
+        let PartialType { fields, name, state, is_enum, .. } = match partial_ty.state {
             PartialTypeState::Uninit => partial_ty,
 
             PartialTypeState::Processing => {
@@ -335,48 +357,14 @@ impl<'storage> TypeBuilder<'storage> {
         *state = PartialTypeState::Processing;
         let fields = fields.take().expect("fields are not initialised");
         let name = *name;
+        let is_enum = *is_enum;
 
         self.processing.push(name);
 
-        let mut process = || -> Result<(), Error> {
-            let align = {
-                let mut max = 1;
-                for f in fields.iter() {
-                    let align = self.align(out, map, f.ty)?;
-                    if align > max {
-                        max = align;
-                    }
-                }
-                max
-            };
-
-            let mut cursor = 0;
-            let mut new_fields = Vec::with_cap_in(out, fields.len());
-
-            for field in fields.iter_mut() {
-                let align = self.align(out, map, field.ty)?;
-                cursor = sti::num::ceil_to_multiple_pow2(cursor, align);
-
-                let offset = cursor;
-                cursor += self.size(out, map, field.ty)?;
-
-                new_fields.push(Field::new(field.name, field.ty, offset));
-            }
-
-            let size = sti::num::ceil_to_multiple_pow2(cursor, align);
-
-            let symbol = TypeSymbol {
-                display_name: name,
-                fields: new_fields.leak(),
-                align,
-                size,
-            };
-
-            map.initialise(ty, symbol);
-            Ok(())
+        let ret = match is_enum {
+            true  => self.process_enum(out, map, fields, name, ty),
+            false => self.process_struct(out, map, fields, name, ty),
         };
-
-        let ret = process();
 
         self.processing.pop();
 
@@ -423,3 +411,92 @@ impl<'storage> TypeBuilder<'storage> {
 
 }
 
+
+impl TypeBuilder<'_> {
+    fn process_struct<'a>(
+        &mut self, out: &'a Arena, map: &mut TypeMap<'a>,
+        fields: &mut [FieldBlueprint], name: StringIndex,
+        ty: TypeId
+    ) -> Result<(), Error> { 
+        let align = {
+            let mut max = 1;
+            for f in fields.iter() {
+                let align = self.align(out, map, f.ty)?;
+                if align > max {
+                    max = align;
+                }
+            }
+            max
+        };
+
+        let mut cursor = 0;
+        let mut new_fields = Vec::with_cap_in(out, fields.len());
+
+        for field in fields.iter_mut() {
+            let align = self.align(out, map, field.ty)?;
+            cursor = sti::num::ceil_to_multiple_pow2(cursor, align);
+
+            let offset = cursor;
+            cursor += self.size(out, map, field.ty)?;
+
+            new_fields.push(Field::new(field.name, field.ty, offset));
+        }
+
+        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+
+        let symbol = TypeSymbol {
+            display_name: name,
+            align,
+            size,
+            kind: TypeSymbolKind::Struct(TypeStruct { fields: new_fields.leak() }),
+        };
+
+        map.initialise(ty, symbol);
+        Ok(())
+    }
+
+    fn process_enum<'a>(
+        &mut self, out: &'a Arena, map: &mut TypeMap<'a>,
+        fields: &mut [FieldBlueprint], name: StringIndex,
+        ty: TypeId
+    ) -> Result<(), Error> { 
+        let starting_offset = size_of::<u32>(); // TEMP
+        let align = {
+            let mut max = starting_offset;
+            for f in fields.iter() {
+                let align = self.align(out, map, f.ty)?;
+                if align > max {
+                    max = align;
+                }
+            }
+            max
+        };
+
+        let mut cursor = starting_offset;
+        let mut new_fields = Vec::with_cap_in(out, fields.len());
+
+        for field in fields.iter_mut() {
+            let align = self.align(out, map, field.ty)?;
+            cursor = sti::num::ceil_to_multiple_pow2(cursor, align);
+
+            let offset = cursor;
+            cursor += self.size(out, map, field.ty)?;
+
+            new_fields.push(Field::new(field.name, field.ty, offset));
+        }
+
+        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+
+        let symbol = TypeSymbol {
+            display_name: name,
+            align,
+            size,
+            kind: TypeSymbolKind::Enum(TypeEnum { fields: new_fields.leak(), offset: starting_offset }),
+        };
+
+        map.initialise(ty, symbol);
+        Ok(())
+    }
+
+
+}
