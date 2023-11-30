@@ -15,7 +15,7 @@ use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, Un
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
 use types::{Type, TypeMap, FieldBlueprint};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
-use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool};
+use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
 use crate::types::TypeBuilder;
 
@@ -25,6 +25,7 @@ pub struct Analyzer<'out> {
     namespaces: NamespaceMap,
     pub types: TypeMap<'out>,
     pub funcs: FunctionMap<'out>,
+    type_to_namespace: HashMap<Type, NamespaceId>,
     output: &'out Arena,
 
     pub module_builder: WasmModuleBuilder<'out>,
@@ -59,8 +60,8 @@ impl Analyzer<'_> {
             DataTypeKind::Result(_, _) => todo!(),
             DataTypeKind::CustomType(v) => {
                 let scope = self.scopes.get(scope);
-                let Some(ty) = scope.get_type(*v, &self.scopes, &self.namespaces)
-                else { return Err(Error::UnknownType(*v, dt.range())) };
+                let Some(ty) = scope.get_type(v, &self.scopes, &self.namespaces)
+                else { return Err(Error::UnknownType(v, dt.range())) };
 
                 Type::Custom(ty)
             },
@@ -85,11 +86,12 @@ impl<'out> Analyzer<'out> {
         let mut slf = Self {
             scopes: ScopeMap::new(),
             namespaces: NamespaceMap::new(),
-            types: TypeMap::new(),
+            types: TypeMap::new(string_map),
             funcs: FunctionMap::new(),
             module_builder: WasmModuleBuilder::new(),
             errors: KVec::new(),
             output,
+            type_to_namespace: HashMap::new(),
         };
 
         let main_name = string_map.insert("_init");
@@ -179,7 +181,7 @@ impl Analyzer<'_> {
 
                     let ty = self.types.pending();
                     namespace.add_type(name, ty);
-                    type_builder.add_ty(ty, name, header, false)
+                    type_builder.add_ty(ty, name, header, matches!(decl, parser::nodes::Declaration::Enum { .. }))
                 },
 
 
@@ -235,7 +237,35 @@ impl Analyzer<'_> {
                 },
 
 
-                parser::nodes::Declaration::Enum { name, header, mappings } => todo!(),
+                parser::nodes::Declaration::Enum { name, header, mappings } => {
+                    let mappings = {
+                        let mut vec = Vec::with_cap_in(type_builder.alloc(), mappings.len());
+                        
+                        for mapping in mappings.iter() {
+                            let ty = match mapping.is_implicit_unit() {
+                                true => DataTypeKind::Unit,
+                                false => mapping.data_type().kind(),
+                            };
+
+                            let ty = DataType::new(mapping.data_type().range(), ty);
+                            let ty = self.convert_ty(scope, ty);
+                            let ty = match ty {
+                                Ok(v) => v,
+                                Err(v) => {
+                                    self.error(v);
+                                    continue;
+                                },
+                            };
+
+                            vec.push(FieldBlueprint::new(*name, ty))
+                        }
+
+                        vec.leak()
+                    };
+
+                    let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
+                    type_builder.add_fields(ty, mappings)
+                },
 
 
                 parser::nodes::Declaration::Function { is_system, name, header, arguments, return_type, body } => {
@@ -401,7 +431,12 @@ impl Analyzer<'_> {
 
 
                     lexer::Literal::String(_) => todo!(),
-                    lexer::Literal::Bool(_) => todo!(),
+                    lexer::Literal::Bool(v) => {
+                        let ty = self.types.bool();
+                        let namespace = self.type_to_namespace.get(&ty);
+
+                        todo!()
+                    },
                 }
             },
 

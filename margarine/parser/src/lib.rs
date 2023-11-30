@@ -25,11 +25,7 @@ impl<'a> DataType<'a> {
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
     #[inline(always)]
-    pub fn kind(&self) -> &DataTypeKind<'a> { &self.kind }
-    #[inline(always)]
-    pub fn kind_mut(&mut self) -> &mut DataTypeKind<'a> { &mut self.kind}
-    #[inline(always)]
-    pub fn kind_owned(self) -> DataTypeKind<'a> { self.kind }
+    pub fn kind(&self) -> DataTypeKind<'a> { self.kind }
 }
 
 

@@ -11,7 +11,7 @@ use crate::{namespace::Namespace, errors::Error};
 
 define_key!(u32, pub TypeId);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Hash, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     Int,
     UInt,
@@ -143,10 +143,16 @@ pub struct TypeMap<'a> {
 
 
 impl<'a> TypeMap<'a> {
-    pub fn new() -> Self {
+    pub fn new(string_map: &mut StringMap) -> Self {
         let mut map = KVec::new();
 
-        map.push(None);
+        map.push(Some(TypeSymbol {
+            display_name: string_map.insert("bool"),
+            align: 4, 
+            size: 4,
+            kind: TypeSymbolKind::Enum(TypeEnum { offset: 0, fields: &[] }),
+        }
+        ));
 
         Self { map  }
     }
@@ -160,6 +166,7 @@ impl<'a> TypeMap<'a> {
     ///
     /// Reserves a spot in the type map and
     /// gives a `TypeId` to that spot
+    /// 
     #[inline(always)]
     pub fn pending(&mut self) -> TypeId {
         self.map.push(None)
@@ -283,8 +290,7 @@ impl<'storage> TypeBuilder<'storage> {
 
 
     pub fn add_fields(&mut self, ty: TypeId, new_fields: &'storage mut [FieldBlueprint]) {
-        let PartialType { fields, name, .. } = self.types.get_mut(&ty).unwrap()
-        else { panic!() };
+        let PartialType { fields, .. } = self.types.get_mut(&ty).unwrap();
 
         assert!(fields.is_none());
         fields.replace(new_fields);
@@ -455,37 +461,43 @@ impl TypeBuilder<'_> {
         Ok(())
     }
 
+
     fn process_enum<'a>(
         &mut self, out: &'a Arena, map: &mut TypeMap<'a>,
         fields: &mut [FieldBlueprint], name: StringIndex,
         ty: TypeId
     ) -> Result<(), Error> { 
         let starting_offset = size_of::<u32>(); // TEMP
-        let align = {
-            let mut max = starting_offset;
+        let (align, union_align) = {
+            let mut max = 1;
             for f in fields.iter() {
                 let align = self.align(out, map, f.ty)?;
                 if align > max {
                     max = align;
                 }
             }
-            max
+            
+            (starting_offset.max(max), max)
         };
 
-        let mut cursor = starting_offset;
         let mut new_fields = Vec::with_cap_in(out, fields.len());
 
-        for field in fields.iter_mut() {
-            let align = self.align(out, map, field.ty)?;
-            cursor = sti::num::ceil_to_multiple_pow2(cursor, align);
+        let max_size = {
+            let mut max_size = starting_offset;
+            for field in fields.iter_mut() {
+                let align = self.align(out, map, field.ty)?;
+                let size = self.size(out, map, field.ty)?;
+                if size > max_size {
+                    max_size = align;
+                }
 
-            let offset = cursor;
-            cursor += self.size(out, map, field.ty)?;
+                new_fields.push(Field { name: field.name, ty: field.ty, offset: sti::num::ceil_to_multiple_pow2(starting_offset, union_align)});
+            }
 
-            new_fields.push(Field::new(field.name, field.ty, offset));
-        }
+            max_size 
+        };
 
-        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+        let size = sti::num::ceil_to_multiple_pow2(max_size, align);
 
         let symbol = TypeSymbol {
             display_name: name,
