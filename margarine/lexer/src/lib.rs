@@ -207,11 +207,23 @@ pub fn lex<'a, 'arena>(
     file: &'a FileData,
     string_map: &'a mut StringMap<'arena>
 ) -> (TokenList, KVec<LexerError, Error>) {
+    {
+        //
+        // https://en.wikipedia.org/wiki/Heaps'_law
+        // K = 8
+        // B = 0.384
+        // Numbers came from my asshole
+        //
+        let unique_ident_count = 8.0 * (file.read().len() as f64).powf(0.384);
+        string_map.reserve(unique_ident_count as usize);
+    }
+
     let mut lexer = Lexer {
         reader: Reader::new(file.read().as_bytes()),
         string_map,
         errors: KVec::new(),
     };
+
 
     let mut tokens = Vec::new();
     loop {

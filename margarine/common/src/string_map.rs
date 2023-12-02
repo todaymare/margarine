@@ -68,6 +68,13 @@ impl<'a> StringMap<'a> {
     pub fn arena_stats(&self) -> ArenaStats {
         self.arena.stats()
     }
+
+
+    #[inline(always)]
+    pub fn reserve(&mut self, additional: usize) {
+        self.vec.reserve(additional);
+        self.map.reserve(additional);
+    }
 }
 
 

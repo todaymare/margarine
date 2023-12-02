@@ -120,6 +120,8 @@ pub struct TypeSymbol<'a> {
 pub enum TypeSymbolKind<'a> {
     Struct(TypeStruct<'a>),
     Enum(TypeEnum<'a>),
+    Union(&'a [Field]),
+
 }
 
 
@@ -131,7 +133,6 @@ pub struct TypeStruct<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeEnum<'a> {
-    offset: usize,
     fields: &'a [Field],
 }
 
@@ -150,7 +151,7 @@ impl<'a> TypeMap<'a> {
             display_name: string_map.insert("bool"),
             align: 4, 
             size: 4,
-            kind: TypeSymbolKind::Enum(TypeEnum { offset: 0, fields: &[] }),
+            kind: TypeSymbolKind::Enum(TypeEnum { fields: &[] }),
         }
         ));
 
@@ -467,48 +468,49 @@ impl TypeBuilder<'_> {
         fields: &mut [FieldBlueprint], name: StringIndex,
         ty: TypeId
     ) -> Result<(), Error> { 
-        let starting_offset = size_of::<u32>(); // TEMP
-        let (align, union_align) = {
-            let mut max = 1;
+        // @TEMP: Let's assume the tag is always a u64
+        let align = {
+            let mut max = 8;
             for f in fields.iter() {
                 let align = self.align(out, map, f.ty)?;
                 if align > max {
                     max = align;
                 }
             }
-            
-            (starting_offset.max(max), max)
+            max
         };
 
+        let mut cursor = 8;
         let mut new_fields = Vec::with_cap_in(out, fields.len());
 
-        let max_size = {
-            let mut max_size = starting_offset;
-            for field in fields.iter_mut() {
-                let align = self.align(out, map, field.ty)?;
-                let size = self.size(out, map, field.ty)?;
-                if size > max_size {
-                    max_size = align;
-                }
+        for field in fields.iter_mut() {
+            let align = self.align(out, map, field.ty)?;
+            let mut c = sti::num::ceil_to_multiple_pow2(4, align);
 
-                new_fields.push(Field { name: field.name, ty: field.ty, offset: sti::num::ceil_to_multiple_pow2(starting_offset, union_align)});
-            }
+            let offset = c;
 
-            max_size 
-        };
+            c += self.size(out, map, field.ty)?;
 
-        let size = sti::num::ceil_to_multiple_pow2(max_size, align);
+            cursor = cursor.max(c);
+
+            new_fields.push(Field::new(field.name, field.ty, offset));
+        }
+
+        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
 
         let symbol = TypeSymbol {
             display_name: name,
             align,
             size,
-            kind: TypeSymbolKind::Enum(TypeEnum { fields: new_fields.leak(), offset: starting_offset }),
+            kind: TypeSymbolKind::Enum(TypeEnum { fields: new_fields.leak() }),
         };
 
         map.initialise(ty, symbol);
         Ok(())
     }
+
+
+
 
 
 }
