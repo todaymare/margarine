@@ -13,8 +13,8 @@ use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
-use types::{Type, TypeMap, FieldBlueprint};
-use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
+use types::{Type, TypeMap, FieldBlueprint, TypeEnum};
+use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
 use crate::types::TypeBuilder;
@@ -69,7 +69,7 @@ impl Analyzer<'_> {
 
         Ok(ty)
     }
-
+     
 
     pub fn error(&mut self, err: Error) -> ErrorId {
         ErrorId::Sema(self.errors.push(err))
@@ -94,12 +94,16 @@ impl<'out> Analyzer<'out> {
             type_to_namespace: HashMap::new(),
         };
 
-        let main_name = string_map.insert("_init");
+        {
+            let ns = slf.namespaces.get_type_mut(Type::BOOL);
+
+        }
+
         let mut func = WasmFunctionBuilder::new(output, slf.module_builder.function_id());
         let scope = Scope::new(ScopeKind::Root, PackedOption::NONE);
         let scope = slf.scopes.push(scope);
 
-        func.export(main_name);
+        func.export(StringMap::INIT_FUNC);
 
         slf.block(&mut func, scope, nodes);
         func.pop();
@@ -305,7 +309,7 @@ impl Analyzer<'_> {
                     };
 
                     let ns = self.namespaces.get_mut(ns_id);
-                    let func = Function::new(*name, args.leak(), ret);
+                    let func = Function::new(*name, args.leak(), ret, self.module_builder.function_id());
                     let func = self.funcs.put(func);
                     ns.add_func(*name, func);
                 },
@@ -358,11 +362,10 @@ impl Analyzer<'_> {
 
 
             Declaration::Function { is_system, name, header, arguments, return_type, body } => {
-                let wasm = self.module_builder.function_id();
-                let mut wasm = WasmFunctionBuilder::new(self.output, wasm);
                 
                 let func = self.scopes.get(scope).get_func(*name, &self.scopes, &self.namespaces).unwrap();
                 let func = self.funcs.get(func);
+                let mut wasm = WasmFunctionBuilder::new(self.output, func.wasm_id);
 
                 wasm.return_value(func.ret.to_wasm_ty());
 
@@ -432,10 +435,13 @@ impl Analyzer<'_> {
 
                     lexer::Literal::String(_) => todo!(),
                     lexer::Literal::Bool(v) => {
-                        let ty = self.types.bool();
-                        let namespace = self.type_to_namespace.get(&ty);
-
-                        todo!()
+                        let ty = Type::BOOL;
+                        let name = if *v { StringMap::TRUE } else { StringMap::FALSE };
+                        let func = self.namespaces.get_type(ty).get_func(name).unwrap();
+                        let func = self.funcs.get(func);
+                        
+                        wasm.call(func.wasm_id);
+                        AnalysisResult::new(Type::BOOL, true)
                     },
                 }
             },
@@ -594,7 +600,7 @@ impl Analyzer<'_> {
                     }
 
                     if *operator == UnaryOperator::Not
-                        && !rhs_anal.ty.eq_sem(self.types.bool()) {
+                        && !rhs_anal.ty.eq_sem(Type::BOOL) {
 
                         wasm.error(self.error(Error::InvalidUnaryOp {
                             operator: *operator, rhs: rhs_anal.ty, source

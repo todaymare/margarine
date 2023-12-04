@@ -1,7 +1,7 @@
 use common::string_map::StringIndex;
 use sti::{define_key, hash::HashMap, keyed::KVec};
 
-use crate::{types::TypeId, funcs::FuncId};
+use crate::{types::{TypeId, Type, TypeMap}, funcs::FuncId};
 
 define_key!(u32, pub NamespaceId);
 
@@ -64,6 +64,7 @@ impl Namespace {
 #[derive(Debug)]
 pub struct NamespaceMap {
     map: KVec<NamespaceId, Namespace>,
+    type_to_ns: HashMap<Type, NamespaceId>,
 }
 
 
@@ -71,7 +72,28 @@ impl NamespaceMap {
     pub fn new() -> Self {
         Self {
             map: KVec::new(),
+            type_to_ns: HashMap::new(),
         }
+    }
+
+
+    #[inline(always)]
+    pub fn get_type(&mut self, id: Type) -> &Namespace {
+        let id = self.type_to_ns.kget_or_insert_with(id, || {
+            self.map.push(Namespace::new())
+        });
+
+        &self.map[*id]
+    }
+
+
+    #[inline(always)]
+    pub fn get_type_mut(&mut self, id: Type) -> &mut Namespace {
+        let id = self.type_to_ns.kget_or_insert_with(id, || {
+            self.map.push(Namespace::new())
+        });
+
+        &mut self.map[*id]
     }
 
 

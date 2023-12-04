@@ -1,5 +1,6 @@
 use common::string_map::StringIndex;
 use sti::{define_key, keyed::KVec};
+use wasm::FunctionId;
 
 use crate::types::Type;
 
@@ -11,10 +12,11 @@ pub struct Function<'a> {
     pub name: StringIndex,
     pub args: &'a [(StringIndex, bool, Type)],
     pub ret : Type,
+    pub wasm_id: FunctionId,
 }
 
 impl<'a> Function<'a> {
-    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type) -> Self { Self { name, args, ret } }
+    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type, wasm_id: FunctionId) -> Self { Self { name, args, ret, wasm_id } }
 }
 
 

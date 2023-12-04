@@ -13,6 +13,10 @@ pub struct StringMap<'a> {
 
 
 impl<'a> StringMap<'a> {
+    pub const INIT_FUNC : StringIndex = StringIndex(0);
+    pub const TRUE : StringIndex = StringIndex(1);
+    pub const FALSE : StringIndex = StringIndex(2);
+ 
     #[inline(always)]
     pub fn new(arena: &'a Arena) -> Self {
         Self::with_capacity(0, arena)
@@ -21,12 +25,17 @@ impl<'a> StringMap<'a> {
     
     #[inline(always)]
     pub fn with_capacity(cap: usize, arena: &'a Arena) -> Self {
-        Self {
+        let mut s = Self {
             map: HashMapF::fwith_cap(cap),
             // map: FuckMap::with_capacity(cap),
             vec: Vec::with_capacity(cap),
             arena,
-        }
+        };
+
+        assert_eq!(s.insert("_init"), Self::INIT_FUNC);
+        assert_eq!(s.insert("true"), Self::TRUE);
+        assert_eq!(s.insert("false"), Self::FALSE);
+        s
     }
 
 

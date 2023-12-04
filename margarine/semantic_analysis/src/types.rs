@@ -7,7 +7,7 @@ use polonius_the_crab::{polonius, polonius_return};
 use sti::{define_key, vec::Vec, hash::{HashMap, DefaultSeed}, keyed::{KVec, KSlice}, traits::MapIt, prelude::Arena, arena_pool::ArenaPool, alloc::GlobalAlloc};
 use wasm::WasmType;
 
-use crate::{namespace::Namespace, errors::Error};
+use crate::{namespace::{Namespace, NamespaceId}, errors::Error};
 
 define_key!(u32, pub TypeId);
 
@@ -25,6 +25,8 @@ pub enum Type {
 
 
 impl Type {
+    pub const BOOL : Type = Type::Custom(TypeId(0));
+
     pub fn display<'a>(
         self,
         string_map: &'a StringMap<'a>,
@@ -39,6 +41,20 @@ impl Type {
             Type::Never => "never",
             Type::Error => "error",
             Type::Custom(t) => string_map.get(types.get(t).display_name),
+        }
+    }
+
+
+    pub const fn id(self) -> TypeId {
+        match self {
+            Type::Int => todo!(),
+            Type::UInt => todo!(),
+            Type::Float => todo!(),
+            Type::Any => todo!(),
+            Type::Unit => todo!(),
+            Type::Never => todo!(),
+            Type::Error => todo!(),
+            Type::Custom(v) => v,
         }
     }
 
@@ -155,12 +171,7 @@ impl<'a> TypeMap<'a> {
         }
         ));
 
-        Self { map  }
-    }
-
-
-    pub fn bool(&self) -> Type {
-        Type::Custom(TypeId(0))
+        Self { map }
     }
 
 
@@ -463,51 +474,51 @@ impl TypeBuilder<'_> {
     }
 
 
-    fn process_enum<'a>(
-        &mut self, out: &'a Arena, map: &mut TypeMap<'a>,
-        fields: &mut [FieldBlueprint], name: StringIndex,
-        ty: TypeId
-    ) -> Result<(), Error> { 
-        // @TEMP: Let's assume the tag is always a u64
-        let align = {
-            let mut max = 8;
-            for f in fields.iter() {
-                let align = self.align(out, map, f.ty)?;
-                if align > max {
-                    max = align;
-                }
+fn process_enum<'a>(
+    &mut self, out: &'a Arena, map: &mut TypeMap<'a>,
+    fields: &mut [FieldBlueprint], name: StringIndex,
+    ty: TypeId
+) -> Result<(), Error> { 
+    // @TEMP: Let's assume the tag is always a u64
+    let align = {
+        let mut max = 8;
+        for f in fields.iter() {
+            let align = self.align(out, map, f.ty)?;
+            if align > max {
+                max = align;
             }
-            max
-        };
-
-        let mut cursor = 8;
-        let mut new_fields = Vec::with_cap_in(out, fields.len());
-
-        for field in fields.iter_mut() {
-            let align = self.align(out, map, field.ty)?;
-            let mut c = sti::num::ceil_to_multiple_pow2(4, align);
-
-            let offset = c;
-
-            c += self.size(out, map, field.ty)?;
-
-            cursor = cursor.max(c);
-
-            new_fields.push(Field::new(field.name, field.ty, offset));
         }
+        max
+    };
 
-        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+    let mut cursor = 8;
+    let mut new_fields = Vec::with_cap_in(out, fields.len());
 
-        let symbol = TypeSymbol {
-            display_name: name,
-            align,
-            size,
-            kind: TypeSymbolKind::Enum(TypeEnum { fields: new_fields.leak() }),
-        };
+    for field in fields.iter_mut() {
+        let align = self.align(out, map, field.ty)?;
+        let mut c = sti::num::ceil_to_multiple_pow2(4, align);
 
-        map.initialise(ty, symbol);
-        Ok(())
+        let offset = c;
+
+        c += self.size(out, map, field.ty)?;
+
+        cursor = cursor.max(c);
+
+        new_fields.push(Field::new(field.name, field.ty, offset));
     }
+
+    let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+
+    let symbol = TypeSymbol {
+        display_name: name,
+        align,
+        size,
+        kind: TypeSymbolKind::Enum(TypeEnum { fields: new_fields.leak() }),
+    };
+
+    map.initialise(ty, symbol);
+    Ok(())
+}
 
 
 
