@@ -16,6 +16,7 @@ impl<'a> StringMap<'a> {
     pub const INIT_FUNC : StringIndex = StringIndex(0);
     pub const TRUE : StringIndex = StringIndex(1);
     pub const FALSE : StringIndex = StringIndex(2);
+    pub const VALUE : StringIndex = StringIndex(3);
  
     #[inline(always)]
     pub fn new(arena: &'a Arena) -> Self {
@@ -35,6 +36,7 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("_init"), Self::INIT_FUNC);
         assert_eq!(s.insert("true"), Self::TRUE);
         assert_eq!(s.insert("false"), Self::FALSE);
+        assert_eq!(s.insert("value"), Self::VALUE);
         s
     }
 

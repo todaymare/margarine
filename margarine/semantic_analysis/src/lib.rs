@@ -13,7 +13,7 @@ use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
-use types::{Type, TypeMap, FieldBlueprint, TypeEnum};
+use types::{Type, TypeMap, FieldBlueprint, TypeEnum, TypeBuilderData};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
@@ -88,7 +88,7 @@ impl<'out> Analyzer<'out> {
             namespaces: NamespaceMap::new(),
             types: TypeMap::new(string_map),
             funcs: FunctionMap::new(),
-            module_builder: WasmModuleBuilder::new(),
+            module_builder: WasmModuleBuilder::new(output),
             errors: KVec::new(),
             output,
             type_to_namespace: HashMap::new(),
@@ -137,7 +137,12 @@ impl<'out> Analyzer<'out> {
         {
             let err_len = self.errors.len();
 
-            ty_builder.finalise(self.output, &mut self.types, &mut self.errors);
+            let mut data = TypeBuilderData::new(
+                &mut self.types, &mut self.namespaces,
+                &mut self.funcs, &mut self.module_builder
+            );
+
+            ty_builder.finalise(self.output, &mut data, &mut self.errors);
 
             for i in err_len..self.errors.len() {
                 builder.error(ErrorId::Sema(SemaError::new((err_len + i) as u32).unwrap()))
@@ -261,7 +266,7 @@ impl Analyzer<'_> {
                                 },
                             };
 
-                            vec.push(FieldBlueprint::new(*name, ty))
+                            vec.push(FieldBlueprint::new(mapping.name(), ty))
                         }
 
                         vec.leak()
@@ -367,7 +372,7 @@ impl Analyzer<'_> {
                 let func = self.funcs.get(func);
                 let mut wasm = WasmFunctionBuilder::new(self.output, func.wasm_id);
 
-                wasm.return_value(func.ret.to_wasm_ty());
+                wasm.return_value(func.ret.to_wasm_ty(&self.types));
 
                 let scope = Scope::new(
                     ScopeKind::FunctionDefinition(
@@ -379,7 +384,7 @@ impl Analyzer<'_> {
                 let mut scope = self.scopes.push(scope);
 
                 for a in func.args.iter() {
-                    let wasm_ty = a.2.to_wasm_ty();
+                    let wasm_ty = a.2.to_wasm_ty(&self.types);
 
                     let local_id = wasm.param(wasm_ty);
 

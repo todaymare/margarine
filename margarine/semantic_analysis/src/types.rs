@@ -5,9 +5,9 @@ use errors::{ErrorId, SemaError};
 use parser::DataType;
 use polonius_the_crab::{polonius, polonius_return};
 use sti::{define_key, vec::Vec, hash::{HashMap, DefaultSeed}, keyed::{KVec, KSlice}, traits::MapIt, prelude::Arena, arena_pool::ArenaPool, alloc::GlobalAlloc};
-use wasm::WasmType;
+use wasm::{WasmType, WasmFunctionBuilder, WasmModuleBuilder};
 
-use crate::{namespace::{Namespace, NamespaceId}, errors::Error};
+use crate::{namespace::{Namespace, NamespaceId, NamespaceMap}, errors::Error, funcs::{FunctionMap, Function}};
 
 define_key!(u32, pub TypeId);
 
@@ -59,7 +59,7 @@ impl Type {
     }
 
 
-    pub fn to_wasm_ty(self) -> WasmType {
+    pub fn to_wasm_ty(self, map: &TypeMap) -> WasmType {
         match self {
             Type::Int => WasmType::I64,
             Type::UInt => WasmType::I64,
@@ -69,8 +69,10 @@ impl Type {
 
             // Pointers
             | Type::Error
-            | Type::Custom(_)
             | Type::Any => WasmType::I64,
+
+
+            Type::Custom(v) => WasmType::Ptr(map.get(v).size),
         }
     }
 
@@ -253,7 +255,33 @@ impl Field {
 pub struct TypeBuilder<'storage> {
     types: HashMap<TypeId, PartialType<'storage>, DefaultSeed, &'storage Arena>,
     storage: &'storage Arena,
-    processing: Vec<StringIndex, &'storage Arena>
+    processing: Vec<StringIndex, &'storage Arena>,
+}
+
+
+pub struct TypeBuilderData<'me, 'out> {
+    arena: &'out Arena,
+    type_map: &'me mut TypeMap<'out>,
+    namespace_map: &'me mut NamespaceMap,
+    function_map: &'me mut FunctionMap<'out>,
+    module_builder: &'me mut WasmModuleBuilder<'out>,
+}
+
+impl<'me, 'out> TypeBuilderData<'me, 'out> {
+    pub fn new(
+        type_map: &'me mut TypeMap<'out>, 
+        namespace_map: &'me mut NamespaceMap, 
+        function_map: &'me mut FunctionMap<'out>, 
+        module_builder: &'me mut WasmModuleBuilder<'out>
+    ) -> Self { 
+        Self { 
+            arena: module_builder.arena,
+            type_map, 
+            namespace_map, 
+            function_map, 
+            module_builder 
+        } 
+    }
 }
 
 
@@ -285,7 +313,6 @@ impl FieldBlueprint {
     pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty } }
 }
 
-
 impl<'storage> TypeBuilder<'storage> {
     pub fn new(storage: &'storage Arena) -> Self {
         Self {
@@ -312,7 +339,7 @@ impl<'storage> TypeBuilder<'storage> {
     pub fn finalise<'a>(
         mut self, 
         out: &'a Arena, 
-        map: &mut TypeMap<'a>, 
+        data: &mut TypeBuilderData<'_, 'a>,
         errors: &mut KVec<SemaError, Error>,
     ) {
 
@@ -321,7 +348,7 @@ impl<'storage> TypeBuilder<'storage> {
         self.types.iter().for_each(|x| vec.push(*x.0));
 
         for ty in &vec {
-            if let Err(err) = self.resolve_type(out, map, *ty) {
+            if let Err(err) = self.resolve_type(out, data, *ty) {
                 errors.push(err);
             }
         }
@@ -338,13 +365,12 @@ impl<'storage> TypeBuilder<'storage> {
     fn resolve_type<'a, 'b>(
         &mut self, 
         out: &'a Arena, 
-        mut map: &'b mut TypeMap<'a>, 
+        mut data: &mut TypeBuilderData<'_, 'a>,
         ty: TypeId
     ) -> Result<TypeSymbol<'a>, Error> {
-
         polonius! {
-            |map| -> Result<TypeSymbol<'a>, Error> {
-                if let Some(v) = map.get_opt(ty) {
+            |data| -> Result<TypeSymbol<'a>, Error> {
+                if let Some(v) = data.type_map.get_opt(ty) {
                     polonius_return!(Ok(v));
                 }
             }
@@ -380,8 +406,8 @@ impl<'storage> TypeBuilder<'storage> {
         self.processing.push(name);
 
         let ret = match is_enum {
-            true  => self.process_enum(out, map, fields, name, ty),
-            false => self.process_struct(out, map, fields, name, ty),
+            true  => self.process_enum(out, data, fields, name, ty),
+            false => self.process_struct(out, data, fields, name, ty),
         };
 
         self.processing.pop();
@@ -391,12 +417,16 @@ impl<'storage> TypeBuilder<'storage> {
             return Err(e);
         }
 
-        Ok(map.get(ty))
+        Ok(data.type_map.get(ty))
     }
 
 
-    fn align<'a>(&mut self, out: &'a Arena, map: &mut TypeMap<'a>, ty: Type) -> Result<usize, Error> {
-        if let Some(v) = map.align(ty) {
+    fn align<'a>(
+        &mut self, out: &'a Arena,
+        data: &mut TypeBuilderData<'_, 'a>,
+        ty: Type,
+    ) -> Result<usize, Error> {
+        if let Some(v) = data.type_map.align(ty) {
             return Ok(v)
         }
 
@@ -405,17 +435,17 @@ impl<'storage> TypeBuilder<'storage> {
             _ => unreachable!()
         };
 
-        Ok(self.resolve_type(out, map, ty_id)?.align)
+        Ok(self.resolve_type(out, data, ty_id)?.align)
     }
 
 
     fn size<'a>(
         &mut self, 
         out: &'a Arena, 
-        map: &mut TypeMap<'a>, 
+        data: &mut TypeBuilderData<'_, 'a>,
         ty: Type
     ) -> Result<usize, Error> {
-        if let Some(v) = map.size(ty) {
+        if let Some(v) = data.type_map.size(ty) {
             return Ok(v)
         }
 
@@ -424,7 +454,7 @@ impl<'storage> TypeBuilder<'storage> {
             _ => unreachable!()
         };
 
-        Ok(self.resolve_type(out, map, ty_id)?.size)
+        Ok(self.resolve_type(out, data, ty_id)?.size)
     }
 
 }
@@ -432,14 +462,15 @@ impl<'storage> TypeBuilder<'storage> {
 
 impl TypeBuilder<'_> {
     fn process_struct<'a>(
-        &mut self, out: &'a Arena, map: &mut TypeMap<'a>,
+        &mut self, out: &'a Arena, 
+        data: &mut TypeBuilderData<'_, 'a>,
         fields: &mut [FieldBlueprint], name: StringIndex,
         ty: TypeId
     ) -> Result<(), Error> { 
         let align = {
             let mut max = 1;
             for f in fields.iter() {
-                let align = self.align(out, map, f.ty)?;
+                let align = self.align(out, data, f.ty)?;
                 if align > max {
                     max = align;
                 }
@@ -451,11 +482,11 @@ impl TypeBuilder<'_> {
         let mut new_fields = Vec::with_cap_in(out, fields.len());
 
         for field in fields.iter_mut() {
-            let align = self.align(out, map, field.ty)?;
+            let align = self.align(out, data, field.ty)?;
             cursor = sti::num::ceil_to_multiple_pow2(cursor, align);
 
             let offset = cursor;
-            cursor += self.size(out, map, field.ty)?;
+            cursor += self.size(out, data, field.ty)?;
 
             new_fields.push(Field::new(field.name, field.ty, offset));
         }
@@ -469,56 +500,93 @@ impl TypeBuilder<'_> {
             kind: TypeSymbolKind::Struct(TypeStruct { fields: new_fields.leak() }),
         };
 
-        map.initialise(ty, symbol);
+        data.type_map.initialise(ty, symbol);
         Ok(())
     }
 
 
-fn process_enum<'a>(
-    &mut self, out: &'a Arena, map: &mut TypeMap<'a>,
-    fields: &mut [FieldBlueprint], name: StringIndex,
-    ty: TypeId
-) -> Result<(), Error> { 
-    // @TEMP: Let's assume the tag is always a u64
-    let align = {
-        let mut max = 8;
-        for f in fields.iter() {
-            let align = self.align(out, map, f.ty)?;
-            if align > max {
-                max = align;
+    fn process_enum<'a>(
+        &mut self, out: &'a Arena,
+        data: &mut TypeBuilderData<'_, 'a>,
+        fields: &mut [FieldBlueprint], name: StringIndex,
+        ty: TypeId
+    ) -> Result<(), Error> { 
+        // @TEMP: Let's assume the tag is always a u64
+        let align = {
+            let mut max = 8;
+            for f in fields.iter() {
+                let align = self.align(out, data, f.ty)?;
+                if align > max {
+                    max = align;
+                }
             }
+            max
+        };
+
+        let mut cursor = 8;
+        let mut new_fields = Vec::with_cap_in(out, fields.len());
+
+        for field in fields.iter_mut() {
+            let align = self.align(out, data, field.ty)?;
+            let mut c = sti::num::ceil_to_multiple_pow2(4, align);
+
+            let offset = c;
+
+            c += self.size(out, data, field.ty)?;
+
+            cursor = cursor.max(c);
+
+            new_fields.push(Field::new(field.name, field.ty, offset));
         }
-        max
-    };
 
-    let mut cursor = 8;
-    let mut new_fields = Vec::with_cap_in(out, fields.len());
+        let size = sti::num::ceil_to_multiple_pow2(cursor, align);
+        let fields = new_fields.leak();
 
-    for field in fields.iter_mut() {
-        let align = self.align(out, map, field.ty)?;
-        let mut c = sti::num::ceil_to_multiple_pow2(4, align);
+        let symbol = TypeSymbol {
+            display_name: name,
+            align,
+            size,
+            kind: TypeSymbolKind::Enum(TypeEnum { fields}),
+        };
 
-        let offset = c;
+        data.type_map.initialise(ty, symbol);
 
-        c += self.size(out, map, field.ty)?;
+        {
+            let mut ns = Namespace::new();
 
-        cursor = cursor.max(c);
+            for (i, f) in fields.iter().enumerate() {
+                let wasm_id = data.module_builder.function_id();
+                let mut wasm_func = WasmFunctionBuilder::new(data.module_builder.arena, wasm_id);
 
-        new_fields.push(Field::new(field.name, field.ty, offset));
+                let return_ptr = wasm_func.return_value(WasmType::Ptr(size));
+                let field_wasm_ty = f.ty.to_wasm_ty(&data.type_map);
+                let param = wasm_func.param(field_wasm_ty);
+
+                wasm_func.i64_const(i as i64);
+                wasm_func.write_i64_to_stack(return_ptr);
+                wasm_func.local_get(param);
+                wasm_func.copy_to_stack(return_ptr, field_wasm_ty);
+
+                data.module_builder.register(wasm_func);
+
+                let function = Function::new(
+                    f.name, 
+                    data.arena.alloc_new([(StringMap::VALUE, false, f.ty)]), 
+                    Type::Custom(ty), 
+                    wasm_id
+                );
+
+
+                let function_id = data.function_map.put(function);
+                ns.add_func(f.name, function_id);
+            }
+
+            data.namespace_map.put(ns);
+            
+        }
+
+        Ok(())
     }
-
-    let size = sti::num::ceil_to_multiple_pow2(cursor, align);
-
-    let symbol = TypeSymbol {
-        display_name: name,
-        align,
-        size,
-        kind: TypeSymbolKind::Enum(TypeEnum { fields: new_fields.leak() }),
-    };
-
-    map.initialise(ty, symbol);
-    Ok(())
-}
 
 
 

@@ -1,4 +1,4 @@
-use std::{fmt::Write, ops::{DerefMut, Deref}};
+use std::{fmt::{Write, write}, ops::{DerefMut, Deref}};
 
 use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
@@ -10,6 +10,7 @@ pub enum WasmType {
     I64,
     F32,
     F64,
+    Ptr(usize),
 }
 
 
@@ -29,10 +30,18 @@ impl WasmType {
             WasmType::I64 => "i64",
             WasmType::F32 => "f32",
             WasmType::F64 => "f64",
+            WasmType::Ptr(_) => "i32",
         }
     }
 
     pub const fn max_size_of_name() -> usize { 3 }
+
+    pub const fn stack_size(self) -> usize {
+        match self {
+            WasmType::Ptr(v) => v,
+            _ => 0,
+        }
+    }
 }
 
 
@@ -51,24 +60,31 @@ pub struct BlockId(usize);
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct LoopId(usize);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct StackPointer(usize);
+
 
 #[derive(Debug)]
 pub struct WasmModuleBuilder<'a> {
+    pub arena: &'a Arena,
     functions: std::vec::Vec<WasmFunctionBuilder<'a>>,
     globals: Vec<WasmConstant>,
     memory: usize,
+    stack_size: usize,
 
     function_id_counter: u32,
 }
 
 
 impl<'a> WasmModuleBuilder<'a> {
-    pub fn new() -> Self { 
+    pub fn new(arena: &'a Arena) -> Self { 
         Self {
             functions: std::vec::Vec::new(),
             function_id_counter: 0,
             globals: Vec::new(),
             memory: 0,
+            stack_size: 0,
+            arena,
         }
     }
 
@@ -95,13 +111,32 @@ impl<'a> WasmModuleBuilder<'a> {
     }
 
 
+    pub fn stack_size(&mut self, size: usize) {
+        self.stack_size = size;
+        self.memory = self.memory.max(self.stack_size);
+    }
+
+
     pub fn build(mut self, string_map: &mut StringMap) -> Vec<u8> {
         self.functions.sort_unstable_by_key(|x| x.function_id.0);
 
         let mut buffer = String::new();
         write!(buffer, "(module ");
         
-        write!(buffer, "(memory {})", self.memory);
+        assert!(self.memory >= self.stack_size);
+        write!(buffer, "(memory (export \"memory\") {})", self.memory);
+        write!(buffer, "(global $stack_pointer (export \"stack_pointer\") (mut i32) (i32.const {}))", 
+               self.stack_size);
+
+        let _ = writeln!(buffer);
+        let _ = writeln!(buffer, ";;");
+        let _ = writeln!(buffer, ";; TEMPLATE START");
+        let _ = writeln!(buffer, ";;");
+        let _ = writeln!(buffer, include_str!("../template.wat"));
+        let _ = writeln!(buffer, ";;");
+        let _ = writeln!(buffer, ";; TEMPLATE OVER");
+        let _ = writeln!(buffer, ";;");
+
 
         for g in self.globals.iter() {
             write!(buffer, "(global");
@@ -128,7 +163,9 @@ pub struct WasmFunctionBuilder<'a> {
     function_id: FunctionId,
     export: Option<StringIndex>,
     ret: Option<WasmType>,
+    ret_offsets: Vec<usize, &'a Arena>,
     body: String<&'a Arena>,
+    stack_size: usize,
 
     loop_nest: usize,
     block_nest: usize,
@@ -146,9 +183,11 @@ impl<'a> WasmFunctionBuilder<'a> {
             body: String::new_in(arena), 
             locals: Vec::new_in(arena), 
             params: Vec::new_in(arena), 
+            ret_offsets: Vec::new_in(arena),
             function_id: id,
             loop_nest: 0,
             block_nest: 0,
+            stack_size: 0,
         }
     }
 
@@ -168,8 +207,11 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     #[inline(always)]
-    pub fn return_value(&mut self, ty: WasmType) {
+    pub fn return_value(&mut self, ty: WasmType) -> StackPointer {
+        assert!(self.ret.is_none());
+
         self.ret.replace(ty);
+        self.alloc_stack(ty.stack_size())
     }
 
 
@@ -187,7 +229,10 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
 impl WasmFunctionBuilder<'_> {
-    pub fn build(self, string_map: &StringMap, buffer: &mut String) {
+    pub fn build(mut self, string_map: &StringMap, buffer: &mut String) {
+        self.ret();
+        
+
         write!(buffer, "(func ");
 
         if let Some(export) = self.export {
@@ -202,8 +247,21 @@ impl WasmFunctionBuilder<'_> {
             write!(buffer, "(local {}) ", l.name());
         }
 
+        let mut ret_stack_size = 0; 
         if let Some(ret) = self.ret {
             write!(buffer, "(result {})", ret.name());
+            ret_stack_size = ret.stack_size();
+        }
+
+        write!(buffer, "(call $push (i32.const {}))", self.stack_size - ret_stack_size);
+
+        if let Some(WasmType::Ptr(_)) = self.ret {
+            write!(buffer, "(global.get $stack_pointer)");   
+        }
+
+        let fmt = format!("(call $pop (i32.const {}))", self.stack_size);
+        for r in &self.ret_offsets {
+            unsafe { self.body.inner_mut() }.insert_from_slice(*r, fmt.as_bytes());
         }
 
         buffer.reserve_exact(self.body.len() + 1);
@@ -212,6 +270,7 @@ impl WasmFunctionBuilder<'_> {
         }
 
         buffer.push_char(')');
+
    }
 }
 
@@ -240,18 +299,6 @@ impl WasmFunctionBuilder<'_> {
 
     #[inline(always)]
     pub fn read_f64(&mut self) { write!(self.body, "f64.load "); }
-
-    #[inline(always)]
-    pub fn write_i32(&mut self) { write!(self.body, "i32.store "); }
-
-    #[inline(always)]
-    pub fn write_f32(&mut self) { write!(self.body, "f32.store "); }
-
-    #[inline(always)]
-    pub fn write_i64(&mut self) { write!(self.body, "i64.store "); }
-
-    #[inline(always)]
-    pub fn write_f64(&mut self) { write!(self.body, "f64.store "); }
 }
 
 
@@ -263,9 +310,7 @@ impl<'a> WasmFunctionBuilder<'a> {
     pub fn global_set(&mut self, index: GlobalId) { write!(self.body, "global.set {}", index.0); }
 
     #[inline(always)]
-    pub fn call(&mut self, func: FunctionId) {
-        write!(self.body, "call {} ", func.0);
-    }
+    pub fn call(&mut self, func: FunctionId) { write!(self.body, "call {} ", func.0); }
 
     #[inline(always)]
     pub fn pop(&mut self) { write!(self.body, "drop "); }
@@ -273,7 +318,70 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn unreachable(&mut self) { write!(self.body, "unreachable "); }
 
-        
+    #[inline(always)]
+    pub fn alloc_stack(&mut self, size: usize) -> StackPointer {
+        let ptr = StackPointer(size);
+        self.stack_size += size; 
+        ptr
+    } 
+
+
+    #[inline(always)]
+    pub fn stack_offset(&mut self, ptr: StackPointer) {
+        write!(self.body, "(i32.sub (global.get $stack_pointer) (i32.const {})) ", ptr.0);
+    }
+
+
+    #[inline(always)]
+    pub fn write_i32_to_stack(&mut self, ptr: StackPointer) {
+        self.stack_offset(ptr);
+        self.call_template("write_i32_to_stack")
+    }
+
+
+    #[inline(always)]
+    pub fn write_i64_to_stack(&mut self, ptr: StackPointer) {
+        self.stack_offset(ptr);
+        self.call_template("write_i64_to_stack")
+    }
+
+
+    #[inline(always)]
+    pub fn write_f32_to_stack(&mut self, ptr: StackPointer) {
+        self.stack_offset(ptr);
+        self.call_template("write_f32_to_stack")
+    }
+
+
+    #[inline(always)]
+    pub fn write_f64_to_stack(&mut self, ptr: StackPointer) {
+        self.stack_offset(ptr);
+        self.call_template("write_f64_to_stack")
+    }
+
+
+    #[inline(always)]
+    pub fn copy_to_stack(&mut self, ptr: StackPointer, ty: WasmType) {
+        match ty {
+            WasmType::I32 => self.write_i32_to_stack(ptr),
+            WasmType::I64 => self.write_i64_to_stack(ptr),
+            WasmType::F32 => self.write_f32_to_stack(ptr),
+            WasmType::F64 => self.write_f64_to_stack(ptr),
+            WasmType::Ptr(v) => {
+                self.stack_offset(ptr);
+                self.i32_const(v.try_into().unwrap());
+                self.call_template("copy_memory");
+            },
+        }
+    }
+
+    
+    #[inline(always)]
+    pub fn call_template(&mut self, name: &str) {
+        write!(self.body, "(call ${name}) ");
+    }
+
+
     #[inline(always)]
     pub fn ite(
         &mut self,
@@ -326,7 +434,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     #[inline(always)]
-    pub fn ret(&mut self) { write!(self.body, "return "); }
+    pub fn ret(&mut self) { self.ret_offsets.push(self.body.len() - 1); write!(self.body, "return "); }
 }
 
 
