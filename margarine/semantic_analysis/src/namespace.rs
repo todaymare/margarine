@@ -79,10 +79,7 @@ impl NamespaceMap {
 
     #[inline(always)]
     pub fn get_type(&mut self, id: Type) -> &Namespace {
-        let id = self.type_to_ns.kget_or_insert_with(id, || {
-            self.map.push(Namespace::new())
-        });
-
+        let id = self.type_to_ns.get(&id).unwrap();
         &self.map[*id]
     }
 
@@ -112,5 +109,11 @@ impl NamespaceMap {
     #[inline(always)]
     pub fn put(&mut self, ns: Namespace) -> NamespaceId {
         self.map.push(ns)
+    }
+
+
+    #[inline(always)]
+    pub fn map_type(&mut self, ty: Type, ns: NamespaceId) {
+        self.type_to_ns.insert(ty, ns);
     }
 }

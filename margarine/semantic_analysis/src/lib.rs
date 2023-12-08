@@ -6,18 +6,18 @@ pub mod funcs;
 
 use std::{task::Wake, any::TypeId};
 
-use common::{source::SourceRange, string_map::StringMap};
+use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
-use types::{Type, TypeMap, FieldBlueprint, TypeEnum, TypeBuilderData};
+use types::{Type, TypeMap, StructFieldBlueprint, TypeEnum, TypeBuilderData};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
-use crate::types::TypeBuilder;
+use crate::types::{TypeBuilder, EnumFieldBlueprint};
 
 #[derive(Debug)]
 pub struct Analyzer<'out> {
@@ -95,8 +95,29 @@ impl<'out> Analyzer<'out> {
         };
 
         {
-            let ns = slf.namespaces.get_type_mut(Type::BOOL);
+            let pool = ArenaPool::tls_get_temp();
+            let mut type_builder = TypeBuilder::new(&pool);
 
+            let id = slf.types.pending();
+            assert_eq!(Type::BOOL.id(), id);
+
+            type_builder.add_enum_ty(Type::BOOL.id(), StringMap::BOOL, SourceRange::new(0, 0));
+            type_builder.add_enum_fields(
+                Type::BOOL.id(),
+                pool.alloc_new([
+                    EnumFieldBlueprint::new(StringMap::TRUE, None),
+                    EnumFieldBlueprint::new(StringMap::FALSE, None),
+                ])
+            );
+
+            let mut data = TypeBuilderData::new(
+                &mut slf.types,
+                &mut slf.namespaces,
+                &mut slf.funcs,
+                &mut slf.module_builder,
+            );
+
+            type_builder.finalise(output, &mut data, &mut slf.errors);
         }
 
         let mut func = WasmFunctionBuilder::new(output, slf.module_builder.function_id());
@@ -190,7 +211,12 @@ impl Analyzer<'_> {
 
                     let ty = self.types.pending();
                     namespace.add_type(name, ty);
-                    type_builder.add_ty(ty, name, header, matches!(decl, parser::nodes::Declaration::Enum { .. }))
+
+                    if matches!(decl, parser::nodes::Declaration::Enum { .. }) {
+                        type_builder.add_enum_ty(ty, name, header);
+                    } else {
+                        type_builder.add_struct_ty(ty, name, header);
+                    }
                 },
 
 
@@ -235,14 +261,14 @@ impl Analyzer<'_> {
                                 },
                             };
 
-                            vec.push(FieldBlueprint::new(*name, ty))
+                            vec.push(StructFieldBlueprint::new(*name, ty))
                         }
 
                         vec.leak()
                     };
 
                     let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
-                    type_builder.add_fields(ty, fields)
+                    type_builder.add_struct_fields(ty, fields)
                 },
 
 
@@ -252,28 +278,32 @@ impl Analyzer<'_> {
                         
                         for mapping in mappings.iter() {
                             let ty = match mapping.is_implicit_unit() {
-                                true => DataTypeKind::Unit,
-                                false => mapping.data_type().kind(),
-                            };
+                                true => None,
+                                false => {
+                                    let ty = mapping.data_type().kind();
 
-                            let ty = DataType::new(mapping.data_type().range(), ty);
-                            let ty = self.convert_ty(scope, ty);
-                            let ty = match ty {
-                                Ok(v) => v,
-                                Err(v) => {
-                                    self.error(v);
-                                    continue;
+                                    let ty = DataType::new(mapping.data_type().range(), ty);
+                                    let ty = self.convert_ty(scope, ty);
+                                    let ty = match ty {
+                                        Ok(v) => v,
+                                        Err(v) => {
+                                            self.error(v);
+                                            continue;
+                                        },
+                                    };
+
+                                    Some(ty)
                                 },
                             };
 
-                            vec.push(FieldBlueprint::new(mapping.name(), ty))
+                            vec.push(EnumFieldBlueprint::new(mapping.name(), ty))
                         }
 
                         vec.leak()
                     };
 
                     let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
-                    type_builder.add_fields(ty, mappings)
+                    type_builder.add_enum_fields(ty, mappings)
                 },
 
 
@@ -442,6 +472,7 @@ impl Analyzer<'_> {
                     lexer::Literal::Bool(v) => {
                         let ty = Type::BOOL;
                         let name = if *v { StringMap::TRUE } else { StringMap::FALSE };
+                        println!("{:#?} {:?}", self.namespaces, name);
                         let func = self.namespaces.get_type(ty).get_func(name).unwrap();
                         let func = self.funcs.get(func);
                         

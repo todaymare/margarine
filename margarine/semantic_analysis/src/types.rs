@@ -138,20 +138,20 @@ pub struct TypeSymbol<'a> {
 pub enum TypeSymbolKind<'a> {
     Struct(TypeStruct<'a>),
     Enum(TypeEnum<'a>),
-    Union(&'a [Field]),
+    Union(&'a [StructField]),
 
 }
 
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeStruct<'a> {
-    fields: &'a [Field],
+    fields: &'a [StructField],
 }
 
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeEnum<'a> {
-    fields: &'a [Field],
+    fields: &'a [EnumField],
 }
 
 
@@ -163,17 +163,7 @@ pub struct TypeMap<'a> {
 
 impl<'a> TypeMap<'a> {
     pub fn new(string_map: &mut StringMap) -> Self {
-        let mut map = KVec::new();
-
-        map.push(Some(TypeSymbol {
-            display_name: string_map.insert("bool"),
-            align: 4, 
-            size: 4,
-            kind: TypeSymbolKind::Enum(TypeEnum { fields: &[] }),
-        }
-        ));
-
-        Self { map }
+        Self { map: KVec::new() }
     }
 
 
@@ -240,14 +230,26 @@ impl<'a> TypeMap<'a> {
 
 
 #[derive(Debug, Clone, Copy)]
-pub struct Field {
+pub struct StructField {
     name: StringIndex,
     ty: Type,
     offset: usize,
 }
 
-impl Field {
+impl StructField {
     pub fn new(name: StringIndex, ty: Type, offset: usize) -> Self { Self { name, ty, offset } }
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct EnumField {
+    name: StringIndex,
+    ty: Option<Type>,
+    offset: usize,
+}
+
+impl EnumField {
+    pub fn new(name: StringIndex, ty: Option<Type>, offset: usize) -> Self { Self { name, ty, offset } }
 }
 
 
@@ -266,6 +268,7 @@ pub struct TypeBuilderData<'me, 'out> {
     function_map: &'me mut FunctionMap<'out>,
     module_builder: &'me mut WasmModuleBuilder<'out>,
 }
+
 
 impl<'me, 'out> TypeBuilderData<'me, 'out> {
     pub fn new(
@@ -288,10 +291,20 @@ impl<'me, 'out> TypeBuilderData<'me, 'out> {
 #[derive(Debug)]
 struct PartialType<'a> {
     name: StringIndex,
-    fields: Option<&'a mut [FieldBlueprint]>,
+    kind: PartialTypeKind<'a>,
     state: PartialTypeState,
     source: SourceRange,
-    is_enum: bool,
+}
+
+
+#[derive(Debug)]
+enum PartialTypeKind<'a> {
+    Struct {
+        fields: Option<&'a mut [StructFieldBlueprint]>,
+    },
+    Enum {
+        fields: Option<&'a mut [EnumFieldBlueprint]>,
+    }
 }
 
 
@@ -304,13 +317,29 @@ enum PartialTypeState {
 
 
 #[derive(Debug)]
-pub struct FieldBlueprint {
+pub struct StructFieldBlueprint {
     name: StringIndex,
     ty: Type,
 }
 
-impl FieldBlueprint {
+impl StructFieldBlueprint {
     pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty } }
+}
+
+
+#[derive(Debug)]
+pub struct EnumFieldBlueprint {
+    name: StringIndex,
+    ty: Option<Type>,
+}
+
+impl EnumFieldBlueprint {
+    pub fn new(name: StringIndex, ty: Option<Type>) -> Self {
+        Self {
+            name,
+            ty,
+        }
+    }
 }
 
 impl<'storage> TypeBuilder<'storage> {
@@ -323,13 +352,30 @@ impl<'storage> TypeBuilder<'storage> {
     }
 
 
-    pub fn add_ty(&mut self, ty: TypeId, name: StringIndex, source: SourceRange, is_enum: bool) {
-        self.types.insert(ty, PartialType { name, fields: None, state: PartialTypeState::Uninit, source, is_enum });
+    pub fn add_struct_ty(&mut self, ty: TypeId, name: StringIndex, source: SourceRange) {
+        self.types.insert(ty, PartialType { name, kind: PartialTypeKind::Struct { fields: None }, state: PartialTypeState::Uninit, source });
     }
 
 
-    pub fn add_fields(&mut self, ty: TypeId, new_fields: &'storage mut [FieldBlueprint]) {
-        let PartialType { fields, .. } = self.types.get_mut(&ty).unwrap();
+    pub fn add_enum_ty(&mut self, ty: TypeId, name: StringIndex, source: SourceRange) {
+        self.types.insert(ty, PartialType { name, kind: PartialTypeKind::Enum { fields: None }, state: PartialTypeState::Uninit, source });
+    }
+
+
+    pub fn add_struct_fields(&mut self, ty: TypeId, new_fields: &'storage mut [StructFieldBlueprint]) {
+        let PartialType { kind, .. } = self.types.get_mut(&ty).unwrap();
+        let PartialTypeKind::Struct { fields } = kind
+        else { panic!() };
+
+        assert!(fields.is_none());
+        fields.replace(new_fields);
+    }
+
+
+    pub fn add_enum_fields(&mut self, ty: TypeId, new_fields: &'storage mut [EnumFieldBlueprint]) {
+        let PartialType { kind, .. } = self.types.get_mut(&ty).unwrap();
+        let PartialTypeKind::Enum { fields } = kind
+        else { panic!() };
 
         assert!(fields.is_none());
         fields.replace(new_fields);
@@ -377,7 +423,7 @@ impl<'storage> TypeBuilder<'storage> {
         }
 
         let partial_ty = self.types.get_mut(&ty).unwrap();
-        let PartialType { fields, name, state, is_enum, .. } = match partial_ty.state {
+        let PartialType { kind, name, state, .. } = match partial_ty.state {
             PartialTypeState::Uninit => partial_ty,
 
             PartialTypeState::Processing => {
@@ -399,15 +445,23 @@ impl<'storage> TypeBuilder<'storage> {
         };
 
         *state = PartialTypeState::Processing;
-        let fields = fields.take().expect("fields are not initialised");
+        self.processing.push(*name);
+
         let name = *name;
-        let is_enum = *is_enum;
+        let kind = kind;
 
-        self.processing.push(name);
 
-        let ret = match is_enum {
-            true  => self.process_enum(out, data, fields, name, ty),
-            false => self.process_struct(out, data, fields, name, ty),
+        let ret = match kind {
+            PartialTypeKind::Struct { fields } => {
+                let fields = fields.take().unwrap();
+                self.process_struct(out, data, fields, name, ty)
+            },
+
+
+            PartialTypeKind::Enum { fields } => {
+                let fields = fields.take().unwrap();
+                self.process_enum(out, data, fields, name, ty)
+            },
         };
 
         self.processing.pop();
@@ -464,7 +518,7 @@ impl TypeBuilder<'_> {
     fn process_struct<'a>(
         &mut self, out: &'a Arena, 
         data: &mut TypeBuilderData<'_, 'a>,
-        fields: &mut [FieldBlueprint], name: StringIndex,
+        fields: &mut [StructFieldBlueprint], name: StringIndex,
         ty: TypeId
     ) -> Result<(), Error> { 
         let align = {
@@ -488,7 +542,7 @@ impl TypeBuilder<'_> {
             let offset = cursor;
             cursor += self.size(out, data, field.ty)?;
 
-            new_fields.push(Field::new(field.name, field.ty, offset));
+            new_fields.push(StructField::new(field.name, field.ty, offset));
         }
 
         let size = sti::num::ceil_to_multiple_pow2(cursor, align);
@@ -508,14 +562,15 @@ impl TypeBuilder<'_> {
     fn process_enum<'a>(
         &mut self, out: &'a Arena,
         data: &mut TypeBuilderData<'_, 'a>,
-        fields: &mut [FieldBlueprint], name: StringIndex,
+        fields: &mut [EnumFieldBlueprint], name: StringIndex,
         ty: TypeId
     ) -> Result<(), Error> { 
         // @TEMP: Let's assume the tag is always a u64
         let align = {
             let mut max = 8;
             for f in fields.iter() {
-                let align = self.align(out, data, f.ty)?;
+                let Some(fty) = f.ty else { continue };
+                let align = self.align(out, data, fty)?;
                 if align > max {
                     max = align;
                 }
@@ -527,16 +582,20 @@ impl TypeBuilder<'_> {
         let mut new_fields = Vec::with_cap_in(out, fields.len());
 
         for field in fields.iter_mut() {
-            let align = self.align(out, data, field.ty)?;
-            let mut c = sti::num::ceil_to_multiple_pow2(4, align);
+            let (ty, offset) = if let Some(fty) = field.ty {
+                let align = self.align(out, data, fty)?;
+                let mut c = sti::num::ceil_to_multiple_pow2(4, align);
 
-            let offset = c;
+                let offset = c;
 
-            c += self.size(out, data, field.ty)?;
+                c += self.size(out, data, fty)?;
 
-            cursor = cursor.max(c);
+                cursor = cursor.max(c);
 
-            new_fields.push(Field::new(field.name, field.ty, offset));
+                (Some(fty), offset)
+            } else { (None, 0) };
+
+            new_fields.push(EnumField::new(field.name, ty, offset));
         }
 
         let size = sti::num::ceil_to_multiple_pow2(cursor, align);
@@ -546,7 +605,7 @@ impl TypeBuilder<'_> {
             display_name: name,
             align,
             size,
-            kind: TypeSymbolKind::Enum(TypeEnum { fields}),
+            kind: TypeSymbolKind::Enum(TypeEnum { fields }),
         };
 
         data.type_map.initialise(ty, symbol);
@@ -559,19 +618,27 @@ impl TypeBuilder<'_> {
                 let mut wasm_func = WasmFunctionBuilder::new(data.module_builder.arena, wasm_id);
 
                 let return_ptr = wasm_func.return_value(WasmType::Ptr(size));
-                let field_wasm_ty = f.ty.to_wasm_ty(&data.type_map);
-                let param = wasm_func.param(field_wasm_ty);
-
+ 
                 wasm_func.i64_const(i as i64);
                 wasm_func.write_i64_to_stack(return_ptr);
-                wasm_func.local_get(param);
-                wasm_func.copy_to_stack(return_ptr, field_wasm_ty);
+
+                let args : &[_] = if let Some(fty) = f.ty {
+                    let field_wasm_ty = fty.to_wasm_ty(&data.type_map);
+
+                    let param = wasm_func.param(field_wasm_ty);
+
+                    wasm_func.local_get(param);
+                    wasm_func.copy_to_stack(return_ptr.add(8), field_wasm_ty);
+
+                    data.arena.alloc_new([(StringMap::VALUE, false, fty)]) 
+
+                } else { &[] };
 
                 data.module_builder.register(wasm_func);
 
                 let function = Function::new(
                     f.name, 
-                    data.arena.alloc_new([(StringMap::VALUE, false, f.ty)]), 
+                    args,
                     Type::Custom(ty), 
                     wasm_id
                 );
@@ -581,7 +648,8 @@ impl TypeBuilder<'_> {
                 ns.add_func(f.name, function_id);
             }
 
-            data.namespace_map.put(ns);
+            let ns = data.namespace_map.put(ns);
+            data.namespace_map.map_type(Type::Custom(ty), ns);
             
         }
 

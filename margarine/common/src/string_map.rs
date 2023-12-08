@@ -17,6 +17,7 @@ impl<'a> StringMap<'a> {
     pub const TRUE : StringIndex = StringIndex(1);
     pub const FALSE : StringIndex = StringIndex(2);
     pub const VALUE : StringIndex = StringIndex(3);
+    pub const BOOL : StringIndex = StringIndex(4);
  
     #[inline(always)]
     pub fn new(arena: &'a Arena) -> Self {
@@ -37,6 +38,7 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("true"), Self::TRUE);
         assert_eq!(s.insert("false"), Self::FALSE);
         assert_eq!(s.insert("value"), Self::VALUE);
+        assert_eq!(s.insert("bool"), Self::BOOL);
         s
     }
 

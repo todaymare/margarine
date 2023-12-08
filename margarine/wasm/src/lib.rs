@@ -63,6 +63,12 @@ pub struct LoopId(usize);
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StackPointer(usize);
 
+impl StackPointer {
+    pub fn add(self, inc: usize) -> StackPointer {
+        StackPointer(self.0 + inc)
+    }
+}
+
 
 #[derive(Debug)]
 pub struct WasmModuleBuilder<'a> {
@@ -233,7 +239,7 @@ impl WasmFunctionBuilder<'_> {
         self.ret();
         
 
-        write!(buffer, "(func ");
+        write!(buffer, "(func $_{}", self.function_id.0);
 
         if let Some(export) = self.export {
             write!(buffer, "(export \"{}\") ", string_map.get(export));
@@ -310,7 +316,7 @@ impl<'a> WasmFunctionBuilder<'a> {
     pub fn global_set(&mut self, index: GlobalId) { write!(self.body, "global.set {}", index.0); }
 
     #[inline(always)]
-    pub fn call(&mut self, func: FunctionId) { write!(self.body, "call {} ", func.0); }
+    pub fn call(&mut self, func: FunctionId) { write!(self.body, "call $_{} ", func.0); }
 
     #[inline(always)]
     pub fn pop(&mut self) { write!(self.body, "drop "); }
