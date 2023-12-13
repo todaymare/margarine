@@ -544,48 +544,32 @@ impl Analyzer<'_, '_, '_> {
 
                     (BinaryOperator::BitwiseXor, Type::Int) => wfunc!(i64_bw_xor, Type::Int),
 
-                    (BinaryOperator::Eq, Type::Int) => todo!(),
-                    (BinaryOperator::Eq, Type::Float) => todo!(),
+                    (BinaryOperator::Eq, Type::Int) => wfunc!(i64_eq, Type::BOOL),
+                    (BinaryOperator::Eq, Type::Float) => wfunc!(f64_eq, Type::BOOL),
+
                     (BinaryOperator::Eq, Type::Any) => todo!(),
                     (BinaryOperator::Eq, Type::Unit) => todo!(),
                     (BinaryOperator::Eq, Type::Never) => todo!(),
                     (BinaryOperator::Eq, Type::Error) => todo!(),
                     (BinaryOperator::Eq, Type::Custom(_)) => todo!(),
-                    (BinaryOperator::Ne, Type::Int) => todo!(),
-                    (BinaryOperator::Ne, Type::Float) => todo!(),
+
+                    (BinaryOperator::Ne, Type::Int) => wfunc!(i64_ne, Type::BOOL),
+                    (BinaryOperator::Ne, Type::Float) => wfunc!(f64_ne, Type::BOOL),
+
                     (BinaryOperator::Ne, Type::Any) => todo!(),
                     (BinaryOperator::Ne, Type::Unit) => todo!(),
                     (BinaryOperator::Ne, Type::Never) => todo!(),
                     (BinaryOperator::Ne, Type::Error) => todo!(),
                     (BinaryOperator::Ne, Type::Custom(_)) => todo!(),
-                    (BinaryOperator::Gt, Type::Int) => todo!(),
-                    (BinaryOperator::Gt, Type::Float) => todo!(),
-                    (BinaryOperator::Gt, Type::Any) => todo!(),
-                    (BinaryOperator::Gt, Type::Unit) => todo!(),
-                    (BinaryOperator::Gt, Type::Never) => todo!(),
-                    (BinaryOperator::Gt, Type::Error) => todo!(),
-                    (BinaryOperator::Gt, Type::Custom(_)) => todo!(),
-                    (BinaryOperator::Ge, Type::Int) => todo!(),
-                    (BinaryOperator::Ge, Type::Float) => todo!(),
-                    (BinaryOperator::Ge, Type::Any) => todo!(),
-                    (BinaryOperator::Ge, Type::Unit) => todo!(),
-                    (BinaryOperator::Ge, Type::Never) => todo!(),
-                    (BinaryOperator::Ge, Type::Error) => todo!(),
-                    (BinaryOperator::Ge, Type::Custom(_)) => todo!(),
-                    (BinaryOperator::Lt, Type::Int) => todo!(),
-                    (BinaryOperator::Lt, Type::Float) => todo!(),
-                    (BinaryOperator::Lt, Type::Any) => todo!(),
-                    (BinaryOperator::Lt, Type::Unit) => todo!(),
-                    (BinaryOperator::Lt, Type::Never) => todo!(),
-                    (BinaryOperator::Lt, Type::Error) => todo!(),
-                    (BinaryOperator::Lt, Type::Custom(_)) => todo!(),
-                    (BinaryOperator::Le, Type::Int) => todo!(),
-                    (BinaryOperator::Le, Type::Float) => todo!(),
-                    (BinaryOperator::Le, Type::Any) => todo!(),
-                    (BinaryOperator::Le, Type::Unit) => todo!(),
-                    (BinaryOperator::Le, Type::Never) => todo!(),
-                    (BinaryOperator::Le, Type::Error) => todo!(),
-                    (BinaryOperator::Le, Type::Custom(_)) => todo!(),
+
+                    (BinaryOperator::Gt, Type::Int)   => wfunc!(i64_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::Float) => wfunc!(f64_gt, Type::BOOL),
+                    (BinaryOperator::Ge, Type::Int)   => wfunc!(i64_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::Float) => wfunc!(f64_ge, Type::BOOL),
+                    (BinaryOperator::Lt, Type::Int)   => wfunc!(i64_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::Float) => wfunc!(f64_lt, Type::BOOL),
+                    (BinaryOperator::Le, Type::Int)   => wfunc!(i64_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::Float) => wfunc!(f64_le, Type::BOOL),
 
                     _ => unreachable!()
                 };
@@ -631,7 +615,10 @@ impl Analyzer<'_, '_, '_> {
                 }
 
                 match (operator, rhs_anal.ty) {
-                    (UnaryOperator::Not, Type::Custom(_)) => todo!(),
+                    (UnaryOperator::Not, Type::Custom(x)) if x == TypeId::BOOL => {
+                        wasm.i64_const(1);
+                        wasm.i64_bw_xor();
+                    },
 
                     (UnaryOperator::Neg, Type::Int) => {
                         // thanks wasm.
