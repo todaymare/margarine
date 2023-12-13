@@ -2,7 +2,7 @@ use common::string_map::StringIndex;
 use sti::{define_key, keyed::KVec};
 use wasm::FunctionId;
 
-use crate::types::Type;
+use crate::types::ty::Type;
 
 define_key!(u32, pub FuncId);
 

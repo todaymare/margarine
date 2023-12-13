@@ -5,7 +5,7 @@ use errors::ErrorType;
 use parser::nodes::{BinaryOperator, UnaryOperator};
 use sti::{keyed::{KVec}, vec::Vec};
 
-use crate::types::{Type, TypeId, TypeSymbol, TypeMap};
+use crate::types::{ty::Type, ty_map::TypeId, ty_sym::TypeSymbol, ty_map::TypeMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {

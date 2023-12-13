@@ -63,6 +63,9 @@ pub struct LoopId(usize);
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StackPointer(usize);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Pointer(usize);
+
 impl StackPointer {
     pub fn add(self, inc: usize) -> StackPointer {
         StackPointer(self.0 + inc)
@@ -71,18 +74,21 @@ impl StackPointer {
 
 
 #[derive(Debug)]
-pub struct WasmModuleBuilder<'a> {
+pub struct WasmModuleBuilder<'a, 'strs> {
     pub arena: &'a Arena,
     functions: std::vec::Vec<WasmFunctionBuilder<'a>>,
     globals: Vec<WasmConstant>,
     memory: usize,
     stack_size: usize,
 
+    strs: Vec<&'strs str>,
+    text_sec_size: usize,
+
     function_id_counter: u32,
 }
 
 
-impl<'a> WasmModuleBuilder<'a> {
+impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
     pub fn new(arena: &'a Arena) -> Self { 
         Self {
             functions: std::vec::Vec::new(),
@@ -91,6 +97,8 @@ impl<'a> WasmModuleBuilder<'a> {
             memory: 0,
             stack_size: 0,
             arena,
+            strs: Vec::new(),
+            text_sec_size: 0,
         }
     }
 
@@ -123,7 +131,15 @@ impl<'a> WasmModuleBuilder<'a> {
     }
 
 
-    pub fn build(mut self, string_map: &mut StringMap) -> Vec<u8> {
+    pub fn add_string(&mut self, str: &'strs str) -> Pointer {
+        self.strs.push(str);
+        let ptr = Pointer(self.text_sec_size);
+        self.text_sec_size += str.len();
+        ptr
+    }
+
+
+    pub fn build(mut self, string_map: &mut StringMap<'strs>) -> Vec<u8> {
         self.functions.sort_unstable_by_key(|x| x.function_id.0);
 
         let mut buffer = String::new();
@@ -333,53 +349,60 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     #[inline(always)]
-    pub fn stack_offset(&mut self, ptr: StackPointer) {
+    pub fn stack_offset(&mut self, ptr: Pointer) {
         write!(self.body, "(i32.sub (global.get $stack_pointer) (i32.const {})) ", ptr.0);
     }
 
 
     #[inline(always)]
+    pub fn stack_to_global(&mut self, ptr: StackPointer) {
+        write!(self.body, "(i32.add (global.get $stack_pointer) (i32.const {})) ", ptr.0);
+    }
+
+
+    #[inline(always)]
     pub fn write_i32_to_stack(&mut self, ptr: StackPointer) {
-        self.stack_offset(ptr);
+        self.stack_to_global(ptr);
         self.call_template("write_i32_to_stack")
     }
 
 
     #[inline(always)]
     pub fn write_i64_to_stack(&mut self, ptr: StackPointer) {
-        self.stack_offset(ptr);
+        self.stack_to_global(ptr);
         self.call_template("write_i64_to_stack")
     }
 
 
     #[inline(always)]
     pub fn write_f32_to_stack(&mut self, ptr: StackPointer) {
-        self.stack_offset(ptr);
+        self.stack_to_global(ptr);
         self.call_template("write_f32_to_stack")
     }
 
 
     #[inline(always)]
     pub fn write_f64_to_stack(&mut self, ptr: StackPointer) {
-        self.stack_offset(ptr);
+        self.stack_to_global(ptr);
         self.call_template("write_f64_to_stack")
     }
 
 
     #[inline(always)]
-    pub fn copy_to_stack(&mut self, ptr: StackPointer, ty: WasmType) {
+    pub fn memcpy(&mut self, ptr: StackPointer, ty: WasmType) {
         match ty {
             WasmType::I32 => self.write_i32_to_stack(ptr),
             WasmType::I64 => self.write_i64_to_stack(ptr),
             WasmType::F32 => self.write_f32_to_stack(ptr),
             WasmType::F64 => self.write_f64_to_stack(ptr),
             WasmType::Ptr(v) => {
-                self.stack_offset(ptr);
+                self.stack_to_global(ptr);
                 self.i32_const(v.try_into().unwrap());
-                self.call_template("copy_memory");
+                self.call_template("memcpy");
             },
         }
     }
+
 
     
     #[inline(always)]
@@ -443,6 +466,15 @@ impl<'a> WasmFunctionBuilder<'a> {
     pub fn ret(&mut self) { self.ret_offsets.push(self.body.len() - 1); write!(self.body, "return "); }
 }
 
+
+
+impl WasmFunctionBuilder<'_> {
+    #[inline(always)]
+    pub fn ptr_const(&mut self, ptr: Pointer) { write!(self.body, "i32.const {} ", ptr.0); }
+
+    #[inline(always)]
+    pub fn bool_const(&mut self, v: bool) { write!(self.body, "i32.const {} ", v as i32); }
+}
 
 
 impl WasmFunctionBuilder<'_> {

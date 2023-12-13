@@ -4,8 +4,6 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
-use std::{task::Wake, any::TypeId};
-
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
@@ -13,22 +11,23 @@ use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
-use types::{Type, TypeMap, StructFieldBlueprint, TypeEnum, TypeBuilderData};
+use types::{ty::Type, ty_map::TypeMap};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
-use crate::types::{TypeBuilder, EnumFieldBlueprint};
+use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}};
 
 #[derive(Debug)]
-pub struct Analyzer<'out> {
+pub struct Analyzer<'me, 'out, 'str> {
     scopes: ScopeMap,
     namespaces: NamespaceMap,
     pub types: TypeMap<'out>,
     pub funcs: FunctionMap<'out>,
     type_to_namespace: HashMap<Type, NamespaceId>,
     output: &'out Arena,
+    pub string_map: &'me StringMap<'str>,
 
-    pub module_builder: WasmModuleBuilder<'out>,
+    pub module_builder: WasmModuleBuilder<'out, 'str>,
     pub errors: KVec<SemaError, Error>
 }
 
@@ -47,11 +46,11 @@ impl AnalysisResult {
 }
 
 
-impl Analyzer<'_> {
+impl Analyzer<'_, '_, '_> {
      pub fn convert_ty(&self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
         let ty = match dt.kind() {
             DataTypeKind::Int => Type::Int,
-            DataTypeKind::Bool => todo!(),
+            DataTypeKind::Bool => Type::BOOL,
             DataTypeKind::Float => Type::Float,
             DataTypeKind::Unit => Type::Unit,
             DataTypeKind::Any => todo!(),
@@ -77,21 +76,22 @@ impl Analyzer<'_> {
 }
 
 
-impl<'out> Analyzer<'out> {
+impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
     pub fn run(
         output: &'out Arena,
-        string_map: &mut StringMap,
+        string_map: &'me mut StringMap<'str>,
         nodes: &[Node],
     ) -> Self {
         let mut slf = Self {
             scopes: ScopeMap::new(),
             namespaces: NamespaceMap::new(),
-            types: TypeMap::new(string_map),
+            types: TypeMap::new(),
             funcs: FunctionMap::new(),
             module_builder: WasmModuleBuilder::new(output),
             errors: KVec::new(),
             output,
             type_to_namespace: HashMap::new(),
+            string_map,
         };
 
         {
@@ -99,15 +99,12 @@ impl<'out> Analyzer<'out> {
             let mut type_builder = TypeBuilder::new(&pool);
 
             let id = slf.types.pending();
-            assert_eq!(Type::BOOL.id(), id);
+            assert_eq!(TypeId::BOOL, id);
 
-            type_builder.add_enum_ty(Type::BOOL.id(), StringMap::BOOL, SourceRange::new(0, 0));
-            type_builder.add_enum_fields(
-                Type::BOOL.id(),
-                pool.alloc_new([
-                    EnumFieldBlueprint::new(StringMap::TRUE, None),
-                    EnumFieldBlueprint::new(StringMap::FALSE, None),
-                ])
+            type_builder.add_ty(TypeId::BOOL, StringMap::BOOL, SourceRange::new(0, 0));
+            type_builder.set_enum_fields(
+                TypeId::BOOL,
+                [(StringMap::TRUE, None), (StringMap::FALSE, None)].into_iter()
             );
 
             let mut data = TypeBuilderData::new(
@@ -117,7 +114,7 @@ impl<'out> Analyzer<'out> {
                 &mut slf.module_builder,
             );
 
-            type_builder.finalise(output, &mut data, &mut slf.errors);
+            type_builder.finalise(data, &mut slf.errors);
         }
 
         let mut func = WasmFunctionBuilder::new(output, slf.module_builder.function_id());
@@ -155,6 +152,7 @@ impl<'out> Analyzer<'out> {
         let scope = self.scopes.push(scope);
 
         self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
+        
         {
             let err_len = self.errors.len();
 
@@ -163,13 +161,12 @@ impl<'out> Analyzer<'out> {
                 &mut self.funcs, &mut self.module_builder
             );
 
-            ty_builder.finalise(self.output, &mut data, &mut self.errors);
+            ty_builder.finalise(data, &mut self.errors);
 
             for i in err_len..self.errors.len() {
                 builder.error(ErrorId::Sema(SemaError::new((err_len + i) as u32).unwrap()))
             }
         }
-
 
         for (id, n) in nodes.iter().enumerate() {
             self.node(scope, builder, n);
@@ -184,7 +181,7 @@ impl<'out> Analyzer<'out> {
 }
 
 
-impl Analyzer<'_> {
+impl Analyzer<'_, '_, '_> {
     pub fn collect_type_names(
         &mut self,
         builder: &mut WasmFunctionBuilder,
@@ -211,12 +208,7 @@ impl Analyzer<'_> {
 
                     let ty = self.types.pending();
                     namespace.add_type(name, ty);
-
-                    if matches!(decl, parser::nodes::Declaration::Enum { .. }) {
-                        type_builder.add_enum_ty(ty, name, header);
-                    } else {
-                        type_builder.add_struct_ty(ty, name, header);
-                    }
+                    type_builder.add_ty(ty, name, header);
                 },
 
 
@@ -248,62 +240,48 @@ impl Analyzer<'_> {
 
             match decl {
                 parser::nodes::Declaration::Struct { kind, name, header, fields } => {
-                    let fields = {
-                        let mut vec = Vec::with_cap_in(type_builder.alloc(), fields.len());
-                        
-                        for (name, ty, _) in fields.iter() {
+                    let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
+                    let fields = fields.iter()
+                        .filter_map(|(name, ty, _)| {
                             let ty = self.convert_ty(scope, *ty);
-                            let ty = match ty {
-                                Ok(v) => v,
-                                Err(v) => {
-                                    self.error(v);
-                                    continue;
-                                },
+                            match ty {
+                                Ok(v) => return Some((*name, v)),
+                                Err(e) => self.error(e),
                             };
 
-                            vec.push(StructFieldBlueprint::new(*name, ty))
-                        }
+                            None
+                        });
 
-                        vec.leak()
-                    };
-
-                    let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
-                    type_builder.add_struct_fields(ty, fields)
+                    type_builder.set_struct_fields(ty, fields)
                 },
 
 
                 parser::nodes::Declaration::Enum { name, header, mappings } => {
-                    let mappings = {
-                        let mut vec = Vec::with_cap_in(type_builder.alloc(), mappings.len());
-                        
-                        for mapping in mappings.iter() {
+                    let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
+                    let mappings = mappings.iter()
+                        .filter_map(|mapping| {
                             let ty = match mapping.is_implicit_unit() {
                                 true => None,
                                 false => {
-                                    let ty = mapping.data_type().kind();
+                                    let ty = mapping.data_type();
 
-                                    let ty = DataType::new(mapping.data_type().range(), ty);
-                                    let ty = self.convert_ty(scope, ty);
+                                    let ty = self.convert_ty(scope, *ty);
                                     let ty = match ty {
                                         Ok(v) => v,
-                                        Err(v) => {
-                                            self.error(v);
-                                            continue;
+                                        Err(e) => {
+                                            self.error(e);
+                                            return None;
                                         },
                                     };
 
                                     Some(ty)
-                                },
+                                }
                             };
 
-                            vec.push(EnumFieldBlueprint::new(mapping.name(), ty))
-                        }
+                            Some((mapping.name(), ty))
+                        });
 
-                        vec.leak()
-                    };
-
-                    let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
-                    type_builder.add_enum_fields(ty, mappings)
+                    type_builder.set_enum_fields(ty, mappings)
                 },
 
 
@@ -468,11 +446,17 @@ impl Analyzer<'_> {
                     },
 
 
-                    lexer::Literal::String(_) => todo!(),
+                    lexer::Literal::String(v) => {
+                        let ptr = self.module_builder.add_string(self.string_map.get(*v));
+                        wasm.ptr_const(ptr);
+
+                        todo!();
+                    },
+
                     lexer::Literal::Bool(v) => {
                         let ty = Type::BOOL;
                         let name = if *v { StringMap::TRUE } else { StringMap::FALSE };
-                        println!("{:#?} {:?}", self.namespaces, name);
+
                         let func = self.namespaces.get_type(ty).get_func(name).unwrap();
                         let func = self.funcs.get(func);
                         
@@ -537,42 +521,30 @@ impl Analyzer<'_> {
 
                 let ty = match (operator, lhs_anal.ty) {
                     (BinaryOperator::Add, Type::Int) => wfunc!(i64_add, Type::Int),
-                    (BinaryOperator::Add, Type::UInt) => wfunc!(i64_add, Type::UInt),
                     (BinaryOperator::Add, Type::Float) => wfunc!(f64_add, Type::Float),
 
                     (BinaryOperator::Sub, Type::Int) => wfunc!(i64_sub, Type::Int),
-                    (BinaryOperator::Sub, Type::UInt) => wfunc!(i64_sub, Type::Int),
                     (BinaryOperator::Sub, Type::Float) => wfunc!(f64_sub, Type::Float),
 
                     (BinaryOperator::Mul, Type::Int) => wfunc!(i64_mul, Type::Int),
-                    (BinaryOperator::Mul, Type::UInt) => wfunc!(i64_mul, Type::Int),
                     (BinaryOperator::Mul, Type::Float) => wfunc!(f64_mul, Type::Float),
 
                     (BinaryOperator::Div, Type::Int) => wfunc!(i64_div, Type::Int),
-                    (BinaryOperator::Div, Type::UInt) => wfunc!(u64_div, Type::Int),
-                    (BinaryOperator::Div, Type::Float) => wfunc!(f64_div, Type::Int),
 
                     (BinaryOperator::Rem, Type::Int) => wfunc!(i64_rem, Type::Int),
-                    (BinaryOperator::Rem, Type::UInt) => wfunc!(u64_rem, Type::Int),
                     (BinaryOperator::Rem, Type::Float) => wfunc!(f64_rem, Type::Int),
 
                     (BinaryOperator::BitshiftLeft, Type::Int) => wfunc!(i64_bw_left_shift, Type::Int),
-                    (BinaryOperator::BitshiftLeft, Type::UInt) => wfunc!(i64_bw_left_shift, Type::UInt),
 
                     (BinaryOperator::BitshiftRight, Type::Int) => wfunc!(i64_bw_right_shift, Type::Int),
-                    (BinaryOperator::BitshiftRight, Type::UInt) => wfunc!(u64_bw_right_shift, Type::Int),
 
                     (BinaryOperator::BitwiseAnd, Type::Int) => wfunc!(i64_bw_and, Type::Int),
-                    (BinaryOperator::BitwiseAnd, Type::UInt) => wfunc!(i64_bw_and, Type::UInt),
 
                     (BinaryOperator::BitwiseOr, Type::Int) => wfunc!(i64_bw_or, Type::Int),
-                    (BinaryOperator::BitwiseOr, Type::UInt) => wfunc!(i64_bw_or, Type::UInt),
 
                     (BinaryOperator::BitwiseXor, Type::Int) => wfunc!(i64_bw_xor, Type::Int),
-                    (BinaryOperator::BitwiseXor, Type::UInt) => wfunc!(i64_bw_xor, Type::Int),
 
                     (BinaryOperator::Eq, Type::Int) => todo!(),
-                    (BinaryOperator::Eq, Type::UInt) => todo!(),
                     (BinaryOperator::Eq, Type::Float) => todo!(),
                     (BinaryOperator::Eq, Type::Any) => todo!(),
                     (BinaryOperator::Eq, Type::Unit) => todo!(),
@@ -580,7 +552,6 @@ impl Analyzer<'_> {
                     (BinaryOperator::Eq, Type::Error) => todo!(),
                     (BinaryOperator::Eq, Type::Custom(_)) => todo!(),
                     (BinaryOperator::Ne, Type::Int) => todo!(),
-                    (BinaryOperator::Ne, Type::UInt) => todo!(),
                     (BinaryOperator::Ne, Type::Float) => todo!(),
                     (BinaryOperator::Ne, Type::Any) => todo!(),
                     (BinaryOperator::Ne, Type::Unit) => todo!(),
@@ -588,7 +559,6 @@ impl Analyzer<'_> {
                     (BinaryOperator::Ne, Type::Error) => todo!(),
                     (BinaryOperator::Ne, Type::Custom(_)) => todo!(),
                     (BinaryOperator::Gt, Type::Int) => todo!(),
-                    (BinaryOperator::Gt, Type::UInt) => todo!(),
                     (BinaryOperator::Gt, Type::Float) => todo!(),
                     (BinaryOperator::Gt, Type::Any) => todo!(),
                     (BinaryOperator::Gt, Type::Unit) => todo!(),
@@ -596,7 +566,6 @@ impl Analyzer<'_> {
                     (BinaryOperator::Gt, Type::Error) => todo!(),
                     (BinaryOperator::Gt, Type::Custom(_)) => todo!(),
                     (BinaryOperator::Ge, Type::Int) => todo!(),
-                    (BinaryOperator::Ge, Type::UInt) => todo!(),
                     (BinaryOperator::Ge, Type::Float) => todo!(),
                     (BinaryOperator::Ge, Type::Any) => todo!(),
                     (BinaryOperator::Ge, Type::Unit) => todo!(),
@@ -604,7 +573,6 @@ impl Analyzer<'_> {
                     (BinaryOperator::Ge, Type::Error) => todo!(),
                     (BinaryOperator::Ge, Type::Custom(_)) => todo!(),
                     (BinaryOperator::Lt, Type::Int) => todo!(),
-                    (BinaryOperator::Lt, Type::UInt) => todo!(),
                     (BinaryOperator::Lt, Type::Float) => todo!(),
                     (BinaryOperator::Lt, Type::Any) => todo!(),
                     (BinaryOperator::Lt, Type::Unit) => todo!(),
@@ -612,7 +580,6 @@ impl Analyzer<'_> {
                     (BinaryOperator::Lt, Type::Error) => todo!(),
                     (BinaryOperator::Lt, Type::Custom(_)) => todo!(),
                     (BinaryOperator::Le, Type::Int) => todo!(),
-                    (BinaryOperator::Le, Type::UInt) => todo!(),
                     (BinaryOperator::Le, Type::Float) => todo!(),
                     (BinaryOperator::Le, Type::Any) => todo!(),
                     (BinaryOperator::Le, Type::Unit) => todo!(),

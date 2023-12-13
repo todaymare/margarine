@@ -1,8 +1,13 @@
+;;
+;; Increments the stack pointer by `amount`
+;;
 (func $push (param $amount i32)
-    ;; Increment the stack pointer
     (global.set $stack_pointer (i32.add (global.get $stack_pointer) (local.get $amount)))
 )
 
+;;
+;; Decrements the stack pointer by `amount`
+;;
 (func $pop (param $amount i32) 
     ;; Decrement the stack pointer
     (global.set $stack_pointer (i32.sub (global.get $stack_pointer) (local.get $amount)))
@@ -28,15 +33,49 @@
     (f64.store (local.get $ptr) (local.get $data))
 )
 
-(func $copy_memory
+;;
+;; Copies `length` bytes from `source_offset` to `dest_offset`
+;;
+(func $memcpy
     (param $source_offset i32)
     (param $dest_offset i32)
     (param $length i32)
 
     ;; Copy memory from source to destination
     (memory.copy
-      (local.get $dest_offset)   ;; destination offset
-      (local.get $source_offset) ;; source offset
-      (local.get $length)        ;; length
+        (local.get $dest_offset)   ;; destination offset
+        (local.get $source_offset) ;; source offset
+        (local.get $length)        ;; length
     )
-  )
+)
+
+
+;;
+;; Checks if the following `length` bytes of `v1` are
+;; equal to the following `length` bytes of `v2`. Returning
+;; 1 if they are and 0 if they are not.
+;;
+(func $bcmp
+    (param $v1 i32)
+    (param $v2 i32)
+    (param $length i32)
+    (result i32)
+
+    (loop $loop
+        (i32.load8_u (local.get $v1))
+        (i32.load8_u (local.get $v2))
+        i32.ne
+
+        if
+            (return (i32.const 0))
+        end
+        
+        (local.set $v1 (i32.add (local.get $v1) (i32.const 1)))
+        (local.set $v2 (i32.add (local.get $v2) (i32.const 1)))
+
+        (local.tee $length (i32.sub (local.get $length) (i32.const 1)))
+        br_if $loop
+    )
+
+    i32.const 1
+)

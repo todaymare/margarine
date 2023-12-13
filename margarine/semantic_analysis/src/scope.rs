@@ -2,7 +2,7 @@ use common::string_map::StringIndex;
 use sti::{packed_option::PackedOption, define_key, keyed::KVec};
 use wasm::LocalId;
 
-use crate::{namespace::{NamespaceId, NamespaceMap}, types::{Type, TypeId, TypeMap}, funcs::FuncId};
+use crate::{namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::{TypeId, TypeMap}}, funcs::FuncId};
 
 define_key!(u32, pub ScopeId);
 
