@@ -15,7 +15,7 @@ use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
-use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}};
+use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData, PartialStructField}, ty_sym::StructField};
 
 #[derive(Debug)]
 pub struct Analyzer<'me, 'out, 'str> {
@@ -25,7 +25,7 @@ pub struct Analyzer<'me, 'out, 'str> {
     pub funcs: FunctionMap<'out>,
     type_to_namespace: HashMap<Type, NamespaceId>,
     output: &'out Arena,
-    pub string_map: &'me StringMap<'str>,
+    pub string_map: &'me mut StringMap<'str>,
 
     pub module_builder: WasmModuleBuilder<'out, 'str>,
     pub errors: KVec<SemaError, Error>
@@ -50,15 +50,16 @@ impl AnalysisResult {
 impl Analyzer<'_, '_, '_> {
      pub fn convert_ty(&self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
         let ty = match dt.kind() {
-            DataTypeKind::Int => Type::Int,
+            DataTypeKind::Int => Type::I64,
             DataTypeKind::Bool => Type::BOOL,
-            DataTypeKind::Float => Type::Float,
+            DataTypeKind::Float => Type::I64,
             DataTypeKind::Unit => Type::Unit,
             DataTypeKind::Any => todo!(),
             DataTypeKind::Never => Type::Never,
             DataTypeKind::Option(_) => todo!(),
             DataTypeKind::Result(_, _) => todo!(),
             DataTypeKind::CustomType(v) => {
+                if v == StringMap::STR { return Ok(Type::STR) }
                 let scope = self.scopes.get(scope);
                 let Some(ty) = scope.get_type(v, &self.scopes, &self.namespaces)
                 else { return Err(Error::UnknownType(v, dt.range())) };
@@ -99,16 +100,31 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             let pool = ArenaPool::tls_get_temp();
             let mut type_builder = TypeBuilder::new(&pool);
 
-            let id = slf.types.pending();
-            assert_eq!(TypeId::BOOL, id);
+            {
+                let id = slf.types.pending();
+                assert_eq!(TypeId::BOOL, id);
 
-            type_builder.add_ty(TypeId::BOOL, StringMap::BOOL, SourceRange::new(0, 0));
-            type_builder.set_enum_fields(
-                TypeId::BOOL,
-                [(StringMap::TRUE, None), (StringMap::FALSE, None)].into_iter()
-            );
+                type_builder.add_ty(TypeId::BOOL, StringMap::BOOL, SourceRange::new(0, 0));
+                type_builder.set_enum_fields(
+                    TypeId::BOOL,
+                    [(StringMap::TRUE, None), (StringMap::FALSE, None)].into_iter()
+                );
+            }
+            {
+                let id = slf.types.pending();
+                assert_eq!(TypeId::STR, id);
 
-            let mut data = TypeBuilderData::new(
+                type_builder.add_ty(TypeId::STR, StringMap::STR, SourceRange::new(0, 0));
+                type_builder.set_struct_fields(
+                    TypeId::STR,
+                    [
+                        (slf.string_map.insert("ptr"), Type::I32),
+                        (slf.string_map.insert("len"), Type::I64),
+                    ].into_iter(),
+                );
+            }
+
+            let data = TypeBuilderData::new(
                 &mut slf.types,
                 &mut slf.namespaces,
                 &mut slf.funcs,
@@ -157,7 +173,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
         {
             let err_len = self.errors.len();
 
-            let mut data = TypeBuilderData::new(
+            let data = TypeBuilderData::new(
                 &mut self.types, &mut self.namespaces,
                 &mut self.funcs, &mut self.module_builder
             );
@@ -441,21 +457,39 @@ impl Analyzer<'_, '_, '_> {
                 match l {
                     lexer::Literal::Integer(i) => {
                         wasm.i64_const(*i);
-                        AnalysisResult::new(Type::Int, true)
+                        AnalysisResult::new(Type::I64, true)
                     },
 
 
                     lexer::Literal::Float(f) => {
                         wasm.f64_const(f.inner());
-                        AnalysisResult::new(Type::Float, true)
+                        AnalysisResult::new(Type::I64, true)
                     },
 
 
                     lexer::Literal::String(v) => {
-                        let ptr = self.module_builder.add_string(self.string_map.get(*v));
+                        let str = self.string_map.get(*v);
+                        let ptr = self.module_builder.add_string(str);
                         wasm.ptr_const(ptr);
+                        
+                        let ty = self.types.get(TypeId::STR);
+                        let TypeSymbolKind::Struct(strct) = ty.kind()
+                        else { unreachable!() };
 
-                        todo!();
+                        let alloc = wasm.alloc_stack(ty.size());
+
+                        {
+                            let ptr = alloc.add(strct.fields[0].offset);
+                            wasm.write_i32_to_stack(ptr);
+                        }
+
+                        {
+                            let ptr = alloc.add(strct.fields[1].offset);
+                            wasm.i64_const(str.len() as i64);
+                            wasm.write_i64_to_stack(ptr);
+                        }
+                        
+                        AnalysisResult::new(Type::STR, true)
                     },
 
                     lexer::Literal::Bool(v) => {
@@ -525,32 +559,32 @@ impl Analyzer<'_, '_, '_> {
                 }
 
                 let ty = match (operator, lhs_anal.ty) {
-                    (BinaryOperator::Add, Type::Int) => wfunc!(i64_add, Type::Int),
-                    (BinaryOperator::Add, Type::Float) => wfunc!(f64_add, Type::Float),
+                    (BinaryOperator::Add, Type::I64) => wfunc!(i64_add, Type::I64),
+                    (BinaryOperator::Add, Type::I64) => wfunc!(f64_add, Type::I64),
 
-                    (BinaryOperator::Sub, Type::Int) => wfunc!(i64_sub, Type::Int),
-                    (BinaryOperator::Sub, Type::Float) => wfunc!(f64_sub, Type::Float),
+                    (BinaryOperator::Sub, Type::I64) => wfunc!(i64_sub, Type::I64),
+                    (BinaryOperator::Sub, Type::I64) => wfunc!(f64_sub, Type::I64),
 
-                    (BinaryOperator::Mul, Type::Int) => wfunc!(i64_mul, Type::Int),
-                    (BinaryOperator::Mul, Type::Float) => wfunc!(f64_mul, Type::Float),
+                    (BinaryOperator::Mul, Type::I64) => wfunc!(i64_mul, Type::I64),
+                    (BinaryOperator::Mul, Type::I64) => wfunc!(f64_mul, Type::I64),
 
-                    (BinaryOperator::Div, Type::Int) => wfunc!(i64_div, Type::Int),
+                    (BinaryOperator::Div, Type::I64) => wfunc!(i64_div, Type::I64),
 
-                    (BinaryOperator::Rem, Type::Int) => wfunc!(i64_rem, Type::Int),
-                    (BinaryOperator::Rem, Type::Float) => wfunc!(f64_rem, Type::Int),
+                    (BinaryOperator::Rem, Type::I64) => wfunc!(i64_rem, Type::I64),
+                    (BinaryOperator::Rem, Type::I64) => wfunc!(f64_rem, Type::I64),
 
-                    (BinaryOperator::BitshiftLeft, Type::Int) => wfunc!(i64_bw_left_shift, Type::Int),
+                    (BinaryOperator::BitshiftLeft, Type::I64) => wfunc!(i64_bw_left_shift, Type::I64),
 
-                    (BinaryOperator::BitshiftRight, Type::Int) => wfunc!(i64_bw_right_shift, Type::Int),
+                    (BinaryOperator::BitshiftRight, Type::I64) => wfunc!(i64_bw_right_shift, Type::I64),
 
-                    (BinaryOperator::BitwiseAnd, Type::Int) => wfunc!(i64_bw_and, Type::Int),
+                    (BinaryOperator::BitwiseAnd, Type::I64) => wfunc!(i64_bw_and, Type::I64),
 
-                    (BinaryOperator::BitwiseOr, Type::Int) => wfunc!(i64_bw_or, Type::Int),
+                    (BinaryOperator::BitwiseOr, Type::I64) => wfunc!(i64_bw_or, Type::I64),
 
-                    (BinaryOperator::BitwiseXor, Type::Int) => wfunc!(i64_bw_xor, Type::Int),
+                    (BinaryOperator::BitwiseXor, Type::I64) => wfunc!(i64_bw_xor, Type::I64),
 
-                    (BinaryOperator::Eq, Type::Int) => wfunc!(i64_eq, Type::BOOL),
-                    (BinaryOperator::Eq, Type::Float) => wfunc!(f64_eq, Type::BOOL),
+                    (BinaryOperator::Eq, Type::I64) => wfunc!(i64_eq, Type::BOOL),
+                    (BinaryOperator::Eq, Type::I64) => wfunc!(f64_eq, Type::BOOL),
 
                     (BinaryOperator::Eq, Type::Any) => todo!(),
                     (BinaryOperator::Eq, Type::Unit) => wfunc!(i64_eq, Type::BOOL),
@@ -558,8 +592,8 @@ impl Analyzer<'_, '_, '_> {
                     (BinaryOperator::Eq, Type::Error) => todo!(),
                     (BinaryOperator::Eq, Type::Custom(_)) => todo!(),
 
-                    (BinaryOperator::Ne, Type::Int) => wfunc!(i64_ne, Type::BOOL),
-                    (BinaryOperator::Ne, Type::Float) => wfunc!(f64_ne, Type::BOOL),
+                    (BinaryOperator::Ne, Type::I64) => wfunc!(i64_ne, Type::BOOL),
+                    (BinaryOperator::Ne, Type::I64) => wfunc!(f64_ne, Type::BOOL),
 
                     (BinaryOperator::Ne, Type::Any) => todo!(),
                     (BinaryOperator::Ne, Type::Unit) => todo!(),
@@ -567,14 +601,14 @@ impl Analyzer<'_, '_, '_> {
                     (BinaryOperator::Ne, Type::Error) => todo!(),
                     (BinaryOperator::Ne, Type::Custom(_)) => todo!(),
 
-                    (BinaryOperator::Gt, Type::Int)   => wfunc!(i64_gt, Type::BOOL),
-                    (BinaryOperator::Gt, Type::Float) => wfunc!(f64_gt, Type::BOOL),
-                    (BinaryOperator::Ge, Type::Int)   => wfunc!(i64_ge, Type::BOOL),
-                    (BinaryOperator::Ge, Type::Float) => wfunc!(f64_ge, Type::BOOL),
-                    (BinaryOperator::Lt, Type::Int)   => wfunc!(i64_lt, Type::BOOL),
-                    (BinaryOperator::Lt, Type::Float) => wfunc!(f64_lt, Type::BOOL),
-                    (BinaryOperator::Le, Type::Int)   => wfunc!(i64_le, Type::BOOL),
-                    (BinaryOperator::Le, Type::Float) => wfunc!(f64_le, Type::BOOL),
+                    (BinaryOperator::Gt, Type::I64)   => wfunc!(i64_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::I64) => wfunc!(f64_gt, Type::BOOL),
+                    (BinaryOperator::Ge, Type::I64)   => wfunc!(i64_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::I64) => wfunc!(f64_ge, Type::BOOL),
+                    (BinaryOperator::Lt, Type::I64)   => wfunc!(i64_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::I64) => wfunc!(f64_lt, Type::BOOL),
+                    (BinaryOperator::Le, Type::I64)   => wfunc!(i64_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::I64) => wfunc!(f64_le, Type::BOOL),
 
                     _ => unreachable!()
                 };
@@ -625,13 +659,13 @@ impl Analyzer<'_, '_, '_> {
                         wasm.i64_bw_xor();
                     },
 
-                    (UnaryOperator::Neg, Type::Int) => {
+                    (UnaryOperator::Neg, Type::I64) => {
                         // thanks wasm.
                         wasm.i64_const(-1);
                         wasm.i64_mul();
                     },
 
-                    (UnaryOperator::Neg, Type::Float) => wasm.f64_neg(),
+                    (UnaryOperator::Neg, Type::I64) => wasm.f64_neg(),
 
                     _ => unreachable!()
                 }
@@ -711,7 +745,9 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::Match { value, taken_as_inout, mappings } => todo!(),
+
             Expression::Block { block } => self.block(wasm, scope, block),
+
             Expression::CreateStruct { data_type, fields } => todo!(),
             Expression::AccessField { val, field_name } => todo!(),
             Expression::CallFunction { name, is_accessor, args } => todo!(),

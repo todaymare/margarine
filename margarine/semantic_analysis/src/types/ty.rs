@@ -8,8 +8,9 @@ use super::ty_map::TypeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
-    Int,
-    Float,
+    I64,
+    I32,
+    F64,
 
     Any,
     Unit,
@@ -22,6 +23,7 @@ pub enum Type {
 
 impl Type {
     pub const BOOL : Type = Type::Custom(TypeId::BOOL);
+    pub const STR  : Type = Type::Custom(TypeId::STR);
 }
 
 
@@ -37,8 +39,9 @@ impl Type {
         types: &TypeMap,
     ) -> &'a str {
         match self {
-            Type::Int    => "int",
-            Type::Float  => "float",
+            Type::I64    => "int",
+            Type::I32    => "i32",
+            Type::F64    => "float",
             Type::Any    => "any",
             Type::Unit   => "unit",
             Type::Never  => "never",
@@ -59,8 +62,9 @@ impl Type {
     ///
     pub fn eq_lit(self, oth: Type) -> bool {
         match (self, oth) {
-            | (Type::Int, Type::Int) 
-            | (Type::Float, Type::Float) 
+            | (Type::I64, Type::I64) 
+            | (Type::I32, Type::I32) 
+            | (Type::F64, Type::F64) 
             | (Type::Any, Type::Any) 
             | (Type::Unit, Type::Unit) 
             | (Type::Never, Type::Never) 
@@ -99,19 +103,20 @@ impl Type {
     ///
     #[inline(always)]
     pub fn is_number(self) -> bool {
-        self.eq_sem(Type::Int)
-        || self.eq_sem(Type::Float)
+        self.eq_sem(Type::I64)
+        || self.eq_sem(Type::F64)
     }
 
 
     pub fn to_wasm_ty(self, ty_map: &TypeMap) -> WasmType {
         match self {
-            Type::Int => WasmType::I64, 
-            Type::Float => WasmType::F64,
+            Type::I64 => WasmType::I64, 
+            Type::I32 => WasmType::I32,
+            Type::F64 => WasmType::F64,
             Type::Any => todo!(),
             Type::Unit => WasmType::I64,
             Type::Never => todo!(),
-            Type::Error => todo!(),
+            Type::Error => WasmType::I64,
 
             Type::Custom(v) => {
                 let ty = ty_map.get(v);
@@ -135,16 +140,17 @@ impl Type {
 impl core::hash::Hash for Type {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         match self {
-            Type::Int => state.write_u8(0),
-            Type::Float => state.write_u8(1),
+            Type::I64 => state.write_u8(0),
+            Type::I32 => state.write_u8(1),
+            Type::F64 => state.write_u8(2),
 
-            Type::Any => state.write_u8(2),
-            Type::Unit => state.write_u8(3),
-            Type::Never => state.write_u8(4),
-            Type::Error => state.write_u8(5),
+            Type::Any => state.write_u8(3),
+            Type::Unit => state.write_u8(4),
+            Type::Never => state.write_u8(5),
+            Type::Error => state.write_u8(6),
 
             Type::Custom(v) => {
-                state.write_u8(6);
+                state.write_u8(7);
                 v.hash(state);
             },
         };

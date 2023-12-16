@@ -7,6 +7,7 @@ define_key!(u32, pub TypeId);
 
 impl TypeId {
     pub const BOOL : TypeId = TypeId(0);
+    pub const STR  : TypeId = TypeId(1);
 }
 
 

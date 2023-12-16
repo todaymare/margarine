@@ -435,8 +435,9 @@ impl<'out> TypeBuilder<'_> {
         ty: Type
     ) -> Result<usize, Error> {
         Ok(match ty {
-            Type::Int   => 8,
-            Type::Float => 8,
+            Type::I64 => 8,
+            Type::I32 => 4,
+            Type::F64 => 8,
             Type::Any   => todo!(),
             Type::Unit  => 1,
             Type::Never => todo!(),
@@ -452,8 +453,9 @@ impl<'out> TypeBuilder<'_> {
         ty: Type
     ) -> Result<usize, Error> {
         Ok(match ty {
-            Type::Int   => 8,
-            Type::Float => 8,
+            Type::I64   => 8,
+            Type::I32   => 4,
+            Type::F64   => 8,
             Type::Any   => todo!(),
             Type::Unit  => 1,
             Type::Never => todo!(),
