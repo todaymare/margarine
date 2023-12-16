@@ -63,6 +63,10 @@ pub enum Error {
         source: SourceRange,
     },
 
+    IfMissingElse {
+        body: (SourceRange, Type),
+    },
+
     IfBodyAndElseMismatch {
         body: (SourceRange, Type),
         else_block: (SourceRange, Type),
@@ -314,7 +318,15 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
                     .highlight_with_note(*source, &msg)
             },
             
-            
+             
+            Error::IfMissingElse { body } => {
+                let msg = format!("the main branch returns '{}' but there's no else branch", 
+                    body.1.display(fmt.string_map(), types));
+
+                let mut err = fmt.error("if is missing an else case");
+                err.highlight_with_note(body.0, &msg);
+            },
+
             Error::IfBodyAndElseMismatch { body, else_block } => {
                 let msg = format!("the main branch returns '{}'", 
                     body.1.display(fmt.string_map(), types));

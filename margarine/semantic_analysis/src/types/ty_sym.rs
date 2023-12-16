@@ -1,4 +1,5 @@
 use common::string_map::StringIndex;
+use wasm::{WasmModuleBuilder, WasmFunctionBuilder};
 
 use super::ty::Type;
 
@@ -76,13 +77,8 @@ pub enum TypeEnum<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeTaggedUnion<'a> {
-    union_offset: usize,
+    union_offset: u32,
     mappings: &'a [TaggedUnionField]
-}
-
-impl<'a> TypeTaggedUnion<'a> {
-    pub fn new(union_offset: usize, mappings: &'a [TaggedUnionField]) -> Self { Self { union_offset, mappings } }
-    pub fn fields(self) -> &'a [TaggedUnionField] { self.mappings }
 }
 
 
@@ -92,16 +88,38 @@ pub struct TaggedUnionField {
     ty: Option<Type>,
 }
 
-impl TaggedUnionField {
-    pub fn new(name: StringIndex, ty: Option<Type>) -> Self { Self { name, ty } }
-    pub fn ty(self) -> Option<Type> { self.ty }
-}
-
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeTag<'a> {
     tags: &'a [StringIndex]
 }
+
+
+impl<'a> TypeEnum<'a> {
+    pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
+        match self {
+            TypeEnum::TaggedUnion(_) => {
+                wasm.read_i32();
+            },
+
+
+            TypeEnum::Tag(_) => (),
+        }
+    }
+}
+
+
+impl<'a> TypeTaggedUnion<'a> {
+    pub fn new(union_offset: u32, mappings: &'a [TaggedUnionField]) -> Self { Self { union_offset, mappings } }
+    pub fn fields(self) -> &'a [TaggedUnionField] { self.mappings }
+}
+
+
+impl TaggedUnionField {
+    pub fn new(name: StringIndex, ty: Option<Type>) -> Self { Self { name, ty } }
+    pub fn ty(self) -> Option<Type> { self.ty }
+}
+
 
 impl<'a> TypeTag<'a> {
     pub fn new(tags: &'a [StringIndex]) -> Self { Self { tags } }

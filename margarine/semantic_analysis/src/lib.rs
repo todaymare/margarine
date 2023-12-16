@@ -11,7 +11,7 @@ use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
-use types::{ty::Type, ty_map::TypeMap};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
@@ -32,6 +32,7 @@ pub struct Analyzer<'me, 'out, 'str> {
 }
 
 
+#[derive(Debug, Clone, Copy)]
 pub struct AnalysisResult {
     ty: Type,
     is_mut: bool,
@@ -168,15 +169,19 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             }
         }
 
+        let mut ty = Type::Unit;
         for (id, n) in nodes.iter().enumerate() {
-            self.node(scope, builder, n);
+            ty = self.node(scope, builder, n).ty;
 
             if id + 1 != nodes.len() {
                 builder.pop();
-            }
+            } 
+
         }
 
-        AnalysisResult { ty: Type::Unit, is_mut: true }
+        if nodes.is_empty() { builder.i64_const(0); }
+
+        AnalysisResult { ty, is_mut: true }
     }
 }
 
@@ -548,7 +553,7 @@ impl Analyzer<'_, '_, '_> {
                     (BinaryOperator::Eq, Type::Float) => wfunc!(f64_eq, Type::BOOL),
 
                     (BinaryOperator::Eq, Type::Any) => todo!(),
-                    (BinaryOperator::Eq, Type::Unit) => todo!(),
+                    (BinaryOperator::Eq, Type::Unit) => wfunc!(i64_eq, Type::BOOL),
                     (BinaryOperator::Eq, Type::Never) => todo!(),
                     (BinaryOperator::Eq, Type::Error) => todo!(),
                     (BinaryOperator::Eq, Type::Custom(_)) => todo!(),
@@ -635,9 +640,78 @@ impl Analyzer<'_, '_, '_> {
             },
 
 
-            Expression::If { condition, body, else_block } => todo!(),
+            Expression::If { condition, body, else_block } => {
+                let cond = self.node(scope, wasm, &condition);
+
+                if !cond.ty.eq_sem(Type::BOOL) {
+                    wasm.error(self.error(Error::InvalidType {
+                        source: condition.range(),
+                        found: cond.ty, expected: Type::BOOL
+                    }));
+
+                    return AnalysisResult::error();
+                }
+                    
+                if cond.ty.eq_lit(Type::Error) {
+                    return AnalysisResult::error();
+                }
+
+                let ty = self.types.get(TypeId::BOOL);
+                let TypeSymbolKind::Enum(e) = ty.kind() else { panic!() };
+                e.get_tag(wasm);
+
+                let (local, l, r) = wasm.ite(
+                    self,
+                    |slf, wasm| {
+                        let body = slf.block(wasm, scope, body);
+                        let wty = body.ty.to_wasm_ty(&slf.types);
+                        let local = wasm.local(wty);
+                        (local, Some((body, wasm.offset())))
+                    },
+                    |slf, wasm| {
+                        if let Some(else_block) = else_block {
+                            return Some((slf.node(scope, wasm, else_block), wasm.offset()))
+                        }
+
+                        None
+                    }
+                );
+
+                let l = l.unwrap();
+
+                if r.is_none() && !l.0.ty.eq_sem(Type::Unit) {
+                    wasm.error(self.error(Error::IfMissingElse { body: (body.range(), l.0.ty) }));
+                    wasm.insert_pop(l.1);
+                    return AnalysisResult::error();
+                }
+                
+                if r.is_none() {
+                    wasm.insert_pop(l.1);
+
+                } else if r.is_some() && !l.0.ty.eq_sem(r.as_ref().unwrap().0.ty) {
+
+                    wasm.error(self.error(Error::IfBodyAndElseMismatch {
+                        body: (body.range(), l.0.ty),
+                        else_block: (else_block.unwrap().range(), r.as_ref().unwrap().0.ty)
+                    }));
+
+                    let i = wasm.insert_pop(l.1);
+                    wasm.insert_pop(r.unwrap().1 + i);
+                    return AnalysisResult::error()
+                } else {
+
+                    let i = wasm.insert_local_set(l.1, local);
+                    if let Some(r) = r {
+                        wasm.insert_local_set(r.1 + i, local);
+                    }
+                }
+
+                l.0
+            },
+
+
             Expression::Match { value, taken_as_inout, mappings } => todo!(),
-            Expression::Block { block } => todo!(),
+            Expression::Block { block } => self.block(wasm, scope, block),
             Expression::CreateStruct { data_type, fields } => todo!(),
             Expression::AccessField { val, field_name } => todo!(),
             Expression::CallFunction { name, is_accessor, args } => todo!(),

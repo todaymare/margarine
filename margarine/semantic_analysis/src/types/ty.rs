@@ -109,7 +109,7 @@ impl Type {
             Type::Int => WasmType::I64, 
             Type::Float => WasmType::F64,
             Type::Any => todo!(),
-            Type::Unit => todo!(),
+            Type::Unit => WasmType::I64,
             Type::Never => todo!(),
             Type::Error => todo!(),
 

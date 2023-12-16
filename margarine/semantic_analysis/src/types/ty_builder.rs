@@ -309,7 +309,7 @@ impl<'out> TypeBuilder<'_> {
     ) -> Result<TypeSymbol<'out>, Error> {
         // Tag
 
-        // TODO: Don't assume u64
+        // TODO: Don't assume u32
         /*
         let tag_size = {
             let mut c = fields.len() as f64;
@@ -323,7 +323,7 @@ impl<'out> TypeBuilder<'_> {
         };
         */
 
-        assert!(fields.len() < u64::MAX as usize, "enums with more than u64::MAX variants are not yet supported");
+        assert!(fields.len() < u64::MAX as usize, "enums with more than u32::MAX variants are not yet supported");
         let tag_align = 4;
         let tag_size = 4;
 
@@ -385,7 +385,7 @@ impl<'out> TypeBuilder<'_> {
         let fields = new_fields.leak();
         
         // Finalise
-        let kind = TypeEnum::TaggedUnion(TypeTaggedUnion::new(union_offset, fields));
+        let kind = TypeEnum::TaggedUnion(TypeTaggedUnion::new(union_offset.try_into().unwrap(), fields));
         Ok(TypeSymbol::new(name, align, size, TypeSymbolKind::Enum(kind)))
     } 
 
@@ -401,6 +401,7 @@ impl<'out> TypeBuilder<'_> {
         match kind {
             TypeEnum::TaggedUnion(sym) => {
                 println!("{sym:?}");
+                todo!("tagged unions aren't supported yet");
             },
 
 
@@ -408,10 +409,9 @@ impl<'out> TypeBuilder<'_> {
                 for (i, f) in sym.fields().into_iter().enumerate() {
                     let wfid = data.module_builder.function_id();
                     let mut wf = WasmFunctionBuilder::new(data.arena, wfid);
-                    wf.return_value(wasm::WasmType::I64);
+                    wf.return_value(wasm::WasmType::I32);
 
-                    wf.i64_const(i as i64);
-                    wf.ret();
+                    wf.i32_const(i as i32);
 
                     data.module_builder.register(wf);
                     

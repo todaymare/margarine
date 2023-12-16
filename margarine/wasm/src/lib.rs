@@ -2,7 +2,7 @@ use std::{fmt::{Write, write}, ops::{DerefMut, Deref}};
 
 use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
-use sti::{write, vec::Vec, string::String, arena::Arena};
+use sti::{write, vec::Vec, string::String, arena::Arena, format_in, arena_pool::ArenaPool};
 
 #[derive(Debug, Clone, Copy)]
 pub enum WasmType {
@@ -247,6 +247,27 @@ impl<'a> WasmFunctionBuilder<'a> {
     pub fn error(&mut self, err: ErrorId) {
         self.body.push(&format!("unreachable (; {err:?} ;)"));
     }
+
+
+    pub fn offset(&self) -> usize { self.body.len() }
+     
+    
+    pub fn insert_local_set(&mut self, offset: usize, local: LocalId) -> usize {
+        self.insert(format_in!(&*ArenaPool::tls_get_temp(), "local.set {}", local.0).as_str(), offset)
+    }
+
+    
+    pub fn insert_pop(&mut self, offset: usize) -> usize {
+        self.insert("drop ", offset)
+    }
+
+
+    pub fn insert(&mut self, str: &str, offset: usize) -> usize {
+        let vec = unsafe { self.body.inner_mut() };
+        vec.insert_from_slice(offset, str.as_bytes());
+        debug_assert!(std::str::from_utf8(vec).is_ok());
+        str.len()
+    } 
 }
 
 
@@ -265,9 +286,6 @@ impl WasmFunctionBuilder<'_> {
             write!(buffer, "(param {}) ", p.name());
         }
 
-        for l in &self.locals {
-            write!(buffer, "(local {}) ", l.name());
-        }
 
         let mut ret_stack_size = 0; 
         if let Some(ret) = self.ret {
@@ -275,15 +293,25 @@ impl WasmFunctionBuilder<'_> {
             ret_stack_size = ret.stack_size();
         }
 
-        write!(buffer, "(call $push (i32.const {}))", self.stack_size - ret_stack_size);
+        for l in &self.locals {
+            write!(buffer, "(local {}) ", l.name());
+        }
+
+
+        if self.stack_size - ret_stack_size > 0 {
+            write!(buffer, "(call $push (i32.const {}))", self.stack_size - ret_stack_size);
+        }
 
         if let Some(WasmType::Ptr(_)) = self.ret {
             write!(buffer, "(global.get $stack_pointer)");   
         }
 
-        let fmt = format!("(call $pop (i32.const {}))", self.stack_size);
-        for r in &self.ret_offsets {
-            unsafe { self.body.inner_mut() }.insert_from_slice(*r, fmt.as_bytes());
+        if self.stack_size > 0 {
+            let fmt = format!("(call $pop (i32.const {}))", self.stack_size);
+
+            for r in &self.ret_offsets {
+                unsafe { self.body.inner_mut() }.insert_from_slice(*r, fmt.as_bytes());
+            }
         }
 
         buffer.reserve_exact(self.body.len() + 1);
@@ -412,16 +440,20 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     #[inline(always)]
-    pub fn ite(
+    pub fn ite<T, A>(
         &mut self,
-        then_body: impl FnOnce(&mut WasmFunctionBuilder),
-        else_body: impl FnOnce(&mut WasmFunctionBuilder),
-    ) {
+        value: &mut T,
+        then_body: impl FnOnce(&mut T, &mut WasmFunctionBuilder) -> (LocalId, A),
+        else_body: impl FnOnce(&mut T, &mut WasmFunctionBuilder) -> A,
+    ) -> (LocalId, A, A) {
         write!(self.body, "(if (then ");
-        then_body(self);
+        let (local, r1) = then_body(value, self);
         write!(self.body, ")(else ");
-        else_body(self);
+        let r2 = else_body(value, self);
         write!(self.body, "))");
+        self.local_get(local);
+
+        (local, r1, r2)
     }
 
 
@@ -610,7 +642,7 @@ impl WasmFunctionBuilder<'_> {
 
     /// Checks if the value at the top of the stack is 0
     #[inline(always)]
-    pub fn i64_eqz(&mut self) { write!(self.body, "i64.eqz"); }
+    pub fn i64_eqz(&mut self) { write!(self.body, "i64.eqz "); }
 
     #[inline(always)]
     pub fn i64_gt(&mut self) { write!(self.body, "i64.gt_s "); }
@@ -718,7 +750,7 @@ impl WasmFunctionBuilder<'_> {
 
 impl WasmFunctionBuilder<'_> {
     #[inline(always)]
-    pub fn f32_const(&mut self, val: f32) { write!(self.body, "f32.const {val}"); }
+    pub fn f32_const(&mut self, val: f32) { write!(self.body, "f32.const {val} "); }
 
     #[inline(always)]
     pub fn f32_eq(&mut self) { write!(self.body, "f32.eq "); }
@@ -808,7 +840,7 @@ impl WasmFunctionBuilder<'_> {
 
 impl WasmFunctionBuilder<'_> {
     #[inline(always)]
-    pub fn f64_const(&mut self, val: f64) { write!(self.body, "f64.const {val}"); }
+    pub fn f64_const(&mut self, val: f64) { write!(self.body, "f64.const {val} "); }
 
     #[inline(always)]
     pub fn f64_eq(&mut self) { write!(self.body, "f64.eq "); }
