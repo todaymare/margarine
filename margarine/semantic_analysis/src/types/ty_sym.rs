@@ -43,7 +43,7 @@ pub enum TypeSymbolKind<'a> {
 //
 #[derive(Debug, Clone, Copy)]
 pub struct TypeStruct<'a> {
-    fields: &'a [StructField],
+    pub fields: &'a [StructField],
 }
 
 impl<'a> TypeStruct<'a> {
@@ -53,9 +53,9 @@ impl<'a> TypeStruct<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct StructField {
-    name: StringIndex,
-    ty: Type,
-    offset: usize,
+    pub name: StringIndex,
+    pub ty: Type,
+    pub offset: usize,
 }
 
 impl StructField {

@@ -1,4 +1,3 @@
-struct Ello {
-    val: int,
+fn hello(arg: int) : str {
+    "hello!"
 }
-
