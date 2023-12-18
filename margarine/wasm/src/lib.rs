@@ -383,35 +383,35 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     #[inline(always)]
-    pub fn stack_to_global(&mut self, ptr: StackPointer) {
+    pub fn sptr_const(&mut self, ptr: StackPointer) {
         write!(self.body, "(i32.add (global.get $stack_pointer) (i32.const {})) ", ptr.0);
     }
 
 
     #[inline(always)]
     pub fn write_i32_to_stack(&mut self, ptr: StackPointer) {
-        self.stack_to_global(ptr);
+        self.sptr_const(ptr);
         self.call_template("write_i32_to_stack")
     }
 
 
     #[inline(always)]
     pub fn write_i64_to_stack(&mut self, ptr: StackPointer) {
-        self.stack_to_global(ptr);
+        self.sptr_const(ptr);
         self.call_template("write_i64_to_stack")
     }
 
 
     #[inline(always)]
     pub fn write_f32_to_stack(&mut self, ptr: StackPointer) {
-        self.stack_to_global(ptr);
+        self.sptr_const(ptr);
         self.call_template("write_f32_to_stack")
     }
 
 
     #[inline(always)]
     pub fn write_f64_to_stack(&mut self, ptr: StackPointer) {
-        self.stack_to_global(ptr);
+        self.sptr_const(ptr);
         self.call_template("write_f64_to_stack")
     }
 
@@ -424,7 +424,7 @@ impl<'a> WasmFunctionBuilder<'a> {
             WasmType::F32 => self.write_f32_to_stack(ptr),
             WasmType::F64 => self.write_f64_to_stack(ptr),
             WasmType::Ptr(v) => {
-                self.stack_to_global(ptr);
+                self.sptr_const(ptr);
                 self.i32_const(v.try_into().unwrap());
                 self.call_template("memcpy");
             },
@@ -502,10 +502,10 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 impl WasmFunctionBuilder<'_> {
     #[inline(always)]
-    pub fn ptr_const(&mut self, ptr: Pointer) { write!(self.body, "i32.const {} ", ptr.0); }
+    pub fn ptr_const(&mut self, ptr: Pointer) { self.i32_const(ptr.0 as i32); }
 
     #[inline(always)]
-    pub fn bool_const(&mut self, v: bool) { write!(self.body, "i32.const {} ", v as i32); }
+    pub fn bool_const(&mut self, v: bool) { self.i32_const(v as i32); }
 }
 
 

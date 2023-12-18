@@ -12,10 +12,10 @@ use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
-use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId};
+use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
-use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData, PartialStructField}, ty_sym::StructField};
+use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData, PartialStructField}, ty_sym::{StructField, TypeStruct}};
 
 #[derive(Debug)]
 pub struct Analyzer<'me, 'out, 'str> {
@@ -560,18 +560,18 @@ impl Analyzer<'_, '_, '_> {
 
                 let ty = match (operator, lhs_anal.ty) {
                     (BinaryOperator::Add, Type::I64) => wfunc!(i64_add, Type::I64),
-                    (BinaryOperator::Add, Type::I64) => wfunc!(f64_add, Type::I64),
+                    (BinaryOperator::Add, Type::F64) => wfunc!(f64_add, Type::F64),
 
                     (BinaryOperator::Sub, Type::I64) => wfunc!(i64_sub, Type::I64),
-                    (BinaryOperator::Sub, Type::I64) => wfunc!(f64_sub, Type::I64),
+                    (BinaryOperator::Sub, Type::F64) => wfunc!(f64_sub, Type::I64),
 
                     (BinaryOperator::Mul, Type::I64) => wfunc!(i64_mul, Type::I64),
-                    (BinaryOperator::Mul, Type::I64) => wfunc!(f64_mul, Type::I64),
+                    (BinaryOperator::Mul, Type::F64) => wfunc!(f64_mul, Type::I64),
 
                     (BinaryOperator::Div, Type::I64) => wfunc!(i64_div, Type::I64),
 
                     (BinaryOperator::Rem, Type::I64) => wfunc!(i64_rem, Type::I64),
-                    (BinaryOperator::Rem, Type::I64) => wfunc!(f64_rem, Type::I64),
+                    (BinaryOperator::Rem, Type::F64) => wfunc!(f64_rem, Type::I64),
 
                     (BinaryOperator::BitshiftLeft, Type::I64) => wfunc!(i64_bw_left_shift, Type::I64),
 
@@ -584,7 +584,7 @@ impl Analyzer<'_, '_, '_> {
                     (BinaryOperator::BitwiseXor, Type::I64) => wfunc!(i64_bw_xor, Type::I64),
 
                     (BinaryOperator::Eq, Type::I64) => wfunc!(i64_eq, Type::BOOL),
-                    (BinaryOperator::Eq, Type::I64) => wfunc!(f64_eq, Type::BOOL),
+                    (BinaryOperator::Eq, Type::F64) => wfunc!(f64_eq, Type::BOOL),
 
                     (BinaryOperator::Eq, Type::Any) => todo!(),
                     (BinaryOperator::Eq, Type::Unit) => wfunc!(i64_eq, Type::BOOL),
@@ -593,7 +593,7 @@ impl Analyzer<'_, '_, '_> {
                     (BinaryOperator::Eq, Type::Custom(_)) => todo!(),
 
                     (BinaryOperator::Ne, Type::I64) => wfunc!(i64_ne, Type::BOOL),
-                    (BinaryOperator::Ne, Type::I64) => wfunc!(f64_ne, Type::BOOL),
+                    (BinaryOperator::Ne, Type::F64) => wfunc!(f64_ne, Type::BOOL),
 
                     (BinaryOperator::Ne, Type::Any) => todo!(),
                     (BinaryOperator::Ne, Type::Unit) => todo!(),
@@ -602,13 +602,13 @@ impl Analyzer<'_, '_, '_> {
                     (BinaryOperator::Ne, Type::Custom(_)) => todo!(),
 
                     (BinaryOperator::Gt, Type::I64)   => wfunc!(i64_gt, Type::BOOL),
-                    (BinaryOperator::Gt, Type::I64) => wfunc!(f64_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::F64) => wfunc!(f64_gt, Type::BOOL),
                     (BinaryOperator::Ge, Type::I64)   => wfunc!(i64_ge, Type::BOOL),
-                    (BinaryOperator::Ge, Type::I64) => wfunc!(f64_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::F64) => wfunc!(f64_ge, Type::BOOL),
                     (BinaryOperator::Lt, Type::I64)   => wfunc!(i64_lt, Type::BOOL),
-                    (BinaryOperator::Lt, Type::I64) => wfunc!(f64_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::F64) => wfunc!(f64_lt, Type::BOOL),
                     (BinaryOperator::Le, Type::I64)   => wfunc!(i64_le, Type::BOOL),
-                    (BinaryOperator::Le, Type::I64) => wfunc!(f64_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::F64) => wfunc!(f64_le, Type::BOOL),
 
                     _ => unreachable!()
                 };
@@ -748,7 +748,82 @@ impl Analyzer<'_, '_, '_> {
 
             Expression::Block { block } => self.block(wasm, scope, block),
 
-            Expression::CreateStruct { data_type, fields } => todo!(),
+            Expression::CreateStruct { data_type, fields } => {
+                let ty = match self.convert_ty(scope, *data_type) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        wasm.error(self.error(e));
+                        return AnalysisResult::error()
+                    },
+                };
+
+
+                let tyid = match ty {
+                    Type::Custom(v) => v,
+
+                    Type::Error => return AnalysisResult::error(),
+
+                    _ => {
+                        wasm.error(self.error(Error::StructCreationOnNonStruct {
+                            source, typ: ty }));
+                        return AnalysisResult::error();
+                    }
+                };
+
+
+                let strct = self.types.get(tyid);
+                let TypeSymbolKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind() 
+                else {
+                    wasm.error(self.error(Error::StructCreationOnNonStruct {
+                        source, typ: ty }));
+                    return AnalysisResult::error();
+                };
+
+
+                for f in fields.iter() {
+                    if !sfields.iter().any(|x| x.name == f.0) {
+                        wasm.error(self.error(Error::FieldDoesntExist {
+                            source: f.1,
+                            field: f.0,
+                            typ: ty,
+                        }));
+
+                        return AnalysisResult::error();
+                    }
+                }
+                
+                let mut vec = Vec::new();
+                for sf in sfields.iter() {
+                    if !fields.iter().any(|x| x.0 == sf.name) {
+                        vec.push(sf.name);
+                    }
+                }
+
+
+                if !vec.is_empty() {
+                    wasm.error(self.error(Error::MissingFields { source, fields: vec }));
+                    return AnalysisResult::error();
+                }
+
+                
+                let alloc = wasm.alloc_stack(strct.size());
+                for sf in sfields.iter() {
+                    let val = fields.iter().find(|x| x.0 == sf.name).unwrap();
+                    let ptr = alloc.add(sf.offset);
+
+                    let node = self.node(scope, wasm, &val.2);
+                    if !node.ty.eq_sem(sf.ty) {
+                        wasm.error(self.error(Error::InvalidType 
+                            { source: val.1, found: node.ty, expected: sf.ty }));
+                        return AnalysisResult::error();
+                    }
+
+                    wasm.memcpy(ptr, node.ty.to_wasm_ty(&self.types))
+                }
+
+                wasm.sptr_const(alloc);
+                AnalysisResult::new(ty, true)
+            },
             Expression::AccessField { val, field_name } => todo!(),
             Expression::CallFunction { name, is_accessor, args } => todo!(),
             Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
@@ -763,5 +838,4 @@ impl Analyzer<'_, '_, '_> {
         }
     }
 }
-
 
