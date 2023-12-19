@@ -28,7 +28,10 @@ pub struct Analyzer<'me, 'out, 'str> {
     pub string_map: &'me mut StringMap<'str>,
 
     pub module_builder: WasmModuleBuilder<'out, 'str>,
-    pub errors: KVec<SemaError, Error>
+    pub errors: KVec<SemaError, Error>,
+
+    options_map: HashMap<Type, TypeId>,
+    results_map: HashMap<(Type, Type), TypeId>,
 }
 
 
@@ -56,8 +59,71 @@ impl Analyzer<'_, '_, '_> {
             DataTypeKind::Unit => Type::Unit,
             DataTypeKind::Any => todo!(),
             DataTypeKind::Never => Type::Never,
-            DataTypeKind::Option(_) => todo!(),
-            DataTypeKind::Result(_, _) => todo!(),
+            DataTypeKind::Option(v) => {
+                let inner_ty = self.convert_ty(scope, *v)?;
+                if let Some(v) = self.options_map.get(&inner_ty) { return Ok(Type::Custom(*v)); }
+
+                let tyid = {
+                    let temp = ArenaPool::tls_get_temp();
+                    let name = {
+                        let mut str = sti::string::String::new_in(&*temp);
+                        str.push(inner_ty.display(self.string_map, &self.types));
+                        str.push_char('?');
+
+                        self.string_map.insert(str.as_str())
+                    };
+
+                    let mut tyb = TypeBuilder::new(&temp);
+
+                    let tyid = self.types.pending();
+                    tyb.add_ty(tyid, name, dt.range());
+
+                    let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+                    tyb.finalise(data, &mut self.errors);
+
+                    tyid
+                };
+
+                self.options_map.insert(inner_ty, tyid);
+
+                Type::Custom(tyid)
+            },
+
+
+            DataTypeKind::Result(v1, v2) => {
+                let inner_ty1 = self.convert_ty(scope, *v1)?;
+                let inner_ty2 = self.convert_ty(scope, *v2)?;
+                if let Some(v) = self.results_map.get(&(inner_ty1, inner_ty2))
+                    { return Ok(Type::Custom(*v)); }
+
+                let tyid = {
+                    let temp = ArenaPool::tls_get_temp();
+                    let name = {
+                        let mut str = sti::string::String::new_in(&*temp);
+                        str.push(inner_ty1.display(self.string_map, &self.types));
+                        str.push(" ~ ");
+                        str.push(inner_ty2.display(self.string_map, &self.types));
+
+                        self.string_map.insert(str.as_str())
+                    };
+
+                    let mut tyb = TypeBuilder::new(&temp);
+
+                    let tyid = self.types.pending();
+                    tyb.add_ty(tyid, name, dt.range());
+
+                    let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+                    tyb.finalise(data, &mut self.errors);
+
+                    tyid
+                };
+
+                self.results_map.insert((inner_ty1, inner_ty2), tyid);
+
+                Type::Custom(tyid)
+            },
+
+
             DataTypeKind::CustomType(v) => {
                 if v == StringMap::STR { return Ok(Type::STR) }
                 let scope = self.scopes.get(scope);
@@ -94,6 +160,8 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             output,
             type_to_namespace: HashMap::new(),
             string_map,
+            options_map: HashMap::new(),
+            results_map: HashMap::new(),
         };
 
         {
@@ -824,6 +892,8 @@ impl Analyzer<'_, '_, '_> {
                 wasm.sptr_const(alloc);
                 AnalysisResult::new(ty, true)
             },
+            
+            
             Expression::AccessField { val, field_name } => todo!(),
             Expression::CallFunction { name, is_accessor, args } => todo!(),
             Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
