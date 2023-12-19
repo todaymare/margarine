@@ -51,7 +51,7 @@ impl AnalysisResult {
 
 
 impl Analyzer<'_, '_, '_> {
-     pub fn convert_ty(&self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
+     pub fn convert_ty(&mut self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
         let ty = match dt.kind() {
             DataTypeKind::Int => Type::I64,
             DataTypeKind::Bool => Type::BOOL,
