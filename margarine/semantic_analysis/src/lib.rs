@@ -442,7 +442,10 @@ impl Analyzer<'_, '_, '_> {
             },
 
             NodeKind::Statement(stmt) => {
-                self.stmt(stmt, node.range(), scope, wasm);
+                if self.stmt(stmt, node.range(), scope, wasm).is_err() {
+                    wasm.i64_const(0);
+                    return AnalysisResult::error()
+                }
                 wasm.i64_const(0);
                 AnalysisResult::new(Type::Unit, true)
 
@@ -519,7 +522,7 @@ impl Analyzer<'_, '_, '_> {
 
         scope: &mut ScopeId,
         wasm: &mut WasmFunctionBuilder,
-    ) {
+    ) -> Result<(), ()> {
         match stmt {
             Statement::Variable { name, hint, is_mut, rhs } => {
                 let mut func = || -> Result<(), ()> {
@@ -557,12 +560,41 @@ impl Analyzer<'_, '_, '_> {
                 if func().is_err() {
                     let dummy = VariableScope::new(*name, true, Type::Error, wasm.local(WasmType::I64));
                     *scope = self.scopes.push(Scope::new(ScopeKind::Variable(dummy), scope.some()));
-                    return;
+                    return Err(());
                 }
                 
             },
-            Statement::UpdateValue { lhs, rhs } => todo!(),
-        }
+
+
+            Statement::UpdateValue { lhs, rhs } => {
+                match lhs.kind() {
+                    NodeKind::Expression(Expression::Identifier(ident)) => {
+                        let v = self.node(scope, wasm, lhs);
+                        wasm.pop();
+
+                        let rhs_anal = self.node(scope, wasm, rhs);
+                        if !v.ty.eq_sem(rhs_anal.ty) {
+                            wasm.pop();
+                            wasm.error(self.error(Error::ValueUpdateTypeMismatch 
+                                                  { lhs: v.ty, rhs: rhs_anal.ty, source }));
+                            return Err(());
+                        }
+
+                        if !v.is_mut {
+                            wasm.pop();
+                            wasm.error(self.error(Error::ValueUpdateNotMut { source }));
+                            return Err(());
+                        }
+
+                        let binding = self.scopes.get(*scope).get_var(*ident, &self.scopes).unwrap();
+                        wasm.local_set(binding.local_id);
+                    },
+
+                    _ => todo!(),
+                }
+            },
+        };
+        Ok(())
    }
 
 

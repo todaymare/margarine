@@ -156,6 +156,10 @@ pub enum Error {
         source: SourceRange,
     },
 
+    ValueUpdateNotMut {
+        source: SourceRange,
+    },
+
     ContinueOutsideOfLoop(SourceRange),
 
     BreakOutsideOfLoop(SourceRange),
@@ -493,7 +497,7 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
                 err.highlight_with_note(*binding_range, "..this branch takes the value as in-out");
                 err.highlight_with_note(*value_range, "consider adding a '&' at the start of this");
             },
-            
+             
             
             Error::ValueUpdateTypeMismatch { lhs, rhs, source } => {
                 let msg = format!("lhs is '{}' while the rhs is '{}'",
@@ -503,6 +507,12 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
 
                 fmt.error("can't update a value with a different type")
                     .highlight_with_note(*source, &msg)
+            },
+
+            
+            Error::ValueUpdateNotMut { source } => {
+                fmt.error("can't update the binding because it's not mutable")
+                    .highlight(*source)
             },
             
             
