@@ -9,7 +9,7 @@ use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator}, DataTypeKind, DataType};
+use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer};
@@ -234,7 +234,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             (Scope::new(ScopeKind::ImplicitNamespace(namespace_id), scope.some()), namespace_id)
         };
         
-        let scope = self.scopes.push(scope);
+        let mut scope = self.scopes.push(scope);
 
         self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
         
@@ -255,7 +255,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
 
         let mut ty = Type::Unit;
         for (id, n) in nodes.iter().enumerate() {
-            ty = self.node(scope, builder, n).ty;
+            ty = self.node(&mut scope, builder, n).ty;
 
             if id + 1 != nodes.len() {
                 builder.pop();
@@ -429,7 +429,7 @@ impl Analyzer<'_, '_, '_> {
 
     fn node(
         &mut self,
-        scope: ScopeId,
+        scope: &mut ScopeId,
         wasm: &mut WasmFunctionBuilder,
 
         node: &Node<'_>,
@@ -441,8 +441,13 @@ impl Analyzer<'_, '_, '_> {
                 AnalysisResult::new(Type::Unit, true)
             },
 
-            NodeKind::Statement(_) => todo!(),
-            NodeKind::Expression(expr) => self.expr(scope, expr, node.range(), wasm),
+            NodeKind::Statement(stmt) => {
+                self.stmt(stmt, node.range(), scope, wasm);
+                wasm.i64_const(0);
+                AnalysisResult::new(Type::Unit, true)
+
+            },
+            NodeKind::Expression(expr) => self.expr(expr, node.range(), scope, wasm),
             NodeKind::Error(err) => {
                 wasm.error(*err);
                 wasm.i64_const(0);
@@ -456,7 +461,7 @@ impl Analyzer<'_, '_, '_> {
         &mut self,
         decl: &Declaration,
         source: SourceRange,
-        scope: ScopeId,
+        scope: &mut ScopeId,
     ) {
         match decl {
             Declaration::Struct { kind, name, header, fields } => (),
@@ -465,7 +470,7 @@ impl Analyzer<'_, '_, '_> {
 
             Declaration::Function { is_system, name, header, arguments, return_type, body } => {
                 
-                let func = self.scopes.get(scope).get_func(*name, &self.scopes, &self.namespaces).unwrap();
+                let func = self.scopes.get(*scope).get_func(*name, &self.scopes, &self.namespaces).unwrap();
                 let func = self.funcs.get(func);
                 let mut wasm = WasmFunctionBuilder::new(self.output, func.wasm_id);
 
@@ -507,12 +512,66 @@ impl Analyzer<'_, '_, '_> {
     }
 
 
+    fn stmt(
+        &mut self,
+        stmt: &Statement,
+        source: SourceRange,
+
+        scope: &mut ScopeId,
+        wasm: &mut WasmFunctionBuilder,
+    ) {
+        match stmt {
+            Statement::Variable { name, hint, is_mut, rhs } => {
+                let mut func = || -> Result<(), ()> {
+                    let rhs_anal = self.node(scope, wasm, rhs);
+                    if rhs_anal.ty.eq_lit(Type::Error) {
+                        return Err(());
+                    }
+
+                    if let Some(hint) = hint {
+                        let hint = match self.convert_ty(*scope, *hint) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                wasm.error(self.error(e));
+                                return Err(());
+                            }
+                        };
+
+                        if !hint.eq_sem(rhs_anal.ty) {
+                            wasm.error(self.error(Error::VariableValueAndHintDiffer {
+                                value_type: rhs_anal.ty, hint_type: hint, source }));
+                            return Err(())
+                        }
+                    }
+
+                    let local = wasm.local(rhs_anal.ty.to_wasm_ty(&self.types));
+                    wasm.local_set(local);
+
+                    let variable_scope = VariableScope::new(*name, *is_mut, rhs_anal.ty, local);
+                    *scope = self.scopes.push(
+                        Scope::new(ScopeKind::Variable(variable_scope), scope.some()));
+
+                    Ok(())
+                };
+
+                if func().is_err() {
+                    let dummy = VariableScope::new(*name, true, Type::Error, wasm.local(WasmType::I64));
+                    *scope = self.scopes.push(Scope::new(ScopeKind::Variable(dummy), scope.some()));
+                    return;
+                }
+                
+            },
+            Statement::UpdateValue { lhs, rhs } => todo!(),
+        }
+   }
+
+
     fn expr(
         &mut self,
-        scope: ScopeId,
         expr: &Expression,
         source: SourceRange,
 
+        scope: &mut ScopeId,
         wasm: &mut WasmFunctionBuilder,
     ) -> AnalysisResult {
         match expr {
@@ -575,7 +634,7 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::Identifier(ident) => {
-                let Some(variable) = self.scopes.get(scope).get_var(*ident, &self.scopes)
+                let Some(variable) = self.scopes.get(*scope).get_var(*ident, &self.scopes)
                 else {
                     wasm.error(self.error(Error::VariableNotFound { name: *ident, source }));
                     return AnalysisResult::error()
@@ -733,7 +792,7 @@ impl Analyzer<'_, '_, '_> {
                         wasm.i64_mul();
                     },
 
-                    (UnaryOperator::Neg, Type::I64) => wasm.f64_neg(),
+                    (UnaryOperator::Neg, Type::F64) => wasm.f64_neg(),
 
                     _ => unreachable!()
                 }
@@ -762,15 +821,16 @@ impl Analyzer<'_, '_, '_> {
                 let TypeSymbolKind::Enum(e) = ty.kind() else { panic!() };
                 e.get_tag(wasm);
 
+                let mut slf = self;
                 let (local, l, r) = wasm.ite(
-                    self,
-                    |slf, wasm| {
-                        let body = slf.block(wasm, scope, body);
+                    &mut (&mut slf, scope),
+                    |(slf, scope), wasm| {
+                        let body = slf.block(wasm, **scope, body);
                         let wty = body.ty.to_wasm_ty(&slf.types);
                         let local = wasm.local(wty);
                         (local, Some((body, wasm.offset())))
                     },
-                    |slf, wasm| {
+                    |(slf, scope), wasm| {
                         if let Some(else_block) = else_block {
                             return Some((slf.node(scope, wasm, else_block), wasm.offset()))
                         }
@@ -782,7 +842,7 @@ impl Analyzer<'_, '_, '_> {
                 let l = l.unwrap();
 
                 if r.is_none() && !l.0.ty.eq_sem(Type::Unit) {
-                    wasm.error(self.error(Error::IfMissingElse { body: (body.range(), l.0.ty) }));
+                    wasm.error(slf.error(Error::IfMissingElse { body: (body.range(), l.0.ty) }));
                     wasm.insert_pop(l.1);
                     return AnalysisResult::error();
                 }
@@ -792,7 +852,7 @@ impl Analyzer<'_, '_, '_> {
 
                 } else if r.is_some() && !l.0.ty.eq_sem(r.as_ref().unwrap().0.ty) {
 
-                    wasm.error(self.error(Error::IfBodyAndElseMismatch {
+                    wasm.error(slf.error(Error::IfBodyAndElseMismatch {
                         body: (body.range(), l.0.ty),
                         else_block: (else_block.unwrap().range(), r.as_ref().unwrap().0.ty)
                     }));
@@ -814,10 +874,10 @@ impl Analyzer<'_, '_, '_> {
 
             Expression::Match { value, taken_as_inout, mappings } => todo!(),
 
-            Expression::Block { block } => self.block(wasm, scope, block),
+            Expression::Block { block } => self.block(wasm, *scope, block),
 
             Expression::CreateStruct { data_type, fields } => {
-                let ty = match self.convert_ty(scope, *data_type) {
+                let ty = match self.convert_ty(*scope, *data_type) {
                     Ok(v) => v,
                     Err(e) => {
                         wasm.error(self.error(e));
@@ -895,6 +955,8 @@ impl Analyzer<'_, '_, '_> {
             
             
             Expression::AccessField { val, field_name } => todo!(),
+
+
             Expression::CallFunction { name, is_accessor, args } => todo!(),
             Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
             Expression::WithinTypeNamespace { namespace, action } => todo!(),
