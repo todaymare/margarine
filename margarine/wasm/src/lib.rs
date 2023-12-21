@@ -466,7 +466,9 @@ impl<'a> WasmFunctionBuilder<'a> {
         write!(self.body, "(loop $l{} ", self.loop_nest);
         self.loop_nest += 1;
 
-        body(self, LoopId(self.loop_nest-1));
+        let id = LoopId(self.loop_nest-1);
+        body(self, id);
+        self.continue_loop(id);
 
         self.loop_nest += 1;
         write!(self.body, ")");
