@@ -1,7 +1,7 @@
-use common::{string_map::StringIndex, source::SourceRange};
+use common::{string_map::{StringIndex, StringMap}, source::SourceRange};
 use errors::SemaError;
-use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
-use wasm::{WasmModuleBuilder, WasmFunctionBuilder};
+use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool, alloc::Alloc};
+use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
 use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField}};
 
@@ -400,8 +400,42 @@ impl<'out> TypeBuilder<'_> {
         
         match kind {
             TypeEnum::TaggedUnion(sym) => {
-                println!("{sym:?}");
-                todo!("tagged unions aren't supported yet");
+                let tysym = data.type_map.get(ty);
+                let wasm_ty = WasmType::Ptr(tysym.size());
+
+                for (i, f) in sym.fields().into_iter().enumerate() {
+                    let wfid = data.module_builder.function_id();
+                    let mut wf = WasmFunctionBuilder::new(data.arena, wfid);
+                    let alloc = wf.return_value(wasm_ty);
+
+                    wf.i32_const(i as i32);
+                    wf.write_i32_to_stack(alloc);
+
+
+                    let func;
+                    if let Some(fty) = f.ty() {
+                        let wfty = fty.to_wasm_ty(data.type_map);
+                        let param = wf.param(wfty);
+                        let union_ptr = alloc.add(sym.union_offset().try_into().unwrap());
+
+                        wf.local_get(param);
+                        wf.memcpy(union_ptr, wfty);
+
+                        func = Function::new(
+                            f.name(),
+                            data.arena.alloc_new([(StringMap::VALUE, false, fty)]),
+                            Type::Custom(ty), wfid
+                        );
+
+                    } else {
+                        func = Function::new(f.name(), &[], Type::Custom(ty), wfid);
+                    }
+
+                    data.module_builder.register(wf);
+                    
+                    let func = data.function_map.put(func);
+                    ns.add_func(f.name(), func);
+                }
             },
 
 

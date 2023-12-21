@@ -112,12 +112,14 @@ impl<'a> TypeEnum<'a> {
 impl<'a> TypeTaggedUnion<'a> {
     pub fn new(union_offset: u32, mappings: &'a [TaggedUnionField]) -> Self { Self { union_offset, mappings } }
     pub fn fields(self) -> &'a [TaggedUnionField] { self.mappings }
+    pub fn union_offset(self) -> u32 { self.union_offset }
 }
 
 
 impl TaggedUnionField {
     pub fn new(name: StringIndex, ty: Option<Type>) -> Self { Self { name, ty } }
     pub fn ty(self) -> Option<Type> { self.ty }
+    pub fn name(self) -> StringIndex { self.name }
 }
 
 
