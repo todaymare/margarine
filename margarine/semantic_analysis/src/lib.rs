@@ -904,7 +904,10 @@ impl Analyzer<'_, '_, '_> {
             },
 
 
-            Expression::Match { value, taken_as_inout, mappings } => todo!(),
+            Expression::Match { value, taken_as_inout, mappings } => {
+                // need to figure out how br_table works :thinking:
+                todo!()
+            },
 
             Expression::Block { block } => self.block(wasm, *scope, block),
 
@@ -992,7 +995,11 @@ impl Analyzer<'_, '_, '_> {
             Expression::CallFunction { name, is_accessor, args } => todo!(),
             Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
             Expression::WithinTypeNamespace { namespace, action } => todo!(),
-            Expression::Loop { body } => todo!(),
+            Expression::Loop { body } => {
+                wasm.do_loop(|wasm, id| { self.block(wasm, *scope, body); });
+                wasm.i64_const(0);
+                AnalysisResult::new(Type::Unit, true)
+            },
             Expression::Return(_) => todo!(),
             Expression::Continue => todo!(),
             Expression::Break => todo!(),
