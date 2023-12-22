@@ -4,6 +4,8 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
+use std::fmt::Write;
+
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
@@ -12,7 +14,7 @@ use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
-use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer};
+use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
 
 use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData, PartialStructField}, ty_sym::{StructField, TypeStruct}};
@@ -263,7 +265,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
 
         }
 
-        if nodes.is_empty() { builder.i64_const(0); }
+        if nodes.is_empty() { builder.unit(); }
 
         AnalysisResult { ty, is_mut: true }
     }
@@ -437,23 +439,23 @@ impl Analyzer<'_, '_, '_> {
         match node.kind() {
             NodeKind::Declaration(decl) => {
                 self.decl(decl, node.range(), scope);
-                wasm.i64_const(0);
+                wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
             },
 
             NodeKind::Statement(stmt) => {
                 if self.stmt(stmt, node.range(), scope, wasm).is_err() {
-                    wasm.i64_const(0);
+                    wasm.unit();
                     return AnalysisResult::error()
                 }
-                wasm.i64_const(0);
+                wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
 
             },
             NodeKind::Expression(expr) => self.expr(expr, node.range(), scope, wasm),
             NodeKind::Error(err) => {
                 wasm.error(*err);
-                wasm.i64_const(0);
+                wasm.unit();
                 AnalysisResult::error()
             },
         }
@@ -608,7 +610,7 @@ impl Analyzer<'_, '_, '_> {
     ) -> AnalysisResult {
         match expr {
             Expression::Unit => {
-                wasm.i64_const(0);
+                wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
             },
 
@@ -704,7 +706,7 @@ impl Analyzer<'_, '_, '_> {
                 if type_check().is_err() {
                     wasm.pop();
                     wasm.pop();
-                    wasm.i64_const(0);
+                    wasm.unit();
                     return AnalysisResult::error();
                 }
 
@@ -808,7 +810,7 @@ impl Analyzer<'_, '_, '_> {
 
                 if type_check().is_err() {
                     wasm.pop();
-                    wasm.i64_const(0);
+                    wasm.unit();
                     return AnalysisResult::error();
                 }
 
@@ -905,8 +907,94 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::Match { value, taken_as_inout, mappings } => {
-                // need to figure out how br_table works :thinking:
-                todo!()
+                fn match_mapping(
+                    anal: &mut Analyzer<'_, '_, '_>,
+                    mut scope: ScopeId,
+                    wasm: &mut WasmFunctionBuilder,
+                    id: LocalId,
+
+                    index: usize,
+                    mappings: &[parser::nodes::MatchMapping<'_>]
+                ) -> Option<(Type, SourceRange, LocalId)> {
+
+                    let Some(mapping) = mappings.get(index) else {
+                        wasm.block(|wasm, _| {
+                        
+                            wasm.local_get(id);
+                            let mut str = format!("br_table {} ", mappings.len());
+
+                            for i in (0..mappings.len()).rev() {
+                                let _ = write!(str, "{} ", i);
+                            }
+                            wasm.raw(&str);
+
+                        });
+
+                        return None;
+                    };
+                    
+                    let mut result = None;
+                    wasm.block(|wasm, _| {
+                        result = match_mapping(anal, scope, wasm, id, index + 1, mappings);
+
+                        let analysis = anal.node(&mut scope, wasm, mapping.node());
+                        if let Some(result) = result {
+                            if analysis.ty.eq_sem(result.0) {
+                                wasm.local_set(result.2);
+                            } else {
+                                wasm.error(anal.error(Error::MatchBranchesDifferInReturnType {
+                                    initial_source: result.1, initial_typ: result.0,
+                                    branch_source: mapping.node().range(), branch_typ: analysis.ty
+                                }));
+                                wasm.pop();
+                            }
+                        } else {
+                            result = Some((
+                                analysis.ty, mapping.range(), 
+                                wasm.local(analysis.ty.to_wasm_ty(&anal.types))
+                            ));
+
+                            wasm.local_set(result.unwrap().2);
+
+                        }
+                    });
+                    
+                    result
+                }
+                
+                let anal = self.node(scope, wasm, value);
+                let tyid = match anal.ty {
+                    Type::Custom(v) => v,
+
+                    Type::Error => return AnalysisResult::error(),
+
+                    _ => {
+                        wasm.error(self.error(Error::MatchValueIsntEnum {
+                            source: value.range(), typ: anal.ty }));
+                        return AnalysisResult::error();
+                    }
+                };
+
+                let ty = self.types.get(tyid); 
+                let TypeSymbolKind::Enum(sym) = ty.kind()
+                else { 
+                    wasm.error(self.error(Error::MatchValueIsntEnum {
+                        source: value.range(), typ: anal.ty }));
+                    return AnalysisResult::error();
+                };
+
+                assert!(matches!(sym, TypeEnum::Tag(_)), "matching on unions arent supported yet");
+                let local = wasm.local(WasmType::I32);
+                wasm.local_set(local);
+
+                let result = match_mapping(self, *scope, wasm, local, 0, mappings);
+                if let Some(result) = result {
+                    wasm.local_get(result.2);
+                    AnalysisResult::new(result.0, true)
+                } else {
+                    wasm.unit();
+                    AnalysisResult::new(Type::Unit, true)
+                }
             },
 
             Expression::Block { block } => self.block(wasm, *scope, block),
@@ -997,7 +1085,7 @@ impl Analyzer<'_, '_, '_> {
             Expression::WithinTypeNamespace { namespace, action } => todo!(),
             Expression::Loop { body } => {
                 wasm.do_loop(|wasm, id| { self.block(wasm, *scope, body); });
-                wasm.i64_const(0);
+                wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
             },
             Expression::Return(_) => todo!(),

@@ -486,8 +486,12 @@ impl<'a> WasmFunctionBuilder<'a> {
         body(self, BlockId(self.block_nest-1));
 
         self.block_nest -= 1;
+        write!(self.body, ")");
     }
 
+
+    #[inline(always)]
+    pub fn raw(&mut self, str: &str) { self.body.push(str); }
 
     #[inline(always)]
     pub fn break_block(&mut self, block: BlockId) { write!(self.body, "br $b{} ", block.0); }
@@ -509,6 +513,9 @@ impl WasmFunctionBuilder<'_> {
 
     #[inline(always)]
     pub fn bool_const(&mut self, v: bool) { self.i32_const(v as i32); }
+
+    #[inline(always)]
+    pub fn unit(&mut self) { self.i64_const(0); }
 }
 
 
