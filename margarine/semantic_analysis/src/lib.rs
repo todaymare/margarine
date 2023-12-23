@@ -15,7 +15,7 @@ use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, Un
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer, LocalId};
-use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap};
+use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::{PackedOption, Reserved}, arena_pool::ArenaPool, hash::HashMap};
 
 use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData, PartialStructField}, ty_sym::{StructField, TypeStruct}};
 
@@ -912,6 +912,8 @@ impl Analyzer<'_, '_, '_> {
                     mut scope: ScopeId,
                     wasm: &mut WasmFunctionBuilder,
                     id: LocalId,
+                    taken_as_inout: bool,
+                    value_range: SourceRange,
 
                     index: usize,
                     mappings: &[parser::nodes::MatchMapping<'_>]
@@ -935,7 +937,12 @@ impl Analyzer<'_, '_, '_> {
                     
                     let mut result = None;
                     wasm.block(|wasm, _| {
-                        result = match_mapping(anal, scope, wasm, id, index + 1, mappings);
+                        result = match_mapping(anal, scope, wasm, id, taken_as_inout, value_range, index + 1, mappings);
+
+                        if mapping.is_inout() && !taken_as_inout {
+                            wasm.error(anal.error(Error::InOutBindingWithoutInOutValue {
+                                value_range, binding_range: mapping.binding_range() }))
+                        }
 
                         let analysis = anal.node(&mut scope, wasm, mapping.node());
                         if let Some(result) = result {
@@ -963,6 +970,11 @@ impl Analyzer<'_, '_, '_> {
                 }
                 
                 let anal = self.node(scope, wasm, value);
+                if *taken_as_inout && !anal.is_mut {
+                    wasm.error(self.error(Error::InOutValueIsntMut(value.range())));
+                    return AnalysisResult::error();
+                }
+
                 let tyid = match anal.ty {
                     Type::Custom(v) => v,
 
@@ -987,7 +999,7 @@ impl Analyzer<'_, '_, '_> {
                 let local = wasm.local(WasmType::I32);
                 wasm.local_set(local);
 
-                let result = match_mapping(self, *scope, wasm, local, 0, mappings);
+                let result = match_mapping(self, *scope, wasm, local, *taken_as_inout, value.range(), 0, mappings);
                 if let Some(result) = result {
                     wasm.local_get(result.2);
                     AnalysisResult::new(result.0, true)
@@ -1081,7 +1093,22 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::CallFunction { name, is_accessor, args } => todo!(),
-            Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
+
+
+            Expression::WithinNamespace { namespace, namespace_source, action } => {
+                let Some(ns) = self.scopes.get(*scope).get_ns(*namespace, &self.scopes)
+                else {
+                    wasm.error(self.error(Error::NamespaceNotFound 
+                                          { source: *namespace_source, namespace: *namespace }));
+                    return AnalysisResult::error();
+                };
+
+                let scope = Scope::new(ScopeKind::ImplicitNamespace(ns.namespace), scope.some());
+                let mut scope = self.scopes.push(scope);
+                self.node(&mut scope, wasm, action)
+            },
+
+
             Expression::WithinTypeNamespace { namespace, action } => todo!(),
             Expression::Loop { body } => {
                 wasm.do_loop(|wasm, id| { self.block(wasm, *scope, body); });

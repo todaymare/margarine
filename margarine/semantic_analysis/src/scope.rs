@@ -78,6 +78,22 @@ impl Scope {
         })
     }
 
+    pub fn get_ns(
+        self,
+        name: StringIndex,
+        scopes: &ScopeMap,
+    ) -> Option<ExplicitNamespace> {
+        self.over(scopes, |current| {
+            if let ScopeKind::ExplicitNamespace(var) = current.kind() {
+                if var.name == name {
+                    return Some(var)
+                }
+            }
+
+            None
+        })
+    }
+
 
     ///
     /// Iterates over the current scope and all of its
@@ -136,7 +152,7 @@ impl VariableScope {
 #[derive(Debug, Clone, Copy)]
 pub struct ExplicitNamespace {
     name: StringIndex,
-    namespace: NamespaceId,
+    pub namespace: NamespaceId,
 }
 
 
