@@ -78,9 +78,8 @@ impl NamespaceMap {
 
 
     #[inline(always)]
-    pub fn get_type(&mut self, id: Type) -> &Namespace {
-        let id = self.type_to_ns.get(&id).unwrap();
-        &self.map[*id]
+    pub fn get_type(&mut self, id: Type) -> NamespaceId {
+        self.type_to_ns[&id]
     }
 
 
