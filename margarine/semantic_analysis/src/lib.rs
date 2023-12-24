@@ -657,7 +657,8 @@ impl Analyzer<'_, '_, '_> {
                         let ty = Type::BOOL;
                         let name = if *v { StringMap::TRUE } else { StringMap::FALSE };
 
-                        let func = self.namespaces.get_type(ty).get_func(name).unwrap();
+                        let func = self.namespaces.get_type(ty);
+                        let func = self.namespaces.get(func).get_func(name).unwrap();
                         let func = self.funcs.get(func);
                         
                         wasm.call(func.wasm_id);
@@ -1109,7 +1110,23 @@ impl Analyzer<'_, '_, '_> {
             },
 
 
-            Expression::WithinTypeNamespace { namespace, action } => todo!(),
+            Expression::WithinTypeNamespace { namespace, action } => {
+                let namespace = self.convert_ty(*scope, *namespace);
+                let namespace = match namespace {
+                    Ok(v) => v,
+                    Err(e) => {
+                        wasm.error(self.error(e));
+                        return AnalysisResult::error();
+                    },
+                };
+
+                let namespace = self.namespaces.get_type(namespace);
+                let scope = Scope::new(ScopeKind::ImplicitNamespace(namespace), scope.some());
+                let mut scope = self.scopes.push(scope);
+                self.node(&mut scope, wasm, action)
+            },
+
+            
             Expression::Loop { body } => {
                 wasm.do_loop(|wasm, id| { self.block(wasm, *scope, body); });
                 wasm.unit();
