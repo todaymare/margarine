@@ -25,7 +25,6 @@ pub struct Analyzer<'me, 'out, 'str> {
     namespaces: NamespaceMap,
     pub types: TypeMap<'out>,
     pub funcs: FunctionMap<'out>,
-    type_to_namespace: HashMap<Type, NamespaceId>,
     output: &'out Arena,
     pub string_map: &'me mut StringMap<'str>,
 
@@ -160,7 +159,6 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             module_builder: WasmModuleBuilder::new(output),
             errors: KVec::new(),
             output,
-            type_to_namespace: HashMap::new(),
             string_map,
             options_map: HashMap::new(),
             results_map: HashMap::new(),
@@ -469,8 +467,8 @@ impl Analyzer<'_, '_, '_> {
         scope: &mut ScopeId,
     ) {
         match decl {
-            Declaration::Struct { kind, name, header, fields } => (),
-            Declaration::Enum { name, header, mappings } => (),
+            Declaration::Struct { .. } => (),
+            Declaration::Enum { .. } => (),
 
 
             Declaration::Function { is_system, name, header, arguments, return_type, body } => {
@@ -996,8 +994,11 @@ impl Analyzer<'_, '_, '_> {
                     return AnalysisResult::error();
                 };
 
-                assert!(matches!(sym, TypeEnum::Tag(_)), "matching on unions arent supported yet");
                 let local = wasm.local(WasmType::I32);
+                match sym {
+                    TypeEnum::TaggedUnion(_) => wasm.read_i32(),
+                    TypeEnum::Tag(_) => (),
+                }
                 wasm.local_set(local);
 
                 let result = match_mapping(self, *scope, wasm, local, *taken_as_inout, value.range(), 0, mappings);
@@ -1093,18 +1094,78 @@ impl Analyzer<'_, '_, '_> {
             Expression::AccessField { val, field_name } => todo!(),
 
 
-            Expression::CallFunction { name, is_accessor, args } => todo!(),
+            Expression::CallFunction { name, is_accessor, args } => {
+                let mut scope = *scope;
+                let pool = ArenaPool::tls_get_rec();
+                let args = {
+                    let mut vec = Vec::new_in(&*pool);
+                    
+                    for a in args.iter() {
+                        let mut scope = scope;
+                        let anal = self.node(&mut scope, wasm, &a.0);
+                        vec.push((anal, a.0.range(), a.1))
+                    }
+
+                    vec
+                };
+
+                if *is_accessor {
+                    let ty = args[0].0.ty;
+                    let ns = self.namespaces.get_type(ty);
+                    scope = self.scopes.push(
+                        Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some()));
+                }
+
+                let scope = self.scopes.get(scope);
+                let Some(func) = scope.get_func(*name, &self.scopes, &self.namespaces)
+                else {
+                    wasm.error(self.error(Error::FunctionNotFound { source, name: *name }));
+                    return AnalysisResult::error();
+                };
+
+                let func = self.funcs.get(func);
+                
+                if func.args.len() != args.len() {
+                    wasm.error(self.error(Error::FunctionArgsMismatch {
+                        source, sig_len: func.args.len(), call_len: args.len() }));
+
+                    return AnalysisResult::error();
+                }
+
+                let mut errored = false;
+                for (sig_arg, call_arg) in func.args.iter().zip(args.iter()) {
+                    if !sig_arg.2.eq_sem(call_arg.0.ty) {
+                        errored = true;
+                        wasm.error(self.error(Error::InvalidType {
+                            source: call_arg.1, found: call_arg.0.ty, expected: sig_arg.2 }));
+                    }
+
+                    if sig_arg.1 && !call_arg.2 {
+                        errored = true;
+                        wasm.error(self.error(Error::InOutValueWithoutInOutBinding {
+                            value_range: call_arg.1 }))
+                    }
+                }
+
+                if errored {
+                    return AnalysisResult::error();
+                }
+
+                wasm.call(func.wasm_id);
+
+                AnalysisResult::new(func.ret, true)
+            },
 
 
             Expression::WithinNamespace { namespace, namespace_source, action } => {
-                let Some(ns) = self.scopes.get(*scope).get_ns(*namespace, &self.scopes)
+                let Some(ns) = self.scopes.get(*scope).get_ns(*namespace, &self.scopes, &mut self.namespaces)
                 else {
                     wasm.error(self.error(Error::NamespaceNotFound 
                                           { source: *namespace_source, namespace: *namespace }));
                     return AnalysisResult::error();
                 };
 
-                let scope = Scope::new(ScopeKind::ImplicitNamespace(ns.namespace), scope.some());
+                let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                 let mut scope = self.scopes.push(scope);
                 self.node(&mut scope, wasm, action)
             },
@@ -1200,6 +1261,8 @@ impl Analyzer<'_, '_, '_> {
                 wasm.break_loop(loop_val.loop_id);
                 AnalysisResult::new(Type::Never, true)
             },
+
+
             Expression::CastAny { lhs, data_type } => todo!(),
             Expression::Unwrap(_) => todo!(),
             Expression::OrReturn(_) => todo!(),

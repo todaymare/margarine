@@ -103,7 +103,12 @@ pub enum Error {
         name: Vec<StringIndex>,
         range: SourceRange,
     },
-    
+     
+    InOutValueWithoutInOutBinding {
+        value_range: SourceRange,
+    },
+
+
     InOutBindingWithoutInOutValue {
         value_range: SourceRange,
         binding_range: SourceRange,
@@ -400,7 +405,7 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             },
             
             Error::NamespaceNotFound { source, namespace } => {
-                let msg = format!("there's no namespace named '{}'in the current scope",
+                let msg = format!("there's no namespace named '{}' in the current scope",
                     fmt.string(*namespace),
                 );
 
@@ -502,9 +507,15 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             },
             
             
+            Error::InOutValueWithoutInOutBinding { value_range } => {
+                let mut err = fmt.error("in-out value without in-out binding");
+                err.highlight_with_note(*value_range, "consider removing the '&' at the start of this");
+            },
+
+            
             Error::InOutBindingWithoutInOutValue { value_range, binding_range } => {
                 let mut err = fmt.error("in-out binding without in-out value");
-                err.highlight_with_note(*binding_range, "..this branch takes the value as in-out");
+                err.highlight_with_note(*binding_range, "..this takes the value as in-out");
                 err.highlight_with_note(*value_range, "consider adding a '&' at the start of this");
             },
              
