@@ -1,6 +1,6 @@
 use common::{string_map::StringIndex, source::SourceRange};
 use sti::{packed_option::PackedOption, define_key, keyed::KVec};
-use wasm::LocalId;
+use wasm::{LocalId, LoopId};
 
 use crate::{namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::{TypeId, TypeMap}}, funcs::FuncId};
 
@@ -109,6 +109,20 @@ impl Scope {
     }
 
 
+    pub fn get_loop(
+        self,
+        scopes: &ScopeMap,
+    ) -> Option<LoopScope> {
+        self.over(scopes, |current| {
+            if let ScopeKind::Loop(funcdef) = current.kind() {
+                return Some(funcdef)
+            }
+
+            None
+        })
+    }
+
+
     ///
     /// Iterates over the current scope and all of its
     /// parents, calling `func` on each of them. If `func`
@@ -145,6 +159,7 @@ pub enum ScopeKind {
     ImplicitNamespace(NamespaceId),
     FunctionDefinition(FunctionDefinitionScope),
     Variable(VariableScope),
+    Loop(LoopScope),
     Root,
 }
 
@@ -178,6 +193,16 @@ pub struct FunctionDefinitionScope {
 
 impl FunctionDefinitionScope {
     pub fn new(return_type: Type, return_source: SourceRange) -> Self { Self { return_type, return_source } }
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct LoopScope {
+    pub loop_id: LoopId,
+}
+
+impl LoopScope {
+    pub fn new(loop_id: LoopId) -> Self { Self { loop_id } }
 }
 
 
