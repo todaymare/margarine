@@ -12,7 +12,7 @@ use errors::Error;
 use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement}, DataTypeKind, DataType};
-use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope};
+use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::{PackedOption, Reserved}, arena_pool::ArenaPool, hash::HashMap};
@@ -1128,10 +1128,18 @@ impl Analyzer<'_, '_, '_> {
 
             
             Expression::Loop { body } => {
-                wasm.do_loop(|wasm, _| { self.block(wasm, *scope, body); });
+                wasm.do_loop(|wasm, id| {
+                    let nscope = LoopScope::new(id);
+                    let nscope = Scope::new(ScopeKind::Loop(nscope), scope.some());
+                    let nscope = self.scopes.push(nscope);
+
+                    self.block(wasm, nscope, body);
+                });
+
                 wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
             },
+
 
             Expression::Return(v) => {
                 let value = self.node(scope, wasm, v);
@@ -1158,8 +1166,40 @@ impl Analyzer<'_, '_, '_> {
                 wasm.ret();
                 AnalysisResult::new(Type::Never, true)
             },
-            Expression::Continue => todo!(),
-            Expression::Break => todo!(),
+
+
+            Expression::Continue => {
+                let loop_val = {
+                    let scope = self.scopes.get(*scope);
+                    match scope.get_loop(&self.scopes) {
+                        Some(v) => v,
+                        None => {
+                            wasm.error(self.error(Error::ContinueOutsideOfLoop(source)));
+                            return AnalysisResult::error()
+                        },
+                    }
+                };
+
+                wasm.continue_loop(loop_val.loop_id);
+                AnalysisResult::new(Type::Never, true)
+            },
+
+
+            Expression::Break => {
+                let loop_val = {
+                    let scope = self.scopes.get(*scope);
+                    match scope.get_loop(&self.scopes) {
+                        Some(v) => v,
+                        None => {
+                            wasm.error(self.error(Error::BreakOutsideOfLoop(source)));
+                            return AnalysisResult::error()
+                        },
+                    }
+                };
+
+                wasm.break_loop(loop_val.loop_id);
+                AnalysisResult::new(Type::Never, true)
+            },
             Expression::CastAny { lhs, data_type } => todo!(),
             Expression::Unwrap(_) => todo!(),
             Expression::OrReturn(_) => todo!(),

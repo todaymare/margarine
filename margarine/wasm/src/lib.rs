@@ -54,11 +54,14 @@ pub struct LocalId(u32);
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct GlobalId(u32);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockId(usize);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct LoopId(usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoopId {
+    continue_id: usize,
+    break_id: BlockId,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StackPointer(usize);
@@ -463,15 +466,21 @@ impl<'a> WasmFunctionBuilder<'a> {
         &mut self,
         body: impl FnOnce(&mut Self, LoopId),
     ) {
-        write!(self.body, "(loop $l{} ", self.loop_nest);
-        self.loop_nest += 1;
+        self.block(|wasm, id| {
+            write!(wasm.body, "(loop $l{} ", wasm.loop_nest);
+            wasm.loop_nest += 1;
 
-        let id = LoopId(self.loop_nest-1);
-        body(self, id);
-        self.continue_loop(id);
+            let id = LoopId {
+                continue_id: wasm.loop_nest-1,
+                break_id: id,
+            };
 
-        self.loop_nest += 1;
-        write!(self.body, ")");
+            body(wasm, id);
+            wasm.continue_loop(id);
+
+            wasm.loop_nest += 1;
+            write!(wasm.body, ")");
+        });
     }
 
 
@@ -498,7 +507,10 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     #[inline(always)]
-    pub fn continue_loop(&mut self, loop_id: LoopId) { write!(self.body, "br $l{} ", loop_id.0); }
+    pub fn break_loop(&mut self, loop_id: LoopId) { self.break_block(loop_id.break_id); }
+
+    #[inline(always)]
+    pub fn continue_loop(&mut self, loop_id: LoopId) { write!(self.body, "br $l{} ", loop_id.continue_id); }
 
 
     #[inline(always)]
