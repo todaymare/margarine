@@ -97,7 +97,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
             if ext.is_empty() { "" } else { "." },
             ext,
             start_line.line + 1,
-            characters_between(file.read(), start_line.offset, source.start() as usize)
+            characters_between(file.read(), start_line.offset, source.start() as usize).len()
         );
 
         let _ = writeln!(self.fmt, 
@@ -135,13 +135,13 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
                             " ".repeated(characters_between(
                                 line.1, 0, 
                                 source.start() as usize - start_line.offset
-                            )),
+                            ).len()),
                             
                             "^".repeated(characters_between(
                                 line.1, 
                                 source.start() as usize - start_line.offset, 
                                 source.end() as usize - end_line.offset + 1, 
-                            ).max(1)).red(),
+                            ).len().max(1)).red(),
                         );
                     } else if line.0 == start_line.line {
                         let _ = write!(
@@ -149,12 +149,12 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
                             " ".repeated(characters_between(
                                 line.1, 0, 
                                 source.start() as usize - start_line.offset
-                            )),
+                            ).len()),
                             
                             "^".repeated(characters_between(
                                 line.1, source.start() as usize - start_line.offset, 
                                 line.1.len()
-                            ).max(1)).red(),
+                            ).len().max(1)).red(),
                         );
                     } else if line.0 == end_line.line {
                         let _ = write!(
@@ -162,7 +162,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
                             "^".repeated(characters_between(
                                 line.1, 0, 
                                 line.1.len() - (source.end() as usize - end_line.offset)
-                            ).max(1)).red(),
+                            ).len().max(1)).red(),
                         );
                     } else {
                         let _ = write!(
@@ -237,9 +237,8 @@ fn line_at(offset: usize, data: &str, from: LineAt) -> Option<LineAt> {
 }
 
 
-fn characters_between(data: &str, start: usize, end: usize) -> usize {
-    let slice = &data[start..end];
-    slice.len()
+fn characters_between(data: &str, start: usize, end: usize) -> &str {
+    data.get(start..end).unwrap_or_else(|| characters_between(data, start, end-1))
 }
 
 

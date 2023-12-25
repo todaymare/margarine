@@ -483,7 +483,7 @@ impl Analyzer<'_, '_, '_> {
 
                 let scope = Scope::new(
                     ScopeKind::FunctionDefinition(
-                        FunctionDefinitionScope::new(func.ret)
+                        FunctionDefinitionScope::new(func.ret, return_type.range())
                     ),
                     scope.some()
                 );
@@ -1128,11 +1128,36 @@ impl Analyzer<'_, '_, '_> {
 
             
             Expression::Loop { body } => {
-                wasm.do_loop(|wasm, id| { self.block(wasm, *scope, body); });
+                wasm.do_loop(|wasm, _| { self.block(wasm, *scope, body); });
                 wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
             },
-            Expression::Return(_) => todo!(),
+
+            Expression::Return(v) => {
+                let value = self.node(scope, wasm, v);
+
+                let func_return = {
+                    let scope = self.scopes.get(*scope);
+                    match scope.get_func_def(&self.scopes) {
+                        Some(v) => v,
+                        None => {
+                            wasm.error(self.error(Error::ReturnOutsideOfAFunction { source }));
+                            return AnalysisResult::error()
+                        },
+                    }
+                };
+
+                if !func_return.return_type.eq_sem(value.ty) {
+                    wasm.error(self.error(Error::ReturnAndFuncTypDiffer {
+                        source, func_source: func_return.return_source,
+                        typ: value.ty, func_typ: func_return.return_type }));
+
+                    return AnalysisResult::error()
+                }
+
+                wasm.ret();
+                AnalysisResult::new(Type::Never, true)
+            },
             Expression::Continue => todo!(),
             Expression::Break => todo!(),
             Expression::CastAny { lhs, data_type } => todo!(),

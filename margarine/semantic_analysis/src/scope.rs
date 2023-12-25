@@ -1,4 +1,4 @@
-use common::string_map::StringIndex;
+use common::{string_map::StringIndex, source::SourceRange};
 use sti::{packed_option::PackedOption, define_key, keyed::KVec};
 use wasm::LocalId;
 
@@ -95,6 +95,20 @@ impl Scope {
     }
 
 
+    pub fn get_func_def(
+        self,
+        scopes: &ScopeMap,
+    ) -> Option<FunctionDefinitionScope> {
+        self.over(scopes, |current| {
+            if let ScopeKind::FunctionDefinition(funcdef) = current.kind() {
+                return Some(funcdef)
+            }
+
+            None
+        })
+    }
+
+
     ///
     /// Iterates over the current scope and all of its
     /// parents, calling `func` on each of them. If `func`
@@ -159,10 +173,11 @@ pub struct ExplicitNamespace {
 #[derive(Debug, Clone, Copy)]
 pub struct FunctionDefinitionScope {
     pub return_type: Type,
+    pub return_source: SourceRange,
 }
 
 impl FunctionDefinitionScope {
-    pub fn new(return_type: Type) -> Self { Self { return_type } }
+    pub fn new(return_type: Type, return_source: SourceRange) -> Self { Self { return_type, return_source } }
 }
 
 

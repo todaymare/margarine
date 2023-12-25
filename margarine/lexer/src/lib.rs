@@ -382,8 +382,8 @@ impl Lexer<'_, '_> {
             token_kind: 
             TokenKind::EndOfFile, 
             source_range: SourceRange::new(
-                self.reader.offset() as u32,
-                self.reader.offset() as u32,
+                self.reader.offset() as u32 - 1,
+                self.reader.offset() as u32 - 1,
             ) 
         }
     }
