@@ -23,6 +23,10 @@ pub enum Error {
         body_type: Type,
     },
 
+    ReturnOutsideOfAFunction {
+        source: SourceRange,
+    },
+
     InvalidType {
         source: SourceRange,
         found: Type,
@@ -254,6 +258,12 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             },
 
             
+            Error::ReturnOutsideOfAFunction { source } => {
+                fmt.error("return outside of a function")
+                    .highlight(*source);
+            },
+
+           
             Error::DuplicateField { declared_at, error_point } => {
                 let mut error = fmt.error("duplicate field");
                 error
