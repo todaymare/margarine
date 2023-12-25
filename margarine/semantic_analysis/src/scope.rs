@@ -82,13 +82,21 @@ impl Scope {
         self,
         name: StringIndex,
         scopes: &ScopeMap,
-    ) -> Option<ExplicitNamespace> {
+        namespaces: &mut NamespaceMap,
+    ) -> Option<NamespaceId> {
         self.over(scopes, |current| {
             if let ScopeKind::ExplicitNamespace(var) = current.kind() {
                 if var.name == name {
-                    return Some(var)
+                    return Some(var.namespace)
                 }
             }
+
+            if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
+                if let Some(val) = namespaces.get(ns).get_type(name) {
+                    return Some(namespaces.get_type(Type::Custom(val)))
+                }
+            }
+
 
             None
         })
@@ -134,7 +142,7 @@ impl Scope {
     pub fn over<T>(
         self,
         scopes: &ScopeMap,
-        func: impl Fn(Self) -> Option<T>
+        mut func: impl FnMut(Self) -> Option<T>
     ) -> Option<T> {
         let mut current = self;
         loop {

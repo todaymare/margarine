@@ -35,7 +35,7 @@ impl<'a> FunctionMap<'a> {
 
 
     #[inline(always)]
-    pub fn get(&self, id: FuncId) -> Function {
+    pub fn get(&self, id: FuncId) -> Function<'a> {
         *self.map.get(id).unwrap()
     }
 
