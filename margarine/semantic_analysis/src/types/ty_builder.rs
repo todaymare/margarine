@@ -7,6 +7,7 @@ use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{Functio
 
 use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag}};
 
+#[derive(Debug)]
 pub struct TypeBuilder<'a> {
     storage: &'a Arena,
 
@@ -15,6 +16,7 @@ pub struct TypeBuilder<'a> {
 }
 
 
+#[derive(Debug)]
 pub enum ProcessingState {
     Uninit,
     Processing,
@@ -22,6 +24,7 @@ pub enum ProcessingState {
 }
 
 
+#[derive(Debug)]
 pub struct PartialType<'a> {
     name: StringIndex,
     source: SourceRange,
@@ -30,6 +33,7 @@ pub struct PartialType<'a> {
 }
 
 
+#[derive(Debug)]
 pub enum PartialTypeKind<'a> {
     Struct {
         fields: &'a mut [PartialStructField]
@@ -41,12 +45,14 @@ pub enum PartialTypeKind<'a> {
 }
 
 
+#[derive(Debug)]
 pub struct PartialStructField {
     name: StringIndex,
     ty: Type,
 }
 
 
+#[derive(Debug)]
 pub struct PartialEnumField {
     name: StringIndex,
     ty: Option<Type>,
