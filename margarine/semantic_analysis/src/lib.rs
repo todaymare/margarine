@@ -56,7 +56,7 @@ impl Analyzer<'_, '_, '_> {
         let ty = match dt.kind() {
             DataTypeKind::Int => Type::I64,
             DataTypeKind::Bool => Type::BOOL,
-            DataTypeKind::Float => Type::I64,
+            DataTypeKind::Float => Type::F64,
             DataTypeKind::Unit => Type::Unit,
             DataTypeKind::Any => todo!(),
             DataTypeKind::Never => Type::Never,
@@ -341,7 +341,8 @@ impl Analyzer<'_, '_, '_> {
                             None
                         });
 
-                    type_builder.set_struct_fields(ty, fields)
+                    type_builder.set_struct_fields(ty, fields);
+                    dbg!(&type_builder);
                 },
 
 
@@ -622,7 +623,7 @@ impl Analyzer<'_, '_, '_> {
 
                     lexer::Literal::Float(f) => {
                         wasm.f64_const(f.inner());
-                        AnalysisResult::new(Type::I64, true)
+                        AnalysisResult::new(Type::F64, true)
                     },
 
 
@@ -1083,7 +1084,9 @@ impl Analyzer<'_, '_, '_> {
                         return AnalysisResult::error();
                     }
 
-                    wasm.memcpy(ptr, node.ty.to_wasm_ty(&self.types))
+                    let wty = sf.ty.to_wasm_ty(&self.types);
+                    dbg!(sf.ty, wty);
+                    wasm.memcpy(ptr, wty);
                 }
 
                 wasm.sptr_const(alloc);
@@ -1091,7 +1094,43 @@ impl Analyzer<'_, '_, '_> {
             },
             
             
-            Expression::AccessField { val, field_name } => todo!(),
+            Expression::AccessField { val, field_name } => {
+                let value = self.node(scope, wasm, val);
+
+                let tyid = match value.ty {
+                    Type::Custom(v) => v,
+
+                    Type::Error => return AnalysisResult::error(),
+
+                    _ => {
+                        wasm.error(self.error(Error::FieldAccessOnNonEnumOrStruct {
+                            source, typ: value.ty }));
+                        return AnalysisResult::error();
+                    }
+                };
+
+
+                let strct = self.types.get(tyid);
+                let TypeSymbolKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind() 
+                else {
+                    wasm.error(self.error(Error::FieldAccessOnNonEnumOrStruct {
+                        source, typ: value.ty }));
+                    return AnalysisResult::error();
+                };
+                
+                for f in sfields.iter() {
+                    if f.name == *field_name {
+                        wasm.i32_const(f.offset.try_into().unwrap());
+                        wasm.i32_add();
+                        wasm.read(f.ty.to_wasm_ty(&self.types));
+                        return AnalysisResult::new(f.ty, value.is_mut);
+                    }
+                }
+
+                wasm.error(self.error(Error::FieldDoesntExist {
+                    source, field: *field_name, typ: value.ty }));
+                AnalysisResult::error()
+            },
 
 
             Expression::CallFunction { name, is_accessor, args } => {

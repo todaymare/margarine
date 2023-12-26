@@ -393,6 +393,22 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     #[inline(always)]
+    pub fn read(&mut self, ty: WasmType) {
+        match ty {
+            WasmType::I32 => self.read_i32(),
+            WasmType::I64 => self.read_i64(),
+            WasmType::F32 => self.read_f32(),
+            WasmType::F64 => self.read_f64(),
+            WasmType::Ptr(v) => {
+                let ptr = self.alloc_stack(v);
+                self.memcpy(ptr, ty);
+                self.sptr_const(ptr);
+            },
+        }
+    }
+
+
+    #[inline(always)]
     pub fn write_i32_to_stack(&mut self, ptr: StackPointer) {
         self.sptr_const(ptr);
         self.call_template("write_i32_to_stack")
@@ -504,7 +520,6 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     #[inline(always)]
     pub fn break_block(&mut self, block: BlockId) { write!(self.body, "br $b{} ", block.0); }
-
 
     #[inline(always)]
     pub fn break_loop(&mut self, loop_id: LoopId) { self.break_block(loop_id.break_id); }
