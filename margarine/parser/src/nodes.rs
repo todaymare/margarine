@@ -39,6 +39,7 @@ pub enum NodeKind<'a> {
     Declaration(Declaration<'a>),
     Statement(Statement<'a>),
     Expression(Expression<'a>),
+    Bundle(&'a [Node<'a>]),
     Error(ErrorId),
 }
 
@@ -175,6 +176,8 @@ pub enum Expression<'a> {
     Return(&'a Node<'a>),
     Continue,
     Break,
+
+    Tuple(&'a [Node<'a>]),
 
     CastAny {
         lhs: &'a Node<'a>,

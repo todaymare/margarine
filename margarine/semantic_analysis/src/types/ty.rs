@@ -127,7 +127,7 @@ impl Type {
                     TypeSymbolKind::Enum(v) => {
                         match v {
                             TypeEnum::TaggedUnion(_) => WasmType::Ptr { size: ty.size() },
-                            TypeEnum::Tag(_) => WasmType::I64,
+                            TypeEnum::Tag(_) => WasmType::I32,
                         }
                     },
                 }
