@@ -164,6 +164,8 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             results_map: HashMap::new(),
         };
 
+        slf.module_builder.memory(64 * 1024);
+
         {
             let pool = ArenaPool::tls_get_temp();
             let mut type_builder = TypeBuilder::new(&pool);

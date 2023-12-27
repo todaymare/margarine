@@ -279,11 +279,11 @@ impl WasmFunctionBuilder<'_> {
         self.ret();
         
 
-        write!(buffer, "(func $_{}", self.function_id.0);
+        write!(buffer, "(func $_{} ", self.function_id.0);
 
         if let Some(export) = self.export {
             write!(buffer, "(export \"{}\") ", string_map.get(export));
-        }
+        } else { write!(buffer, "(export \"{}\")", self.function_id.0) };
 
         for p in &self.params {
             write!(buffer, "(param {}) ", p.name());

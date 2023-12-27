@@ -1,4 +1,4 @@
-use margarine::{FileData, StringMap, DropTimer, Extension, WasmFunctionBuilder, WasmType, WasmModuleBuilder};
+use margarine::{FileData, StringMap, DropTimer, Extension};
 use sti::prelude::Arena;
 
  fn main() -> Result<(), &'static str> {
@@ -32,27 +32,29 @@ use sti::prelude::Arena;
          let _scopes = Arena::new();
          let sema = {
              let _1 = DropTimer::new("semantic analysis");
-             margarine::Analyzer::run(&ns_arena, &ast)
+             margarine::Analyzer::run(&ns_arena, &mut string_map, &ast)
         };
 
          println!("{sema:#?}");
 
          if !lex_errors.is_empty() {
-             let report = margarine::display(lex_errors.as_slice().inner(), &string_map, &file, &());
+             let report = margarine::display(lex_errors.as_slice().inner(), &sema.string_map, &file, &());
              println!("{report}");
          }
 
          if !parse_errors.is_empty() {
-             let report = margarine::display(parse_errors.as_slice().inner(), &string_map, &file, &());
+             let report = margarine::display(parse_errors.as_slice().inner(), &sema.string_map, &file, &());
              println!("{report}");
          }
 
          if !sema.errors.is_empty() {
-             let report = margarine::display(sema.errors.as_slice().inner(), &string_map, &file, &sema.types);
+             let report = margarine::display(sema.errors.as_slice().inner(), &sema.string_map, &file, &sema.types);
              println!("{report}");
          }
          
 
+         let code = sema.module_builder.build(&mut string_map);
+         std::fs::write("out.wat", &*code).unwrap();
 
          // let typed_ast = match typed_ast {
          //     Ok(v)  => v,
