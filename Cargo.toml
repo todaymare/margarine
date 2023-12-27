@@ -9,6 +9,5 @@ members = [
   "margarine/parser",
   "margarine/semantic_analysis",
   "margarine/wasm",
-  "margarine/codegen",
   "margarine/errors",
 ]
