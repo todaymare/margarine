@@ -415,7 +415,8 @@ impl<'out> TypeBuilder<'_> {
                     let alloc = wf.return_value(wasm_ty);
 
                     wf.i32_const(i as i32);
-                    wf.write_i32_to_stack(alloc);
+                    wf.sptr_const(alloc);
+                    wf.write_i32();
 
 
                     let func;
@@ -425,7 +426,8 @@ impl<'out> TypeBuilder<'_> {
                         let union_ptr = alloc.add(sym.union_offset().try_into().unwrap());
 
                         wf.local_get(param);
-                        wf.memcpy(union_ptr, wfty);
+                        wf.sptr_const(union_ptr);
+                        wf.write(wfty);
 
                         func = Function::new(
                             f.name(),

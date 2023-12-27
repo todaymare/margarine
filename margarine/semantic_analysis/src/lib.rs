@@ -568,30 +568,10 @@ impl Analyzer<'_, '_, '_> {
 
 
             Statement::UpdateValue { lhs, rhs } => {
-                match lhs.kind() {
-                    NodeKind::Expression(Expression::Identifier(ident)) => {
-                        let v = self.node(scope, wasm, lhs);
-                        wasm.pop();
-
-                        let rhs_anal = self.node(scope, wasm, rhs);
-                        if !v.ty.eq_sem(rhs_anal.ty) {
-                            wasm.pop();
-                            wasm.error(self.error(Error::ValueUpdateTypeMismatch 
-                                                  { lhs: v.ty, rhs: rhs_anal.ty, source }));
-                            return Err(());
-                        }
-
-                        if !v.is_mut {
-                            wasm.pop();
-                            wasm.error(self.error(Error::ValueUpdateNotMut { source }));
-                            return Err(());
-                        }
-
-                        let binding = self.scopes.get(*scope).get_var(*ident, &self.scopes).unwrap();
-                        wasm.local_set(binding.local_id);
-                    },
-
-                    _ => todo!(),
+                let rhs_anal = self.node(scope, wasm, rhs);
+                if let Err(e) = self.assign(wasm, *scope, lhs, rhs_anal.ty, 0) {
+                    wasm.error(self.error(e));
+                    return Err(());
                 }
             },
         };
@@ -640,13 +620,16 @@ impl Analyzer<'_, '_, '_> {
 
                         {
                             let ptr = alloc.add(strct.fields[0].offset);
-                            wasm.write_i32_to_stack(ptr);
+                            wasm.sptr_const(ptr);
+                            wasm.write_i32();
                         }
 
                         {
                             let ptr = alloc.add(strct.fields[1].offset);
                             wasm.i64_const(str.len() as i64);
-                            wasm.write_i64_to_stack(ptr);
+
+                            wasm.sptr_const(ptr);
+                            wasm.write_i64();
                         }
                         
                         AnalysisResult::new(Type::STR, true)
@@ -1085,8 +1068,8 @@ impl Analyzer<'_, '_, '_> {
                     }
 
                     let wty = sf.ty.to_wasm_ty(&self.types);
-                    dbg!(sf.ty, wty);
-                    wasm.memcpy(ptr, wty);
+                    wasm.sptr_const(ptr);
+                    wasm.write(wty);
                 }
 
                 wasm.sptr_const(alloc);
@@ -1307,5 +1290,93 @@ impl Analyzer<'_, '_, '_> {
             Expression::OrReturn(_) => todo!(),
         }
     }
+
+    ///
+    /// This function expects:
+    /// - A value on the stack with type `val_ty`
+    ///
+    fn assign(
+        &mut self, 
+        wasm: &mut WasmFunctionBuilder,
+        scope: ScopeId, 
+        node: &Node,
+        val_ty: Type,
+        depth: usize
+    ) -> Result<Type, Error> {
+        match node.kind() {
+            NodeKind::Expression(Expression::Identifier(ident)) => {
+                let Some(val) = self.scopes.get(scope).get_var(*ident, &self.scopes)
+                else {
+                    return Err(Error::VariableNotFound { name: *ident, source: node.range() });
+                };
+
+                if !val.is_mutable {
+                    return Err(Error::ValueUpdateNotMut { source: node.range() });
+                }
+
+                if depth == 0 {
+                    wasm.local_set(val.local_id);
+
+                    if !val.ty.eq_sem(val_ty) {
+                        return Err(Error::ValueUpdateTypeMismatch 
+                                   { lhs: val.ty, rhs: val_ty, source: node.range() })
+                    }
+
+                    return Ok(val.ty);
+                }
+
+                wasm.local_get(val.local_id);
+                Ok(val.ty)
+            }
+
+            
+            NodeKind::Expression(Expression::AccessField { val, field_name }) => {
+                let ty = self.assign(wasm, scope, val, val_ty, depth + 1)?;
+
+                let tyid = match ty {
+                    Type::Custom(v) => v,
+
+                    Type::Error => return Err(Error::Bypass),
+
+                    _ => {
+                        return Err(Error::FieldAccessOnNonEnumOrStruct {
+                            source: node.range(), typ: ty });
+                    }
+                };
+
+
+                let strct = self.types.get(tyid);
+                let TypeSymbolKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind() 
+                else {
+                    return Err(Error::FieldAccessOnNonEnumOrStruct {
+                        source: node.range(), typ: ty });
+                };
+
+                for sf in sfields.iter() {
+                    if sf.name == *field_name {
+                        wasm.i32_const(sf.offset.try_into().unwrap());
+                        wasm.i32_add();
+
+                        if depth == 0 {
+                            if !sf.ty.eq_sem(val_ty) {
+                                return Err(Error::ValueUpdateTypeMismatch 
+                                           { lhs: sf.ty, rhs: val_ty, source: node.range() })
+                            }
+                            wasm.write(val_ty.to_wasm_ty(&self.types));
+                        }
+
+                        return Ok(sf.ty);
+                    }
+                }
+
+                Err(Error::FieldDoesntExist {
+                    source: node.range(), field: *field_name, typ: ty })
+            }
+
+            NodeKind::Error(_) => return Err(Error::Bypass),
+            _ => return Err(Error::AssignIsNotLHSValue { source: node.range() }),
+        }
+    }
 }
+
 

@@ -392,6 +392,10 @@ impl<'a> WasmFunctionBuilder<'a> {
     }
 
 
+    ///
+    /// This function expects:
+    /// - A pointer to memory with type `ty`
+    ///
     #[inline(always)]
     pub fn read(&mut self, ty: WasmType) {
         match ty {
@@ -401,58 +405,58 @@ impl<'a> WasmFunctionBuilder<'a> {
             WasmType::F64 => self.read_f64(),
             WasmType::Ptr(v) => {
                 let ptr = self.alloc_stack(v);
-                self.memcpy(ptr, ty);
+                self.sptr_const(ptr);
+                self.write(ty);
                 self.sptr_const(ptr);
             },
         }
     }
 
 
+    ///
+    /// This function expects:
+    /// - The value with the type `ty`
+    /// - A pointer to memory with type `ty`
+    /// 
     #[inline(always)]
-    pub fn write_i32_to_stack(&mut self, ptr: StackPointer) {
-        self.sptr_const(ptr);
-        self.call_template("write_i32_to_stack")
-    }
-
-
-    #[inline(always)]
-    pub fn write_i64_to_stack(&mut self, ptr: StackPointer) {
-        self.sptr_const(ptr);
-        self.call_template("write_i64_to_stack")
-    }
-
-
-    #[inline(always)]
-    pub fn write_f32_to_stack(&mut self, ptr: StackPointer) {
-        self.sptr_const(ptr);
-        self.call_template("write_f32_to_stack")
-    }
-
-
-    #[inline(always)]
-    pub fn write_f64_to_stack(&mut self, ptr: StackPointer) {
-        self.sptr_const(ptr);
-        self.call_template("write_f64_to_stack")
-    }
-
-
-    #[inline(always)]
-    pub fn memcpy(&mut self, ptr: StackPointer, ty: WasmType) {
+    pub fn write(&mut self, ty: WasmType) {
         match ty {
-            WasmType::I32 => self.write_i32_to_stack(ptr),
-            WasmType::I64 => self.write_i64_to_stack(ptr),
-            WasmType::F32 => self.write_f32_to_stack(ptr),
-            WasmType::F64 => self.write_f64_to_stack(ptr),
+            WasmType::I32 => self.write_i32(),
+            WasmType::I64 => self.write_i64(),
+            WasmType::F32 => self.write_f32(),
+            WasmType::F64 => self.write_f64(),
             WasmType::Ptr(v) => {
-                self.sptr_const(ptr);
                 self.i32_const(v.try_into().unwrap());
                 self.call_template("memcpy");
             },
         }
     }
 
-
     
+    #[inline(always)]
+    pub fn write_i32(&mut self) {
+        self.call_template("write_i32_to_stack")
+    }
+
+
+    #[inline(always)]
+    pub fn write_i64(&mut self) {
+        self.call_template("write_i64_to_stack")
+    }
+
+
+    #[inline(always)]
+    pub fn write_f32(&mut self) {
+        self.call_template("write_f32_to_stack")
+    }
+
+
+    #[inline(always)]
+    pub fn write_f64(&mut self) {
+        self.call_template("write_f64_to_stack")
+    }
+
+
     #[inline(always)]
     pub fn call_template(&mut self, name: &str) {
         write!(self.body, "(call ${name}) ");
