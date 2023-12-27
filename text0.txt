@@ -1,3 +1,10 @@
-fn hello(arg: int) : str {
-    "hello!"
+struct A {
+    A: int,
+    B: float,
+}
+
+system fn main() {
+    let mut x = A { A: 69, B: 420.69 }
+    x.A = 69 + 420
+    x.A
 }
