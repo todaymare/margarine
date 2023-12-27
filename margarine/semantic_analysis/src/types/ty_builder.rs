@@ -407,7 +407,7 @@ impl<'out> TypeBuilder<'_> {
         match kind {
             TypeEnum::TaggedUnion(sym) => {
                 let tysym = data.type_map.get(ty);
-                let wasm_ty = WasmType::Ptr(tysym.size());
+                let wasm_ty = WasmType::Ptr { size: tysym.size() };
 
                 for (i, f) in sym.fields().into_iter().enumerate() {
                     let wfid = data.module_builder.function_id();
@@ -416,7 +416,7 @@ impl<'out> TypeBuilder<'_> {
 
                     wf.i32_const(i as i32);
                     wf.sptr_const(alloc);
-                    wf.write_i32();
+                    wf.i32_write();
 
 
                     let func;

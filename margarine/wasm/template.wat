@@ -61,6 +61,14 @@
     (param $length i32)
     (result i32)
 
+    local.get $v1
+    local.get $v2
+    i32.eq
+    (if (then 
+        i32.const 1
+        return
+    ))
+
     (loop $loop
         (i32.load8_u (local.get $v1))
         (i32.load8_u (local.get $v2))
