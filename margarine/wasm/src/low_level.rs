@@ -189,7 +189,10 @@ impl WasmFunctionBuilder<'_> {
     /// `$ret` -> `unreachable`
     ///
     #[inline(always)]
-    pub fn ret(&mut self) { self.ret_offsets.push(self.body.len() - 1); write!(self.body, "return "); }
+    pub fn ret(&mut self) {
+        if self.ret.is_some() { write!(self.body, "local.set $_ret "); }
+        write!(self.body, "br $_ret ");
+    }
 }
 
 
