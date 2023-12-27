@@ -1,9 +1,9 @@
 pub mod nodes;
 pub mod errors;
 
-use std::ops::Deref;
+use std::{ops::Deref, hash::Hash};
 
-use common::{source::SourceRange, string_map::{StringMap, StringIndex}, Slice};
+use common::{source::{SourceRange, self}, string_map::{StringMap, StringIndex}, Slice};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
@@ -46,6 +46,7 @@ pub enum DataTypeKind<'a> {
     Never,
     Option(&'a DataType<'a>),
     Result(&'a DataType<'a>, &'a DataType<'a>),
+    Tuple(&'a [DataType<'a>]),
     CustomType(StringIndex),
 }
 
@@ -80,9 +81,16 @@ impl std::hash::Hash for DataTypeKind<'_> {
                 v1.kind().hash(state);
                 v2.kind().hash(state);
             },
+
             DataTypeKind::CustomType(v) => {
                 9.hash(state);
                 v.hash(state)
+            },
+
+            DataTypeKind::Tuple(v) => {
+                10.hash(state);
+                v.len().hash(state);
+                v.iter().for_each(|x| x.kind().hash(state));
             },
         }
     }
@@ -995,42 +1003,80 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Let))?;
         self.advance();
 
-        let is_mut = 
-            if self.current_is(TokenKind::Keyword(Keyword::Mut)) {
+        let pool = ArenaPool::tls_get_temp();
+        let mut bindings = Vec::new_in(&*pool);
+        loop {
+            if !bindings.is_empty() {
+                self.expect(TokenKind::Comma)?;
                 self.advance();
-                true
-            } else { false };
+            }
 
-        
-        let name = self.expect_identifier()?;
-        self.advance();
-        
+            let is_mut = 
+                if self.current_is(TokenKind::Keyword(Keyword::Mut)) {
+                    self.advance();
+                    true
+                } else { false };
 
-        let hint =
-            if self.current_is(TokenKind::Colon) {
-                self.advance();
-                let typ = self.expect_type()?;
-                self.advance();
-                Some(typ)
-            } else { None };
+            
+            let name = self.expect_identifier()?;
+            self.advance();
+            
 
+            let hint =
+                if self.current_is(TokenKind::Colon) {
+                    self.advance();
+                    let typ = self.expect_type()?;
+                    self.advance();
+                    Some(typ)
+                } else { None };
+
+            bindings.push((is_mut, name, hint));
+            if self.current_is(TokenKind::Equals) {
+                break
+            }
+        }
         
         self.expect(TokenKind::Equals)?;
         self.advance();
+        if bindings.len() != 1 {
+            self.expect(TokenKind::LeftParenthesis)?;
+            self.advance();
+        }
 
-        let expr = self.expression(&ParserSettings::default())?;
+        let source = SourceRange::new(start, self.current_range().end());
+        let mut bundle = Vec::with_cap_in(self.arena, bindings.len());
+        for (is_mut, name, hint) in bindings.iter().copied() {
+            if !bundle.is_empty() {
+                self.advance();
+                self.expect(TokenKind::Comma)?;
+                self.advance()
+            }
+
+            let expr = self.expression(&ParserSettings::default())?;
+            let node = Node::new(
+                NodeKind::Statement(Statement::Variable {
+                    name, 
+                    hint, 
+                    is_mut, 
+                    rhs: self.arena.alloc_new(expr)
+                }),
+                source,
+            );
+
+            bundle.push(node);
+        }
+
+        if bindings.len() != 1 {
+            self.advance();
+            self.expect(TokenKind::RightParenthesis)?;
+        }
+
 
         Ok(Node::new(
-            NodeKind::Statement(Statement::Variable {
-                name, 
-                hint, 
-                is_mut, 
-                rhs: self.arena.alloc_new(expr)
-            }),
-            SourceRange::new(start, self.current_range().end())
+            NodeKind::Bundle(bundle.leak()),
+            source,
         ))
     }
-
 
     fn assignment(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
         fn binary_op_assignment<'la>(
@@ -1384,6 +1430,24 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 let mut expr = self.expression(&ParserSettings::default())?;
                 self.advance();
 
+                if self.current_is(TokenKind::Comma) {
+                    let pool = ArenaPool::tls_get_rec();
+                    let mut vec = Vec::new_in(&*pool);
+                    vec.push(expr);
+                    while self.current_is(TokenKind::Comma) {
+                        self.advance();
+                        if self.current_is(TokenKind::RightParenthesis) { break }
+
+                        vec.push(self.expression(&ParserSettings::default())?);
+                        self.advance();
+                    }
+                    self.expect(TokenKind::RightParenthesis)?;
+                    return Ok(Node::new(
+                        NodeKind::Expression(Expression::Tuple(vec.move_into(self.arena).leak())), 
+                        SourceRange::new(start, self.current_range().end())
+                    ));
+                }
+
                 self.expect(TokenKind::RightParenthesis)?;
 
                 expr.source_range = SourceRange::new(start, self.current_range().end());
@@ -1483,6 +1547,46 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 Ok(Node::new(
                     NodeKind::Expression(Expression::Loop { body }),
                     SourceRange::new(start, self.current_range().end())
+                ))
+            }
+
+
+            TokenKind::Keyword(Keyword::While) => {
+                let start = self.current_range().start();
+                self.advance();
+
+                let expr = self.expression(&ParserSettings {
+                    can_parse_struct_creation: false,
+                    ..Default::default()
+                })?;
+
+                self.advance();
+
+                let body_start = self.current_range().start();
+                self.expect(TokenKind::LeftBracket)?;
+                self.advance();
+                let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
+
+                let source = SourceRange::new(start, self.current_range().end());
+
+                let else_block = Node::new(
+                    NodeKind::Expression(Expression::Break),
+                    source,
+                );
+
+                let if_node = Node::new(
+                    NodeKind::Expression(Expression::If {
+                        condition: self.arena.alloc_new(expr),
+                        body,
+                        else_block: Some(self.arena.alloc_new(else_block)),
+                    }),
+                    source
+                );
+
+                Ok(Node::new(
+                    NodeKind::Expression(Expression::Loop {
+                        body: Block::new(self.arena.alloc_new([if_node]), source) }),
+                    source,
                 ))
             }
 

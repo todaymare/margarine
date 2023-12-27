@@ -6,7 +6,7 @@ pub mod funcs;
 
 use std::fmt::Write;
 
-use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
+use common::{source::SourceRange, string_map::{StringMap, StringIndex, self}};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function};
@@ -33,6 +33,7 @@ pub struct Analyzer<'me, 'out, 'str> {
 
     options_map: HashMap<Type, TypeId>,
     results_map: HashMap<(Type, Type), TypeId>,
+    tuple_map: HashMap<&'out [Type], TypeId>,
 }
 
 
@@ -51,7 +52,7 @@ impl AnalysisResult {
 }
 
 
-impl Analyzer<'_, '_, '_> {
+impl<'out> Analyzer<'_, 'out, '_> {
      pub fn convert_ty(&mut self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
         let ty = match dt.kind() {
             DataTypeKind::Int => Type::I64,
@@ -78,6 +79,12 @@ impl Analyzer<'_, '_, '_> {
 
                     let tyid = self.types.pending();
                     tyb.add_ty(tyid, name, dt.range());
+                    tyb.set_enum_fields(tyid, 
+                        [
+                        (self.string_map.insert("some"), Some(inner_ty)),
+                        (self.string_map.insert("none"), None),
+                        ].iter().copied()
+                    );
 
                     let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
                     tyb.finalise(data, &mut self.errors);
@@ -112,6 +119,12 @@ impl Analyzer<'_, '_, '_> {
 
                     let tyid = self.types.pending();
                     tyb.add_ty(tyid, name, dt.range());
+                    tyb.set_enum_fields(tyid, 
+                        [
+                        (self.string_map.insert("ok"), Some(inner_ty1)),
+                        (self.string_map.insert("err"), Some(inner_ty2)),
+                        ].iter().copied()
+                    );
 
                     let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
                     tyb.finalise(data, &mut self.errors);
@@ -133,9 +146,64 @@ impl Analyzer<'_, '_, '_> {
 
                 Type::Custom(ty)
             },
+
+
+            DataTypeKind::Tuple(list) => {
+                let pool = ArenaPool::tls_get_rec();
+                let mut vec = Vec::with_cap_in(&*pool, list.len());
+                for dt in list.iter() {
+                    vec.push(self.convert_ty(scope, *dt)?)
+                }
+
+                if let Some(ty) = self.tuple_map.get(&*vec) { return Ok(Type::Custom(*ty)) }
+
+                let vec = vec.move_into(self.output).leak();
+                let tyid = self.make_tuple(vec, dt.range());
+
+                self.tuple_map.insert(vec, tyid);
+                Type::Custom(tyid)
+            },
         };
 
         Ok(ty)
+    }
+
+    
+    pub fn make_tuple(&mut self, vec: &'out [Type], source: SourceRange) -> TypeId {
+        let temp = ArenaPool::tls_get_temp();
+        let name = {
+            let mut str = sti::string::String::new_in(&*temp);
+            str.push_char('(');
+            for (i, t) in vec.iter().enumerate() {
+                if i != 0 {
+                    str.push(", ");
+                }
+
+                str.push(t.display(self.string_map, &self.types));
+            }
+            str.push_char(')');
+
+            self.string_map.insert(str.as_str())
+        };
+
+        let mut tyb = TypeBuilder::new(&temp);
+
+        let tyid = self.types.pending();
+        tyb.add_ty(tyid, name, source);
+        tyb.set_struct_fields(tyid, vec.iter().enumerate().map(|(i, x)| {
+            let mut str = sti::string::String::new_in(&*temp);
+            // TODO: Uh oh, heap allocation allert!
+            str.push(&i.to_string());
+            let id = self.string_map.insert(&str);
+            (id, *x)
+        }));
+
+        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+        tyb.finalise(data, &mut self.errors);
+
+        self.tuple_map.insert(vec, tyid);
+
+        tyid
     }
      
 
@@ -162,6 +230,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             string_map,
             options_map: HashMap::new(),
             results_map: HashMap::new(),
+            tuple_map: HashMap::new(),
         };
 
         slf.module_builder.memory(64 * 1024);
@@ -224,7 +293,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
         builder: &mut WasmFunctionBuilder,
         scope: ScopeId,
         nodes: &[Node],
-    ) -> AnalysisResult {
+    ) -> (AnalysisResult, ScopeId) {
         let pool = ArenaPool::tls_get_rec();
         let mut ty_builder = TypeBuilder::new(&*pool); 
         let (scope, ns_id) = {
@@ -267,7 +336,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
 
         if nodes.is_empty() { builder.unit(); }
 
-        AnalysisResult { ty, is_mut: true }
+        (AnalysisResult { ty, is_mut: true }, scope)
     }
 }
 
@@ -437,7 +506,8 @@ impl Analyzer<'_, '_, '_> {
 
         node: &Node<'_>,
     ) -> AnalysisResult {
-        match node.kind() {
+        let kind = node.kind();
+        match kind {
             NodeKind::Declaration(decl) => {
                 self.decl(decl, node.range(), scope);
                 wasm.unit();
@@ -454,6 +524,11 @@ impl Analyzer<'_, '_, '_> {
 
             },
             NodeKind::Expression(expr) => self.expr(expr, node.range(), scope, wasm),
+            NodeKind::Bundle(v) => {
+                let (anal, bscope) = self.block(wasm, *scope, v);
+                *scope = bscope;
+                anal
+            },
             NodeKind::Error(err) => {
                 wasm.error(*err);
                 wasm.unit();
@@ -675,6 +750,13 @@ impl Analyzer<'_, '_, '_> {
                             return Err(())
                     }
 
+
+                    if !lhs_anal.ty.eq_sem(rhs_anal.ty) {
+                        wasm.error(self.error(Error::InvalidType {
+                            source, found: rhs_anal.ty, expected: lhs_anal.ty }));
+                            return Err(());
+                    }
+
                     if operator.is_arith() 
                         && !(lhs_anal.ty.is_number() && rhs_anal.ty.is_number()) {
                         wasm.error(self.error(Error::InvalidBinaryOp {
@@ -729,26 +811,15 @@ impl Analyzer<'_, '_, '_> {
 
                     (BinaryOperator::BitwiseXor, Type::I64) => wfunc!(i64_bw_xor, Type::I64),
 
-                    (BinaryOperator::Eq, Type::I64) => wfunc!(i64_eq, Type::BOOL),
-                    (BinaryOperator::Eq, Type::F64) => wfunc!(f64_eq, Type::BOOL),
+                    (BinaryOperator::Eq, _) => {
+                        wasm.eq(lhs_anal.ty.to_wasm_ty(&self.types));
+                        Type::BOOL
+                    }
 
-                    (BinaryOperator::Eq, Type::Any) => todo!(),
-                    (BinaryOperator::Eq, Type::Unit) => wfunc!(i64_eq, Type::BOOL),
-                    (BinaryOperator::Eq, Type::Never) => todo!(),
-                    (BinaryOperator::Eq, Type::Error) => todo!(),
-                    (BinaryOperator::Eq, Type::Custom(v)) => {
-                        let ty = self.types.get(v);
-                        todo!()
-                    },
-
-                    (BinaryOperator::Ne, Type::I64) => wfunc!(i64_ne, Type::BOOL),
-                    (BinaryOperator::Ne, Type::F64) => wfunc!(f64_ne, Type::BOOL),
-
-                    (BinaryOperator::Ne, Type::Any) => todo!(),
-                    (BinaryOperator::Ne, Type::Unit) => todo!(),
-                    (BinaryOperator::Ne, Type::Never) => todo!(),
-                    (BinaryOperator::Ne, Type::Error) => todo!(),
-                    (BinaryOperator::Ne, Type::Custom(_)) => todo!(),
+                    (BinaryOperator::Ne, _) => {
+                        wasm.ne(lhs_anal.ty.to_wasm_ty(&self.types));
+                        Type::BOOL
+                    }
 
                     (BinaryOperator::Gt, Type::I64)   => wfunc!(i64_gt, Type::BOOL),
                     (BinaryOperator::Gt, Type::F64) => wfunc!(f64_gt, Type::BOOL),
@@ -846,7 +917,7 @@ impl Analyzer<'_, '_, '_> {
                 let (local, l, r) = wasm.ite(
                     &mut (&mut slf, scope),
                     |(slf, scope), wasm| {
-                        let body = slf.block(wasm, **scope, body);
+                        let (body, ..) = slf.block(wasm, **scope, body);
                         let wty = body.ty.to_wasm_ty(&slf.types);
                         let local = wasm.local(wty);
                         (local, Some((body, wasm.offset())))
@@ -999,7 +1070,7 @@ impl Analyzer<'_, '_, '_> {
                 }
             },
 
-            Expression::Block { block } => self.block(wasm, *scope, block),
+            Expression::Block { block } => self.block(wasm, *scope, block).0,
 
             Expression::CreateStruct { data_type, fields } => {
                 let ty = match self.convert_ty(*scope, *data_type) {
@@ -1286,6 +1357,48 @@ impl Analyzer<'_, '_, '_> {
 
                 wasm.break_loop(loop_val.loop_id);
                 AnalysisResult::new(Type::Never, true)
+            },
+
+
+            Expression::Tuple(v) => {
+                let pool = ArenaPool::tls_get_rec();
+                let mut vec = Vec::with_cap_in(&*pool, v.len());
+                for n in v.iter() {
+                    let anal = self.node(scope, wasm, n);
+                    vec.push(anal.ty);
+                }
+
+                let ty_id = match self.tuple_map.get(&*vec) {
+                    Some(v) => *v,
+                    None => {
+                        let vec = vec.clone_in(self.output).leak();
+                        self.make_tuple(vec, source)
+                    },
+                };
+
+                let ty = self.types.get(ty_id);
+                let TypeSymbolKind::Struct(sym) = ty.kind() else { unreachable!() };
+                let ptr = wasm.alloc_stack(ty.size());
+
+                let mut errored = false;
+                for ((sf, f), n) in sym.fields.iter().zip(vec.iter()).zip(v.iter()).rev() {
+                    if !sf.ty.eq_sem(*f) {
+                        errored = true;
+                        wasm.pop();
+                        wasm.error(self.error(Error::InvalidType {
+                            source: n.range(), found: *f, expected: sf.ty }));
+                        continue
+                    }
+
+                    let ptr = ptr.add(sf.offset);
+                    wasm.sptr_const(ptr);
+                    wasm.write(sf.ty.to_wasm_ty(&self.types));
+                }
+
+                if errored { return AnalysisResult::error() }
+
+                wasm.sptr_const(ptr);
+                AnalysisResult::new(Type::Custom(ty_id), true)
             },
 
 

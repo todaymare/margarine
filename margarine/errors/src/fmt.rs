@@ -106,7 +106,6 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
             "|".orange(), 
         );
         
-        dbg!(source, start_line, end_line);
 
         {
             for line in file.read().lines().enumerate().take(end_line.line+1).skip(start_line.line) {
@@ -221,7 +220,6 @@ fn line_at(offset: usize, data: &str, from: LineAt) -> Option<LineAt> {
     }
     
     for line in data.lines().enumerate().skip(from.line) {
-        println!("{line:?}");
         current_offset += line.1.len();
         current_offset += 1;
         

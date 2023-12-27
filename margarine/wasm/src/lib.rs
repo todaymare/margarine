@@ -342,7 +342,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     ///
     /// This function expects:
-    /// `ptr($ty)`, `$ty` -> ()
+    /// `$ty`, `ptr($ty)` -> ()
     /// 
     #[inline(always)]
     pub fn write(&mut self, ty: WasmType) {
