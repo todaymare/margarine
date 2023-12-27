@@ -206,6 +206,11 @@ pub enum Error {
         backtrace: std::vec::Vec<StringIndex>,
         name: StringIndex,
     },
+
+
+    AssignIsNotLHSValue {
+        source: SourceRange,
+    },
     
     Bypass,
 }
@@ -645,6 +650,12 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
 
                 fmt.error("found cyclic type")
                     .highlight_with_note(*source, &msg)
+            },
+
+
+            Error::AssignIsNotLHSValue { source } => {
+                fmt.error("assign value is not a valid lhs value")
+                    .highlight(*source);
             },
 
             
