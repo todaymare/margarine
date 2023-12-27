@@ -99,7 +99,7 @@ impl<'a> TypeEnum<'a> {
     pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
         match self {
             TypeEnum::TaggedUnion(_) => {
-                wasm.read_i32();
+                wasm.i32_read();
             },
 
 

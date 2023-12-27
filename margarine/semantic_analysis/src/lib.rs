@@ -623,7 +623,7 @@ impl Analyzer<'_, '_, '_> {
                         {
                             let ptr = alloc.add(strct.fields[0].offset);
                             wasm.sptr_const(ptr);
-                            wasm.write_i32();
+                            wasm.i32_write();
                         }
 
                         {
@@ -631,7 +631,7 @@ impl Analyzer<'_, '_, '_> {
                             wasm.i64_const(str.len() as i64);
 
                             wasm.sptr_const(ptr);
-                            wasm.write_i64();
+                            wasm.i64_write();
                         }
                         
                         AnalysisResult::new(Type::STR, true)
@@ -736,7 +736,10 @@ impl Analyzer<'_, '_, '_> {
                     (BinaryOperator::Eq, Type::Unit) => wfunc!(i64_eq, Type::BOOL),
                     (BinaryOperator::Eq, Type::Never) => todo!(),
                     (BinaryOperator::Eq, Type::Error) => todo!(),
-                    (BinaryOperator::Eq, Type::Custom(_)) => todo!(),
+                    (BinaryOperator::Eq, Type::Custom(v)) => {
+                        let ty = self.types.get(v);
+                        todo!()
+                    },
 
                     (BinaryOperator::Ne, Type::I64) => wfunc!(i64_ne, Type::BOOL),
                     (BinaryOperator::Ne, Type::F64) => wfunc!(f64_ne, Type::BOOL),
@@ -801,8 +804,7 @@ impl Analyzer<'_, '_, '_> {
 
                 match (operator, rhs_anal.ty) {
                     (UnaryOperator::Not, Type::Custom(x)) if x == TypeId::BOOL => {
-                        wasm.i64_const(1);
-                        wasm.i64_bw_xor();
+                        wasm.bool_not()
                     },
 
                     (UnaryOperator::Neg, Type::I64) => {
@@ -862,12 +864,12 @@ impl Analyzer<'_, '_, '_> {
 
                 if r.is_none() && !l.0.ty.eq_sem(Type::Unit) {
                     wasm.error(slf.error(Error::IfMissingElse { body: (body.range(), l.0.ty) }));
-                    wasm.insert_pop(l.1);
+                    wasm.insert_drop(l.1);
                     return AnalysisResult::error();
                 }
                 
                 if r.is_none() {
-                    wasm.insert_pop(l.1);
+                    wasm.insert_drop(l.1);
 
                 } else if r.is_some() && !l.0.ty.eq_sem(r.as_ref().unwrap().0.ty) {
 
@@ -876,8 +878,8 @@ impl Analyzer<'_, '_, '_> {
                         else_block: (else_block.unwrap().range(), r.as_ref().unwrap().0.ty)
                     }));
 
-                    let i = wasm.insert_pop(l.1);
-                    wasm.insert_pop(r.unwrap().1 + i);
+                    let i = wasm.insert_drop(l.1);
+                    wasm.insert_drop(r.unwrap().1 + i);
                     return AnalysisResult::error()
                 } else {
 
@@ -982,7 +984,7 @@ impl Analyzer<'_, '_, '_> {
 
                 let local = wasm.local(WasmType::I32);
                 match sym {
-                    TypeEnum::TaggedUnion(_) => wasm.read_i32(),
+                    TypeEnum::TaggedUnion(_) => wasm.i32_read(),
                     TypeEnum::Tag(_) => (),
                 }
                 wasm.local_set(local);
