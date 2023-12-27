@@ -432,11 +432,11 @@ impl<'out> TypeBuilder<'_> {
                         func = Function::new(
                             f.name(),
                             data.arena.alloc_new([(StringMap::VALUE, false, fty)]),
-                            Type::Custom(ty), wfid
+                            Type::Custom(ty), wfid, None,
                         );
 
                     } else {
-                        func = Function::new(f.name(), &[], Type::Custom(ty), wfid);
+                        func = Function::new(f.name(), &[], Type::Custom(ty), wfid, None);
                     }
 
                     data.module_builder.register(wf);
@@ -457,7 +457,7 @@ impl<'out> TypeBuilder<'_> {
 
                     data.module_builder.register(wf);
                     
-                    let func = Function::new(*f, &[], Type::Custom(ty), wfid);
+                    let func = Function::new(*f, &[], Type::Custom(ty), wfid, None);
                     let func = data.function_map.put(func);
                     ns.add_func(*f, func);
                 }

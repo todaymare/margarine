@@ -1,10 +1,25 @@
-struct A {
-    A: int,
-    B: float,
+fn main(): int {
+    let mut n = 10 
+    fib(&n)
+    n
 }
 
-system fn main() {
-    let mut x = A { A: 69, B: 420.69 }
-    x.A = 69 + 420
-    x.A
+fn fib(&n: int) {
+    if n <= 0 { n = 0 return _ }
+    if n == 1 { n = 1 return _ }
+
+    let mut a,
+        mut b,
+        mut i = (0, 1, 2)
+
+    while i <= n {
+        let c = a + b
+        a = b
+        b = c
+
+        i += 1
+    }
+
+    n = b
 }
+

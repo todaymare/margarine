@@ -196,7 +196,6 @@ pub struct WasmFunctionBuilder<'a> {
     function_id: FunctionId,
     export: Option<StringIndex>,
     ret: Option<WasmType>,
-    ret_offsets: Vec<usize, &'a Arena>,
     body: String<&'a Arena>,
     stack_size: usize,
 
@@ -205,6 +204,8 @@ pub struct WasmFunctionBuilder<'a> {
 
     locals: Vec<WasmType, &'a Arena>,
     params: Vec<WasmType, &'a Arena>,
+
+    finaliser: String<&'a Arena>,
 }
 
 
@@ -216,16 +217,24 @@ impl<'a> WasmFunctionBuilder<'a> {
             body: String::new_in(arena), 
             locals: Vec::new_in(arena), 
             params: Vec::new_in(arena), 
-            ret_offsets: Vec::new_in(arena),
             function_id: id,
             loop_nest: 0,
             block_nest: 0,
             stack_size: 0,
+            finaliser: String::new_in(arena),
         }
     }
 
     #[inline(always)]
     pub fn param(&mut self, ty: WasmType) -> LocalId {
+        assert!(self.locals.is_empty());
+        self.params.push(ty);
+        LocalId(self.params.len() as u32 - 1)
+    }
+
+
+    #[inline(always)]
+    pub fn prepend_param(&mut self, ty: WasmType) -> LocalId {
         assert!(self.locals.is_empty());
         self.params.push(ty);
         LocalId(self.params.len() as u32 - 1)
@@ -261,13 +270,24 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     pub fn offset(&self) -> usize { self.body.len() }
+
+
+    pub fn set_finaliser(&mut self, string: String<&'a Arena>) { self.finaliser = string } 
+
+
+    pub fn write_to(
+        &mut self, str: &mut String<&'a Arena>,
+        func: impl FnOnce(&mut WasmFunctionBuilder)) {
+        std::mem::swap(&mut self.body, str);
+        func(self);
+        std::mem::swap(&mut self.body, str);
+    }
 }
 
 
 impl WasmFunctionBuilder<'_> {
     pub fn build(mut self, string_map: &StringMap, buffer: &mut String) {
         self.ret();
-        
 
         write!(buffer, "(func $_{} ", self.function_id.0);
 
@@ -284,6 +304,8 @@ impl WasmFunctionBuilder<'_> {
         if let Some(ret) = self.ret {
             write!(buffer, "(result {})", ret.name());
             ret_stack_size = ret.stack_size();
+
+            write!(buffer, "(local $_ret {})", ret.name());
         }
 
         for l in &self.locals {
@@ -296,21 +318,25 @@ impl WasmFunctionBuilder<'_> {
         }
 
         if let Some(WasmType::Ptr { .. }) = self.ret {
-            write!(buffer, "(global.get $stack_pointer)");   
+            write!(buffer, "(global.get $stack_pointer)"); 
         }
 
-        if self.stack_size > 0 {
-            let fmt = format!("(call $pop (i32.const {}))", self.stack_size);
-
-            for r in &self.ret_offsets {
-                unsafe { self.body.inner_mut() }.insert_from_slice(*r, fmt.as_bytes());
-            }
-        }
-
+        write!(buffer, "(block $_ret ");
         buffer.reserve_exact(self.body.len() + 1);
         for i in self.body.trim_end().chars() {
             buffer.push_char(i)
         }
+        write!(buffer, ")");
+
+        if self.stack_size > 0 {
+            write!(buffer, "(call $pop (i32.const {}))", self.stack_size);
+        }
+
+        buffer.push(&self.finaliser);
+
+        if self.ret.is_some() { write!(buffer, "local.get $_ret "); }
+        write!(buffer, "return");
+
 
         buffer.push_char(')');
 

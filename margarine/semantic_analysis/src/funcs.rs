@@ -2,7 +2,7 @@ use common::string_map::StringIndex;
 use sti::{define_key, keyed::KVec};
 use wasm::FunctionId;
 
-use crate::types::ty::Type;
+use crate::types::{ty::Type, ty_map::TypeId};
 
 define_key!(u32, pub FuncId);
 
@@ -13,10 +13,11 @@ pub struct Function<'a> {
     pub args: &'a [(StringIndex, bool, Type)],
     pub ret : Type,
     pub wasm_id: FunctionId,
+    pub inout: Option<TypeId>,
 }
 
 impl<'a> Function<'a> {
-    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type, wasm_id: FunctionId) -> Self { Self { name, args, ret, wasm_id } }
+    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type, wasm_id: FunctionId, inout: Option<TypeId>) -> Self { Self { name, args, ret, wasm_id, inout } }
 }
 
 
