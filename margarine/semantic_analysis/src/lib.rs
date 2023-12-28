@@ -615,11 +615,16 @@ impl Analyzer<'_, '_, '_> {
                         counter += 1;
                     });
                 }
-                wasm.set_finaliser(string.clone_in(self.module_builder.arena));
 
+                wasm.set_finaliser(string.clone_in(self.module_builder.arena));
                 wasm.export(*name);
 
-                self.block(&mut wasm, scope, &body);
+                let (anal, _) = self.block(&mut wasm, scope, &body);
+                if !anal.ty.eq_sem(func.ret) {
+                    wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
+                        header: *header, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
+                        return_type: func.ret, body_type: anal.ty }));
+                }
 
                 self.module_builder.register(wasm);
             },
