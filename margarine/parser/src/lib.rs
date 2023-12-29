@@ -308,15 +308,44 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let mut result = 
         if self.current_is(TokenKind::Bang) {
             DataType::new(self.current_range(), DataTypeKind::Never)
-        } else if self.current_is(TokenKind::LeftParenthesis) {
+        } else if self.current_is(TokenKind::LeftParenthesis) { 
             self.advance();
             if self.current_is(TokenKind::RightParenthesis) {
                 DataType::new(self.current_range(), DataTypeKind::Unit)
             } else {
-                let typ = self.expect_type()?;
-                self.advance();
+                let start = self.current_range().start();
+                let pool = ArenaPool::tls_get_rec();
+                let mut vec = Vec::new_in(&*pool);
+
+                loop {
+                    if self.current_is(TokenKind::RightParenthesis) {
+                        break
+                    }
+
+                    if !vec.is_empty() {
+                        self.expect(TokenKind::Comma)?;
+                        self.advance();
+                    }
+                    
+                    if self.current_is(TokenKind::RightParenthesis) {
+                        break
+                    }
+
+                    let typ = self.expect_type()?;
+                    vec.push(typ);
+                    self.advance();
+                }
+
                 self.expect(TokenKind::RightParenthesis)?;
-                typ
+
+                if vec.len() == 1 {
+                    vec[0]
+                } else {
+                    DataType::new(
+                        SourceRange::new(start, self.current_range().end()),
+                        DataTypeKind::Tuple(vec.move_into(self.arena).leak())
+                    )
+                }
             }
         } else {
             let identifier = self.expect_identifier()?;
@@ -1794,7 +1823,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         associated: Option<Node<'ta>>
     ) -> Result<&'ta mut [(Node<'ta>, bool)], ErrorId> {
 
-        let binding = ArenaPool::tls_get_temp();
+        let binding = ArenaPool::tls_get_rec();
         let mut args = Vec::new_in(&*binding);
 
         if let Some(node) = associated {

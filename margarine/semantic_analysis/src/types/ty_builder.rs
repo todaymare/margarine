@@ -483,7 +483,7 @@ impl<'out> TypeBuilder<'_> {
             Type::Any   => todo!(),
             Type::Unit  => 1,
             Type::Never => todo!(),
-            Type::Error => todo!(),
+            Type::Error => 1,
             Type::Custom(v) => self.resolve_type(data, v)?.align(),
         })
     }
@@ -501,7 +501,7 @@ impl<'out> TypeBuilder<'_> {
             Type::Any   => todo!(),
             Type::Unit  => 1,
             Type::Never => todo!(),
-            Type::Error => todo!(),
+            Type::Error => 0,
             Type::Custom(v) => self.resolve_type(data, v)?.size(),
         })
     }
