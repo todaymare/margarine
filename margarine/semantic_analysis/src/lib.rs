@@ -588,7 +588,6 @@ impl Analyzer<'_, '_, '_> {
                     let local_id = wasm.param(wasm_ty);
                     if a.1 {
                         ids.push(local_id);
-                        
                     }
 
                     let t = Scope::new(
@@ -1482,8 +1481,7 @@ impl Analyzer<'_, '_, '_> {
     }
 
     ///
-    /// This function expects:
-    /// - A value on the stack with type `val_ty`
+    /// `$val_ty` -> ()
     ///
     fn assign(
         &mut self, 
