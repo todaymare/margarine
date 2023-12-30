@@ -179,6 +179,7 @@ impl<'out> TypeBuilder<'_> {
             return Ok(v);
         }
 
+        println!("{:?}", ty);
         let pty = self.types.get_mut(&ty).unwrap();
         let PartialType { name, process_state, kind, .. } = match pty.process_state {
             ProcessingState::Uninit => pty,

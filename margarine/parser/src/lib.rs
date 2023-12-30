@@ -47,6 +47,7 @@ pub enum DataTypeKind<'a> {
     Option(&'a DataType<'a>),
     Result(&'a DataType<'a>, &'a DataType<'a>),
     Tuple(&'a [DataType<'a>]),
+    Within(StringIndex, &'a DataType<'a>),
     CustomType(StringIndex),
 }
 
@@ -91,6 +92,12 @@ impl std::hash::Hash for DataTypeKind<'_> {
                 10.hash(state);
                 v.len().hash(state);
                 v.iter().for_each(|x| x.kind().hash(state));
+            },
+
+            DataTypeKind::Within(name, dt) => {
+                11.hash(state);
+                name.hash(state);
+                dt.kind().hash(state);
             },
         }
     }
@@ -349,13 +356,18 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
         } else {
             let identifier = self.expect_identifier()?;
-
-            let result = match self.symbol_map.get(identifier) {
-                "int" => DataTypeKind::Int,
-                "float" => DataTypeKind::Float,
-                "bool" => DataTypeKind::Bool,
-                "any" => DataTypeKind::Any,
-                _ => DataTypeKind::CustomType(identifier),
+            let result = if self.peek_is(TokenKind::DoubleColon) {
+                self.advance();
+                self.advance();
+                DataTypeKind::Within(identifier, self.arena.alloc_new(self.expect_type()?))
+            } else {
+                match identifier {
+                    StringMap::INT   => DataTypeKind::Int,
+                    StringMap::FLOAT => DataTypeKind::Float,
+                    StringMap::BOOL  => DataTypeKind::Bool,
+                    StringMap::ANY   => DataTypeKind::Any,
+                    _ => DataTypeKind::CustomType(identifier),
+                }
             };
 
             DataType::new(

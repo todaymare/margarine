@@ -1,4 +1,4 @@
-use common::{string_map::StringIndex, source::SourceRange};
+use common::{string_map::{StringIndex, StringMap}, source::SourceRange};
 use sti::{packed_option::PackedOption, define_key, keyed::KVec};
 use wasm::{LocalId, LoopId};
 
@@ -97,6 +97,18 @@ impl Scope {
                 }
             }
 
+            
+            if let ScopeKind::Root = current.kind() {
+                let ty = match name {
+                    StringMap::INT => namespaces.get_type(Type::I64),
+                    StringMap::FLOAT => namespaces.get_type(Type::F64),
+                    StringMap::BOOL => namespaces.get_type(Type::BOOL),
+                    StringMap::ANY => namespaces.get_type(Type::Any),
+                    _ => return None,
+                };
+
+                return Some(ty);
+            }
 
             None
         })
