@@ -1841,7 +1841,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
 
 
-            if !args.is_empty() {
+            if (associated.is_none() && args.len() != 0)
+                || (associated.is_some() && args.len() != 1) {
                 self.expect(TokenKind::Comma)?;
                 self.advance();
             }
