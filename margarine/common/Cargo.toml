@@ -6,6 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sti = { git = "https://github.com/leddoo/sti"}
+sti = { git = "https://github.com/rookieCookies/sti"}
 istd = { git = "https://github.com/rookieCookies/istd" }
 colourful = "*"

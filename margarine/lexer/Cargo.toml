@@ -9,4 +9,4 @@ edition = "2021"
 common = { path = "../common" }
 errors = { path = "../errors" }
 
-sti = { git = "https://github.com/leddoo/sti"}
+sti = { git = "https://github.com/rookieCookies/sti"}

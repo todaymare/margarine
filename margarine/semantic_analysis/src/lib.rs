@@ -4,7 +4,7 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
-use std::{fmt::Write};
+use std::{fmt::Write, task::Wake, mem::replace};
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex, self}};
 use ::errors::{ErrorId, SemaError};
@@ -192,8 +192,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
         tyb.add_ty(tyid, name, source);
         tyb.set_struct_fields(tyid, vec.iter().enumerate().map(|(i, x)| {
             let mut str = sti::string::String::new_in(&*temp);
-            // TODO: Uh oh, heap allocation allert!
-            str.push(&i.to_string());
+            let _ = write!(str, "{}", i);
             let id = self.string_map.insert(&str);
             (id, *x)
         }));
@@ -297,17 +296,22 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
         let pool = ArenaPool::tls_get_rec();
         let mut ty_builder = TypeBuilder::new(&*pool); 
         let (scope, ns_id) = {
-            let mut namespace = Namespace::new();
+            let namespace = Namespace::new();
+            let namespace = self.namespaces.put(namespace);
 
-            self.collect_type_names(builder, nodes, &mut ty_builder, &mut namespace);
+            self.collect_type_names(nodes, builder, &mut ty_builder, namespace);
 
-            let namespace_id = self.namespaces.put(namespace);
-            (Scope::new(ScopeKind::ImplicitNamespace(namespace_id), scope.some()), namespace_id)
+            (Scope::new(ScopeKind::ImplicitNamespace(namespace), scope.some()), namespace)
         };
         
         let mut scope = self.scopes.push(scope);
+        let mut impls = Vec::new_in(&*pool);
 
-        self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
+        self.collect_impls(builder, &mut impls, nodes, scope);
+        dbg!(&impls);
+
+        let mut counter = 0;
+        self.resolve_names(nodes, builder, &mut ty_builder, (&mut impls, &mut counter), scope, ns_id);
         
         {
             let err_len = self.errors.len();
@@ -344,11 +348,11 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
 impl Analyzer<'_, '_, '_> {
     pub fn collect_type_names(
         &mut self,
-        builder: &mut WasmFunctionBuilder,
         nodes: &[Node],
         
+        builder: &mut WasmFunctionBuilder,
         type_builder: &mut TypeBuilder,
-        namespace: &mut Namespace,
+        namespace: NamespaceId,
     ) {
         for node in nodes {
             let source = node.range();
@@ -359,6 +363,7 @@ impl Analyzer<'_, '_, '_> {
             match *decl {
                 | parser::nodes::Declaration::Enum { name, header, .. }
                 | parser::nodes::Declaration::Struct { name, header, .. } => {
+                    let namespace = self.namespaces.get_mut(namespace);
                     if namespace.get_type(name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
                            source: header, name }));
@@ -374,7 +379,8 @@ impl Analyzer<'_, '_, '_> {
 
                 parser::nodes::Declaration::Function { .. } => {},
 
-                parser::nodes::Declaration::Impl { data_type, body } => todo!(),
+                parser::nodes::Declaration::Impl { data_type, body } => (),
+
                 parser::nodes::Declaration::Using { file } => todo!(),
                 parser::nodes::Declaration::Module { name, body } => todo!(),
                 parser::nodes::Declaration::Extern { file, functions } => todo!(),
@@ -383,12 +389,49 @@ impl Analyzer<'_, '_, '_> {
     }
 
 
-    pub fn resolve_names(
+    pub fn collect_impls<'a>(
+        &mut self,
+        builder: &mut WasmFunctionBuilder,
+        impls: &mut Vec<Option<TypeBuilder<'a>>, &'a Arena>,
+        nodes: &[Node],
+        
+        scope: ScopeId,
+    ) {
+        for node in nodes {
+            let NodeKind::Declaration(decl) = node.kind()
+            else { continue };
+
+            let Declaration::Impl { data_type, body } = decl
+            else { continue };
+
+            let ty = match self.convert_ty(scope, *data_type) {
+                Ok(v) => v,
+                Err(e) => {
+                    builder.error(self.error(e));
+                    return;
+                },
+            };
+            
+            let ns_id = self.namespaces.get_type(ty);
+
+            let mut type_builder = TypeBuilder::new(impls.alloc());
+
+            self.collect_type_names(body, builder, &mut type_builder, ns_id);
+            self.collect_impls(builder, impls, body, scope);
+            impls.push(Some(type_builder));
+
+        }
+
+    }
+
+
+    pub fn resolve_names<'a>(
         &mut self,
         nodes: &[Node],
 
         builder: &mut WasmFunctionBuilder,
         type_builder: &mut TypeBuilder,
+        (impls, counter): (&mut Vec<Option<TypeBuilder<'a>>, &'a Arena>, &mut usize),
         scope: ScopeId,
         ns_id: NamespaceId,
     ) {
@@ -413,7 +456,6 @@ impl Analyzer<'_, '_, '_> {
                         });
 
                     type_builder.set_struct_fields(ty, fields);
-                    dbg!(&type_builder);
                 },
 
 
@@ -495,7 +537,22 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                parser::nodes::Declaration::Impl { data_type, body } => todo!(),
+                parser::nodes::Declaration::Impl { data_type, body } => {
+                    let mut tb = impls[*counter].take().unwrap();
+                    let ns = {
+                        let Ok(ty) = self.convert_ty(scope, *data_type)
+                        else { continue };
+
+                        self.namespaces.get_type(ty)
+                    };
+                    *counter += 1;
+                    
+                    self.resolve_names(body, builder, &mut tb, (impls, counter), scope, ns);
+
+                    *counter -= 1;
+
+                    impls[*counter].replace(tb);
+                },
                 parser::nodes::Declaration::Using { file } => todo!(),
                 parser::nodes::Declaration::Module { name, body } => todo!(),
                 parser::nodes::Declaration::Extern { file, functions } => todo!(),
@@ -629,7 +686,7 @@ impl Analyzer<'_, '_, '_> {
             },
 
 
-            Declaration::Impl { data_type, body } => todo!(),
+            Declaration::Impl { data_type, body } => (),
             Declaration::Using { file } => todo!(),
             Declaration::Module { name, body } => todo!(),
             Declaration::Extern { file, functions } => todo!(),
