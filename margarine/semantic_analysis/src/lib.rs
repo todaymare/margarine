@@ -163,6 +163,18 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 self.tuple_map.insert(vec, tyid);
                 Type::Custom(tyid)
             },
+
+
+            DataTypeKind::Within(ns, dt) => {
+                let Some(ns) = self.scopes.get(scope).get_ns(ns, &self.scopes, &mut self.namespaces)
+                else {
+                    return Err(Error::NamespaceNotFound { source: dt.range(), namespace: ns });
+                };
+
+                let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), None.into());
+                let scope = self.scopes.push(scope);
+                self.convert_ty(scope, *dt)?
+            }
         };
 
         Ok(ty)
@@ -305,13 +317,10 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
         };
         
         let mut scope = self.scopes.push(scope);
-        let mut impls = Vec::new_in(&*pool);
 
-        self.collect_impls(builder, &mut impls, nodes, scope);
-        dbg!(&impls);
+        self.collect_impls(builder, &mut ty_builder, nodes, scope);
 
-        let mut counter = 0;
-        self.resolve_names(nodes, builder, &mut ty_builder, (&mut impls, &mut counter), scope, ns_id);
+        self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
         
         {
             let err_len = self.errors.len();
@@ -392,7 +401,7 @@ impl Analyzer<'_, '_, '_> {
     pub fn collect_impls<'a>(
         &mut self,
         builder: &mut WasmFunctionBuilder,
-        impls: &mut Vec<Option<TypeBuilder<'a>>, &'a Arena>,
+        type_builder: &mut TypeBuilder,
         nodes: &[Node],
         
         scope: ScopeId,
@@ -414,11 +423,8 @@ impl Analyzer<'_, '_, '_> {
             
             let ns_id = self.namespaces.get_type(ty);
 
-            let mut type_builder = TypeBuilder::new(impls.alloc());
-
-            self.collect_type_names(body, builder, &mut type_builder, ns_id);
-            self.collect_impls(builder, impls, body, scope);
-            impls.push(Some(type_builder));
+            self.collect_type_names(body, builder, type_builder, ns_id);
+            self.collect_impls(builder, type_builder, body, scope);
 
         }
 
@@ -431,7 +437,6 @@ impl Analyzer<'_, '_, '_> {
 
         builder: &mut WasmFunctionBuilder,
         type_builder: &mut TypeBuilder,
-        (impls, counter): (&mut Vec<Option<TypeBuilder<'a>>, &'a Arena>, &mut usize),
         scope: ScopeId,
         ns_id: NamespaceId,
     ) {
@@ -538,20 +543,14 @@ impl Analyzer<'_, '_, '_> {
 
 
                 parser::nodes::Declaration::Impl { data_type, body } => {
-                    let mut tb = impls[*counter].take().unwrap();
                     let ns = {
                         let Ok(ty) = self.convert_ty(scope, *data_type)
                         else { continue };
 
                         self.namespaces.get_type(ty)
                     };
-                    *counter += 1;
                     
-                    self.resolve_names(body, builder, &mut tb, (impls, counter), scope, ns);
-
-                    *counter -= 1;
-
-                    impls[*counter].replace(tb);
+                    self.resolve_names(body, builder, type_builder, scope, ns);
                 },
                 parser::nodes::Declaration::Using { file } => todo!(),
                 parser::nodes::Declaration::Module { name, body } => todo!(),
