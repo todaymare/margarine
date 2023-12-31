@@ -7,4 +7,9 @@ edition = "2021"
 
 [dependencies]
 margarine = { path = "../margarine" }
+
+colourful = { git = "https://github.com/rookieCookies/colourful" }
 sti = { git = "https://github.com/leddoo/sti" }
+
+wasmer = "*"
+wasmer-compiler-cranelift = "*"

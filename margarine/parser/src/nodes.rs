@@ -10,6 +10,7 @@ use crate::{DataType, Block};
 pub struct Node<'a> {
     kind: NodeKind<'a>,
     pub(crate) source_range: SourceRange,
+    tags: &'a [Tag],
 }
 
 impl<'arena> Node<'arena> {
@@ -17,6 +18,7 @@ impl<'arena> Node<'arena> {
         Self {
             kind, 
             source_range,
+            tags: &[],
         } 
     }
 
@@ -187,6 +189,12 @@ pub enum Expression<'a> {
     Unwrap(&'a Node<'a>),
 
     OrReturn(&'a Node<'a>),
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Tag {
+    StartupFunction,
 }
 
 
