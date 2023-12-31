@@ -8,7 +8,7 @@ use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument,
-    ExternFunction, Expression, BinaryOperator, Statement, EnumMapping};
+    ExternFunction, Expression, BinaryOperator, Statement, EnumMapping, Tag};
 use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec};
 
 use crate::nodes::MatchMapping;
@@ -144,13 +144,13 @@ impl<'a> Deref for Block<'a> {
 pub fn parse<'a>(
     tokens: TokenList, 
     arena: &'a mut Arena, 
-    symbol_map: &mut StringMap
+    string_map: &mut StringMap
 ) -> (Block<'a>, KVec<ParserError, Error>) {
 
     let mut parser = Parser {
         tokens: tokens.as_slice(),
         index: 0,
-        symbol_map,
+        string_map,
         arena,
         errors: KVec::new(),
         is_in_panic: false,
@@ -191,7 +191,7 @@ struct Parser<'a, 'ta, 'sa> {
     index: usize,
 
     arena: &'ta Arena,
-    symbol_map: &'a mut StringMap<'sa>,
+    string_map: &'a mut StringMap<'sa>,
 
     errors: KVec<ParserError, Error>,
     is_in_panic: bool,
@@ -506,15 +506,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(Block::new(storage.leak(), SourceRange::new(start, end)))
     }
-
-
-    fn parse_with_tag<'b>(
-        &mut self, 
-        _settings: &'b ParserSettings<'ta>,
-        _func: fn(&mut Self, &'b ParserSettings<'ta>) -> ParseResult<'ta>,
-    ) -> ParseResult<'ta> {
-        todo!();
-    }
 }
 
 
@@ -544,7 +535,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Let) => self.let_statement(),
 
 
-            TokenKind::At => self.parse_with_tag(&settings, Self::statement),
+            // TokenKind::At => self.parse_with_tag(&settings, Self::statement),
 
 
             _ => self.assignment(&settings),
@@ -688,7 +679,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             {
                 if arguments.is_empty()
-                    && self.symbol_map.get(name) == "self" {
+                    && self.string_map.get(name) == "self" {
                     if let Some(self_type) = settings.is_in_impl {
                         arguments.push(FunctionArgument::new(
                             name,
@@ -1403,7 +1394,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let start = self.current_range().start();
             let ident = self.expect_identifier()?;
 
-            if self.symbol_map.get(ident) == "cast" {
+            if self.string_map.get(ident) == "cast" {
                 self.advance();
                 result = self.cast_expr(result)?;
                 continue
@@ -1544,7 +1535,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::If) => self.if_expression(),
             
             
-            TokenKind::At => self.parse_with_tag(settings, Self::expression),
+            // TokenKind::At => self.parse_with_tag(settings, Self::expression),
 
 
             TokenKind::Keyword(Keyword::Return) => {
@@ -1730,7 +1721,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     (name, is_inout, binding_range)
 
                 } else {
-                    (self.symbol_map.insert("_"), false, self.current_range())
+                    (self.string_map.insert("_"), false, self.current_range())
                 };
 
 
