@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, fs};
 
 use colourful::ColourBrush;
 use margarine::{FileData, StringMap, DropTimer, Extension};
@@ -55,6 +55,7 @@ use wasmer_compiler_cranelift::Cranelift;
          }
          
 
+         dbg!(&sema);
          let code = sema.module_builder.build(&mut string_map);
 
          /*
@@ -62,6 +63,10 @@ use wasmer_compiler_cranelift::Cranelift;
          println!("{:?}", &*ArenaPool::tls_get_temp());
          println!("{:?}", &*ArenaPool::tls_get_rec());
          */
+
+         {
+             fs::write("out.wat", &*code).unwrap();
+         }
 
          // Run
          {

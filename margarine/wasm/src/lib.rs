@@ -174,11 +174,16 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         for g in self.globals.iter() {
             write!(buffer, "(global");
             match g {
-                WasmConstant::I32(v) => write!(buffer, "i32 (i32.const {v})"),
-                WasmConstant::I64(v) => write!(buffer, "i64 (i64.const {v})"),
-                WasmConstant::F32(v) => write!(buffer, "f32 (f32.const {v})"),
-                WasmConstant::F64(v) => write!(buffer, "f64 (f64.const {v})"),
+                WasmConstant::I32(v) => write!(buffer, "i32 (i32.const {v}))"),
+                WasmConstant::I64(v) => write!(buffer, "i64 (i64.const {v}))"),
+                WasmConstant::F32(v) => write!(buffer, "f32 (f32.const {v}))"),
+                WasmConstant::F64(v) => write!(buffer, "f64 (f64.const {v}))"),
             }
+        }
+
+        for f in self.functions.iter() {
+            write!(buffer, "(global $s_{} i32 (i32.const {}))",
+                f.function_id.0, f.stack_size);
         }
 
         for f in self.functions.into_iter() {
@@ -300,21 +305,17 @@ impl WasmFunctionBuilder<'_> {
         }
 
 
-        let mut ret_stack_size = 0; 
         if let Some(ret) = self.ret {
-            write!(buffer, "(result {})", ret.name());
-            ret_stack_size = ret.stack_size();
+            if ret.stack_size() == 0 {
+                write!(buffer, "(result {})", ret.name());
+            }
 
             write!(buffer, "(local $_ret {})", ret.name());
+
         }
 
         for l in &self.locals {
             write!(buffer, "(local {}) ", l.name());
-        }
-
-
-        if self.stack_size - ret_stack_size > 0 {
-            write!(buffer, "(call $push (i32.const {}))", self.stack_size - ret_stack_size);
         }
 
         if let Some(WasmType::Ptr { .. }) = self.ret {
@@ -328,13 +329,16 @@ impl WasmFunctionBuilder<'_> {
         }
         write!(buffer, ")");
 
-        if self.stack_size > 0 {
-            write!(buffer, "(call $pop (i32.const {}))", self.stack_size);
-        }
-
         buffer.push(&self.finaliser);
 
-        if self.ret.is_some() { write!(buffer, "local.get $_ret "); }
+        if let Some(ret) = self.ret {
+            write!(buffer, "local.get $_ret ");
+            if ret.stack_size() != 0 {
+                write!(buffer, "local.get {} ", self.params.len() - 1);
+                write!(buffer, "i32.const {} ", ret.stack_size());
+                write!(buffer, "call $memcpy ");
+            }
+        }
         write!(buffer, "return");
 
 

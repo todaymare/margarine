@@ -386,12 +386,15 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                parser::nodes::Declaration::Function { .. } => {},
-
-                parser::nodes::Declaration::Impl { data_type, body } => (),
+                parser::nodes::Declaration::Function { .. } => (),
+                parser::nodes::Declaration::Impl { .. } => (),
 
                 parser::nodes::Declaration::Using { file } => todo!(),
-                parser::nodes::Declaration::Module { name, body } => todo!(),
+
+                parser::nodes::Declaration::Module { name, body } => {
+                    
+                },
+
                 parser::nodes::Declaration::Extern { file, functions } => todo!(),
             }
         }
@@ -617,7 +620,8 @@ impl Analyzer<'_, '_, '_> {
                 let func = self.funcs.get(func);
                 let mut wasm = WasmFunctionBuilder::new(self.output, func.wasm_id);
 
-                wasm.return_value(func.ret.to_wasm_ty(&self.types));
+                let ret = func.ret.to_wasm_ty(&self.types);
+                wasm.return_value(ret);
 
                 let scope = Scope::new(
                     ScopeKind::FunctionDefinition(
@@ -627,7 +631,6 @@ impl Analyzer<'_, '_, '_> {
                 );
 
                 let mut scope = self.scopes.push(scope);
-
 
                 let fields = func.inout.map(|inout| self.types.get(inout).kind()).map(|x| {
                     let TypeSymbolKind::Struct(val) = x else { unreachable!() };
@@ -669,6 +672,11 @@ impl Analyzer<'_, '_, '_> {
 
                         counter += 1;
                     });
+                }
+
+                let wasm_ret = func.ret.to_wasm_ty(&self.types);
+                if wasm_ret.stack_size() != 0 {
+                    wasm.param(wasm_ret);
                 }
 
                 wasm.set_finaliser(string.clone_in(self.module_builder.arena));
@@ -1329,12 +1337,22 @@ impl Analyzer<'_, '_, '_> {
                     return AnalysisResult::error();
                 }
 
+
                 let inout = func.inout.map(|inout| {
                     let ty = self.types.get(inout);
                     let sp = wasm.alloc_stack(ty.size());
                     wasm.sptr_const(sp);
                     (ty, sp)
                 });
+                
+                let ret = {
+                    let size = func.ret.to_wasm_ty(&self.types).stack_size(); 
+                    if size != 0 {
+                        let sp = wasm.alloc_stack(size);
+                        wasm.sptr_const(sp);
+                        Some(sp)
+                    } else { None }
+                };
 
                 let mut errored = false;
                 for (sig_arg, call_arg) in func.args.iter().zip(aargs.iter()) {
@@ -1356,6 +1374,10 @@ impl Analyzer<'_, '_, '_> {
                 }
 
                 wasm.call(func.wasm_id);
+
+                if let Some(sp) = ret {
+                    wasm.sptr_const(sp);
+                }
 
                 if let Some((ty, sp)) = inout {
                     let TypeSymbolKind::Struct(sym) = ty.kind() else { unreachable!() };
