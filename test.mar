@@ -1,0 +1,13 @@
+
+fn main(): float {
+    test().hey
+}
+
+struct Hello {
+    val: int,
+    hey: float,
+}
+
+fn test(): Hello {
+    Hello { val: 69, hey: 420.0 }
+}

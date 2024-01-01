@@ -1,35 +1,35 @@
 ;;
 ;; Increments the stack pointer by `amount`
 ;;
-(func $push (param $amount i32)
+(func $push (export "push") (param $amount i32)
     (global.set $stack_pointer (i32.add (global.get $stack_pointer) (local.get $amount)))
 )
 
 ;;
 ;; Decrements the stack pointer by `amount`
 ;;
-(func $pop (param $amount i32) 
+(func $pop (export "pop") (param $amount i32) 
     ;; Decrement the stack pointer
     (global.set $stack_pointer (i32.sub (global.get $stack_pointer) (local.get $amount)))
 )
 
 
-(func $write_i32_to_stack (param $data i32) (param $ptr i32)
+(func $write_i32_to_stack (export "write_i32_to_stack") (param $data i32) (param $ptr i32)
     (i32.store (local.get $ptr) (local.get $data))
 )
 
 
-(func $write_i64_to_stack (param $data i64) (param $ptr i32)
+(func $write_i64_to_stack (export "write_i64_to_stack") (param $data i64) (param $ptr i32)
     (i64.store (local.get $ptr) (local.get $data))
 )
 
 
-(func $write_f32_to_stack (param $data f32) (param $ptr i32)
+(func $write_f32_to_stack (export "write_f32_to_stack") (param $data f32) (param $ptr i32)
     (f32.store (local.get $ptr) (local.get $data))
 )
 
 
-(func $write_f64_to_stack (param $data f64) (param $ptr i32)
+(func $write_f64_to_stack (export "write_f64_to_stack") (param $data f64) (param $ptr i32)
     (f64.store (local.get $ptr) (local.get $data))
 )
 
@@ -37,6 +37,7 @@
 ;; Copies `length` bytes from `source_offset` to `dest_offset`
 ;;
 (func $memcpy
+    (export "memcpy")
     (param $source_offset i32)
     (param $dest_offset i32)
     (param $length i32)
@@ -56,6 +57,7 @@
 ;; 1 if they are and 0 if they are not.
 ;;
 (func $bcmp
+    (export "bcmp")
     (param $v1 i32)
     (param $v2 i32)
     (param $length i32)

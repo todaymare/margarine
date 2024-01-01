@@ -108,7 +108,15 @@ impl WasmFunctionBuilder<'_> {
     /// for `$arg` in `0..argc` -> `$ret`
     ///
     #[inline(always)]
-    pub fn call(&mut self, func: FunctionId) { write!(self.body, "call $_{} ", func.0); }
+    pub fn call(&mut self, func: FunctionId) {
+        write!(self.body, "global.get $s_{}", self.function_id.0);
+        self.call_template("push");
+
+        write!(self.body, "call $_{} ", func.0);
+
+        write!(self.body, "global.get $s_{}", self.function_id.0);
+        self.call_template("pop");
+    }
 
     ///
     /// Removes a value from the stack
