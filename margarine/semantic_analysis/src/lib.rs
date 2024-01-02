@@ -318,8 +318,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
         
         let mut scope = self.scopes.push(scope);
 
-        self.collect_impls(builder, &mut ty_builder, nodes, scope);
-
+        self.collect_impls(builder, &mut ty_builder, nodes, scope, ns_id);
         self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
         
         {
@@ -391,9 +390,7 @@ impl Analyzer<'_, '_, '_> {
 
                 parser::nodes::Declaration::Using { file } => todo!(),
 
-                parser::nodes::Declaration::Module { name, body } => {
-                    
-                },
+                parser::nodes::Declaration::Module { name, body } => (),
 
                 parser::nodes::Declaration::Extern { file, functions } => todo!(),
             }
@@ -408,27 +405,54 @@ impl Analyzer<'_, '_, '_> {
         nodes: &[Node],
         
         scope: ScopeId,
+        ns_id: NamespaceId,
     ) {
         for node in nodes {
+            let source = node.range();
             let NodeKind::Declaration(decl) = node.kind()
             else { continue };
 
-            let Declaration::Impl { data_type, body } = decl
-            else { continue };
+            match decl {
+                Declaration::Impl { data_type, body } => {
+                    let ty = match self.convert_ty(scope, *data_type) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            builder.error(self.error(e));
+                            return;
+                        },
+                    };
+                    
+                    let ns_id = self.namespaces.get_type(ty);
 
-            let ty = match self.convert_ty(scope, *data_type) {
-                Ok(v) => v,
-                Err(e) => {
-                    builder.error(self.error(e));
-                    return;
-                },
-            };
-            
-            let ns_id = self.namespaces.get_type(ty);
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns_id), scope.some());
+                    let scope = self.scopes.push(scope);
 
-            self.collect_type_names(body, builder, type_builder, ns_id);
-            self.collect_impls(builder, type_builder, body, scope);
+                    self.collect_type_names(body, builder, type_builder, ns_id);
+                    self.collect_impls(builder, type_builder, body, scope, ns_id);
+                }
 
+
+                Declaration::Module { name, body } => {
+                    let ns = self.namespaces.get(ns_id);
+                    if ns.get_mod(*name).is_some() {
+                        builder.error(self.error(Error::NameIsAlreadyDefined { source, name: *name }));
+                        continue;
+                    };
+
+                    let ns = Namespace::new();
+                    let ns = self.namespaces.put(ns);
+                    let ns_id = self.namespaces.get_mut(ns_id);
+                    ns_id.add_mod(*name, ns);
+
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                    let scope = self.scopes.push(scope);
+
+                    self.collect_type_names(body, builder, type_builder, ns);
+                    self.collect_impls(builder, type_builder, body, scope, ns);
+                }
+
+                _ => continue
+            }
         }
 
     }
@@ -450,7 +474,7 @@ impl Analyzer<'_, '_, '_> {
             else { continue };
 
             match decl {
-                parser::nodes::Declaration::Struct { kind, name, header, fields } => {
+                Declaration::Struct { kind, name, header, fields } => {
                     let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
                     let fields = fields.iter()
                         .filter_map(|(name, ty, _)| {
@@ -467,7 +491,7 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                parser::nodes::Declaration::Enum { name, header, mappings } => {
+                Declaration::Enum { name, header, mappings } => {
                     let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
                     let mappings = mappings.iter()
                         .filter_map(|mapping| {
@@ -496,7 +520,7 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                parser::nodes::Declaration::Function { is_system, name, header, arguments, return_type, body } => {
+                Declaration::Function { name, header, arguments, return_type, .. } => {
                     let ns = self.namespaces.get(ns_id);
                     if ns.get_func(*name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
@@ -545,19 +569,32 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                parser::nodes::Declaration::Impl { data_type, body } => {
+                Declaration::Impl { data_type, body } => {
                     let ns = {
                         let Ok(ty) = self.convert_ty(scope, *data_type)
                         else { continue };
 
                         self.namespaces.get_type(ty)
                     };
+
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                    let scope = self.scopes.push(scope);
                     
                     self.resolve_names(body, builder, type_builder, scope, ns);
                 },
-                parser::nodes::Declaration::Using { file } => todo!(),
-                parser::nodes::Declaration::Module { name, body } => todo!(),
-                parser::nodes::Declaration::Extern { file, functions } => todo!(),
+
+                Declaration::Module { name, body } => {
+                    let ns = self.namespaces.get(ns_id);
+                    let ns = ns.get_mod(*name).unwrap();
+
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                    let scope = self.scopes.push(scope);
+
+                    self.resolve_names(body, builder, type_builder, scope, ns)
+                },
+
+                Declaration::Using { file } => todo!(),
+                Declaration::Extern { file, functions } => todo!(),
             }
        }
 
@@ -693,9 +730,37 @@ impl Analyzer<'_, '_, '_> {
             },
 
 
-            Declaration::Impl { data_type, body } => (),
+            Declaration::Impl { data_type, body } => {
+                let Ok(ns) = self.convert_ty(*scope, *data_type)
+                else { return };
+
+                let ns = self.namespaces.get_type(ns);
+                let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                let mut scope = self.scopes.push(scope);
+
+                for n in body.iter() {
+                    let NodeKind::Declaration(decl) = n.kind()
+                    else { panic!() };
+
+                    self.decl(decl, n.range(), &mut scope);
+                }
+            },
+
             Declaration::Using { file } => todo!(),
-            Declaration::Module { name, body } => todo!(),
+            Declaration::Module { name, body } => {
+                let ns = self.scopes.get(*scope);
+                let ns = ns.get_mod(*name, &self.scopes, &self.namespaces).unwrap();
+                let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                let mut scope = self.scopes.push(scope);
+
+                for n in body.iter() {
+                    let NodeKind::Declaration(decl) = n.kind()
+                    else { panic!() };
+
+                    self.decl(decl, n.range(), &mut scope);
+                }
+            },
+
             Declaration::Extern { file, functions } => todo!(),
         }
     }

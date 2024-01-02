@@ -9,7 +9,8 @@ define_key!(u32, pub NamespaceId);
 #[derive(Debug)]
 pub struct Namespace {
     types: HashMap<StringIndex, TypeId>,
-    funcs: HashMap<StringIndex, FuncId>
+    funcs: HashMap<StringIndex, FuncId>,
+    modules: HashMap<StringIndex, NamespaceId>,
 }
 
 
@@ -33,6 +34,7 @@ impl Namespace {
         Namespace {
             types: HashMap::with_cap(ty_cap),
             funcs: HashMap::with_cap(fn_cap),
+            modules: HashMap::with_cap(0),
         }
     }
     
@@ -49,6 +51,12 @@ impl Namespace {
     }
 
 
+    pub fn add_mod(&mut self, name: StringIndex, module: NamespaceId) {
+        let prev_value = self.modules.insert(name, module);
+        assert!(prev_value.is_none());
+    }
+
+
     pub fn get_type(&self, id: StringIndex) -> Option<TypeId> {
         self.types.get(&id).copied()
     }
@@ -58,6 +66,9 @@ impl Namespace {
         self.funcs.get(&id).copied()
     }
 
+    pub fn get_mod(&self, id: StringIndex) -> Option<NamespaceId> {
+        self.modules.get(&id).copied()
+    }
 }
 
 
