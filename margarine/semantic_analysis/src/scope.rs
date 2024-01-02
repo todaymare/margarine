@@ -78,6 +78,24 @@ impl Scope {
         })
     }
 
+
+    pub fn get_mod(
+        self,
+        name: StringIndex,
+        scopes: &ScopeMap,
+        namespaces: &NamespaceMap,
+    ) -> Option<NamespaceId> {
+        self.over(scopes, |current| {
+            if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
+                if let Some(ns) = namespaces.get(ns).get_mod(name) {
+                    return Some(ns);
+                }
+            }
+
+            None
+        })
+    }
+
     pub fn get_ns(
         self,
         name: StringIndex,
@@ -92,8 +110,13 @@ impl Scope {
             }
 
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
-                if let Some(val) = namespaces.get(ns).get_type(name) {
+                let ns = namespaces.get(ns);
+                if let Some(val) = ns.get_type(name) {
                     return Some(namespaces.get_type(Type::Custom(val)))
+                }
+
+                if let Some(val) = ns.get_mod(name) {
+                    return Some(val)
                 }
             }
 

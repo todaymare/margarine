@@ -1,13 +1,13 @@
-
-fn main(): float {
-    test().hey
+fn main(): int {
+    (690).at_most(100)
 }
 
-struct Hello {
-    val: int,
-    hey: float,
-}
 
-fn test(): Hello {
-    Hello { val: 69, hey: 420.0 }
+mod std {
+    impl int {
+        fn at_most(self, oth: int): int {
+            if self < oth { self }
+            else { oth }
+        }
+    }
 }
