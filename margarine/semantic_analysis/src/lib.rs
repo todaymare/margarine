@@ -4,18 +4,18 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
-use std::{fmt::Write, task::Wake, mem::replace};
+use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex, self}};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement}, DataTypeKind, DataType};
+use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping, EnumMapping}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer, LocalId};
-use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::{PackedOption, Reserved}, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String};
+use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::{PackedOption, Reserved}, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
 use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData, PartialStructField}, ty_sym::{StructField, TypeStruct}};
 
@@ -1138,73 +1138,14 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::Match { value, taken_as_inout, mappings } => {
-                fn match_mapping(
-                    anal: &mut Analyzer<'_, '_, '_>,
-                    mut scope: ScopeId,
-                    wasm: &mut WasmFunctionBuilder,
-                    id: LocalId,
-                    taken_as_inout: bool,
-                    value_range: SourceRange,
-
-                    index: usize,
-                    mappings: &[parser::nodes::MatchMapping<'_>]
-                ) -> Option<(Type, SourceRange, LocalId)> {
-
-                    let Some(mapping) = mappings.get(index) else {
-                        wasm.block(|wasm, _| {
-                        
-                            wasm.local_get(id);
-                            let mut str = format!("br_table {} ", mappings.len());
-
-                            for i in (0..mappings.len()).rev() {
-                                let _ = write!(str, "{} ", i);
-                            }
-                            wasm.raw(&str);
-
-                        });
-
-                        return None;
-                    };
-                    
-                    let mut result = None;
-                    wasm.block(|wasm, _| {
-                        result = match_mapping(anal, scope, wasm, id, taken_as_inout, value_range, index + 1, mappings);
-
-                        if mapping.is_inout() && !taken_as_inout {
-                            wasm.error(anal.error(Error::InOutBindingWithoutInOutValue {
-                                value_range, binding_range: mapping.binding_range() }))
-                        }
-
-                        let analysis = anal.node(&mut scope, wasm, mapping.node());
-                        if let Some(result) = result {
-                            if analysis.ty.eq_sem(result.0) {
-                                wasm.local_set(result.2);
-                            } else {
-                                wasm.error(anal.error(Error::MatchBranchesDifferInReturnType {
-                                    initial_source: result.1, initial_typ: result.0,
-                                    branch_source: mapping.node().range(), branch_typ: analysis.ty
-                                }));
-                                wasm.pop();
-                            }
-                        } else {
-                            result = Some((
-                                analysis.ty, mapping.range(), 
-                                wasm.local(analysis.ty.to_wasm_ty(&anal.types))
-                            ));
-
-                            wasm.local_set(result.unwrap().2);
-
-                        }
-                    });
-                    
-                    result
-                }
-                
                 let anal = self.node(scope, wasm, value);
                 if *taken_as_inout && !anal.is_mut {
                     wasm.error(self.error(Error::InOutValueIsntMut(value.range())));
                     return AnalysisResult::error();
                 }
+
+                let sym_local = wasm.local(anal.ty.to_wasm_ty(&self.types));
+                wasm.local_set(sym_local);
 
                 let tyid = match anal.ty {
                     Type::Custom(v) => v,
@@ -1226,20 +1167,122 @@ impl Analyzer<'_, '_, '_> {
                     return AnalysisResult::error();
                 };
 
-                let local = wasm.local(WasmType::I32);
+                wasm.local_get(sym_local);
+
+                let tag = wasm.local(WasmType::I32);
                 match sym {
                     TypeEnum::TaggedUnion(_) => wasm.i32_read(),
-                    TypeEnum::Tag(_) => (),
+                    TypeEnum::Tag(_) => (), // value on the stack is already the tag
                 }
-                wasm.local_set(local);
 
-                let result = match_mapping(self, *scope, wasm, local, *taken_as_inout, value.range(), 0, mappings);
-                if let Some(result) = result {
-                    wasm.local_get(result.2);
-                    AnalysisResult::new(result.0, true)
-                } else {
-                    wasm.unit();
-                    AnalysisResult::new(Type::Unit, true)
+                wasm.local_set(tag);
+
+                {
+                    fn do_mapping(
+                        anal: &mut Analyzer,
+                        wasm: &mut WasmFunctionBuilder,
+                        mappings: &[MatchMapping<'_>],
+                        enum_sym: TypeEnum,
+                        sym_local: LocalId,
+                        tag: LocalId,
+                        taken_as_inout: bool,
+                        value_range: SourceRange,
+                        scope: ScopeId,
+
+                        index: usize,
+                    ) -> Option<(Type, LocalId, SourceRange)> {
+                        let Some(mapping) = mappings.get(index)
+                        else {
+                            wasm.block(|wasm, _| {
+                                wasm.local_get(tag);
+                                
+                                let mut string = format_in!(anal.output, "br_table {}", mappings.len());
+
+                                for i in (0..mappings.len()).rev() {
+                                    let _ = write!(string, "{} ", i);
+                                }
+
+                                wasm.raw(&string);
+                            });
+
+                            return None;
+                        };
+
+                        let mut final_result = None;
+                        wasm.block(|wasm, _| {
+                            let result = do_mapping(anal, wasm, mappings, enum_sym, sym_local, tag,
+                                                    taken_as_inout, value_range, scope, index + 1);
+
+                            if mapping.is_inout() && !taken_as_inout {
+                                wasm.error(anal.error(Error::InOutBindingWithoutInOutValue {
+                                    value_range, binding_range: mapping.binding_range() }))
+                            }
+
+                            let (ty, local) = match enum_sym {
+                                TypeEnum::TaggedUnion(v) => {
+                                    let emapping = v.fields().iter().find(|x| x.name() == mapping.name()).unwrap();
+                                    let ty = emapping.ty().unwrap_or(Type::Unit);
+                                    let wty = ty.to_wasm_ty(&anal.types);
+                                    let local = wasm.local(wty);
+
+
+                                    wasm.local_get(sym_local);
+                                    wasm.i32_const(v.union_offset() as i32);
+                                    wasm.i32_add();
+
+                                    wasm.read(wty);
+                                    wasm.local_set(local);
+                                    (ty, local)
+                                },
+                                TypeEnum::Tag(_) => {
+                                    let local = wasm.local(Type::Unit.to_wasm_ty(&anal.types));
+                                    (Type::Unit, local)
+                                },
+                            };
+
+                            let var_scope = VariableScope::new(
+                                mapping.binding(), mapping.is_inout(),
+                                ty, local
+                            );
+
+                            let scope = Scope::new(ScopeKind::Variable(var_scope), scope.some());
+                            let mut scope = anal.scopes.push(scope);
+
+                            let analysis = anal.node(&mut scope, wasm, mapping.node());
+
+                            final_result = Some(if let Some((ty, local, src)) = result {
+                                if analysis.ty.eq_sem(ty) {
+                                    wasm.local_set(local);
+                                } else {
+                                    wasm.error(anal.error(Error::MatchBranchesDifferInReturnType {
+                                        initial_source: src, initial_typ: ty,
+                                        branch_source: mapping.range(), branch_typ: analysis.ty }));
+                                    wasm.pop();
+                                }
+                                
+                                let ty = if ty.eq_lit(Type::Error) { analysis.ty } else { ty };
+                                (ty, local, src)
+                            } else {
+                                let local = wasm.local(analysis.ty.to_wasm_ty(&anal.types));
+                                wasm.local_set(local);
+
+                                (analysis.ty, local, mapping.range())
+                            });
+
+                        });
+                        Some(final_result.unwrap())
+                    }
+
+                    let result = do_mapping(self, wasm, mappings, sym, sym_local, tag, *taken_as_inout,
+                               value.range(), *scope, 0);
+
+                    if let Some(result) = result {
+                        wasm.local_get(result.1);
+                        AnalysisResult::new(result.0, true)
+                    } else {
+                        wasm.unit();
+                        AnalysisResult::new(Type::Unit, true)
+                    }
                 }
             },
 

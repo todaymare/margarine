@@ -249,7 +249,7 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn local(&mut self, ty: WasmType) -> LocalId {
         self.locals.push(ty);
-        LocalId(self.params.len() as u32 + self.locals.len() as u32 - 1)
+        LocalId(self.params.len() as u32 + self.locals.len() as u32)
     }
 
 

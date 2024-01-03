@@ -167,7 +167,6 @@ impl WasmFunctionBuilder<'_> {
         write!(self.body, "(call ${name}) ");
     }
 
-
     ///
     /// Breaks out of a specific loop
     ///
