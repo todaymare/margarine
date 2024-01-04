@@ -268,6 +268,19 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
     #[inline(always)]
+    fn expect_literal_bool(&mut self) -> Result<bool, ErrorId> {
+        self.is_error_token()?;
+        match self.current_kind() {
+            TokenKind::Literal(Literal::Bool(v)) => Ok(v),
+            _ => Err(ErrorId::Parser(self.errors.push(Error::ExpectedLiteralBool { 
+                    source: self.current_range(), 
+                    token: self.current_kind()
+                })))
+        }
+    }
+
+
+    #[inline(always)]
     fn expect_identifier(&mut self) -> Result<StringIndex, ErrorId> {
         self.is_error_token()?;
         match self.current_kind() {
@@ -1701,7 +1714,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             
             let start = self.current_range().start();
-            let name = self.expect_identifier()?;
+            let name = match self.current_kind() {
+                TokenKind::Literal(Literal::Bool(true)) => StringMap::TRUE,
+                TokenKind::Literal(Literal::Bool(false)) => StringMap::FALSE,
+                _ => self.expect_identifier()?,
+            };
             let source_range = SourceRange::new(start, self.current_range().end());
             self.advance();
 
