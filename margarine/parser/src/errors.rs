@@ -11,6 +11,11 @@ pub enum Error {
         token: TokenKind,
     },
     
+    ExpectedLiteralBool {
+        source: SourceRange,
+        token: TokenKind,
+    },
+    
     ExpectedIdentifier {
         source: SourceRange,
         token: TokenKind,
@@ -43,6 +48,15 @@ impl ErrorType<()> for Error {
                     )
             },
 
+
+            Error::ExpectedLiteralBool { source, token } => {
+                fmt.error("expected literal")
+                    .highlight_with_note(
+                        *source,
+                        &format!("expected a boolean literal, found '{token:?}'"),
+                    )
+            },
+            
             
             Error::ExpectedIdentifier { source, token } => {
                 fmt.error("expected identifier")

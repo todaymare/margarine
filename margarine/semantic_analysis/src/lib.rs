@@ -1177,6 +1177,54 @@ impl Analyzer<'_, '_, '_> {
 
                 wasm.local_set(tag);
 
+                for (i, m) in mappings.iter().enumerate() {
+                    if let Some(e) = mappings[(i + 1)..].iter().find(|x| x.name() == m.name()) {
+                        wasm.error(self.error(Error::DuplicateMatch {
+                            declared_at: m.range(), error_point: e.range() }))
+                    }
+                }
+
+                match sym {
+                    TypeEnum::TaggedUnion(v) => {
+                        for m in mappings.iter() {
+                            if !v.fields().iter().any(|x| x.name() == m.name()) {
+                                wasm.error(self.error(Error::InvalidMatch { 
+                                    name: m.name(), range: m.range(), value: anal.ty }));
+                            }
+                        }
+
+                        let mut vec = Vec::new();
+                        for m in v.fields().iter() {
+                            if !mappings.iter().any(|x| x.name() == m.name()) {
+                                vec.push(m.name());
+                            }
+                        }
+                        if !vec.is_empty() {
+                            wasm.error(self.error(Error::MissingMatch { name: vec, range: source }));
+                        }
+
+                    },
+
+                    TypeEnum::Tag(v) => {
+                        for m in mappings.iter() {
+                            if !v.fields().contains(&m.name()) {
+                                wasm.error(self.error(Error::InvalidMatch { 
+                                    name: m.name(), range: m.range(), value: anal.ty }));
+                            }
+                        }
+
+                        let mut vec = Vec::new();
+                        for m in v.fields().iter() {
+                            if !mappings.iter().any(|x| x.name() == *m) {
+                                vec.push(*m);
+                            }
+                        }
+                        if !vec.is_empty() {
+                            wasm.error(self.error(Error::MissingMatch { name: vec, range: source }));
+                        }
+                    },
+                }
+
                 {
                     fn do_mapping(
                         anal: &mut Analyzer,
@@ -1196,7 +1244,7 @@ impl Analyzer<'_, '_, '_> {
                             wasm.block(|wasm, _| {
                                 wasm.local_get(tag);
                                 
-                                let mut string = format_in!(anal.output, "br_table {}", mappings.len());
+                                let mut string = format_in!(anal.output, "br_table {} ", mappings.len());
 
                                 for i in (0..mappings.len()).rev() {
                                     let _ = write!(string, "{} ", i);
