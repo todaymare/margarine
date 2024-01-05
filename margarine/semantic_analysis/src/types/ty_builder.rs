@@ -3,9 +3,9 @@ use errors::SemaError;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool, alloc::Alloc};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
-use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField}};
+use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}};
 
-use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag}};
+use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag, TypeEnumStatus}};
 
 #[derive(Debug)]
 pub struct TypeBuilder<'a> {
@@ -40,7 +40,8 @@ pub enum PartialTypeKind<'a> {
     },
 
     Enum {
-        mappings: &'a mut [PartialEnumField]
+        mappings: &'a mut [PartialEnumField],
+        status: TypeEnumStatus,
     }
 }
 
@@ -119,7 +120,8 @@ impl<'a> TypeBuilder<'a> {
     pub fn set_enum_fields(
         &mut self, 
         ty: TypeId, 
-        iter: impl Iterator<Item=(StringIndex, Option<Type>)>
+        iter: impl Iterator<Item=(StringIndex, Option<Type>)>,
+        status: TypeEnumStatus,
     ) {
         let mappings = Vec::from_in(
             self.storage, 
@@ -128,7 +130,7 @@ impl<'a> TypeBuilder<'a> {
         
         let mappings = mappings.leak();
 
-        self.set_kind(ty, PartialTypeKind::Enum { mappings })
+        self.set_kind(ty, PartialTypeKind::Enum { mappings, status })
     }
 }
 
@@ -179,7 +181,6 @@ impl<'out> TypeBuilder<'_> {
             return Ok(v);
         }
 
-        println!("{:?}", ty);
         let pty = self.types.get_mut(&ty).unwrap();
         let PartialType { name, process_state, kind, .. } = match pty.process_state {
             ProcessingState::Uninit => pty,
@@ -216,8 +217,8 @@ impl<'out> TypeBuilder<'_> {
                     self.process_struct(data, fields, name),
 
 
-                PartialTypeKind::Enum { mappings } => { 
-                    let sym = self.process_enum(data, mappings, name);
+                PartialTypeKind::Enum { mappings, status } => { 
+                    let sym = self.process_enum(data, mappings, status, name);
 
                     sym
                 },
@@ -312,6 +313,7 @@ impl<'out> TypeBuilder<'_> {
         &mut self,
         data: &mut TypeBuilderData<'_, 'out, '_>,
         fields: &[PartialEnumField],
+        status: TypeEnumStatus,
         name: StringIndex,
     ) -> Result<TypeSymbol<'out>, Error> {
         // Tag
@@ -362,8 +364,8 @@ impl<'out> TypeBuilder<'_> {
             size = sti::num::ceil_to_multiple_pow2(size, tag_align);
             return Ok(TypeSymbol::new(
                     name, tag_align,
-                    size, TypeSymbolKind::Enum(TypeEnum::Tag(TypeTag::new(
-                            Vec::from_in(data.arena, fields.iter().map(|x| x.name)).leak())))
+                    size, TypeSymbolKind::Enum(TypeEnum::new(TypeEnumStatus::User, TypeEnumKind::Tag(TypeTag::new(
+                            Vec::from_in(data.arena, fields.iter().map(|x| x.name)).leak()))))
                     ));
         }
 
@@ -392,7 +394,7 @@ impl<'out> TypeBuilder<'_> {
         let fields = new_fields.leak();
         
         // Finalise
-        let kind = TypeEnum::TaggedUnion(TypeTaggedUnion::new(union_offset.try_into().unwrap(), fields));
+        let kind = TypeEnum::new(status, TypeEnumKind::TaggedUnion(TypeTaggedUnion::new(union_offset.try_into().unwrap(), fields)));
         Ok(TypeSymbol::new(name, align, size, TypeSymbolKind::Enum(kind)))
     } 
 
@@ -405,8 +407,8 @@ impl<'out> TypeBuilder<'_> {
     ) {
         let mut ns = Namespace::new();
         
-        match kind {
-            TypeEnum::TaggedUnion(sym) => {
+        match kind.kind() {
+            TypeEnumKind::TaggedUnion(sym) => {
                 let tysym = data.type_map.get(ty);
                 let wasm_ty = WasmType::Ptr { size: tysym.size() };
 
@@ -419,7 +421,6 @@ impl<'out> TypeBuilder<'_> {
                     wf.sptr_const(alloc);
                     wf.i32_write();
 
-
                     let func;
                     if let Some(fty) = f.ty() {
                         let wfty = fty.to_wasm_ty(data.type_map);
@@ -429,6 +430,7 @@ impl<'out> TypeBuilder<'_> {
                         wf.local_get(param);
                         wf.sptr_const(union_ptr);
                         wf.write(wfty);
+
 
                         func = Function::new(
                             f.name(),
@@ -440,6 +442,12 @@ impl<'out> TypeBuilder<'_> {
                         func = Function::new(f.name(), &[], Type::Custom(ty), wfid, None);
                     }
 
+
+                    if wasm_ty.stack_size() != 0 {
+                        wf.param(WasmType::I32);
+                    }
+
+                    wf.sptr_const(alloc);
                     data.module_builder.register(wf);
                     
                     let func = data.function_map.put(func);
@@ -448,7 +456,7 @@ impl<'out> TypeBuilder<'_> {
             },
 
 
-            TypeEnum::Tag(sym) => {
+            TypeEnumKind::Tag(sym) => {
                 for (i, f) in sym.fields().into_iter().enumerate() {
                     let wfid = data.module_builder.function_id();
                     let mut wf = WasmFunctionBuilder::new(data.arena, wfid);

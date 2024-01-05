@@ -9,7 +9,7 @@ impl WasmFunctionBuilder<'_> {
     /// Inserts a `local.set` at a specific offset
     ///
     pub fn insert_local_set(&mut self, offset: usize, local: LocalId) -> usize {
-        self.insert(format_in!(&*ArenaPool::tls_get_temp(), "local.set {}", local.0).as_str(), offset)
+        self.insert(format_in!(&*ArenaPool::tls_get_temp(), "local.set {} ", local.0).as_str(), offset)
     }
 
     

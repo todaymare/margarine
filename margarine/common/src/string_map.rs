@@ -22,6 +22,10 @@ impl<'a> StringMap<'a> {
     pub const INT : StringIndex = StringIndex(6);
     pub const FLOAT : StringIndex = StringIndex(7);
     pub const ANY : StringIndex = StringIndex(8);
+    pub const OK : StringIndex = StringIndex(9);
+    pub const ERR : StringIndex = StringIndex(10);
+    pub const SOME : StringIndex = StringIndex(11);
+    pub const NONE : StringIndex = StringIndex(12);
  
     #[inline(always)]
     pub fn new(arena: &'a Arena) -> Self {
@@ -47,6 +51,10 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("int"), Self::INT);
         assert_eq!(s.insert("float"), Self::FLOAT);
         assert_eq!(s.insert("any"), Self::ANY);
+        assert_eq!(s.insert("ok"), Self::OK);
+        assert_eq!(s.insert("err"), Self::ERR);
+        assert_eq!(s.insert("some"), Self::SOME);
+        assert_eq!(s.insert("none"), Self::NONE);
         s
     }
 
