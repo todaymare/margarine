@@ -69,7 +69,22 @@ impl StructField {
 // Enum
 //
 #[derive(Debug, Clone, Copy)]
-pub enum TypeEnum<'a> {
+pub struct TypeEnum<'a> {
+    status: TypeEnumStatus,
+    kind: TypeEnumKind<'a>,
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TypeEnumStatus {
+    User,
+    Result,
+    Option,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum TypeEnumKind<'a> {
     TaggedUnion(TypeTaggedUnion<'a>),
     Tag(TypeTag<'a>),
 }
@@ -96,14 +111,38 @@ pub struct TypeTag<'a> {
 
 
 impl<'a> TypeEnum<'a> {
+    pub fn new(status: TypeEnumStatus, kind: TypeEnumKind<'a>) -> Self { Self { status, kind } }
+
     pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
-        match self {
-            TypeEnum::TaggedUnion(_) => {
+        match self.kind {
+            TypeEnumKind::TaggedUnion(_) => {
                 wasm.i32_read();
             },
 
 
-            TypeEnum::Tag(_) => (),
+            TypeEnumKind::Tag(_) => (),
+        }
+    }
+
+
+    #[inline(always)]
+    pub fn kind(self) -> TypeEnumKind<'a> {
+        self.kind
+    }
+
+
+    #[inline(always)]
+    pub fn status(self) -> TypeEnumStatus {
+        self.status
+    }
+}
+
+
+impl<'a> TypeEnumKind<'a> {
+    pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
+        match self {
+            TypeEnumKind::TaggedUnion(_) => wasm.i32_read(),
+            TypeEnumKind::Tag(_) => (), // value on the stack is already the tag
         }
     }
 }

@@ -334,6 +334,7 @@ impl WasmFunctionBuilder<'_> {
         if let Some(ret) = self.ret {
             write!(buffer, "local.get $_ret ");
             if ret.stack_size() != 0 {
+                dbg!(&self);
                 write!(buffer, "local.get {} ", self.params.len() - 1);
                 write!(buffer, "i32.const {} ", ret.stack_size());
                 write!(buffer, "call $memcpy ");
@@ -423,12 +424,12 @@ impl<'a> WasmFunctionBuilder<'a> {
         &mut self,
         value: &mut T,
         then_body: impl FnOnce(&mut T, &mut WasmFunctionBuilder) -> (LocalId, A),
-        else_body: impl FnOnce(&mut T, &mut WasmFunctionBuilder) -> A,
+        else_body: impl FnOnce((&mut T, LocalId), &mut WasmFunctionBuilder) -> A,
     ) -> (LocalId, A, A) {
         write!(self.body, "(if (then ");
         let (local, r1) = then_body(value, self);
         write!(self.body, ")(else ");
-        let r2 = else_body(value, self);
+        let r2 = else_body((value, local), self);
         write!(self.body, "))");
         self.local_get(local);
 

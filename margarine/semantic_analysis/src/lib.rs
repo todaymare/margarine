@@ -13,7 +13,7 @@ use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping, EnumMapping}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind}};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::{PackedOption, Reserved}, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
@@ -63,37 +63,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             DataTypeKind::Never => Type::Never,
             DataTypeKind::Option(v) => {
                 let inner_ty = self.convert_ty(scope, *v)?;
-                if let Some(v) = self.options_map.get(&inner_ty) { return Ok(Type::Custom(*v)); }
-
-                let tyid = {
-                    let temp = ArenaPool::tls_get_temp();
-                    let name = {
-                        let mut str = sti::string::String::new_in(&*temp);
-                        str.push(inner_ty.display(self.string_map, &self.types));
-                        str.push_char('?');
-
-                        self.string_map.insert(str.as_str())
-                    };
-
-                    let mut tyb = TypeBuilder::new(&temp);
-
-                    let tyid = self.types.pending();
-                    tyb.add_ty(tyid, name, dt.range());
-                    tyb.set_enum_fields(tyid, 
-                        [
-                        (self.string_map.insert("some"), Some(inner_ty)),
-                        (self.string_map.insert("none"), None),
-                        ].iter().copied()
-                    );
-
-                    let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
-                    tyb.finalise(data, &mut self.errors);
-
-                    tyid
-                };
-
-                self.options_map.insert(inner_ty, tyid);
-
+                let tyid = self.make_option(inner_ty);
                 Type::Custom(tyid)
             },
 
@@ -101,40 +71,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             DataTypeKind::Result(v1, v2) => {
                 let inner_ty1 = self.convert_ty(scope, *v1)?;
                 let inner_ty2 = self.convert_ty(scope, *v2)?;
-                if let Some(v) = self.results_map.get(&(inner_ty1, inner_ty2))
-                    { return Ok(Type::Custom(*v)); }
-
-                let tyid = {
-                    let temp = ArenaPool::tls_get_temp();
-                    let name = {
-                        let mut str = sti::string::String::new_in(&*temp);
-                        str.push(inner_ty1.display(self.string_map, &self.types));
-                        str.push(" ~ ");
-                        str.push(inner_ty2.display(self.string_map, &self.types));
-
-                        self.string_map.insert(str.as_str())
-                    };
-
-                    let mut tyb = TypeBuilder::new(&temp);
-
-                    let tyid = self.types.pending();
-                    tyb.add_ty(tyid, name, dt.range());
-                    tyb.set_enum_fields(tyid, 
-                        [
-                        (self.string_map.insert("ok"), Some(inner_ty1)),
-                        (self.string_map.insert("err"), Some(inner_ty2)),
-                        ].iter().copied()
-                    );
-
-                    let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
-                    tyb.finalise(data, &mut self.errors);
-
-                    tyid
-                };
-
-                self.results_map.insert((inner_ty1, inner_ty2), tyid);
-
-                Type::Custom(tyid)
+                Type::Custom(self.make_result(inner_ty1, inner_ty2))
             },
 
 
@@ -216,6 +153,81 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
         tyid
     }
+
+
+    pub fn make_result(&mut self, v1: Type, v2: Type) -> TypeId {
+        if let Some(v) = self.results_map.get(&(v1, v2))
+            { return *v; }
+
+        let tyid = {
+            let temp = ArenaPool::tls_get_temp();
+            let name = {
+                let mut str = sti::string::String::new_in(&*temp);
+                str.push(v1.display(self.string_map, &self.types));
+                str.push(" ~ ");
+                str.push(v2.display(self.string_map, &self.types));
+
+                self.string_map.insert(str.as_str())
+            };
+
+            let mut tyb = TypeBuilder::new(&temp);
+
+            let tyid = self.types.pending();
+            tyb.add_ty(tyid, name, SourceRange::new(0, 0));
+            tyb.set_enum_fields(tyid, 
+                [
+                (self.string_map.insert("ok"), Some(v1)),
+                (self.string_map.insert("err"),Some(v2)),
+                ].iter().copied(),
+                TypeEnumStatus::Result,
+            );
+
+            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+            tyb.finalise(data, &mut self.errors);
+
+            tyid
+        };
+
+        self.results_map.insert((v1, v2), tyid);
+
+        tyid
+    }
+
+
+    fn make_option(&mut self, ty: Type) -> TypeId {
+        if let Some(v) = self.options_map.get(&ty) { return *v; }
+
+        let tyid = {
+            let temp = ArenaPool::tls_get_temp();
+            let name = {
+                let mut str = sti::string::String::new_in(&*temp);
+                str.push(ty.display(self.string_map, &self.types));
+                str.push_char('?');
+
+                self.string_map.insert(str.as_str())
+            };
+
+            let mut tyb = TypeBuilder::new(&temp);
+
+            let tyid = self.types.pending();
+            tyb.add_ty(tyid, name, SourceRange::new(0, 0));
+            tyb.set_enum_fields(tyid, 
+                [
+                (self.string_map.insert("some"), Some(ty)),
+                (self.string_map.insert("none"), None),
+                ].iter().copied(),
+                TypeEnumStatus::Option,
+            );
+
+            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+            tyb.finalise(data, &mut self.errors);
+
+            tyid
+        };
+
+        self.options_map.insert(ty, tyid);
+        tyid
+    }
      
 
     pub fn error(&mut self, err: Error) -> ErrorId {
@@ -257,7 +269,8 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
                 type_builder.add_ty(TypeId::BOOL, StringMap::BOOL, SourceRange::new(0, 0));
                 type_builder.set_enum_fields(
                     TypeId::BOOL,
-                    [(StringMap::TRUE, None), (StringMap::FALSE, None)].into_iter()
+                    [(StringMap::TRUE, None), (StringMap::FALSE, None)].into_iter(),
+                    TypeEnumStatus::User,
                 );
             }
             {
@@ -516,7 +529,7 @@ impl Analyzer<'_, '_, '_> {
                             Some((mapping.name(), ty))
                         });
 
-                    type_builder.set_enum_fields(ty, mappings)
+                    type_builder.set_enum_fields(ty, mappings, TypeEnumStatus::User)
                 },
 
 
@@ -1095,7 +1108,7 @@ impl Analyzer<'_, '_, '_> {
                         let local = wasm.local(wty);
                         (local, Some((body, wasm.offset())))
                     },
-                    |(slf, scope), wasm| {
+                    |((slf, scope), _), wasm| {
                         if let Some(else_block) = else_block {
                             return Some((slf.node(scope, wasm, else_block), wasm.offset()))
                         }
@@ -1170,10 +1183,7 @@ impl Analyzer<'_, '_, '_> {
                 wasm.local_get(sym_local);
 
                 let tag = wasm.local(WasmType::I32);
-                match sym {
-                    TypeEnum::TaggedUnion(_) => wasm.i32_read(),
-                    TypeEnum::Tag(_) => (), // value on the stack is already the tag
-                }
+                sym.kind().get_tag(wasm);
 
                 wasm.local_set(tag);
 
@@ -1184,8 +1194,8 @@ impl Analyzer<'_, '_, '_> {
                     }
                 }
 
-                match sym {
-                    TypeEnum::TaggedUnion(v) => {
+                match sym.kind() {
+                    TypeEnumKind::TaggedUnion(v) => {
                         for m in mappings.iter() {
                             if !v.fields().iter().any(|x| x.name() == m.name()) {
                                 wasm.error(self.error(Error::InvalidMatch { 
@@ -1205,7 +1215,7 @@ impl Analyzer<'_, '_, '_> {
 
                     },
 
-                    TypeEnum::Tag(v) => {
+                    TypeEnumKind::Tag(v) => {
                         for m in mappings.iter() {
                             if !v.fields().contains(&m.name()) {
                                 wasm.error(self.error(Error::InvalidMatch { 
@@ -1266,8 +1276,8 @@ impl Analyzer<'_, '_, '_> {
                                     value_range, binding_range: mapping.binding_range() }))
                             }
 
-                            let (ty, local) = match enum_sym {
-                                TypeEnum::TaggedUnion(v) => {
+                            let (ty, local) = match enum_sym.kind() {
+                                TypeEnumKind::TaggedUnion(v) => {
                                     let emapping = v.fields().iter().find(|x| x.name() == mapping.name()).unwrap();
                                     let ty = emapping.ty().unwrap_or(Type::Unit);
                                     let wty = ty.to_wasm_ty(&anal.types);
@@ -1282,7 +1292,8 @@ impl Analyzer<'_, '_, '_> {
                                     wasm.local_set(local);
                                     (ty, local)
                                 },
-                                TypeEnum::Tag(_) => {
+
+                                TypeEnumKind::Tag(_) => {
                                     let local = wasm.local(Type::Unit.to_wasm_ty(&anal.types));
                                     (Type::Unit, local)
                                 },
@@ -1709,8 +1720,284 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::CastAny { lhs, data_type } => todo!(),
-            Expression::Unwrap(_) => todo!(),
-            Expression::OrReturn(_) => todo!(),
+            Expression::Unwrap(v) => {
+                let anal = self.node(scope, wasm, v);
+                let ty = match anal.ty {
+                    Type::Custom(v) => self.types.get(v),
+
+                    Type::Error => return AnalysisResult::error(),
+
+                    _ => {
+                        wasm.error(self.error(Error::CantUnwrapOnGivenType(v.range(), anal.ty)));
+                        return AnalysisResult::error();
+                    }
+                };
+                
+                let TypeSymbolKind::Enum(e) = ty.kind()
+                else {
+                    wasm.error(self.error(Error::CantUnwrapOnGivenType(v.range(), anal.ty)));
+                    return AnalysisResult::error();
+                };
+
+                if !matches!(e.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
+                    wasm.error(self.error(Error::CantUnwrapOnGivenType(v.range(), anal.ty)));
+                    return AnalysisResult::error();
+                }
+
+                let dup = wasm.local(anal.ty.to_wasm_ty(&self.types));
+                wasm.local_tee(dup);
+                
+                // 0: Some/Ok
+                // 1: None/Err
+                e.kind().get_tag(wasm);
+
+                let mut ret_ty = Type::Unit;
+                wasm.ite(&mut (), |_, wasm| {
+                    // TODO: Error messages, add it once errors are properly made
+                    wasm.unreachable();
+                    let ty = match e.kind() {
+                        TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
+                        TypeEnumKind::Tag(_) => Type::Unit,
+                    };
+
+                    ret_ty = ty;
+
+                    (wasm.local(ty.to_wasm_ty(&self.types)), ())
+                },
+                |(_, local), wasm| {
+                    match e.kind() {
+                        TypeEnumKind::TaggedUnion(v) => {
+                            let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
+                            if ty == Type::Unit {
+                                return
+                            }
+
+                            wasm.local_get(dup);
+                            wasm.i32_const(v.union_offset() as i32);
+                            wasm.i32_add();
+                            wasm.read(ty.to_wasm_ty(&self.types));
+                            wasm.local_set(local)
+                        },
+
+                        TypeEnumKind::Tag(_) => wasm.unit(),
+                    }
+
+                });
+
+                AnalysisResult::new(ret_ty, true)
+            },
+            Expression::OrReturn(v) => {
+                let anal = self.node(scope, wasm, v);
+                let ty = match anal.ty {
+                    Type::Custom(v) => self.types.get(v),
+
+                    Type::Error => return AnalysisResult::error(),
+
+                    _ => {
+                        wasm.error(self.error(Error::CantTryOnGivenType(v.range(), anal.ty)));
+                        return AnalysisResult::error();
+                    }
+                };
+                
+                let TypeSymbolKind::Enum(enum_sym) = ty.kind()
+                else {
+                    wasm.error(self.error(Error::CantTryOnGivenType(v.range(), anal.ty)));
+                    return AnalysisResult::error();
+                };
+
+                if !matches!(enum_sym.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
+                    wasm.error(self.error(Error::CantTryOnGivenType(v.range(), anal.ty)));
+                    return AnalysisResult::error();
+                }
+
+                let func = self.scopes.get(*scope).get_func_def(&self.scopes).unwrap();
+
+                let mut err = |anal: &mut Self| {
+                    if enum_sym.status() == TypeEnumStatus::Result {
+                        wasm.error(anal.error(Error::FunctionDoesntReturnAResult {
+                            source, func_typ: func.return_type }));
+                    } else if enum_sym.status() == TypeEnumStatus::Option {
+                        wasm.error(anal.error(Error::FunctionDoesntReturnAnOption {
+                            source, func_typ: func.return_type }));
+                    } else { unreachable!() }
+                    return AnalysisResult::error();
+                };
+
+                let func_ret = match func.return_type {
+                    Type::Custom(v) => self.types.get(v),
+                    Type::Error => return AnalysisResult::error(),
+                    _ => {
+                        return err(self);
+                    }
+                };
+
+                let TypeSymbolKind::Enum(func_sym) = ty.kind()
+                else {
+                    return err(self);
+                };
+
+                if !matches!(func_sym.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
+                    return err(self);
+                }
+
+                let dup = wasm.local(anal.ty.to_wasm_ty(&self.types));
+                wasm.local_tee(dup);
+
+                // 0: Some/Ok
+                // 1: None/Err
+                enum_sym.kind().get_tag(wasm);
+
+                let mut ret_ty = Type::Unit;
+                wasm.ite(self, |slf, wasm| {
+
+                    match func_sym.status() {
+                        TypeEnumStatus::Option => {
+                            let some_val = match enum_sym.kind() {
+                                TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
+                                TypeEnumKind::Tag(_) => Type::Unit,
+                            };
+
+                            ret_ty = some_val;
+                            let local = wasm.local(some_val.to_wasm_ty(&slf.types));
+
+                            // Check the functions return signature for failure
+                            {
+                                if func_sym.status() != TypeEnumStatus::Option {
+                                    wasm.error(slf.error(Error::FunctionDoesntReturnAnOption {
+                                        source, func_typ: func.return_type }));
+                                    return (local, ());
+                                }
+                            }
+
+                            // Codegen
+                            {
+                                let ns = slf.namespaces.get_type(func.return_type);
+                                let ns = slf.namespaces.get(ns);
+                                let call_func = ns.get_func(StringMap::NONE).unwrap();
+                                let call_func = slf.funcs.get(call_func);
+
+                                let func_ret_wasm_ty = func.return_type.to_wasm_ty(&slf.types);
+                                if func_ret_wasm_ty.stack_size() != 0 {
+                                    let alloc = wasm.alloc_stack(func_ret_wasm_ty.stack_size());
+
+                                    wasm.sptr_const(alloc);
+                                    wasm.call(call_func.wasm_id);
+
+                                    wasm.sptr_const(alloc);
+                                    wasm.ret();
+                                } else {
+                                    wasm.call(call_func.wasm_id);
+                                    wasm.ret();
+                                }
+
+                            }
+
+
+                            (local, ())
+                        },
+
+
+                        TypeEnumStatus::Result => {
+                            let (ok, err) = match enum_sym.kind() {
+                                TypeEnumKind::TaggedUnion(v) => (
+                                    v.fields()[0].ty().unwrap_or(Type::Unit),
+                                    v.fields()[1].ty().unwrap_or(Type::Unit),
+                                ),
+                                TypeEnumKind::Tag(_) => (Type::Unit, Type::Unit),
+                            };
+
+                            ret_ty = ok;
+                            let local = wasm.local(ok.to_wasm_ty(&slf.types));
+
+                            // Check the functions return signature for failure
+                            {
+                                if func_sym.status() != TypeEnumStatus::Result {
+                                    wasm.error(slf.error(Error::FunctionDoesntReturnAResult {
+                                        source, func_typ: func.return_type }));
+                                    return (local, ());
+                                }
+
+                                let ferr = match func_sym.kind() {
+                                    TypeEnumKind::TaggedUnion(v) => 
+                                        v.fields()[1].ty().unwrap_or(Type::Unit),
+                                    TypeEnumKind::Tag(_) => Type::Unit,
+                                };
+
+                                if !ferr.eq_sem(err) {
+                                    wasm.error(slf.error(Error::FunctionReturnsAResultButTheErrIsntTheSame { 
+                                        source, func_source: func.return_source, 
+                                        func_err_typ: ferr, err_typ: err }));
+                                    return (local, ());
+                                }
+                            }
+
+                            // Codegen
+                            {
+                                let ns = slf.namespaces.get_type(func.return_type);
+                                let ns = slf.namespaces.get(ns);
+                                let call_func = ns.get_func(StringMap::ERR).unwrap();
+                                let call_func = slf.funcs.get(call_func);
+                                // Get the error value
+                                {
+                                    match enum_sym.kind() {
+                                        TypeEnumKind::TaggedUnion(v) => {
+                                            let ty = v.fields()[1].ty().unwrap_or(Type::Unit);
+
+                                            wasm.local_get(dup);
+                                            wasm.i32_const(v.union_offset() as i32);
+                                            wasm.i32_add();
+                                            wasm.read(ty.to_wasm_ty(&slf.types));
+                                        },
+
+                                        TypeEnumKind::Tag(_) => wasm.unit(),
+                                    }
+                                }
+
+                                let func_ret_wasm_ty = func.return_type.to_wasm_ty(&slf.types);
+                                if func_ret_wasm_ty.stack_size() != 0 {
+                                    let alloc = wasm.alloc_stack(func_ret_wasm_ty.stack_size());
+
+                                    wasm.sptr_const(alloc);
+                                    wasm.call(call_func.wasm_id);
+
+                                    wasm.sptr_const(alloc);
+                                    wasm.ret();
+                                } else {
+                                    wasm.call(call_func.wasm_id);
+                                    wasm.ret();
+                                }
+
+                            }
+
+
+                            (local, ())
+                        },
+                        
+                        _ => unreachable!(),
+                    }
+                },
+
+                |(slf, local), wasm| {
+                    match enum_sym.kind() {
+                        TypeEnumKind::TaggedUnion(v) => {
+                            let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
+                            if ty == Type::Unit {
+                                return
+                            }
+
+                            wasm.local_get(dup);
+                            wasm.i32_const(v.union_offset() as i32);
+                            wasm.i32_add();
+                            wasm.read(ty.to_wasm_ty(&slf.types));
+                            wasm.local_set(local)
+                        },
+
+                        TypeEnumKind::Tag(_) => wasm.unit(),
+                    }
+                });
+
+                AnalysisResult::new(ret_ty, true)
+            },
         }
     }
 
