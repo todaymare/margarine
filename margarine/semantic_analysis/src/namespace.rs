@@ -1,7 +1,7 @@
 use common::string_map::StringIndex;
 use sti::{define_key, hash::HashMap, keyed::KVec};
 
-use crate::{types::{ty_map::TypeId, ty::Type, ty_map::TypeMap}, funcs::FuncId};
+use crate::{types::{ty_map::TypeId, ty::Type}, funcs::FuncId};
 
 define_key!(u32, pub NamespaceId);
 

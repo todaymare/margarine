@@ -1,5 +1,5 @@
 use common::string_map::StringIndex;
-use wasm::{WasmModuleBuilder, WasmFunctionBuilder};
+use wasm::WasmFunctionBuilder;
 
 use super::ty::Type;
 

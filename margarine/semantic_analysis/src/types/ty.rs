@@ -3,7 +3,7 @@ use wasm::WasmType;
 
 use crate::types::ty_map::TypeId;
 
-use super::{ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind}};
+use super::{ty_map::TypeMap, ty_sym::{TypeSymbolKind, TypeEnumKind}};
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

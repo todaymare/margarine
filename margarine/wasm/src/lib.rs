@@ -1,10 +1,10 @@
 pub mod low_level;
 
-use std::{fmt::{Write, write}, ops::{DerefMut, Deref}};
+use std::fmt::Write;
 
 use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
-use sti::{write, vec::Vec, string::String, arena::Arena, format_in, arena_pool::ArenaPool};
+use sti::{write, vec::Vec, string::String, arena::Arena};
 
 #[derive(Debug, Clone, Copy)]
 pub enum WasmType {

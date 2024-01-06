@@ -1,6 +1,6 @@
 use common::{string_map::{StringIndex, StringMap}, source::SourceRange};
 use errors::SemaError;
-use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool, alloc::Alloc};
+use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
 use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}};

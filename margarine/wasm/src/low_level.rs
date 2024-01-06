@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use sti::{write, format_in, arena_pool::ArenaPool};
 
-use crate::{WasmFunctionBuilder, MemoryAddress, LocalId, GlobalId, FunctionId, StackPointer, LoopId, BlockId, WasmType};
+use crate::{WasmFunctionBuilder, MemoryAddress, LocalId, GlobalId, FunctionId, StackPointer, LoopId, BlockId};
 
 impl WasmFunctionBuilder<'_> { 
     ///
