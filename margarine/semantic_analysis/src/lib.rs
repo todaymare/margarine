@@ -6,18 +6,18 @@ pub mod funcs;
 
 use std::fmt::Write;
 
-use common::{source::SourceRange, string_map::{StringMap, StringIndex, self}};
+use common::{source::SourceRange, string_map::StringMap};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping, EnumMapping}, DataTypeKind, DataType};
+use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus}};
-use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, FunctionId, StackPointer, LocalId};
-use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::{PackedOption, Reserved}, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
+use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
+use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
-use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData, PartialStructField}, ty_sym::{StructField, TypeStruct}};
+use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::TypeStruct};
 
 #[derive(Debug)]
 pub struct Analyzer<'me, 'out, 'str> {
@@ -376,8 +376,6 @@ impl Analyzer<'_, '_, '_> {
         namespace: NamespaceId,
     ) {
         for node in nodes {
-            let source = node.range();
-
             let NodeKind::Declaration(decl) = node.kind()
             else { continue };
 
@@ -401,11 +399,11 @@ impl Analyzer<'_, '_, '_> {
                 parser::nodes::Declaration::Function { .. } => (),
                 parser::nodes::Declaration::Impl { .. } => (),
 
-                parser::nodes::Declaration::Using { file } => todo!(),
+                parser::nodes::Declaration::Using { .. } => todo!(),
 
-                parser::nodes::Declaration::Module { name, body } => (),
+                parser::nodes::Declaration::Module { .. } => (),
 
-                parser::nodes::Declaration::Extern { file, functions } => todo!(),
+                parser::nodes::Declaration::Extern { .. } => todo!(),
             }
         }
     }
@@ -487,7 +485,7 @@ impl Analyzer<'_, '_, '_> {
             else { continue };
 
             match decl {
-                Declaration::Struct { kind, name, header, fields } => {
+                Declaration::Struct { name, fields, .. } => {
                     let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
                     let fields = fields.iter()
                         .filter_map(|(name, ty, _)| {
@@ -504,7 +502,7 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                Declaration::Enum { name, header, mappings } => {
+                Declaration::Enum { name, mappings, .. } => {
                     let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
                     let mappings = mappings.iter()
                         .filter_map(|mapping| {
@@ -606,8 +604,8 @@ impl Analyzer<'_, '_, '_> {
                     self.resolve_names(body, builder, type_builder, scope, ns)
                 },
 
-                Declaration::Using { file } => todo!(),
-                Declaration::Extern { file, functions } => todo!(),
+                Declaration::Using { .. } => todo!(),
+                Declaration::Extern { .. } => todo!(),
             }
        }
 
@@ -656,7 +654,7 @@ impl Analyzer<'_, '_, '_> {
     fn decl(
         &mut self,
         decl: &Declaration,
-        source: SourceRange,
+        _source: SourceRange,
         scope: &mut ScopeId,
     ) {
         match decl {
@@ -664,8 +662,7 @@ impl Analyzer<'_, '_, '_> {
             Declaration::Enum { .. } => (),
 
 
-            Declaration::Function { is_system, name, header, arguments, return_type, body } => {
-                
+            Declaration::Function { name, header, return_type, body, .. } => {
                 let func = self.scopes.get(*scope).get_func(*name, &self.scopes, &self.namespaces).unwrap();
                 let func = self.funcs.get(func);
                 let mut wasm = WasmFunctionBuilder::new(self.output, func.wasm_id);
@@ -759,7 +756,7 @@ impl Analyzer<'_, '_, '_> {
                 }
             },
 
-            Declaration::Using { file } => todo!(),
+            Declaration::Using { .. } => todo!(),
             Declaration::Module { name, body } => {
                 let ns = self.scopes.get(*scope);
                 let ns = ns.get_mod(*name, &self.scopes, &self.namespaces).unwrap();
@@ -774,7 +771,7 @@ impl Analyzer<'_, '_, '_> {
                 }
             },
 
-            Declaration::Extern { file, functions } => todo!(),
+            Declaration::Extern { .. } => todo!(),
         }
     }
 
@@ -1719,7 +1716,7 @@ impl Analyzer<'_, '_, '_> {
             },
 
 
-            Expression::CastAny { lhs, data_type } => todo!(),
+            Expression::CastAny { .. } => todo!(),
             Expression::Unwrap(v) => {
                 let anal = self.node(scope, wasm, v);
                 let ty = match anal.ty {
@@ -1821,14 +1818,6 @@ impl Analyzer<'_, '_, '_> {
                             source, func_typ: func.return_type }));
                     } else { unreachable!() }
                     return AnalysisResult::error();
-                };
-
-                let func_ret = match func.return_type {
-                    Type::Custom(v) => self.types.get(v),
-                    Type::Error => return AnalysisResult::error(),
-                    _ => {
-                        return err(self);
-                    }
                 };
 
                 let TypeSymbolKind::Enum(func_sym) = ty.kind()

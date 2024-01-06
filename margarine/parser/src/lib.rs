@@ -1,15 +1,15 @@
 pub mod nodes;
 pub mod errors;
 
-use std::{ops::Deref, hash::Hash};
+use std::ops::Deref;
 
-use common::{source::{SourceRange, self}, string_map::{StringMap, StringIndex}, Slice};
+use common::{source::SourceRange, string_map::{StringMap, StringIndex}, Slice};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument,
-    ExternFunction, Expression, BinaryOperator, Statement, EnumMapping, Tag};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec};
+    ExternFunction, Expression, BinaryOperator, Statement, EnumMapping};
+use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::MatchMapping;
 
@@ -260,19 +260,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         match self.current_kind() {
             TokenKind::Literal(Literal::String(v)) => Ok(v),
             _ => Err(ErrorId::Parser(self.errors.push(Error::ExpectedLiteralString { 
-                    source: self.current_range(), 
-                    token: self.current_kind()
-                })))
-        }
-    }
-
-
-    #[inline(always)]
-    fn expect_literal_bool(&mut self) -> Result<bool, ErrorId> {
-        self.is_error_token()?;
-        match self.current_kind() {
-            TokenKind::Literal(Literal::Bool(v)) => Ok(v),
-            _ => Err(ErrorId::Parser(self.errors.push(Error::ExpectedLiteralBool { 
                     source: self.current_range(), 
                     token: self.current_kind()
                 })))
@@ -1405,7 +1392,15 @@ impl<'ta> Parser<'_, 'ta, '_> {
             self.advance();
             
             let start = self.current_range().start();
-            let ident = self.expect_identifier()?;
+            let ident = match self.current_kind() {
+                TokenKind::Literal(Literal::Integer(int)) => {
+                    let pool = ArenaPool::tls_get_temp();
+                    let string = format_in!(&*pool, "{}", int);
+                    self.string_map.insert(&string)
+                },
+
+                _ => self.expect_identifier()?,
+            };
 
             if self.string_map.get(ident) == "cast" {
                 self.advance();
