@@ -36,7 +36,8 @@ pub struct PartialType<'a> {
 #[derive(Debug)]
 pub enum PartialTypeKind<'a> {
     Struct {
-        fields: &'a mut [PartialStructField]
+        fields: &'a mut [PartialStructField],
+        is_tuple: bool,
     },
 
     Enum {
@@ -98,7 +99,8 @@ impl<'a> TypeBuilder<'a> {
     pub fn set_struct_fields(
         &mut self, 
         ty: TypeId, 
-        iter: impl Iterator<Item=(StringIndex, Type)>
+        is_tuple: bool,
+        iter: impl Iterator<Item=(StringIndex, Type)>,
     ) {
         let fields = Vec::from_in(
             self.storage, 
@@ -107,7 +109,7 @@ impl<'a> TypeBuilder<'a> {
         
         let fields = fields.leak();
 
-        self.set_kind(ty, PartialTypeKind::Struct { fields })
+        self.set_kind(ty, PartialTypeKind::Struct { fields, is_tuple })
     }
 
 
@@ -213,8 +215,8 @@ impl<'out> TypeBuilder<'_> {
             let kind = kind.take().unwrap();
 
             match kind {
-                PartialTypeKind::Struct { fields } => 
-                    self.process_struct(data, fields, name),
+                PartialTypeKind::Struct { fields, is_tuple } => 
+                    self.process_struct(data, fields, name, is_tuple),
 
 
                 PartialTypeKind::Enum { mappings, status } => { 
@@ -265,6 +267,7 @@ impl<'out> TypeBuilder<'_> {
         data: &mut TypeBuilderData<'_, 'out, '_>,
         fields: &[PartialStructField],
         name: StringIndex,
+        is_tuple: bool,
     ) -> Result<TypeSymbol<'out>, Error> {
         let mut align = 1;
         let mut cursor = 0;
@@ -292,7 +295,7 @@ impl<'out> TypeBuilder<'_> {
         let fields : &[_] = new_fields.leak();
 
         // Finalise
-        let kind = TypeStruct::new(fields);
+        let kind = TypeStruct::new(fields, is_tuple);
         let kind = TypeSymbolKind::Struct(kind);
         let symbol = TypeSymbol::new(name, align, size, kind);
 

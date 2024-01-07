@@ -1,13 +1,10 @@
 fn main(): int {
-    (690).at_most(100)
+    let x, y = (69, 420) 
+    x + y
 }
 
 
-mod std {
-    impl int {
-        fn at_most(self, oth: int): int {
-            if self < oth { self }
-            else { oth }
-        }
-    }
+fn test(): (int, int) {
+    (69, 420)
 }
+

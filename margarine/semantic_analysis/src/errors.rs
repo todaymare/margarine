@@ -49,6 +49,8 @@ pub enum Error {
         source: SourceRange,
     },
 
+    VariableValueNotTuple(SourceRange),
+
     VariableNotFound {
         name: StringIndex,
         source: SourceRange,
@@ -656,6 +658,12 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             Error::AssignIsNotLHSValue { source } => {
                 fmt.error("assign value is not a valid lhs value")
                     .highlight(*source);
+            },
+
+
+            Error::VariableValueNotTuple(s) => {
+                fmt.error("variable value is not a tuple")
+                    .highlight(*s);
             },
 
             

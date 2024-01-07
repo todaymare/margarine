@@ -9,7 +9,7 @@ use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument,
     ExternFunction, Expression, BinaryOperator, Statement, EnumMapping};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
+use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in, alloc::Alloc};
 
 use crate::nodes::MatchMapping;
 
@@ -1053,59 +1053,30 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let name = self.expect_identifier()?;
             self.advance();
             
-
-            let hint =
-                if self.current_is(TokenKind::Colon) {
-                    self.advance();
-                    let typ = self.expect_type()?;
-                    self.advance();
-                    Some(typ)
-                } else { None };
-
-            bindings.push((is_mut, name, hint));
-            if self.current_is(TokenKind::Equals) {
+            bindings.push((name, is_mut));
+            if self.current_is(TokenKind::Equals) || self.current_is(TokenKind::Colon) {
                 break
             }
         }
+
+        let hint =
+            if self.current_is(TokenKind::Colon) {
+                self.advance();
+                let typ = self.expect_type()?;
+                self.advance();
+                Some(typ)
+            } else { None };
         
         self.expect(TokenKind::Equals)?;
         self.advance();
-        if bindings.len() != 1 {
-            self.expect(TokenKind::LeftParenthesis)?;
-            self.advance();
-        }
 
         let source = SourceRange::new(start, self.current_range().end());
-        let mut bundle = Vec::with_cap_in(self.arena, bindings.len());
-        for (is_mut, name, hint) in bindings.iter().copied() {
-            if !bundle.is_empty() {
-                self.advance();
-                self.expect(TokenKind::Comma)?;
-                self.advance()
-            }
-
-            let expr = self.expression(&ParserSettings::default())?;
-            let node = Node::new(
-                NodeKind::Statement(Statement::Variable {
-                    name, 
-                    hint, 
-                    is_mut, 
-                    rhs: self.arena.alloc_new(expr)
-                }),
-                source,
-            );
-
-            bundle.push(node);
-        }
-
-        if bindings.len() != 1 {
-            self.advance();
-            self.expect(TokenKind::RightParenthesis)?;
-        }
-
-
+        let rhs = self.expression(&ParserSettings::default())?;
+        
         Ok(Node::new(
-            NodeKind::Bundle(bundle.leak()),
+            NodeKind::Statement(Statement::VariableTuple {
+                names: bindings.move_into(self.arena).leak(), 
+                hint , rhs: self.arena.alloc_new(rhs) }),
             source,
         ))
     }
