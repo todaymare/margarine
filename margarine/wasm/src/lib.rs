@@ -158,8 +158,12 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         
         assert!(self.memory >= self.stack_size);
         write!(buffer, "(memory (export \"memory\") {})", self.memory);
+
+        let stack_pointer = self.memory;
         write!(buffer, "(global $stack_pointer (export \"stack_pointer\") (mut i32) (i32.const {}))", 
-               self.stack_size);
+               stack_pointer);
+        write!(buffer, "(global $bstack_pointer (export \"bstack_pointer\") i32 (i32.const {}))", 
+               stack_pointer);
 
         let _ = writeln!(buffer);
         let _ = writeln!(buffer, ";;");

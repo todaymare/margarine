@@ -875,6 +875,7 @@ impl Analyzer<'_, '_, '_> {
                         wasm.i32_const(sym.offset as i32);
                         wasm.i32_add();
 
+
                         let sym_ty = sym.ty.to_wasm_ty(&self.types);
                         wasm.read(sym_ty);
 

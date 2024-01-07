@@ -1,16 +1,31 @@
 ;;
 ;; Increments the stack pointer by `amount`
 ;;
-(func $push (export "push") (param $amount i32)
-    (global.set $stack_pointer (i32.add (global.get $stack_pointer) (local.get $amount)))
+(func $push (export "push") (param $amount i32) (local $ptr i32)
+    (i32.sub (global.get $stack_pointer) (local.get $amount))
+    local.tee $ptr
+    i32.const 0
+    i32.le_s
+    (if (then 
+        unreachable
+    ))
+
+    (global.set $stack_pointer (local.get $ptr))
 )
 
 ;;
 ;; Decrements the stack pointer by `amount`
 ;;
-(func $pop (export "pop") (param $amount i32) 
-    ;; Decrement the stack pointer
-    (global.set $stack_pointer (i32.sub (global.get $stack_pointer) (local.get $amount)))
+(func $pop (export "pop") (param $amount i32) (local $ptr i32)
+    (i32.add (global.get $stack_pointer) (local.get $amount))
+    local.tee $ptr
+    global.get $bstack_pointer
+    i32.gt_s
+    (if (then 
+        unreachable
+    ))
+
+    (global.set $stack_pointer (local.get $ptr))
 )
 
 
