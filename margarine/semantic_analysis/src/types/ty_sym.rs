@@ -44,10 +44,11 @@ pub enum TypeSymbolKind<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct TypeStruct<'a> {
     pub fields: &'a [StructField],
+    pub is_tuple: bool,
 }
 
 impl<'a> TypeStruct<'a> {
-    pub fn new(fields: &'a [StructField]) -> Self { Self { fields } }
+    pub fn new(fields: &'a [StructField], is_tuple: bool) -> Self { Self { fields, is_tuple } }
 }
 
 

@@ -139,7 +139,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
         let tyid = self.types.pending();
         tyb.add_ty(tyid, name, source);
-        tyb.set_struct_fields(tyid, vec.iter().enumerate().map(|(i, x)| {
+        tyb.set_struct_fields(tyid, true, vec.iter().enumerate().map(|(i, x)| {
             let mut str = sti::string::String::new_in(&*temp);
             let _ = write!(str, "{}", i);
             let id = self.string_map.insert(&str);
@@ -280,6 +280,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
                 type_builder.add_ty(TypeId::STR, StringMap::STR, SourceRange::new(0, 0));
                 type_builder.set_struct_fields(
                     TypeId::STR,
+                    false,
                     [
                         (slf.string_map.insert("ptr"), Type::I32),
                         (slf.string_map.insert("len"), Type::I64),
@@ -498,7 +499,7 @@ impl Analyzer<'_, '_, '_> {
                             None
                         });
 
-                    type_builder.set_struct_fields(ty, fields);
+                    type_builder.set_struct_fields(ty, false, fields);
                 },
 
 
@@ -636,12 +637,9 @@ impl Analyzer<'_, '_, '_> {
                 AnalysisResult::new(Type::Unit, true)
 
             },
+
             NodeKind::Expression(expr) => self.expr(expr, node.range(), scope, wasm),
-            NodeKind::Bundle(v) => {
-                let (anal, bscope) = self.block(wasm, *scope, v);
-                *scope = bscope;
-                anal
-            },
+
             NodeKind::Error(err) => {
                 wasm.error(*err);
                 wasm.unit();
@@ -819,11 +817,86 @@ impl Analyzer<'_, '_, '_> {
                 };
 
                 if func().is_err() {
-                    let dummy = VariableScope::new(*name, true, Type::Error, wasm.local(WasmType::I64));
+                    let dummy = VariableScope::new(*name, *is_mut, Type::Error, wasm.local(WasmType::I64));
                     *scope = self.scopes.push(Scope::new(ScopeKind::Variable(dummy), scope.some()));
                     return Err(());
                 }
                 
+            },
+
+
+            Statement::VariableTuple { names, hint, rhs } => {
+                let mut func = || -> Result<(), ()> {
+                    let rhs_anal = self.node(scope, wasm, rhs);
+                    if rhs_anal.ty.eq_lit(Type::Error) {
+                        return Err(());
+                    }
+
+                    if let Some(hint) = hint {
+                        let hint = match self.convert_ty(*scope, *hint) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                wasm.error(self.error(e));
+                                return Err(());
+                            }
+                        };
+
+                        if !hint.eq_sem(rhs_anal.ty) {
+                            wasm.error(self.error(Error::VariableValueAndHintDiffer {
+                                value_type: rhs_anal.ty, hint_type: hint, source }));
+                            return Err(())
+                        }
+                    }
+
+                    let rty = match rhs_anal.ty {
+                        Type::Custom(v) => self.types.get(v),
+                        _ => {
+                            wasm.error(self.error(Error::VariableValueNotTuple(rhs.range())));
+                            return Err(());
+                        }
+                    };
+
+                    let TypeSymbolKind::Struct(sym) = rty.kind()
+                    else {
+                        wasm.error(self.error(Error::VariableValueNotTuple(rhs.range())));
+                        return Err(());
+                    };
+
+                    if !sym.is_tuple {
+                        wasm.error(self.error(Error::VariableValueNotTuple(rhs.range())));
+                        return Err(());
+                    }
+
+                    let ptr = wasm.local(rhs_anal.ty.to_wasm_ty(&self.types));
+                    wasm.local_set(ptr);
+
+                    for (binding, sym) in names.iter().zip(sym.fields.iter()) {
+                        wasm.local_get(ptr);
+                        wasm.i32_const(sym.offset as i32);
+                        wasm.i32_add();
+
+                        let sym_ty = sym.ty.to_wasm_ty(&self.types);
+                        wasm.read(sym_ty);
+
+                        let local = wasm.local(sym_ty);
+                        wasm.local_set(local);
+
+                        let variable_scope = VariableScope::new(binding.0, binding.1, sym.ty, local);
+                        *scope = self.scopes.push(
+                            Scope::new(ScopeKind::Variable(variable_scope), scope.some()));
+                    }
+
+                    Ok(())
+                };
+
+                if func().is_err() {
+                    for binding in names.iter() {
+                        let dummy = VariableScope::new(binding.0, binding.1, Type::Error, wasm.local(WasmType::I64));
+                        *scope = self.scopes.push(Scope::new(ScopeKind::Variable(dummy), scope.some()));
+                    }
+                    return Err(());
+                }
+
             },
 
 

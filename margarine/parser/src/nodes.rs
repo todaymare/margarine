@@ -41,7 +41,6 @@ pub enum NodeKind<'a> {
     Declaration(Declaration<'a>),
     Statement(Statement<'a>),
     Expression(Expression<'a>),
-    Bundle(&'a [Node<'a>]),
     Error(ErrorId),
 }
 
@@ -98,6 +97,13 @@ pub enum Statement<'a> {
         name: StringIndex,
         hint: Option<DataType<'a>>,
         is_mut: bool,
+        rhs: &'a Node<'a>,
+    },
+
+
+    VariableTuple {
+        names: &'a [(StringIndex, bool)],
+        hint: Option<DataType<'a>>,
         rhs: &'a Node<'a>,
     },
 
