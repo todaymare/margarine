@@ -1,10 +1,9 @@
 fn main(): int {
-    let x, y = (69, 420) 
-    x + y
+    test()
 }
 
-
-fn test(): (int, int) {
-    (69, 420)
+fn test(): int {
+    let x, y = (6, 3) 
+    x + y
 }
 

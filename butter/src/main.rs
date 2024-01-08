@@ -1,12 +1,15 @@
-use std::{env, fs};
+use std::{env, fs::{self, File}};
 
 use colourful::ColourBrush;
-use margarine::{FileData, StringMap, DropTimer, Extension};
-use sti::{prelude::Arena, arena_pool::ArenaPool};
-use wasmer::{Store, Module, imports, Instance, RuntimeError};
+use game_runtime::encode;
+use margarine::{FileData, StringMap, DropTimer};
+use sti::prelude::Arena;
+use wasmer::{Store, Module, imports, Instance, RuntimeError, Function};
 use wasmer_compiler_cranelift::Cranelift;
 
- fn main() -> Result<(), &'static str> {
+const GAME_RUNTIME : &[u8] = include_bytes!("../../target/debug/game-runtime");
+
+fn main() -> Result<(), &'static str> {
      DropTimer::with_timer("compilation", || {
          let string_map_arena = Arena::new();
          let mut string_map = StringMap::new(&string_map_arena);
@@ -65,29 +68,23 @@ use wasmer_compiler_cranelift::Cranelift;
          */
 
          {
-             fs::write("out.wat", &*code).unwrap();
+             let mut game = GAME_RUNTIME.to_vec();
+             encode(&mut game, &*code);
+             fs::write("out", &*game).unwrap();
          }
 
          // Run
          {
              let cranelift = Cranelift::new();
-             let mut store = Store::new(cranelift);
+             let store = Store::new(cranelift);
              let module = Module::new(&store, &*code).unwrap();
+             let bytes = module.serialize().unwrap();
+             let data = &bytes[..];
 
-             let imports_object = imports! {};
-
-             let instance = Instance::new(&mut store, &module, &imports_object).unwrap();
-             let func = instance.exports.get_function("main").unwrap();
-             let result = DropTimer::with_timer("wasm runtime", || {
-                 func.call(&mut store, &[])
-             });
-
-             match result {
-                Ok(v) => println!("result is {v:?}"),
-                Err(v) => {
-                    println!("{}: {}", "critical runtime error".red().bold(), print_wasm_error(v).white().bold());
-                }
-            }
+             let mut game = GAME_RUNTIME.to_vec();
+             encode(&mut game, &*data);
+             fs::write("out", &*game).unwrap();
+             
          }
 
          Ok(())
@@ -114,3 +111,4 @@ fn print_wasm_error(e: RuntimeError) -> String {
 
     string
 }
+
