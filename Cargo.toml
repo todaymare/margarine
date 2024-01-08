@@ -2,6 +2,7 @@
 resolver = "1"
 members = [
   "butter", # The engine
+  "game-runtime", # The binary in which the wasm will be put into
 
   "margarine", # The Language
   "margarine/common",
@@ -9,5 +10,5 @@ members = [
   "margarine/parser",
   "margarine/semantic_analysis",
   "margarine/wasm",
-  "margarine/errors",
+  "margarine/errors", "game-runtime",
 ]
