@@ -9,7 +9,7 @@ use std::fmt::Write;
 use common::{source::SourceRange, string_map::StringMap};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
-use funcs::{FunctionMap, Function};
+use funcs::{FunctionMap, Function, FunctionKind};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
@@ -94,10 +94,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 if let Some(ty) = self.tuple_map.get(&*vec) { return Ok(Type::Custom(*ty)) }
 
-                let vec = vec.move_into(self.output).leak();
                 let tyid = self.make_tuple(vec, dt.range());
 
-                self.tuple_map.insert(vec, tyid);
                 Type::Custom(tyid)
             },
 
@@ -118,7 +116,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
 
     
-    pub fn make_tuple(&mut self, vec: &'out [Type], source: SourceRange) -> TypeId {
+    pub fn make_tuple(&mut self, vec: Vec<Type, &Arena>, source: SourceRange) -> TypeId {
+        if let Some(val) = self.tuple_map.get(&*vec) { return *val };
         let temp = ArenaPool::tls_get_temp();
         let name = {
             let mut str = sti::string::String::new_in(&*temp);
@@ -149,7 +148,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
         let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
         tyb.finalise(data, &mut self.errors);
 
-        self.tuple_map.insert(vec, tyid);
+        self.tuple_map.insert(vec.move_into(self.output).leak(), tyid);
 
         tyid
     }
@@ -404,7 +403,7 @@ impl Analyzer<'_, '_, '_> {
 
                 parser::nodes::Declaration::Module { .. } => (),
 
-                parser::nodes::Declaration::Extern { .. } => todo!(),
+                parser::nodes::Declaration::Extern { .. } => (),
             }
         }
     }
@@ -567,15 +566,18 @@ impl Analyzer<'_, '_, '_> {
                             Type::Error
                         },
                     };
+
                     let inout_ty_id = if args.iter().any(|a| a.1) {
                         let temp = ArenaPool::tls_get_temp();
                         let tuple = Vec::from_in(&*temp,
                                                    args.iter().map(|a| a.2));
-                        Some(self.make_tuple(tuple.move_into(self.output).leak(), source))
+                        Some(self.make_tuple(tuple, source))
                     } else { None };
 
                     let ns = self.namespaces.get_mut(ns_id);
-                    let func = Function::new(*name, args.leak(), ret, self.module_builder.function_id(), inout_ty_id);
+                    let func = FunctionKind::UserDefined {
+                        inout: inout_ty_id,  };
+                    let func = Function::new(*name, args.leak(), ret, self.module_builder.function_id(), func);
                     let func = self.funcs.put(func);
                     ns.add_func(*name, func);
                 },
@@ -606,7 +608,61 @@ impl Analyzer<'_, '_, '_> {
                 },
 
                 Declaration::Using { .. } => todo!(),
-                Declaration::Extern { .. } => todo!(),
+
+                Declaration::Extern { file, functions  } => {
+                    for f in functions.iter() {
+                        let ns = self.namespaces.get(ns_id);
+                        if ns.get_func(f.name()).is_some() {
+                            builder.error(self.error(Error::NameIsAlreadyDefined { 
+                               source: f.range(), name: f.name() }));
+
+                            continue
+                        }
+
+                        let args = {
+                            let mut args = Vec::with_cap_in(self.output, f.args().len());
+
+                            for arg in f.args().iter() {
+                                let ty = self.convert_ty(scope, arg.data_type());
+                                let ty = match ty {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        builder.error(self.error(e));
+                                        Type::Error
+                                    },
+                                };
+
+                                args.push((arg.name(), arg.is_inout(), ty));
+                            }
+
+                            args
+                        };
+
+                        let ret = match self.convert_ty(scope, f.return_type()) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                builder.error(self.error(e));
+                                Type::Error
+                            },
+                        };
+
+                        let ty = {
+                            let pool = ArenaPool::tls_get_temp();
+                            let mut vec = Vec::with_cap_in(&*pool, args.len() + 1);
+                            vec.extend(args.iter().map(|x| x.2));
+                            vec.push(ret);
+                            self.make_tuple(vec, source)
+                        };
+
+                        let wfid = self.module_builder.extern_func(*file, f.path());
+                        
+                        let ns = self.namespaces.get_mut(ns_id);
+                        let func = FunctionKind::Extern { ty };
+                        let func = Function::new(f.name(), args.leak(), ret, wfid, func);
+                        let func = self.funcs.put(func);
+                        ns.add_func(f.name(), func);
+                    }
+                },
             }
        }
 
@@ -663,6 +719,8 @@ impl Analyzer<'_, '_, '_> {
             Declaration::Function { name, header, return_type, body, .. } => {
                 let func = self.scopes.get(*scope).get_func(*name, &self.scopes, &self.namespaces).unwrap();
                 let func = self.funcs.get(func);
+                let FunctionKind::UserDefined { inout } = func.kind
+                else { unreachable!() };
                 let mut wasm = WasmFunctionBuilder::new(self.output, func.wasm_id);
 
                 let ret = func.ret.to_wasm_ty(&self.types);
@@ -677,7 +735,7 @@ impl Analyzer<'_, '_, '_> {
 
                 let mut scope = self.scopes.push(scope);
 
-                let fields = func.inout.map(|inout| self.types.get(inout).kind()).map(|x| {
+                let fields = inout.map(|inout| self.types.get(inout).kind()).map(|x| {
                     let TypeSymbolKind::Struct(val) = x else { unreachable!() };
                     val
                 });
@@ -702,7 +760,7 @@ impl Analyzer<'_, '_, '_> {
                     scope = self.scopes.push(t);
                 }
 
-                let inout_param = func.inout.map(|inout| wasm.param(WasmType::Ptr { size: self.types.get(inout).size() }));
+                let inout_param = inout.map(|inout| wasm.param(WasmType::Ptr { size: self.types.get(inout).size() }));
                 for i in ids.iter() {
                     wasm.write_to(&mut string, |wasm| {
                         let f = fields.unwrap().fields[counter];
@@ -769,7 +827,7 @@ impl Analyzer<'_, '_, '_> {
                 }
             },
 
-            Declaration::Extern { .. } => todo!(),
+            Declaration::Extern { .. } => (),
         }
     }
 
@@ -1575,68 +1633,117 @@ impl Analyzer<'_, '_, '_> {
                     return AnalysisResult::error();
                 }
 
+                match func.kind {
+                    FunctionKind::UserDefined { inout } => {
+                        let inout = inout.map(|inout| {
+                            let ty = self.types.get(inout);
+                            let sp = wasm.alloc_stack(ty.size());
+                            wasm.sptr_const(sp);
+                            (ty, sp)
+                        });
+                        
+                        let ret = {
+                            let size = func.ret.to_wasm_ty(&self.types).stack_size(); 
+                            if size != 0 {
+                                let sp = wasm.alloc_stack(size);
+                                wasm.sptr_const(sp);
+                                Some(sp)
+                            } else { None }
+                        };
 
-                let inout = func.inout.map(|inout| {
-                    let ty = self.types.get(inout);
-                    let sp = wasm.alloc_stack(ty.size());
-                    wasm.sptr_const(sp);
-                    (ty, sp)
-                });
-                
-                let ret = {
-                    let size = func.ret.to_wasm_ty(&self.types).stack_size(); 
-                    if size != 0 {
-                        let sp = wasm.alloc_stack(size);
-                        wasm.sptr_const(sp);
-                        Some(sp)
-                    } else { None }
-                };
+                        let mut errored = false;
+                        for (sig_arg, call_arg) in func.args.iter().zip(aargs.iter()) {
+                            if !sig_arg.2.eq_sem(call_arg.0.ty) {
+                                errored = true;
+                                wasm.error(self.error(Error::InvalidType {
+                                    source: call_arg.1, found: call_arg.0.ty, expected: sig_arg.2 }));
+                            }
 
-                let mut errored = false;
-                for (sig_arg, call_arg) in func.args.iter().zip(aargs.iter()) {
-                    if !sig_arg.2.eq_sem(call_arg.0.ty) {
-                        errored = true;
-                        wasm.error(self.error(Error::InvalidType {
-                            source: call_arg.1, found: call_arg.0.ty, expected: sig_arg.2 }));
-                    }
-
-                    if sig_arg.1 && !call_arg.2 {
-                        errored = true;
-                        wasm.error(self.error(Error::InOutValueWithoutInOutBinding {
-                            value_range: call_arg.1 }))
-                    }
-                }
-
-                if errored {
-                    return AnalysisResult::error();
-                }
-
-                wasm.call(func.wasm_id);
-
-                if let Some(sp) = ret {
-                    wasm.sptr_const(sp);
-                }
-
-                if let Some((ty, sp)) = inout {
-                    let TypeSymbolKind::Struct(sym) = ty.kind() else { unreachable!() };
-                    let mut c = 0;
-                    for (i, sig_arg) in func.args.iter().enumerate() {
-                        if !sig_arg.1 { continue }
-
-                        let field = sym.fields[c];
-                        wasm.sptr_const(sp);
-                        wasm.i32_const(field.offset.try_into().unwrap());
-                        wasm.i32_add();
-                        wasm.read(sig_arg.2.to_wasm_ty(&self.types));
-
-                        if let Err(e) = self.assign(wasm, scope_id, &args[i].0, sig_arg.2, 0) {
-                            wasm.error(self.error(e));
+                            if sig_arg.1 && !call_arg.2 {
+                                errored = true;
+                                wasm.error(self.error(Error::InOutValueWithoutInOutBinding {
+                                    value_range: call_arg.1 }))
+                            }
                         }
 
-                        c += 1;
+                        if errored {
+                            return AnalysisResult::error();
+                        }
 
-                    }
-                }
+                        wasm.call(func.wasm_id);
+
+                        if let Some(sp) = ret {
+                            wasm.sptr_const(sp);
+                        }
+
+                        if let Some((ty, sp)) = inout {
+                            let TypeSymbolKind::Struct(sym) = ty.kind() else { unreachable!() };
+                            let mut c = 0;
+                            for (i, sig_arg) in func.args.iter().enumerate() {
+                                if !sig_arg.1 { continue }
+
+                                let field = sym.fields[c];
+                                wasm.sptr_const(sp);
+                                wasm.i32_const(field.offset.try_into().unwrap());
+                                wasm.i32_add();
+                                wasm.read(sig_arg.2.to_wasm_ty(&self.types));
+
+                                if let Err(e) = self.assign(wasm, scope_id, &args[i].0, sig_arg.2, 0) {
+                                    wasm.error(self.error(e));
+                                }
+
+                                c += 1;
+
+                            }
+                        }
+                    },
+
+                    FunctionKind::Extern { ty } => {
+                        let ty_sym = self.types.get(ty);
+                        let ptr = {
+                            wasm.alloc_stack(ty_sym.size())
+                        };
+
+                        let TypeSymbolKind::Struct(sym) = ty_sym.kind() else { unreachable!() };
+                        for sym_arg in sym.fields.iter().rev().skip(1) {
+                            wasm.sptr_const(ptr);
+                            wasm.i32_const(sym_arg.offset as i32);
+                            wasm.i32_add();
+
+                            wasm.write(sym_arg.ty.to_wasm_ty(&self.types));
+                        }
+
+                        wasm.sptr_const(ptr);
+                        wasm.call(func.wasm_id);
+
+                        let mut c = 0;
+                        for (i, sig_arg) in func.args.iter().enumerate() {
+                            if !sig_arg.1 { continue }
+
+                            let field = sym.fields[c];
+                            wasm.sptr_const(ptr);
+                            wasm.i32_const(field.offset.try_into().unwrap());
+                            wasm.i32_add();
+                            wasm.read(sig_arg.2.to_wasm_ty(&self.types));
+
+                            if let Err(e) = self.assign(wasm, scope_id, &args[i].0, sig_arg.2, 0) {
+                                wasm.error(self.error(e));
+                            }
+
+                            c += 1;
+
+                        }
+
+                        {
+                            let r = sym.fields.last().unwrap();
+                            wasm.sptr_const(ptr);
+                            wasm.i32_const(r.offset as i32);
+                            wasm.i32_add();
+
+                            wasm.read(r.ty.to_wasm_ty(&self.types));
+                        }
+                    },
+                };
 
                 AnalysisResult::new(func.ret, true)
             },
@@ -1759,8 +1866,7 @@ impl Analyzer<'_, '_, '_> {
                 let ty_id = match self.tuple_map.get(&*vec) {
                     Some(v) => *v,
                     None => {
-                        let vec = vec.clone_in(self.output).leak();
-                        self.make_tuple(vec, source)
+                        self.make_tuple(vec.clone_in(&*pool), source)
                     },
                 };
 
@@ -1938,6 +2044,8 @@ impl Analyzer<'_, '_, '_> {
                                 let ns = slf.namespaces.get(ns);
                                 let call_func = ns.get_func(StringMap::NONE).unwrap();
                                 let call_func = slf.funcs.get(call_func);
+                                let FunctionKind::UserDefined { inout } = call_func.kind
+                                else { unreachable!() };
 
                                 let func_ret_wasm_ty = func.return_type.to_wasm_ty(&slf.types);
                                 if func_ret_wasm_ty.stack_size() != 0 {
@@ -2000,6 +2108,9 @@ impl Analyzer<'_, '_, '_> {
                                 let ns = slf.namespaces.get(ns);
                                 let call_func = ns.get_func(StringMap::ERR).unwrap();
                                 let call_func = slf.funcs.get(call_func);
+                                let FunctionKind::UserDefined { inout } = call_func.kind
+                                else { unreachable!() };
+
                                 // Get the error value
                                 {
                                     match enum_sym.kind() {

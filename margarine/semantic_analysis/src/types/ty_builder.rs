@@ -3,7 +3,7 @@ use errors::SemaError;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
-use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}};
+use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}};
 
 use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag, TypeEnumStatus}};
 
@@ -438,11 +438,13 @@ impl<'out> TypeBuilder<'_> {
                         func = Function::new(
                             f.name(),
                             data.arena.alloc_new([(StringMap::VALUE, false, fty)]),
-                            Type::Custom(ty), wfid, None,
+                            Type::Custom(ty), wfid,
+                            FunctionKind::UserDefined { inout: None },
                         );
 
                     } else {
-                        func = Function::new(f.name(), &[], Type::Custom(ty), wfid, None);
+                        func = Function::new(f.name(), &[], Type::Custom(ty), wfid,
+                                FunctionKind::UserDefined { inout: None });
                     }
 
 
@@ -469,7 +471,9 @@ impl<'out> TypeBuilder<'_> {
 
                     data.module_builder.register(wf);
                     
-                    let func = Function::new(*f, &[], Type::Custom(ty), wfid, None);
+                    let func = Function::new(*f, &[], Type::Custom(ty), wfid,
+                        FunctionKind::UserDefined { inout: None });
+
                     let func = data.function_map.put(func);
                     ns.add_func(*f, func);
                 }

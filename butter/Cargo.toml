@@ -14,7 +14,4 @@ game-runtime = { path = "../game-runtime" }
 colourful = { git = "https://github.com/rookieCookies/colourful" }
 sti = { git = "https://github.com/leddoo/sti" }
 
-wasmer = "*"
-wasmer-compiler-cranelift = "*"
-hex-string = "*"
-
+wasmtime = "*"

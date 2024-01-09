@@ -12,12 +12,25 @@ pub struct Function<'a> {
     pub name: StringIndex,
     pub args: &'a [(StringIndex, bool, Type)],
     pub ret : Type,
+    pub kind: FunctionKind,
     pub wasm_id: FunctionId,
-    pub inout: Option<TypeId>,
 }
 
+
+#[derive(Debug, Clone, Copy)]
+pub enum FunctionKind {
+    UserDefined {
+        inout: Option<TypeId>,
+    },
+
+    Extern {
+        ty: TypeId,
+    }, 
+}
+
+
 impl<'a> Function<'a> {
-    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type, wasm_id: FunctionId, inout: Option<TypeId>) -> Self { Self { name, args, ret, wasm_id, inout } }
+    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type, wasm_id: FunctionId, kind: FunctionKind) -> Self { Self { name, args, ret, kind, wasm_id } }
 }
 
 
