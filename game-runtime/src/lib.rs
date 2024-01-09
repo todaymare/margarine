@@ -3,36 +3,116 @@
  * - Binary
  * - Data
  * - Data Len
+ * - Imports
+ *   - DLL Count
+ *   - DLL Name
+ *     - Len
+ *     - Name
+ *   - Item count
+ *   - for _ in 0..Item Count
+ *      - Item Name
+ *        - Len
+ *        - Name
+ * - Imports Len
  * - Crc32 of the data
+ * - Crc32 of the imports 
  * - Magic Value for making sure nothing has been appended
 */
 
 const MAGIC : &[u8] = b"NICETITS";
 
-pub fn encode(binary: &mut Vec<u8>, data: &[u8]) {
-    let hash = crc32fast::hash(data);
+pub fn encode(binary: &mut Vec<u8>, data: &[u8], imports: &[(&str, Vec<&str>)]) {
+    let hash_data = crc32fast::hash(data);
+    let imports = {
+        let mut vec = Vec::new();
+        vec.extend_from_slice(&(imports.len() as u64).to_le_bytes());
+        for (path, items) in imports.iter() {
+            vec.extend_from_slice(&(path.len() as u64).to_le_bytes());
+            vec.extend_from_slice(path.as_bytes());
+
+            vec.extend_from_slice(&(items.len() as u64).to_le_bytes());
+            for item in items.iter() {
+                vec.extend_from_slice(&(item.len() as u64).to_le_bytes());
+                vec.extend_from_slice(item.as_bytes());
+            }
+        }
+
+        vec
+    };
+
+    let hash_imports = crc32fast::hash(&imports);
 
     binary.extend_from_slice(data);
     binary.extend_from_slice(&(data.len() as u64).to_le_bytes());
-    binary.extend_from_slice(&hash.to_le_bytes());
+    binary.extend_from_slice(&*imports);
+    binary.extend_from_slice(&(imports.len() as u64).to_le_bytes());
+    binary.extend_from_slice(&hash_data.to_le_bytes());
+    binary.extend_from_slice(&hash_imports.to_le_bytes());
     binary.extend_from_slice(MAGIC);
 }
 
 
-pub fn decode(binary: &[u8]) -> Vec<u8> {
+pub fn decode(binary: &'_ [u8]) -> (Vec<(&'_ str, Vec<&'_ str>)>, &'_ [u8]) {
     assert_eq!(&binary[binary.len() - MAGIC.len()..], MAGIC, "magic not valid");
     let binary = &binary[..binary.len() - MAGIC.len()];
 
-    let hash = u32::from_le_bytes(binary[binary.len() - 4..].try_into().unwrap());
+    let hash_imports = u32::from_le_bytes(binary[binary.len() - 4..].try_into().unwrap());
     let binary = &binary[..binary.len() - 4];
 
+    let hash_data = u32::from_le_bytes(binary[binary.len() - 4..].try_into().unwrap());
+    let binary = &binary[..binary.len() - 4];
+
+    // imports 
     let len = u64::from_le_bytes(binary[binary.len() - 8..].try_into().unwrap());
     let binary = &binary[..binary.len() - 8];
 
-    let data = &binary[binary.len() - len as usize..];
+    let imports = &binary[binary.len() - len as usize..];
+    let imports_hash = crc32fast::hash(imports);
+    assert_eq!(hash_imports, imports_hash, "The CRC32 hash of the imports is not valid");
 
-    let data_hash = crc32fast::hash(data);
-    assert_eq!(hash, data_hash, "The CRC32 hash of the data is not valid");
+    let binary = &binary[..binary.len() - len as usize];
+    let imports = {
+        let dll_count = u64::from_le_bytes(imports[..8].try_into().unwrap());
+        let mut imports = &imports[8..];
 
-    data.to_vec()
+        let mut vec = Vec::with_capacity(dll_count as usize);
+        for _ in 0..dll_count {
+            let name_len = u64::from_le_bytes(imports[..8].try_into().unwrap());
+            imports = &imports[8..];
+            
+            let dll_name = std::str::from_utf8(&imports[..name_len as usize]).unwrap();
+            imports = &imports[name_len as usize..];
+
+            let item_count = u64::from_le_bytes(imports[..8].try_into().unwrap());
+            imports = &imports[8..];
+
+            let mut items = Vec::with_capacity(item_count as usize);
+            for _ in 0..item_count {
+                let name_len = u64::from_le_bytes(imports[..8].try_into().unwrap());
+                imports = &imports[8..];
+                
+                let item_name = std::str::from_utf8(&imports[..name_len as usize]).unwrap();
+                imports = &imports[name_len as usize..];
+
+                items.push(item_name);
+            }
+
+            vec.push((dll_name, items));
+        }
+        vec
+    };
+
+
+    let data = {
+        let len = u64::from_le_bytes(binary[binary.len() - 8..].try_into().unwrap());
+        let binary = &binary[..binary.len() - 8];
+
+        let data = &binary[binary.len() - len as usize..];
+        let data_hash = crc32fast::hash(data);
+        assert_eq!(hash_data, data_hash, "The CRC32 hash of the data is not valid");
+
+        data
+    };
+
+    (imports, data)
 }

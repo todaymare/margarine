@@ -1,6 +1,6 @@
 pub mod low_level;
 
-use std::fmt::Write;
+use std::{fmt::Write, collections::HashMap};
 
 use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
@@ -85,6 +85,7 @@ impl StackPointer {
 pub struct WasmModuleBuilder<'a, 'strs> {
     pub arena: &'a Arena,
     functions: std::vec::Vec<WasmFunctionBuilder<'a>>,
+    pub externs: HashMap<StringIndex, Vec<(StringIndex, FunctionId)>>,
     globals: Vec<WasmConstant>,
     memory: usize,
     stack_size: usize,
@@ -107,7 +108,15 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
             arena,
             strs: Vec::new(),
             text_sec_size: 0,
+            externs: HashMap::new(),
         }
+    }
+
+    
+    pub fn extern_func(&mut self, path: StringIndex, name: StringIndex) -> FunctionId {
+        let fid = self.function_id();
+        self.externs.entry(path).or_insert(Vec::new()).push((name, fid));
+        fid
     }
 
     
@@ -150,13 +159,22 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
     }
 
 
-    pub fn build(mut self, string_map: &mut StringMap<'strs>) -> Vec<u8> {
+    pub fn build(&mut self, string_map: &mut StringMap<'strs>) -> Vec<u8> {
         self.functions.sort_unstable_by_key(|x| x.function_id.0);
 
         let mut buffer = String::new();
         write!(buffer, "(module ");
         
         assert!(self.memory >= self.stack_size);
+
+        for (path, funcs) in &self.externs {
+            let path = string_map.get(*path);
+            for (name, id) in funcs {
+                let name = string_map.get(*name);
+                write!(buffer, r#"(func $_{} (import "{}" "{}") (param i32))"#, id.0, path, name);
+            }
+        }
+
         write!(buffer, "(memory (export \"memory\") {})", self.memory);
 
         let stack_pointer = self.memory;
@@ -190,7 +208,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
                 f.function_id.0, f.stack_size);
         }
 
-        for f in self.functions.into_iter() {
+        for f in self.functions.iter_mut() {
             f.build(string_map, &mut buffer)
         }
 
@@ -295,7 +313,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
 impl WasmFunctionBuilder<'_> {
-    pub fn build(mut self, string_map: &StringMap, buffer: &mut String) {
+    pub fn build(&mut self, string_map: &StringMap, buffer: &mut String) {
         self.ret();
 
         write!(buffer, "(func $_{} ", self.function_id.0);
