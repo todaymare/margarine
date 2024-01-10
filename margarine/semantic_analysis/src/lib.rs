@@ -256,6 +256,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
         };
 
         slf.module_builder.memory(64 * 1024);
+        slf.module_builder.stack_size(32 * 1024);
 
         {
             let pool = ArenaPool::tls_get_temp();
@@ -281,8 +282,8 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
                     TypeId::STR,
                     false,
                     [
-                        (slf.string_map.insert("ptr"), Type::I32),
                         (slf.string_map.insert("len"), Type::I64),
+                        (slf.string_map.insert("ptr"), Type::I32),
                     ].into_iter(),
                 );
             }
@@ -348,6 +349,8 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
                 builder.error(ErrorId::Sema(SemaError::new((err_len + i) as u32).unwrap()))
             }
         }
+        
+        self.resolve_functions(nodes, builder, scope, ns_id);
 
         let mut ty = Type::Unit;
         for (id, n) in nodes.iter().enumerate() {
@@ -531,6 +534,53 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
+                Declaration::Impl { data_type, body } => {
+                    let ns = {
+                        let Ok(ty) = self.convert_ty(scope, *data_type)
+                        else { continue };
+
+                        self.namespaces.get_type(ty)
+                    };
+
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                    let scope = self.scopes.push(scope);
+                    
+                    self.resolve_names(body, builder, type_builder, scope, ns);
+                },
+
+                Declaration::Module { name, body } => {
+                    let ns = self.namespaces.get(ns_id);
+                    let ns = ns.get_mod(*name).unwrap();
+
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                    let scope = self.scopes.push(scope);
+
+                    self.resolve_names(body, builder, type_builder, scope, ns)
+                },
+
+                Declaration::Using { .. } => todo!(),
+
+                _ => continue,
+           }
+        }
+    }
+
+
+    pub fn resolve_functions<'a>(
+        &mut self,
+        nodes: &[Node],
+
+        builder: &mut WasmFunctionBuilder,
+        scope: ScopeId,
+        ns_id: NamespaceId,
+    ) {
+        for node in nodes {
+            let source = node.range();
+
+            let NodeKind::Declaration(decl) = node.kind()
+            else { continue };
+
+            match decl {
                 Declaration::Function { name, header, arguments, return_type, .. } => {
                     let ns = self.namespaces.get(ns_id);
                     if ns.get_func(*name).is_some() {
@@ -582,32 +632,6 @@ impl Analyzer<'_, '_, '_> {
                     ns.add_func(*name, func);
                 },
 
-
-                Declaration::Impl { data_type, body } => {
-                    let ns = {
-                        let Ok(ty) = self.convert_ty(scope, *data_type)
-                        else { continue };
-
-                        self.namespaces.get_type(ty)
-                    };
-
-                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                    let scope = self.scopes.push(scope);
-                    
-                    self.resolve_names(body, builder, type_builder, scope, ns);
-                },
-
-                Declaration::Module { name, body } => {
-                    let ns = self.namespaces.get(ns_id);
-                    let ns = ns.get_mod(*name).unwrap();
-
-                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                    let scope = self.scopes.push(scope);
-
-                    self.resolve_names(body, builder, type_builder, scope, ns)
-                },
-
-                Declaration::Using { .. } => todo!(),
 
                 Declaration::Extern { file, functions  } => {
                     for f in functions.iter() {
@@ -663,8 +687,10 @@ impl Analyzer<'_, '_, '_> {
                         ns.add_func(f.name(), func);
                     }
                 },
+
+                _ => continue,
             }
-       }
+        }
 
     }
 
@@ -1001,8 +1027,7 @@ impl Analyzer<'_, '_, '_> {
 
                     lexer::Literal::String(v) => {
                         let str = self.string_map.get(*v);
-                        let ptr = self.module_builder.add_string(str);
-                        wasm.ptr_const(ptr);
+                        let string_ptr = self.module_builder.add_string(str);
                         
                         let ty = self.types.get(TypeId::STR);
                         let TypeSymbolKind::Struct(strct) = ty.kind()
@@ -1010,19 +1035,24 @@ impl Analyzer<'_, '_, '_> {
 
                         let alloc = wasm.alloc_stack(ty.size());
 
+                        // len
                         {
+
                             let ptr = alloc.add(strct.fields[0].offset);
+                            wasm.i64_const(str.len() as i64);
+                            wasm.sptr_const(ptr);
+                            wasm.i64_write();
+                        }
+
+                        // ptr
+                        {
+                            let ptr = alloc.add(strct.fields[1].offset);
+                            wasm.string_const(string_ptr);
                             wasm.sptr_const(ptr);
                             wasm.i32_write();
                         }
 
-                        {
-                            let ptr = alloc.add(strct.fields[1].offset);
-                            wasm.i64_const(str.len() as i64);
-
-                            wasm.sptr_const(ptr);
-                            wasm.i64_write();
-                        }
+                        wasm.sptr_const(alloc);
                         
                         AnalysisResult::new(Type::STR, true)
                     },

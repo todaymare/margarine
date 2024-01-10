@@ -69,7 +69,7 @@ pub struct LoopId {
 pub struct StackPointer(usize);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct MemoryAddress {
+pub struct StringAddress {
     address: usize,
     size: usize,
 }
@@ -148,9 +148,9 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
     }
 
 
-    pub fn add_string(&mut self, str: &'strs str) -> MemoryAddress {
+    pub fn add_string(&mut self, str: &'strs str) -> StringAddress {
         self.strs.push(str);
-        let ptr = MemoryAddress {
+        let ptr = StringAddress {
             address: self.text_sec_size,
             size: str.len(),
         };
@@ -177,7 +177,17 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
 
         write!(buffer, "(memory (export \"memory\") {})", self.memory);
 
-        let stack_pointer = self.memory;
+        let string_pointer = self.stack_size;
+        write!(buffer, "(global $string_pointer i32 (i32.const {}))", string_pointer);
+        {
+            let mut c = string_pointer;
+            for f in &self.strs {
+                write!(buffer, "(data (i32.const {c}) \"{}\")", f);
+                c += f.len();
+            }
+        }
+
+        let stack_pointer = self.stack_size;
         write!(buffer, "(global $stack_pointer (export \"stack_pointer\") (mut i32) (i32.const {}))", 
                stack_pointer);
         write!(buffer, "(global $bstack_pointer (export \"bstack_pointer\") i32 (i32.const {}))", 

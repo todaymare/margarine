@@ -19,6 +19,8 @@
  * - Magic Value for making sure nothing has been appended
 */
 
+pub mod ffi;
+
 const MAGIC : &[u8] = b"NICETITS";
 
 pub fn encode(binary: &mut Vec<u8>, data: &[u8], imports: &[(&str, Vec<&str>)]) {
@@ -116,3 +118,6 @@ pub fn decode(binary: &'_ [u8]) -> (Vec<(&'_ str, Vec<&'_ str>)>, &'_ [u8]) {
 
     (imports, data)
 }
+
+
+
