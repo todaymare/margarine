@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use sti::{write, format_in, arena_pool::ArenaPool};
 
-use crate::{WasmFunctionBuilder, MemoryAddress, LocalId, GlobalId, FunctionId, StackPointer, LoopId, BlockId};
+use crate::{WasmFunctionBuilder, StringAddress, LocalId, GlobalId, FunctionId, StackPointer, LoopId, BlockId};
 
 impl WasmFunctionBuilder<'_> { 
     ///
@@ -139,9 +139,8 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn alloc_stack(&mut self, size: usize) -> StackPointer {
-        let ptr = StackPointer(self.stack_size);
         self.stack_size += size; 
-        ptr
+        StackPointer(self.stack_size)
     } 
 
 
@@ -208,8 +207,10 @@ impl WasmFunctionBuilder<'_> {
     /// Pushes a raw memory address to the stack
     /// () -> `ptr($t)`
     #[inline(always)]
-    pub fn ptr_const(&mut self, ptr: MemoryAddress) {
-        self.i32_const(ptr.address.try_into().unwrap());
+    pub fn string_const(&mut self, ptr: StringAddress) {
+        write!(self.body, "global.get $string_pointer ");
+        self.i32_const(ptr.address as i32);
+        self.i32_add();
     }
 
 

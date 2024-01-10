@@ -66,6 +66,7 @@ fn main() -> Result<(), &'static str> {
          println!("{:?}", &*ArenaPool::tls_get_rec());
          */
          
+         fs::write("out.wat", &*code).unwrap();
          // Run
          {
             let data = &*code;

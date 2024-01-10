@@ -1,13 +1,13 @@
-use std::{env, fs, error::Error, sync::OnceLock, ptr::null, ops::Add};
+use std::{env, fs, error::Error, sync::OnceLock, ptr::null, ops::Add, thread, time::Duration};
 
-use game_runtime::decode;
+use game_runtime::{decode, ffi::{Ctx, WasmPtr}};
 use libloading::{Library, Symbol};
 use wasmtime::{Config, Engine, Module, Linker, Store, Val};
 
 type ExternFunction<'a> = Symbol<'a, ExternFunctionRaw>;
-type ExternFunctionRaw = unsafe extern "C" fn(*mut u8);
+type ExternFunctionRaw = unsafe extern "C" fn(*const Ctx, *mut u8);
 
-static mut PTR : *const u8 = null();
+static mut CTX : Ctx = Ctx::new();
 
 fn main() {
     let file = env::current_exe().unwrap();
@@ -23,6 +23,7 @@ fn main() {
 
     let module = unsafe { Module::deserialize(&engine, data) }.unwrap();
     let mut linker = Linker::new(&engine);
+    let mut libs = Vec::with_capacity(imports_data.len());
 
     for (path, items) in imports_data {
         let path_noext = path;
@@ -48,14 +49,17 @@ fn main() {
         for i in items {
             let sym = unsafe { library.get::<ExternFunction<'_>>(i.as_bytes()) }.unwrap();
             let sym = unsafe { sym.into_raw() };
-            println!("{path_noext}::{i}");
             linker.func_wrap(&*path_noext, i, move |param: i32| {
-                let ptr = unsafe { PTR.add(param as usize).cast_mut() };
-                unsafe { sym(ptr); };
+                let ptr = WasmPtr::from_i32(param).as_mut(unsafe { &CTX });
+                unsafe { sym(&CTX, ptr); };
             }).unwrap();
         }
 
-        std::mem::forget(library);
+        if let Ok(f) = unsafe { library.get::<unsafe extern "C" fn(&Ctx)>(b"_init") } {
+            unsafe { f(&CTX) };
+        }
+
+        libs.push(library);
     }
 
     let mut store = Store::new(&engine, 4);
@@ -63,13 +67,18 @@ fn main() {
     let memory = instance.get_memory(&mut store, "memory").unwrap();
 
     let ptr = memory.data_ptr(&store);
-    unsafe { PTR = ptr };
-    
+    unsafe { CTX.set_base(ptr); };
+   
     let func = instance.get_func(&mut store, "main").unwrap();
     let mut slice = [Val::null()];
     func.call(&mut store, &[], &mut slice).unwrap();
 
-    println!("{slice:?}");
+    for l in libs {
+        if let Ok(f) = unsafe { l.get::<unsafe extern "C" fn(&Ctx)>(b"_finalise") } {
+            unsafe { f(&CTX) };
+        }
+    }
+    thread::sleep(Duration::from_secs(1));
 }
 
 
