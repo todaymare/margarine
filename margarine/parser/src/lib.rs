@@ -1023,10 +1023,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let file = self.expect_literal_str()?;
         let end = self.current_range().end();
 
-        Ok(Node::new(
-            NodeKind::Declaration(Declaration::Using { file }),
-            SourceRange::new(start, end)
-        ))
+        todo!()
     }
 
 
@@ -1072,13 +1069,18 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         let source = SourceRange::new(start, self.current_range().end());
         let rhs = self.expression(&ParserSettings::default())?;
+        let rhs = self.arena.alloc_new(rhs);
         
-        Ok(Node::new(
-            NodeKind::Statement(Statement::VariableTuple {
+        Ok(Node::new(NodeKind::Statement(if bindings.len() == 1 {
+            let b = bindings[0];
+            Statement::Variable { name: b.0, hint, is_mut: b.1, rhs }
+        } else {
+            Statement::VariableTuple {
                 names: bindings.move_into(self.arena).leak(), 
-                hint , rhs: self.arena.alloc_new(rhs) }),
-            source,
-        ))
+                hint, rhs
+            }
+        }), source))
+        
     }
 
     fn assignment(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
