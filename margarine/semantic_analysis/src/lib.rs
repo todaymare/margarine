@@ -688,6 +688,38 @@ impl Analyzer<'_, '_, '_> {
                     }
                 },
 
+
+                Declaration::Impl { data_type, body } => {
+                    let ty = match self.convert_ty(scope, *data_type) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            builder.error(self.error(e));
+                            return;
+                        },
+                    };
+                    
+                    let ns_id = self.namespaces.get_type(ty);
+
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns_id), scope.some());
+                    let scope = self.scopes.push(scope);
+
+
+                    self.resolve_functions(body, builder, scope, ns_id);
+                }
+
+
+                Declaration::Module { name, body } => {
+                    let ns = Namespace::new();
+                    let ns = self.namespaces.put(ns);
+                    let ns_id = self.namespaces.get_mut(ns_id);
+                    ns_id.add_mod(*name, ns);
+
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                    let scope = self.scopes.push(scope);
+
+                    self.resolve_functions(body, builder, scope, ns)
+                }
+
                 _ => continue,
             }
         }
@@ -831,8 +863,12 @@ impl Analyzer<'_, '_, '_> {
                 let mut scope = self.scopes.push(scope);
 
                 for n in body.iter() {
-                    let NodeKind::Declaration(decl) = n.kind()
-                    else { panic!() };
+                    
+                    let decl = match n.kind() {
+                        NodeKind::Declaration(d) => d,
+                        NodeKind::Error(_) => continue,
+                        _ => panic!("{n:?}"),
+                    };
 
                     self.decl(decl, n.range(), &mut scope);
                 }

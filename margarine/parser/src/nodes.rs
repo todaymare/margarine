@@ -75,7 +75,7 @@ pub enum Declaration<'a> {
     },
 
     Using {
-        file: StringIndex,
+        item: UseItem<'a>,
     },
 
     Module {
@@ -230,7 +230,7 @@ impl<'arena> ExternFunction<'arena> {
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
     #[inline(always)]
-    pub fn path(&self) -> StringIndex { self.name }
+    pub fn path(&self) -> StringIndex { self.path }
     #[inline(always)]
     pub fn args(&self) -> &[FunctionArgument<'arena>] { &self.args }
     #[inline(always)]
@@ -528,3 +528,14 @@ impl Display for UnaryOperator {
     }
 }
 
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UseItem<'a> {
+    List {
+        name: StringIndex, 
+        list: &'a [UseItem<'a>],
+    },
+    Single {
+        name: StringIndex,
+    }
+}

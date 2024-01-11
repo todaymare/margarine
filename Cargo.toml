@@ -4,11 +4,14 @@ members = [
   "butter", # The engine
   "game-runtime", # The binary in which the wasm will be put into
 
+  "butter-runtime-api",
+  "butter-runtime-api/proc-macros",
+
   "margarine", # The Language
   "margarine/common",
   "margarine/lexer",
   "margarine/parser",
   "margarine/semantic_analysis",
   "margarine/wasm",
-  "margarine/errors", "game-runtime",
+  "margarine/errors",
 ]

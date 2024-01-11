@@ -1,6 +1,7 @@
-use std::{env, fs, error::Error, sync::OnceLock, ptr::null, ops::Add, thread, time::Duration};
+use std::{env, fs};
 
-use game_runtime::{decode, ffi::{Ctx, WasmPtr}};
+use butter_runtime_api::ffi::{Ctx, WasmPtr};
+use game_runtime::decode;
 use libloading::{Library, Symbol};
 use wasmtime::{Config, Engine, Module, Linker, Store, Val};
 
@@ -50,7 +51,10 @@ fn main() {
             let sym = unsafe { library.get::<ExternFunction<'_>>(i.as_bytes()) }.unwrap();
             let sym = unsafe { sym.into_raw() };
             linker.func_wrap(&*path_noext, i, move |param: i32| {
-                let ptr = WasmPtr::from_i32(param).as_mut(unsafe { &CTX });
+                let ptr = u32::from_ne_bytes(param.to_ne_bytes());
+                let ptr = WasmPtr::from_u32(ptr);
+                let ptr = ptr.as_mut(unsafe { &CTX });
+
                 unsafe { sym(&CTX, ptr); };
             }).unwrap();
         }
@@ -73,12 +77,13 @@ fn main() {
     let mut slice = [Val::null()];
     func.call(&mut store, &[], &mut slice).unwrap();
 
+    println!("Result is {slice:?}");
+
     for l in libs {
         if let Ok(f) = unsafe { l.get::<unsafe extern "C" fn(&Ctx)>(b"_finalise") } {
             unsafe { f(&CTX) };
         }
     }
-    thread::sleep(Duration::from_secs(1));
 }
 
 
