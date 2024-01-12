@@ -11,7 +11,7 @@ use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping}, DataTypeKind, DataType};
+use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping, UseItemKind, UseItem}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
@@ -332,7 +332,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
         
         let mut scope = self.scopes.push(scope);
 
-        self.collect_impls(builder, &mut ty_builder, nodes, scope, ns_id);
+        self.collect_impls(builder, &mut ty_builder, nodes, &mut scope, ns_id);
         self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
         
         {
@@ -402,7 +402,7 @@ impl Analyzer<'_, '_, '_> {
                 parser::nodes::Declaration::Function { .. } => (),
                 parser::nodes::Declaration::Impl { .. } => (),
 
-                parser::nodes::Declaration::Using { .. } => todo!(),
+                parser::nodes::Declaration::Using { .. } => (),
 
                 parser::nodes::Declaration::Module { .. } => (),
 
@@ -418,7 +418,7 @@ impl Analyzer<'_, '_, '_> {
         type_builder: &mut TypeBuilder,
         nodes: &[Node],
         
-        scope: ScopeId,
+        scope: &mut ScopeId,
         ns_id: NamespaceId,
     ) {
         for node in nodes {
@@ -428,7 +428,7 @@ impl Analyzer<'_, '_, '_> {
 
             match decl {
                 Declaration::Impl { data_type, body } => {
-                    let ty = match self.convert_ty(scope, *data_type) {
+                    let ty = match self.convert_ty(*scope, *data_type) {
                         Ok(v) => v,
                         Err(e) => {
                             builder.error(self.error(e));
@@ -439,10 +439,13 @@ impl Analyzer<'_, '_, '_> {
                     let ns_id = self.namespaces.get_type(ty);
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns_id), scope.some());
-                    let scope = self.scopes.push(scope);
+                    let mut scope = self.scopes.push(scope);
+                    let before = scope;
 
                     self.collect_type_names(body, builder, type_builder, ns_id);
-                    self.collect_impls(builder, type_builder, body, scope, ns_id);
+                    self.collect_impls(builder, type_builder, body, &mut scope, ns_id);
+
+                    assert_eq!(before, scope);
                 }
 
 
@@ -459,10 +462,49 @@ impl Analyzer<'_, '_, '_> {
                     ns_id.add_mod(*name, ns);
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                    let scope = self.scopes.push(scope);
+                    let mut scope = self.scopes.push(scope);
+                    let before = scope;
 
                     self.collect_type_names(body, builder, type_builder, ns);
-                    self.collect_impls(builder, type_builder, body, scope, ns);
+                    self.collect_impls(builder, type_builder, body, &mut scope, ns);
+
+                    assert_eq!(before, scope);
+                }
+
+
+                Declaration::Using { item } => {
+                    fn resolve_item(
+                        anal: &mut Analyzer,
+                        scope_id: &mut ScopeId,
+                        ns: NamespaceId,
+                        item: &UseItem,
+                    ) -> Result<(), ErrorId> {
+                        match item.kind() {
+                            UseItemKind::List { name, list } => todo!(),
+                            UseItemKind::BringName { name } => todo!(),
+
+                            UseItemKind::All { name } => {
+                                let scope = anal.scopes.get(*scope_id);
+                                let module = scope.get_mod(name, &anal.scopes, &anal.namespaces);
+                                let Some(module) = module
+                                else {
+                                    return Err(anal.error(Error::NamespaceNotFound {
+                                        source: item.range(),
+                                        namespace: name }));
+                                };
+
+                                let scope = Scope::new(ScopeKind::ImplicitNamespace(module), scope_id.some());
+                                *scope_id = anal.scopes.push(scope);
+                            },
+                        };
+
+                        Ok(())
+                    }
+
+                    if let Err(e) = resolve_item(self, scope, ns_id, item) {
+                        builder.error(e);
+                        continue
+                    }
                 }
 
                 _ => continue
@@ -558,7 +600,7 @@ impl Analyzer<'_, '_, '_> {
                     self.resolve_names(body, builder, type_builder, scope, ns)
                 },
 
-                Declaration::Using { .. } => todo!(),
+                Declaration::Using { .. } => (),
 
                 _ => continue,
            }
@@ -709,10 +751,8 @@ impl Analyzer<'_, '_, '_> {
 
 
                 Declaration::Module { name, body } => {
-                    let ns = Namespace::new();
-                    let ns = self.namespaces.put(ns);
                     let ns_id = self.namespaces.get_mut(ns_id);
-                    ns_id.add_mod(*name, ns);
+                    let ns = ns_id.get_mod(*name).unwrap();
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
@@ -874,7 +914,7 @@ impl Analyzer<'_, '_, '_> {
                 }
             },
 
-            Declaration::Using { .. } => todo!(),
+            Declaration::Using { .. } => (),
             Declaration::Module { name, body } => {
                 let ns = self.scopes.get(*scope);
                 let ns = ns.get_mod(*name, &self.scopes, &self.namespaces).unwrap();
