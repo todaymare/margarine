@@ -53,6 +53,7 @@ impl Namespace {
 
     pub fn add_mod(&mut self, name: StringIndex, module: NamespaceId) {
         let prev_value = self.modules.insert(name, module);
+        dbg!(&prev_value);
         assert!(prev_value.is_none());
     }
 

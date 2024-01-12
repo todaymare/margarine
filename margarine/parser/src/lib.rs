@@ -8,7 +8,7 @@ use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument,
-    ExternFunction, Expression, BinaryOperator, Statement, EnumMapping};
+    ExternFunction, Expression, BinaryOperator, Statement, EnumMapping, UseItem, UseItemKind};
 use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in, alloc::Alloc};
 
 use crate::nodes::MatchMapping;
@@ -529,7 +529,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Mod) => self.mod_declaration(),
             TokenKind::Keyword(Keyword::Extern) => self.extern_declaration(),
             TokenKind::Keyword(Keyword::Enum) => self.enum_declaration(),
-            TokenKind::Keyword(Keyword::Using) => self.using_declaration(),
+            TokenKind::Keyword(Keyword::Use) => self.using_declaration(),
 
 
             TokenKind::Keyword(Keyword::Let) => self.let_statement(),
@@ -1017,13 +1017,71 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn using_declaration(&mut self) -> ParseResult<'ta> {
         let start = self.current_range().start();
-        self.expect(TokenKind::Keyword(Keyword::Using))?;
+        self.expect(TokenKind::Keyword(Keyword::Use))?;
         self.advance();
 
-        let file = self.expect_literal_str()?;
-        let end = self.current_range().end();
+        let item = self.parse_use_item()?;
 
-        todo!()
+        Ok(Node::new(
+                NodeKind::Declaration(Declaration::Using { item }),
+                SourceRange::new(start, self.current_range().end())
+        ))
+    }
+
+
+    fn parse_use_item(&mut self) -> Result<UseItem<'ta>, ErrorId> {
+        let start = self.current_range().start();
+        let ident = self.expect_identifier()?;
+
+        let mut func = || {
+            if self.peek_is(TokenKind::Slash) {
+                self.advance();
+                self.advance();
+                if self.current_is(TokenKind::Star) {
+                    return Ok(UseItemKind::All { name: ident })
+                }
+
+                let inner = self.parse_use_item()?;
+                return Ok(UseItemKind::List { 
+                        name: ident, 
+                        list: self.arena.alloc_new([inner]) })
+            }
+
+
+            if self.peek_is(TokenKind::LeftParenthesis) {
+                self.advance();
+                self.advance();
+
+                let pool = ArenaPool::tls_get_rec();
+                let mut vec = Vec::new_in(&*pool);
+
+                loop {
+                    if self.current_is(TokenKind::RightParenthesis) { break }
+
+                    if !vec.is_empty() {
+                        self.expect(TokenKind::Comma)?;
+                        self.advance();
+                    }
+
+                    if self.current_is(TokenKind::RightParenthesis) { break }
+
+                    let item = self.parse_use_item()?;
+                    vec.push(item);
+                    self.advance();
+                }
+
+                return Ok(UseItemKind::List { 
+                    name: ident, list: vec.move_into(self.arena).leak() })
+
+            }
+
+            Ok(UseItemKind::BringName { name: ident })
+
+        };
+
+        let item = func()?;
+
+        Ok(UseItem::new(item, SourceRange::new(start, self.current_range().end())))
     }
 
 
