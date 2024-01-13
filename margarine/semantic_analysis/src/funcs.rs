@@ -1,4 +1,4 @@
-use common::string_map::StringIndex;
+use common::{string_map::StringIndex, Swap};
 use sti::{define_key, keyed::KVec};
 use wasm::FunctionId;
 
@@ -36,7 +36,7 @@ impl<'a> Function<'a> {
 
 #[derive(Debug)]
 pub struct FunctionMap<'a> {
-    map: KVec<FuncId, Function<'a>>,
+    map: KVec<FuncId, Option<Function<'a>>>,
 }
 
 
@@ -50,12 +50,18 @@ impl<'a> FunctionMap<'a> {
 
     #[inline(always)]
     pub fn get(&self, id: FuncId) -> Function<'a> {
-        *self.map.get(id).unwrap()
+        self.map.get(id).unwrap().unwrap()
     }
 
 
     #[inline(always)]
-    pub fn put(&mut self, ns: Function<'a>) -> FuncId {
-        self.map.push(ns)
+    pub fn pending(&mut self) -> FuncId {
+        self.map.push(None)
+    }
+
+
+    #[inline(always)]
+    pub fn put(&mut self, func_id: FuncId, ns: Function<'a>) {
+        assert!(self.map[func_id].swap(Some(ns)).is_none());
     }
 }
