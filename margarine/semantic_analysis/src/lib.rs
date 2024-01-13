@@ -17,7 +17,7 @@ use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEn
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
-use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::TypeStruct};
+use crate::{types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::TypeStruct}, scope::ExplicitNamespace};
 
 #[derive(Debug)]
 pub struct Analyzer<'me, 'out, 'str> {
@@ -333,6 +333,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
         let mut scope = self.scopes.push(scope);
 
         self.collect_impls(builder, &mut ty_builder, nodes, &mut scope, ns_id);
+        self.collect_uses(nodes, builder, &mut scope, ns_id);
         self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
         
         {
@@ -379,6 +380,7 @@ impl Analyzer<'_, '_, '_> {
         namespace: NamespaceId,
     ) {
         for node in nodes {
+            let source = node.range();
             let NodeKind::Declaration(decl) = node.kind()
             else { continue };
 
@@ -404,7 +406,20 @@ impl Analyzer<'_, '_, '_> {
 
                 parser::nodes::Declaration::Using { .. } => (),
 
-                parser::nodes::Declaration::Module { .. } => (),
+                parser::nodes::Declaration::Module { name, .. } => {
+                    let ns = self.namespaces.get_mut(namespace);
+                    if ns .get_mod(name).is_some() {
+                        builder.error(self.error(Error::NameIsAlreadyDefined { 
+                           source, name }));
+
+                        continue
+                    }
+
+                    let ns = Namespace::new();
+                    let ns = self.namespaces.put(ns);
+                    let namespace = self.namespaces.get_mut(namespace);
+                    namespace.add_mod(name, ns);
+                },
 
                 parser::nodes::Declaration::Extern { .. } => (),
             }
@@ -450,16 +465,8 @@ impl Analyzer<'_, '_, '_> {
 
 
                 Declaration::Module { name, body } => {
-                    let ns = self.namespaces.get(ns_id);
-                    if ns.get_mod(*name).is_some() {
-                        builder.error(self.error(Error::NameIsAlreadyDefined { source, name: *name }));
-                        continue;
-                    };
-
-                    let ns = Namespace::new();
-                    let ns = self.namespaces.put(ns);
-                    let ns_id = self.namespaces.get_mut(ns_id);
-                    ns_id.add_mod(*name, ns);
+                    let ns_id = self.namespaces.get(ns_id);
+                    let ns = ns_id.get_mod(*name).unwrap();
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let mut scope = self.scopes.push(scope);
@@ -473,38 +480,7 @@ impl Analyzer<'_, '_, '_> {
 
 
                 Declaration::Using { item } => {
-                    fn resolve_item(
-                        anal: &mut Analyzer,
-                        scope_id: &mut ScopeId,
-                        ns: NamespaceId,
-                        item: &UseItem,
-                    ) -> Result<(), ErrorId> {
-                        match item.kind() {
-                            UseItemKind::List { name, list } => todo!(),
-                            UseItemKind::BringName { name } => todo!(),
-
-                            UseItemKind::All { name } => {
-                                let scope = anal.scopes.get(*scope_id);
-                                let module = scope.get_mod(name, &anal.scopes, &anal.namespaces);
-                                let Some(module) = module
-                                else {
-                                    return Err(anal.error(Error::NamespaceNotFound {
-                                        source: item.range(),
-                                        namespace: name }));
-                                };
-
-                                let scope = Scope::new(ScopeKind::ImplicitNamespace(module), scope_id.some());
-                                *scope_id = anal.scopes.push(scope);
-                            },
-                        };
-
-                        Ok(())
-                    }
-
-                    if let Err(e) = resolve_item(self, scope, ns_id, item) {
-                        builder.error(e);
-                        continue
-                    }
+                    
                 }
 
                 _ => continue
@@ -512,6 +488,96 @@ impl Analyzer<'_, '_, '_> {
         }
 
     }
+
+
+    pub fn collect_uses<'a>(
+        &mut self,
+        nodes: &[Node],
+
+        builder: &mut WasmFunctionBuilder,
+        scope: &mut ScopeId,
+        ns_id: NamespaceId,
+    ) {
+        fn resolve_item(
+            anal: &mut Analyzer,
+            scope_id: ScopeId,
+            ns: NamespaceId,
+            item: &UseItem,
+        ) -> Result<Scope, ErrorId> {
+            let scope = anal.scopes.get(scope_id);
+            let module = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
+            let Some(module) = module
+            else {
+                return Err(anal.error(Error::NamespaceNotFound {
+                    source: item.range(),
+                    namespace: item.name() }));
+            };
+
+            let result = match item.kind() {
+                UseItemKind::List { list } => {
+                    let mut curr_scope = scope;
+                    let module_scope = Scope::new(ScopeKind::ImplicitNamespace(module), scope_id.some());
+                    let module_scope = anal.scopes.push(module_scope);
+                    
+                    for i in list.iter() {
+                        let scope = resolve_item(anal, module_scope, ns, i)?;
+
+                        // swap out the parent
+                        {
+                            let mut root = scope;
+                            let mut root_id = None;
+                            while scope.parent() != module_scope.some() {
+                                root = anal.scopes.get(scope.parent().unwrap());
+                                root_id = Some(scope.parent().unwrap());
+                            }
+
+                            let scope = Scope::new(root.kind(), anal.scopes.push(curr_scope).some());
+                            anal.scopes.swap(root_id.unwrap(), scope);
+                        }
+
+                        curr_scope = scope;
+                    }
+
+                    curr_scope
+                },
+
+                UseItemKind::BringName => {
+                    let scope = ExplicitNamespace {
+                        name: item.name(),
+                        namespace: module,
+                    };
+
+                    let scope = Scope::new(ScopeKind::ExplicitNamespace(scope), scope_id.some());
+                    scope
+                },
+
+                UseItemKind::All  => {
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(module), scope_id.some());
+                    scope
+                },
+            };
+
+            Ok(result)
+        }
+
+        for node in nodes {
+            let source = node.range();
+
+            let NodeKind::Declaration(decl) = node.kind()
+            else { continue };
+
+            let Declaration::Using { item } = decl
+            else { continue };
+
+
+            if let Err(e) = resolve_item(self, *scope, ns_id, item) {
+                builder.error(e);
+                continue
+            }
+        }
+    }
+
+
 
 
     pub fn resolve_names<'a>(

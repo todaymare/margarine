@@ -532,11 +532,14 @@ impl Display for UnaryOperator {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UseItem<'a> {
     kind: UseItemKind<'a>,
+    name: StringIndex,
     range: SourceRange,
 }
 
 impl<'a> UseItem<'a> {
-    pub fn new(kind: UseItemKind<'a>, range: SourceRange) -> Self { Self { kind, range } }
+    pub fn new(name: StringIndex, kind: UseItemKind<'a>, range: SourceRange) -> Self { Self { kind, range, name } }
+    #[inline(always)]
+    pub fn name(self) -> StringIndex { self.name}
     #[inline(always)]
     pub fn kind(self) -> UseItemKind<'a> { self.kind }
     #[inline(always)]
@@ -547,13 +550,8 @@ impl<'a> UseItem<'a> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UseItemKind<'a> {
     List {
-        name: StringIndex, 
         list: &'a [UseItem<'a>],
     },
-    BringName {
-        name: StringIndex,
-    },
-    All {
-        name: StringIndex,
-    },
+    BringName,
+    All,
 }

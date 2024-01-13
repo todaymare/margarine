@@ -1038,12 +1038,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 self.advance();
                 self.advance();
                 if self.current_is(TokenKind::Star) {
-                    return Ok(UseItemKind::All { name: ident })
+                    return Ok(UseItemKind::All)
                 }
 
                 let inner = self.parse_use_item()?;
                 return Ok(UseItemKind::List { 
-                        name: ident, 
                         list: self.arena.alloc_new([inner]) })
             }
 
@@ -1071,17 +1070,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 }
 
                 return Ok(UseItemKind::List { 
-                    name: ident, list: vec.move_into(self.arena).leak() })
+                    list: vec.move_into(self.arena).leak() })
 
             }
 
-            Ok(UseItemKind::BringName { name: ident })
+            Ok(UseItemKind::BringName)
 
         };
 
         let item = func()?;
 
-        Ok(UseItem::new(item, SourceRange::new(start, self.current_range().end())))
+        Ok(UseItem::new(ident, item, SourceRange::new(start, self.current_range().end())))
     }
 
 
