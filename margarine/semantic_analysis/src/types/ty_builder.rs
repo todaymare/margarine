@@ -455,8 +455,9 @@ impl<'out> TypeBuilder<'_> {
                     wf.sptr_const(alloc);
                     data.module_builder.register(wf);
                     
-                    let func = data.function_map.put(func);
-                    ns.add_func(f.name(), func);
+                    let func_id = data.function_map.pending();
+                    data.function_map.put(func_id, func);
+                    ns.add_func(f.name(), func_id);
                 }
             },
 
@@ -474,8 +475,9 @@ impl<'out> TypeBuilder<'_> {
                     let func = Function::new(*f, &[], Type::Custom(ty), wfid,
                         FunctionKind::UserDefined { inout: None });
 
-                    let func = data.function_map.put(func);
-                    ns.add_func(*f, func);
+                    let func_id = data.function_map.pending();
+                    data.function_map.put(func_id, func);
+                    ns.add_func(*f, func_id);
                 }
             },
         }

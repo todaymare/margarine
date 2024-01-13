@@ -1,8 +1,17 @@
-fn main(): int {
-    add(69, 420)
+use std ( A, io/IO, io )
+
+mod std {
+    fn add(v: int, v2: int) : int { v + v2 }
+
+    struct A { i: int }
+
+
+    mod io {
+        struct IO {i: A}
+    }
 }
 
 
-extern "std" {
-    fn add(v1: int, v2: int): int
+fn main(io: io::IO): int {
+    add(69, 420)
 }

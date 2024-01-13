@@ -401,14 +401,24 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                parser::nodes::Declaration::Function { .. } => (),
+                parser::nodes::Declaration::Function { name, header, .. } => {
+                    let namespace = self.namespaces.get_mut(namespace);
+                    if namespace.get_func(name).is_some() {
+                        builder.error(self.error(Error::NameIsAlreadyDefined { 
+                           source: header, name }));
+
+                        continue
+                    }
+
+                    namespace.add_func(name, self.funcs.pending())
+                },
                 parser::nodes::Declaration::Impl { .. } => (),
 
                 parser::nodes::Declaration::Using { .. } => (),
 
                 parser::nodes::Declaration::Module { name, .. } => {
                     let ns = self.namespaces.get_mut(namespace);
-                    if ns .get_mod(name).is_some() {
+                    if ns.get_mod(name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
                            source, name }));
 
@@ -417,6 +427,7 @@ impl Analyzer<'_, '_, '_> {
 
                     let ns = Namespace::new();
                     let ns = self.namespaces.put(ns);
+
                     let namespace = self.namespaces.get_mut(namespace);
                     namespace.add_mod(name, ns);
                 },
@@ -504,35 +515,44 @@ impl Analyzer<'_, '_, '_> {
             ns: NamespaceId,
             item: &UseItem,
         ) -> Result<Scope, ErrorId> {
-            let scope = anal.scopes.get(scope_id);
-            let module = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
-            let Some(module) = module
-            else {
-                return Err(anal.error(Error::NamespaceNotFound {
-                    source: item.range(),
-                    namespace: item.name() }));
-            };
-
             let result = match item.kind() {
                 UseItemKind::List { list } => {
+                    let scope = anal.scopes.get(scope_id);
+                    let module = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
+                    let Some(module) = module
+                    else {
+                        return Err(anal.error(Error::NamespaceNotFound {
+                            source: item.range(),
+                            namespace: item.name() }));
+                    };
+
                     let mut curr_scope = scope;
-                    let module_scope = Scope::new(ScopeKind::ImplicitNamespace(module), scope_id.some());
+                    let module_scope = Scope::new(ScopeKind::ImplicitNamespace(module), None.into());
                     let module_scope = anal.scopes.push(module_scope);
                     
                     for i in list.iter() {
-                        let scope = resolve_item(anal, module_scope, ns, i)?;
+                        let mut scope = resolve_item(anal, module_scope, ns, i)?;
 
                         // swap out the parent
                         {
                             let mut root = scope;
                             let mut root_id = None;
-                            while scope.parent() != module_scope.some() {
-                                root = anal.scopes.get(scope.parent().unwrap());
-                                root_id = Some(scope.parent().unwrap());
+                            while root.parent().is_some() && root.parent() != module_scope.some() {
+                                let parent = root.parent().unwrap();
+                                root = anal.scopes.get(parent);
+                                root_id = Some(parent);
                             }
 
-                            let scope = Scope::new(root.kind(), anal.scopes.push(curr_scope).some());
-                            anal.scopes.swap(root_id.unwrap(), scope);
+                            scope = Scope::new(root.kind(), anal.scopes.push(curr_scope).some());
+                            match root_id {
+                                // found the root
+                                Some(root_id) => {
+                                    assert_ne!(root_id, module_scope);
+                                    anal.scopes.swap(root_id, scope);
+                                },
+                                // the root is `scope` itself
+                                None => (),
+                            };
                         }
 
                         curr_scope = scope;
@@ -542,16 +562,55 @@ impl Analyzer<'_, '_, '_> {
                 },
 
                 UseItemKind::BringName => {
-                    let scope = ExplicitNamespace {
-                        name: item.name(),
-                        namespace: module,
-                    };
+                    let scope = anal.scopes.get(scope_id);
+                    let i = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
+                    if let Some(module) = i {
+                        let scope = ExplicitNamespace {
+                            name: item.name(),
+                            namespace: module,
+                        };
 
-                    let scope = Scope::new(ScopeKind::ExplicitNamespace(scope), scope_id.some());
-                    scope
+                        let scope = Scope::new(ScopeKind::ExplicitNamespace(scope), scope_id.some());
+                        return Ok(scope) 
+                    }
+
+                    let i = scope.get_type(item.name(), &anal.scopes, &anal.namespaces);
+                    if let Some(ty) = i {
+                        let mut ns = Namespace::with_ty_cap(1);
+                        ns.add_type(item.name(), ty);
+
+                        let ty = anal.namespaces.put(ns);
+
+                        let scope = Scope::new(ScopeKind::ImplicitNamespace(ty), scope_id.some());
+                        return Ok(scope) 
+                    }
+
+                    let i = scope.get_func(item.name(), &anal.scopes, &anal.namespaces);
+                    if let Some(func) = i {
+                        let mut ns = Namespace::with_fn_cap(1);
+                        ns.add_func(item.name(), func);
+
+                        let ty = anal.namespaces.put(ns);
+
+                        let scope = Scope::new(ScopeKind::ImplicitNamespace(ty), scope_id.some());
+                        return Ok(scope) 
+                    }
+
+                    panic!();
+                    return Err(anal.error(Error::NamespaceNotFound { 
+                        source: item.range(), namespace: item.name() }))
                 },
 
                 UseItemKind::All  => {
+                    let scope = anal.scopes.get(scope_id);
+                    let module = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
+                    let Some(module) = module
+                    else {
+                        return Err(anal.error(Error::NamespaceNotFound {
+                            source: item.range(),
+                            namespace: item.name() }));
+                    };
+
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(module), scope_id.some());
                     scope
                 },
@@ -692,12 +751,6 @@ impl Analyzer<'_, '_, '_> {
             match decl {
                 Declaration::Function { name, header, arguments, return_type, .. } => {
                     let ns = self.namespaces.get(ns_id);
-                    if ns.get_func(*name).is_some() {
-                        builder.error(self.error(Error::NameIsAlreadyDefined { 
-                           source: *header, name: *name }));
-
-                        continue
-                    }
 
                     let args = {
                         let mut args = Vec::with_cap_in(self.output, arguments.len());
@@ -734,23 +787,17 @@ impl Analyzer<'_, '_, '_> {
                     } else { None };
 
                     let ns = self.namespaces.get_mut(ns_id);
+                    let func_id = ns.get_func(*name).unwrap();
                     let func = FunctionKind::UserDefined {
                         inout: inout_ty_id,  };
                     let func = Function::new(*name, args.leak(), ret, self.module_builder.function_id(), func);
-                    let func = self.funcs.put(func);
-                    ns.add_func(*name, func);
+                    self.funcs.put(func_id, func);
                 },
 
 
                 Declaration::Extern { file, functions  } => {
                     for f in functions.iter() {
                         let ns = self.namespaces.get(ns_id);
-                        if ns.get_func(f.name()).is_some() {
-                            builder.error(self.error(Error::NameIsAlreadyDefined { 
-                               source: f.range(), name: f.name() }));
-
-                            continue
-                        }
 
                         let args = {
                             let mut args = Vec::with_cap_in(self.output, f.args().len());
@@ -790,10 +837,11 @@ impl Analyzer<'_, '_, '_> {
                         let wfid = self.module_builder.extern_func(*file, f.path());
                         
                         let ns = self.namespaces.get_mut(ns_id);
+                        let func_id = ns.get_func(f.name()).unwrap();
                         let func = FunctionKind::Extern { ty };
                         let func = Function::new(f.name(), args.leak(), ret, wfid, func);
-                        let func = self.funcs.put(func);
-                        ns.add_func(f.name(), func);
+                        self.funcs.put(func_id, func);
+                        ns.add_func(f.name(), func_id);
                     }
                 },
 
@@ -983,6 +1031,7 @@ impl Analyzer<'_, '_, '_> {
 
             Declaration::Using { .. } => (),
             Declaration::Module { name, body } => {
+                dbg!(self.string_map.get(*name));
                 let ns = self.scopes.get(*scope);
                 let ns = ns.get_mod(*name, &self.scopes, &self.namespaces).unwrap();
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
