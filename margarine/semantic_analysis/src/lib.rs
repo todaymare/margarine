@@ -561,8 +561,6 @@ impl Analyzer<'_, '_, '_> {
         }
 
         for node in nodes {
-            let source = node.range();
-
             let NodeKind::Declaration(decl) = node.kind()
             else { continue };
 
@@ -570,9 +568,12 @@ impl Analyzer<'_, '_, '_> {
             else { continue };
 
 
-            if let Err(e) = resolve_item(self, *scope, ns_id, item) {
-                builder.error(e);
-                continue
+            match resolve_item(self, *scope, ns_id, item) {
+                Ok(v) => *scope = self.scopes.push(v),
+                Err(e) => {
+                    builder.error(e);
+                    continue
+                }
             }
         }
     }
