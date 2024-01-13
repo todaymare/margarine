@@ -1,4 +1,4 @@
-use common::{string_map::{StringIndex, StringMap}, source::SourceRange};
+use common::{string_map::{StringIndex, StringMap}, source::SourceRange, Swap};
 use sti::{packed_option::PackedOption, define_key, keyed::KVec};
 use wasm::{LocalId, LoopId};
 
@@ -223,7 +223,7 @@ impl VariableScope {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExplicitNamespace {
-    name: StringIndex,
+    pub name: StringIndex,
     pub namespace: NamespaceId,
 }
 
@@ -265,5 +265,10 @@ impl ScopeMap {
     #[inline(always)]
     pub fn get(&self, scope_id: ScopeId) -> Scope {
         *self.map.get(scope_id).unwrap()
+    }
+
+    #[inline(always)]
+    pub fn swap(&mut self, scope_id: ScopeId, scope: Scope) -> Scope {
+        self.map.get_mut(scope_id).unwrap().swap(scope)
     }
 }
