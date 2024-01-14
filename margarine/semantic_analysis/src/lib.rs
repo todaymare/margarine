@@ -596,7 +596,6 @@ impl Analyzer<'_, '_, '_> {
                         return Ok(scope) 
                     }
 
-                    panic!();
                     return Err(anal.error(Error::NamespaceNotFound { 
                         source: item.range(), namespace: item.name() }))
                 },
@@ -914,6 +913,7 @@ impl Analyzer<'_, '_, '_> {
                 wasm.unit();
                 AnalysisResult::error()
             },
+            NodeKind::Attribute(_, _) => todo!(),
         }
     }
 
@@ -1031,7 +1031,6 @@ impl Analyzer<'_, '_, '_> {
 
             Declaration::Using { .. } => (),
             Declaration::Module { name, body } => {
-                dbg!(self.string_map.get(*name));
                 let ns = self.scopes.get(*scope);
                 let ns = ns.get_mod(*name, &self.scopes, &self.namespaces).unwrap();
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());

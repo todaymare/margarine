@@ -8,7 +8,7 @@ use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument,
-    ExternFunction, Expression, BinaryOperator, Statement, EnumMapping, UseItem, UseItemKind};
+    ExternFunction, Expression, BinaryOperator, Statement, EnumMapping, UseItem, UseItemKind, Attribute};
 use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in, alloc::Alloc};
 
 use crate::nodes::MatchMapping;
@@ -423,6 +423,65 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
+    fn parse_with_tag(
+        &mut self, 
+        settings: &ParserSettings<'ta>,
+        func: fn(&mut Self, &ParserSettings<'ta>) -> ParseResult<'ta>,
+    ) -> ParseResult<'ta> {
+        let start = self.current_range().start();
+        self.expect(TokenKind::At)?;
+        self.advance();
+
+        let attr = self.parse_attribute()?;
+        self.advance();
+        let func = func(self, settings)?;
+        let func = self.arena.alloc_new(func);
+
+
+        Ok(Node::new(NodeKind::Attribute(attr, func), 
+                SourceRange::new(start, self.current_range().end())))
+    }
+
+
+    fn parse_attribute(&mut self) -> Result<Attribute<'ta>, ErrorId> {
+        let start = self.current_range().start();
+        let ident = self.expect_identifier()?;
+
+        let mut func = || -> Result<&'ta [Attribute<'ta>], ErrorId> {
+            if self.peek_is(TokenKind::LeftParenthesis) {
+                self.advance();
+                self.advance();
+
+                let pool = ArenaPool::tls_get_rec();
+                let mut vec = Vec::new_in(&*pool);
+
+                loop {
+                    if self.current_is(TokenKind::RightParenthesis) { break }
+
+                    if !vec.is_empty() {
+                        self.expect(TokenKind::Comma)?;
+                        self.advance();
+                    }
+
+                    if self.current_is(TokenKind::RightParenthesis) { break }
+
+                    let item = self.parse_attribute()?;
+                    vec.push(item);
+                    self.advance();
+                }
+
+                return Ok(vec.move_into(self.arena).leak())
+            }
+
+            Ok(&[])
+        };
+
+        let item = func()?;
+
+        Ok(Attribute::new(ident, item, SourceRange::new(start, self.current_range().end())))
+    }
+
+
     fn current_is(&self, token_kind: TokenKind) -> bool {
         self.current_kind() == token_kind
     }
@@ -535,7 +594,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Let) => self.let_statement(),
 
 
-            // TokenKind::At => self.parse_with_tag(&settings, Self::statement),
+            TokenKind::At => self.parse_with_tag(&settings, Self::statement),
 
 
             _ => self.assignment(&settings),
@@ -973,7 +1032,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let start = self.current_range().start();
             let name = self.expect_identifier()?;
 
-            let (data_type, is_implicit_unit)=
+            let (data_type, is_implicit_unit) =
                 if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance();
                     self.advance();
@@ -1573,7 +1632,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::If) => self.if_expression(),
             
             
-            // TokenKind::At => self.parse_with_tag(settings, Self::expression),
+            TokenKind::At => self.parse_with_tag(settings, Self::expression),
 
 
             TokenKind::Keyword(Keyword::Return) => {
