@@ -41,6 +41,7 @@ pub enum NodeKind<'a> {
     Declaration(Declaration<'a>),
     Statement(Statement<'a>),
     Expression(Expression<'a>),
+    Attribute(Attribute<'a>, &'a Node<'a>),
     Error(ErrorId),
 }
 
@@ -555,3 +556,22 @@ pub enum UseItemKind<'a> {
     BringName,
     All,
 }
+
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Attribute<'a> {
+    subs: &'a [Attribute<'a>],
+    name: StringIndex,
+    range: SourceRange,
+}
+
+impl<'a> Attribute<'a> {
+    pub fn new(name: StringIndex, subs: &'a [Attribute<'a>], range: SourceRange) -> Self { Self { subs, range, name } }
+    #[inline(always)]
+    pub fn name(self) -> StringIndex { self.name}
+    #[inline(always)]
+    pub fn subs(self) -> &'a [Attribute<'a>] { self.subs }
+    #[inline(always)]
+    pub fn range(self) -> SourceRange { self.range }
+}
+
