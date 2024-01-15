@@ -4,12 +4,12 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
-use std::fmt::Write;
+use std::{fmt::Write};
 
 use common::{source::SourceRange, string_map::StringMap};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
-use funcs::{FunctionMap, Function, FunctionKind};
+use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping, UseItemKind, UseItem}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
@@ -30,6 +30,7 @@ pub struct Analyzer<'me, 'out, 'str> {
 
     pub module_builder: WasmModuleBuilder<'out, 'str>,
     pub errors: KVec<SemaError, Error>,
+    pub startup_functions: Vec<FuncId>,
 
     options_map: HashMap<Type, TypeId>,
     results_map: HashMap<(Type, Type), TypeId>,
@@ -253,6 +254,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             options_map: HashMap::new(),
             results_map: HashMap::new(),
             tuple_map: HashMap::new(),
+            startup_functions: Vec::new(),
         };
 
         slf.module_builder.memory(64 * 1024);
@@ -306,6 +308,17 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
 
         slf.block(&mut func, scope, nodes);
         func.pop();
+
+        for s in slf.startup_functions.iter() {
+            let f = slf.funcs.get(*s);
+            assert!(f.args.is_empty(), "resources are not ready yet");
+            let ret_ty = f.ret.to_wasm_ty(&slf.types).stack_size();
+            if ret_ty != 0 {
+                let alloc = func.alloc_stack(ret_ty);
+                func.sptr_const(alloc);
+            }
+            func.call(f.wasm_id);
+        }
 
         slf.module_builder.register(func);
 
@@ -381,8 +394,16 @@ impl Analyzer<'_, '_, '_> {
     ) {
         for node in nodes {
             let source = node.range();
-            let NodeKind::Declaration(decl) = node.kind()
-            else { continue };
+            let decl = match node.kind() {
+                NodeKind::Declaration(decl) => decl,
+                NodeKind::Attribute(_, node) => {
+                    self.collect_type_names(std::slice::from_ref(node), builder, type_builder, namespace);
+                    continue
+                }
+
+                _ => continue,
+            };
+
 
             match *decl {
                 | parser::nodes::Declaration::Enum { name, header, .. }
@@ -448,9 +469,16 @@ impl Analyzer<'_, '_, '_> {
         ns_id: NamespaceId,
     ) {
         for node in nodes {
-            let source = node.range();
-            let NodeKind::Declaration(decl) = node.kind()
-            else { continue };
+            let decl = match node.kind() {
+                NodeKind::Declaration(decl) => decl,
+                NodeKind::Attribute(_, node) => {
+                    self.collect_impls(builder, type_builder, std::slice::from_ref(node), scope, ns_id);
+                    continue
+                }
+
+                _ => continue,
+            };
+
 
             match decl {
                 Declaration::Impl { data_type, body } => {
@@ -619,8 +647,15 @@ impl Analyzer<'_, '_, '_> {
         }
 
         for node in nodes {
-            let NodeKind::Declaration(decl) = node.kind()
-            else { continue };
+            let decl = match node.kind() {
+                NodeKind::Declaration(decl) => decl,
+                NodeKind::Attribute(_, node) => {
+                    self.collect_uses(std::slice::from_ref(node), builder, scope, ns_id);
+                    continue
+                }
+
+                _ => continue,
+            };
 
             let Declaration::Using { item } = decl
             else { continue };
@@ -649,10 +684,15 @@ impl Analyzer<'_, '_, '_> {
         ns_id: NamespaceId,
     ) {
         for node in nodes {
-            let source = node.range();
+            let decl = match node.kind() {
+                NodeKind::Declaration(decl) => decl,
+                NodeKind::Attribute(_, node) => {
+                    self.resolve_names(std::slice::from_ref(node), builder, type_builder, scope, ns_id);
+                    continue
+                }
 
-            let NodeKind::Declaration(decl) = node.kind()
-            else { continue };
+                _ => continue,
+            };
 
             match decl {
                 Declaration::Struct { name, fields, .. } => {
@@ -744,8 +784,15 @@ impl Analyzer<'_, '_, '_> {
         for node in nodes {
             let source = node.range();
 
-            let NodeKind::Declaration(decl) = node.kind()
-            else { continue };
+            let decl = match node.kind() {
+                NodeKind::Declaration(decl) => decl,
+                NodeKind::Attribute(_, node) => {
+                    self.resolve_functions(std::slice::from_ref(node), builder, scope, ns_id);
+                    continue
+                }
+
+                _ => continue,
+            };
 
             match decl {
                 Declaration::Function { name, header, arguments, return_type, .. } => {
@@ -913,7 +960,37 @@ impl Analyzer<'_, '_, '_> {
                 wasm.unit();
                 AnalysisResult::error()
             },
-            NodeKind::Attribute(_, _) => todo!(),
+
+            NodeKind::Attribute(attr, node) => {
+                match self.string_map.get(attr.name()) {
+                    "startup" => {
+                        if !matches!(node.kind(), NodeKind::Declaration(Declaration::Function { is_system: true, .. })) {
+                            wasm.error(self.error(Error::InvalidValueForAttr {
+                                attr: (attr.range(), attr.name()),
+                                value: node.range(),
+                                expected: "a system function",
+                            }));
+                            wasm.unit();
+                            return AnalysisResult::error();
+                        }
+
+                        let result = self.node(scope, wasm, node);
+                        let NodeKind::Declaration(Declaration::Function { name, .. }) = node.kind()
+                        else { unreachable!() };
+
+                        let func = self.scopes.get(*scope).get_func(*name, &self.scopes, &self.namespaces).unwrap();
+
+                        self.startup_functions.push(func);
+
+                        result
+                    }
+                    _ => {
+                        wasm.error(self.error(Error::UnknownAttr(attr.range(), attr.name())));
+                        wasm.unit();
+                        AnalysisResult::error()
+                    }
+                }
+            },
         }
     }
 

@@ -2,13 +2,21 @@ use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
-use parser::nodes::{BinaryOperator, UnaryOperator};
+use parser::nodes::{BinaryOperator, UnaryOperator, Attribute};
 use sti::vec::Vec;
 
 use crate::types::{ty::Type, ty_map::TypeMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {
+    InvalidValueForAttr {
+        attr: (SourceRange, StringIndex),
+        value: SourceRange,
+        expected: &'static str,
+    },
+
+    UnknownAttr(SourceRange, StringIndex),
+
     NameIsAlreadyDefined {
         source: SourceRange,
         name: StringIndex,
@@ -667,6 +675,17 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             },
 
             
+            Error::UnknownAttr(source, name) => {
+                fmt.error("unknown attribute")
+                    .highlight(*source);
+            },
+
+            Error::InvalidValueForAttr { attr, value, expected } => {
+                let msg = format!("is an invalid value for attribute '{}' which expects {expected}", fmt.string(attr.1));
+                fmt.error("invalid value for attribute")
+                    .highlight_with_note(*value, &msg);
+            },
+
             Error::Bypass => (),
         }
     }
