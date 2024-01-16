@@ -1,15 +1,15 @@
 extern crate proc_macro;
 use core::panic;
-use std::{time::{Duration, Instant, UNIX_EPOCH}, hash::Hash, sync::atomic::AtomicUsize};
+use std::sync::atomic::AtomicUsize;
 
-use proc_macro::{TokenStream};
+use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemFn, Type, Ident, token::{Group, Comma}, punctuated::Punctuated, PatType, ItemStruct, ItemEnum, spanned::Spanned};
+use syn::{ItemFn, Type, Ident, PatType, ItemStruct, ItemEnum, spanned::Spanned};
 
 static COUNTER : AtomicUsize = AtomicUsize::new(0);
 
 #[proc_macro_attribute]
-pub fn margarine(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn margarine(_: TokenStream, item: TokenStream) -> TokenStream {
     match syn::parse2(item.clone().into()) {
         Ok(it) => return margarine_function(it),
         Err(_) => (),
