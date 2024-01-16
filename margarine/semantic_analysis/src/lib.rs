@@ -4,7 +4,7 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
-use std::{fmt::Write};
+use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::StringMap};
 use ::errors::{ErrorId, SemaError};
@@ -518,9 +518,7 @@ impl Analyzer<'_, '_, '_> {
                 }
 
 
-                Declaration::Using { item } => {
-                    
-                }
+                Declaration::Using { .. } => (), 
 
                 _ => continue
             }
@@ -795,9 +793,7 @@ impl Analyzer<'_, '_, '_> {
             };
 
             match decl {
-                Declaration::Function { name, header, arguments, return_type, .. } => {
-                    let ns = self.namespaces.get(ns_id);
-
+                Declaration::Function { name, arguments, return_type, .. } => {
                     let args = {
                         let mut args = Vec::with_cap_in(self.output, arguments.len());
 
@@ -843,8 +839,6 @@ impl Analyzer<'_, '_, '_> {
 
                 Declaration::Extern { file, functions  } => {
                     for f in functions.iter() {
-                        let ns = self.namespaces.get(ns_id);
-
                         let args = {
                             let mut args = Vec::with_cap_in(self.output, f.args().len());
 
@@ -2342,7 +2336,7 @@ impl Analyzer<'_, '_, '_> {
                                 let ns = slf.namespaces.get(ns);
                                 let call_func = ns.get_func(StringMap::NONE).unwrap();
                                 let call_func = slf.funcs.get(call_func);
-                                let FunctionKind::UserDefined { inout } = call_func.kind
+                                let FunctionKind::UserDefined { .. } = call_func.kind
                                 else { unreachable!() };
 
                                 let func_ret_wasm_ty = func.return_type.to_wasm_ty(&slf.types);
@@ -2406,7 +2400,7 @@ impl Analyzer<'_, '_, '_> {
                                 let ns = slf.namespaces.get(ns);
                                 let call_func = ns.get_func(StringMap::ERR).unwrap();
                                 let call_func = slf.funcs.get(call_func);
-                                let FunctionKind::UserDefined { inout } = call_func.kind
+                                let FunctionKind::UserDefined { .. } = call_func.kind
                                 else { unreachable!() };
 
                                 // Get the error value

@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
-use parser::nodes::{BinaryOperator, UnaryOperator, Attribute};
+use parser::nodes::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
 use crate::types::{ty::Type, ty_map::TypeMap};
@@ -675,7 +675,7 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             },
 
             
-            Error::UnknownAttr(source, name) => {
+            Error::UnknownAttr(source, _) => {
                 fmt.error("unknown attribute")
                     .highlight(*source);
             },

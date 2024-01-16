@@ -28,7 +28,7 @@ fn main() -> Result<(), &'static str> {
              ast
          });
 
-         // println!("{ast:#?}");
+         println!("{ast:#?}");
 
          let ns_arena = Arena::new();
          let _scopes = Arena::new();
@@ -39,6 +39,7 @@ fn main() -> Result<(), &'static str> {
 
          // println!("{sema:#?}");
 
+         dbg!(&sema);
 
          if !lex_errors.is_empty() {
              let report = margarine::display(lex_errors.as_slice().inner(), &sema.string_map, &file, &());
@@ -56,7 +57,6 @@ fn main() -> Result<(), &'static str> {
          }
          
 
-         dbg!(&sema);
          let code = sema.module_builder.build(&mut sema.string_map);
 
          /*

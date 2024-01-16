@@ -9,7 +9,7 @@ use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument,
     ExternFunction, Expression, BinaryOperator, Statement, EnumMapping, UseItem, UseItemKind, Attribute};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in, alloc::Alloc};
+use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::MatchMapping;
 
