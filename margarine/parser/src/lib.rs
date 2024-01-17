@@ -3,7 +3,7 @@ pub mod errors;
 
 use std::ops::Deref;
 
-use common::{source::SourceRange, string_map::{StringMap, StringIndex}, Slice};
+use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
@@ -148,7 +148,7 @@ pub fn parse<'a>(
 ) -> (Block<'a>, KVec<ParserError, Error>) {
 
     let mut parser = Parser {
-        tokens: tokens.as_slice(),
+        tokens: &*tokens,
         index: 0,
         string_map,
         arena,

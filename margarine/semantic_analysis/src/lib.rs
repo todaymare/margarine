@@ -285,7 +285,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
                     false,
                     [
                         (slf.string_map.insert("len"), Type::I64),
-                        (slf.string_map.insert("ptr"), Type::I32),
+                        (slf.string_map.insert("ptr"), Type::I64),
                     ].into_iter(),
                 );
             }
@@ -453,7 +453,20 @@ impl Analyzer<'_, '_, '_> {
                     namespace.add_mod(name, ns);
                 },
 
-                parser::nodes::Declaration::Extern { .. } => (),
+                parser::nodes::Declaration::Extern { functions, .. } => {
+                    for f in functions.iter() {
+                        let namespace = self.namespaces.get_mut(namespace);
+                        if namespace.get_func(f.name()).is_some() {
+                            builder.error(self.error(Error::NameIsAlreadyDefined { 
+                               source: f.range(), name: f.name() }));
+
+                            continue
+                        }
+
+                        namespace.add_func(f.name(), self.funcs.pending())
+                    }
+
+                },
             }
         }
     }
@@ -881,7 +894,6 @@ impl Analyzer<'_, '_, '_> {
                         let func = FunctionKind::Extern { ty };
                         let func = Function::new(f.name(), args.leak(), ret, wfid, func);
                         self.funcs.put(func_id, func);
-                        ns.add_func(f.name(), func_id);
                     }
                 },
 
@@ -1311,7 +1323,7 @@ impl Analyzer<'_, '_, '_> {
                             let ptr = alloc.add(strct.fields[1].offset);
                             wasm.string_const(string_ptr);
                             wasm.sptr_const(ptr);
-                            wasm.i32_write();
+                            wasm.i64_write();
                         }
 
                         wasm.sptr_const(alloc);
