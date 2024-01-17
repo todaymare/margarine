@@ -1,10 +1,11 @@
 use std::{ptr::null, marker::PhantomData};
 
+use proc_macros::margarine;
+
 ///
 /// A pointer to wasm memory
 ///
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[margarine]
 pub struct WasmPtr(u32);
 
 impl WasmPtr {
@@ -45,8 +46,7 @@ impl WasmPtr {
 }
 
 
-#[repr(C)]
-#[derive(Debug, PartialEq)]
+#[margarine]
 pub struct Ptr<T>(i64, PhantomData<T>);
 
 
@@ -64,14 +64,6 @@ impl<T> Ptr<T> {
     }
 }
 
-
-impl<T> Clone for Ptr<T> {
-    fn clone(&self) -> Self {
-        Self(self.0, self.1)
-    }
-}
-
-impl<T> Copy for Ptr<T> {}
 unsafe impl<T> Sync for Ptr<T> {}
 unsafe impl<T> Send for Ptr<T> {}
 
@@ -98,93 +90,23 @@ impl Ctx {
 }
 
 
-
-#[macro_export]
-macro_rules! enum_ty {
-    ($u_name: ident, $name: ident { $($t: literal $n: ident : $ty: ty),* }) => {
-        #[repr(C)]
-        #[derive(Clone, Copy)]
-        struct $name {
-            tag: u32,
-            data: $u_name,
-        }
-
-        #[derive(Clone, Copy)]
-        union $u_name {
-            $(
-                $n : $ty
-            ),*
-        }
-
-        impl std::fmt::Debug for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let mut dbg = f.debug_struct(stringify!($name));
-
-                match self.tag {
-                    $(
-                        $t => dbg.field(stringify!($n), unsafe { &self.data.$n }),
-                    )*
-                    _ => panic!("unknown variant"),
-                };
-                
-                dbg.finish()
-            }
-        }
-
-
-        impl std::cmp::PartialEq for $name {
-            fn eq(&self, oth: &Self) -> bool {
-                if self.tag != oth.tag { return false }
-
-                match self.tag {
-                    $(
-                        $t => unsafe { self.data.$n == oth.data.$n },
-                    )*
-                    _ => panic!("unknown variant"),
-                }
-            }
-        }
-
-
-    };
+#[margarine]
+pub struct Str {
+    len: u64,
+    ptr: *const u8,
 }
 
 
-#[macro_export]
-macro_rules! func {
-    ($(fn $name: ident ( $($n: ident : $aty: ty),* ) -> $ret: ty $body: block )*) => {
-        #[allow(non_camel_case_types)]
-        mod __func_tys {
-            use super::{$($($aty,)* $ret),+};
-            $(
-            #[repr(C)]
-            #[derive(Debug, Clone, Copy)]
-            pub struct $name {
-                $(
-                    pub $n: $aty,
-                )*
-
-                pub __ret: $ret
-            }
-            )*
+impl Str {
+    pub fn new(str: &'static str) -> Self {
+        Self {
+            len: str.len() as u64,
+            ptr: str.as_ptr(),
         }
-
-
-        $(
-        #[no_mangle]
-        pub extern "C" fn $name(ctx: &Ctx, __argp: *mut __func_tys::$name) {
-            let ($($n),*) = {
-                let data = unsafe { &*__argp };
-                ($(data.$n),*)
-            };
-
-            let ret = || -> $ret { $body };
-            let ret = ret();
-
-            unsafe { &mut *__argp }.__ret = ret;
-        }
-        )+
-    };
+    }
+    pub fn read<'a>(self) -> &'a str {
+        let slice = unsafe { std::slice::from_raw_parts(self.ptr, self.len.try_into().unwrap()) };
+        let str = std::str::from_utf8(slice).expect("invalid pointer");
+        str
+    }
 }
-
-

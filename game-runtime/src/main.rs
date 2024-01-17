@@ -71,13 +71,19 @@ fn main() {
     let memory = instance.get_memory(&mut store, "memory").unwrap();
 
     let ptr = memory.data_ptr(&store);
-    unsafe { CTX.set_base(ptr); };
-   
-    let func = instance.get_func(&mut store, "main").unwrap();
-    let mut slice = [Val::null()];
-    func.call(&mut store, &[], &mut slice).unwrap();
+    unsafe { 
+        CTX.set_base(ptr);
+        let size = memory.data_size(&store) - 1;
+        CTX.set_size(size.try_into().unwrap());
+    };
 
-    println!("Result is {slice:?}");
+    instance
+        .get_global(&mut store, "host_memory_offset").unwrap()
+        .set(&mut store, Val::I64((ptr as isize).try_into().unwrap()))
+        .unwrap();
+   
+    let func = instance.get_func(&mut store, "_init").unwrap();
+    func.call(&mut store, &[], &mut []).unwrap();
 
     for l in libs {
         if let Ok(f) = unsafe { l.get::<unsafe extern "C" fn(&Ctx)>(b"_finalise") } {

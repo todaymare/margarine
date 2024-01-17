@@ -1,30 +1,12 @@
 pub mod string_map;
-pub mod fuck_map;
 pub mod hashables;
 pub mod source;
-pub mod small_vec;
-pub mod static_vec;
 
-use std::{ops::{Deref, DerefMut}, time::Instant};
+use std::time::Instant;
 
 use sti::{prelude::Alloc, vec::Vec};
 use colourful::*;
 
-pub trait Slice: Deref {
-    fn as_slice(&self) -> &<Self as Deref>::Target;
-    fn as_mut(&mut self) -> &mut <Self as Deref>::Target;
-}
-
-
-impl<A, T: Deref<Target = [A]> + DerefMut> Slice for T {
-    fn as_slice(&self) -> &<Self as Deref>::Target {
-        self.deref()
-    }
-
-    fn as_mut(&mut self) -> &mut <Self as Deref>::Target {
-        self.deref_mut()
-    }
-}
 
 
 pub struct DropTimer<'a> {

@@ -1,7 +1,7 @@
 #![allow(unused)]
 use std::fmt::Debug;
 
-use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, Slice, hashables::NonNaNF64};
+use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, hashables::NonNaNF64};
 use sti::prelude::Arena;
 
 use crate::{lex, Token, TokenKind, Literal, errors::Error};
@@ -16,7 +16,7 @@ fn empty() {
 
     let tokens = lex(&file_data, &mut symbol_table);
 
-    assert_eq!(tokens.0.as_slice(), vec![
+    assert_eq!(&*tokens.0, vec![
         Token {
             token_kind: TokenKind::EndOfFile,
             source_range: SourceRange::new(0, 0),
@@ -109,7 +109,7 @@ fn numbers() {
     
         let tokens = lex(&file_data, &mut symbol_table);
 
-        compare_individually(tokens.0.as_slice(), vec![
+        compare_individually(&*tokens.0, vec![
             Token {
                 token_kind: TokenKind::Literal(Literal::Integer(123456789)),
                 source_range: SourceRange::new(0, 8),
@@ -132,7 +132,7 @@ fn numbers() {
     
         let tokens = lex(&file_data, &mut symbol_table);
 
-        compare_individually(tokens.0.as_slice(), vec![
+        compare_individually(&*tokens.0, vec![
             Token {
                 token_kind: TokenKind::Literal(Literal::Float(NonNaNF64::new(420.69))),
                 source_range: SourceRange::new(0, 5),
@@ -169,7 +169,7 @@ fn identifiers() {
 
     let tokens = lex(&file_data, &mut symbol_table);
 
-    compare_individually(tokens.0.as_slice(), vec![
+    compare_individually(&*tokens.0, vec![
         Token {
             token_kind: TokenKind::Identifier(symbol_table.insert("hello")),
             source_range: SourceRange::new(0, 4),
@@ -198,7 +198,7 @@ fn string() {
 
         let tokens = lex(&file_data, &mut symbol_table);
 
-        compare_individually(tokens.0.as_slice(), vec![
+        compare_individually(&*tokens.0, vec![
             Token {
                 token_kind: TokenKind::Literal(Literal::String(symbol_table.insert("hello there"))),
                 source_range: SourceRange::new(0, 12),
@@ -234,7 +234,7 @@ fn comments() {
     let file_data = FileData::new(data.to_string(), file, Extension::None);
 
     let tokens = lex(&file_data, &mut symbol_table);
-    compare_individually(tokens.0.as_slice(), vec![
+    compare_individually(&*tokens.0, vec![
         Token {
             token_kind: TokenKind::EndOfFile, 
             source_range: SourceRange::new(data.len() as u32, data.len() as u32),

@@ -56,14 +56,28 @@ fn margarine_function(func: ItemFn) -> TokenStream {
         vec.push(ident.ident);
     }
 
-    let quote = quote!(
-        #[repr(C)]
-        #[derive(Clone, Copy, Debug, PartialEq)]
-        struct #struct_name {
-            #inputs,
-            __ret: #ret,
-        }
+    let quote = if inputs.is_empty() { 
+        quote!(
+            #[repr(C)]
+            #[derive(Clone, Copy, Debug, PartialEq)]
+            struct #struct_name {
+                __ret: #ret,
+            }
+        )
+    } else {
+        quote!(
+            #[repr(C)]
+            #[derive(Clone, Copy, Debug, PartialEq)]
+            struct #struct_name {
+                #inputs,
+                __ret: #ret,
+            }
+        )
+     };
 
+    let quote = quote!(
+        #quote
+    
         #[no_mangle]
         pub extern "C" fn #name(ctx: &Ctx, __argp: *mut #struct_name) {
             let (#(#vec),*) = {
