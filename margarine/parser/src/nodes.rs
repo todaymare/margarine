@@ -193,6 +193,11 @@ pub enum Expression<'a> {
         data_type: DataType<'a>,
     },
 
+    AsCast {
+        lhs: &'a Node<'a>,
+        data_type: DataType<'a>,
+    },
+
     Unwrap(&'a Node<'a>),
 
     OrReturn(&'a Node<'a>),

@@ -72,6 +72,8 @@ impl<T> Clone for Ptr<T> {
 }
 
 impl<T> Copy for Ptr<T> {}
+unsafe impl<T> Sync for Ptr<T> {}
+unsafe impl<T> Send for Ptr<T> {}
 
 
 #[repr(C)]

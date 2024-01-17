@@ -9,6 +9,11 @@ use crate::types::{ty::Type, ty_map::TypeMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {
+    InvalidCast {
+        range: SourceRange,
+        from_ty: Type,
+        to_ty: Type,
+    },
     InvalidValueForAttr {
         attr: (SourceRange, StringIndex),
         value: SourceRange,
@@ -684,6 +689,14 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
                 let msg = format!("is an invalid value for attribute '{}' which expects {expected}", fmt.string(attr.1));
                 fmt.error("invalid value for attribute")
                     .highlight_with_note(*value, &msg);
+            },
+
+            Error::InvalidCast { range, from_ty, to_ty } => {
+                let msg = format!("can't cast '{}' to '{}'", 
+                                  from_ty.display(fmt.string_map(), types),
+                                  to_ty.display(fmt.string_map(), types));
+                fmt.error("invalid as cast")
+                    .highlight_with_note(*range, &msg);
             },
 
             Error::Bypass => (),
