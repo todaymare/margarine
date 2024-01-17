@@ -271,7 +271,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
                 type_builder.add_ty(TypeId::BOOL, StringMap::BOOL, SourceRange::new(0, 0));
                 type_builder.set_enum_fields(
                     TypeId::BOOL,
-                    [(StringMap::TRUE, None), (StringMap::FALSE, None)].into_iter(),
+                    [(StringMap::FALSE, None), (StringMap::TRUE, None)].into_iter(),
                     TypeEnumStatus::User,
                 );
             }
@@ -2189,6 +2189,78 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::CastAny { .. } => todo!(),
+
+
+            Expression::AsCast { lhs, data_type } => {
+                let lhs_anal = self.node(scope, wasm, &lhs);
+                let ty = self.convert_ty(*scope, *data_type);
+                let ty = match ty {
+                    Ok(v) => v,
+                    Err(e) => {
+                        wasm.error(self.error(e));
+                        return AnalysisResult::error()
+                    }
+                };
+
+
+                match (lhs_anal.ty, ty) {
+                    | (Type::Error, _)
+                    | (_, Type::Error) => return AnalysisResult::error(),
+
+                    (Type::I64, Type::I32) => wasm.i64_as_i32(),
+                    (Type::I64, Type::F64) => wasm.i64_as_f64(),
+                    (Type::I32, Type::I64) => wasm.i32_as_i64(),
+                    (Type::I32, Type::F64) => wasm.i32_as_f64(),
+                    (Type::F64, Type::I64) => wasm.f64_as_i64(),
+                    (Type::F64, Type::I32) => wasm.f64_as_i32(),
+
+                    | (Type::I64, Type::I64)
+                    | (Type::I32, Type::I32)
+                    | (Type::F64, Type::F64) => (),
+
+                    (Type::I64, Type::BOOL) => {
+                        wasm.i64_as_i32();
+                        wasm.ite(
+                            &mut (), 
+                            |_, wasm| {
+                                let local = wasm.local(WasmType::I32);
+                                wasm.i32_const(1);
+                                wasm.local_set(local);
+                                (local, ())
+                            }, 
+                            |(_, local), wasm| {
+                                wasm.i32_const(0);
+                                wasm.local_set(local);
+                            }
+                        );
+                    },
+
+                    (Type::BOOL, Type::I64) => {
+                        wasm.ite(
+                            &mut (), 
+                            |_, wasm| {
+                                let local = wasm.local(WasmType::I64);
+                                wasm.i64_const(1);
+                                wasm.local_set(local);
+                                (local, ())
+                            }, 
+                            |(_, local), wasm| {
+                                wasm.i64_const(0);
+                                wasm.local_set(local);
+                            }
+                        );
+                    }
+
+                    _ => {
+                        wasm.error(self.error(Error::InvalidCast {
+                            range: source, from_ty: lhs_anal.ty, to_ty: ty }))
+                    }
+                }
+
+                AnalysisResult::new(ty, true)
+            },
+
+
             Expression::Unwrap(v) => {
                 let anal = self.node(scope, wasm, v);
                 let ty = match anal.ty {

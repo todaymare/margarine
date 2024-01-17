@@ -201,6 +201,7 @@ pub enum Keyword {
     Return,
     Break,
     Continue,
+    As,
 }
 
 pub fn lex<'a, 'arena>(
@@ -418,6 +419,7 @@ impl Lexer<'_, '_> {
             "return"    => TokenKind::Keyword(Keyword::Return),
             "break"     => TokenKind::Keyword(Keyword::Break),
             "continue"  => TokenKind::Keyword(Keyword::Continue),
+            "as"        => TokenKind::Keyword(Keyword::As),
 
             "true"      => TokenKind::Literal(Literal::Bool(true)),
             "false"     => TokenKind::Literal(Literal::Bool(false)),

@@ -1437,7 +1437,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         if self.current_is(TokenKind::Minus) {
             let start = self.current_range().start();
             self.advance();
-            let expr = self.accessors(settings)?;
+            let expr = self.as_cast(settings)?;
             return Ok(Node::new(
                 NodeKind::Expression(Expression::UnaryOp { 
                     operator: nodes::UnaryOperator::Neg, 
@@ -1447,7 +1447,24 @@ impl<'ta> Parser<'_, 'ta, '_> {
             ))
         }
 
-        self.accessors(settings)
+        self.as_cast(settings)
+    }
+
+
+    fn as_cast(&mut self, settings: &ParserSettings<'ta>) -> ParseResult<'ta> {
+        let expr = self.accessors(settings)?;
+        if !self.peek_is(TokenKind::Keyword(Keyword::As)) {
+            return Ok(expr)
+        }
+
+        self.advance();
+        self.advance();
+        let ty = self.expect_type()?;
+
+        let nk = NodeKind::Expression(Expression::AsCast {
+            lhs: self.arena.alloc_new(expr), data_type: ty });
+
+        Ok(Node::new(nk, SourceRange::new(expr.range().start(), ty.range().end())))
     }
 
 

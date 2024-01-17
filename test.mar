@@ -1,4 +1,4 @@
-use std ( A, io/IO, io )
+use std ( add, A, io )
 
 mod std {
     fn add(v: int, v2: int) : int { v + v2 }
@@ -11,7 +11,7 @@ mod std {
     }
 }
 
-
-fn main(io: io::IO): int {
-    add(69, 420)
+@startup
+system fn main(): bool { 
+    69 as bool 
 }
