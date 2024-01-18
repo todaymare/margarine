@@ -420,7 +420,7 @@ impl<'out> TypeBuilder<'_> {
                     let mut wf = WasmFunctionBuilder::new(data.arena, wfid);
                     let alloc = wf.return_value(wasm_ty);
 
-                    wf.i32_const(i as i32);
+                    wf.u32_const(i as u32);
                     wf.sptr_const(alloc);
                     wf.i32_write();
 
@@ -468,7 +468,7 @@ impl<'out> TypeBuilder<'_> {
                     let mut wf = WasmFunctionBuilder::new(data.arena, wfid);
                     wf.return_value(wasm::WasmType::I32);
 
-                    wf.i32_const(i as i32);
+                    wf.u32_const(i as u32);
 
                     data.module_builder.register(wf);
                     

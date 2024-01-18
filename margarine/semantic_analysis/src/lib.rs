@@ -13,7 +13,7 @@ use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping, UseItemKind, UseItem}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus}};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeSymbol}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
@@ -360,7 +360,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             ty_builder.finalise(data, &mut self.errors);
 
             for i in err_len..self.errors.len() {
-                builder.error(ErrorId::Sema(SemaError::new((err_len + i) as u32).unwrap()))
+                builder.error(ErrorId::Sema(SemaError::new((err_len + i).try_into().unwrap()).unwrap()))
             }
         }
         
@@ -1064,7 +1064,7 @@ impl Analyzer<'_, '_, '_> {
                         wasm.local_get(*i);
 
                         wasm.local_get(inout);
-                        wasm.i32_const(f.offset.try_into().unwrap());
+                        wasm.u32_const(f.offset.try_into().unwrap());
                         wasm.i32_add();
 
                         wasm.write(f.ty.to_wasm_ty(&self.types));
@@ -1230,7 +1230,7 @@ impl Analyzer<'_, '_, '_> {
 
                     for (binding, sym) in names.iter().zip(sym.fields.iter()) {
                         wasm.local_get(ptr);
-                        wasm.i32_const(sym.offset as i32);
+                        wasm.u32_const(sym.offset.try_into().unwrap());
                         wasm.i32_add();
 
 
@@ -1718,7 +1718,7 @@ impl Analyzer<'_, '_, '_> {
 
 
                                     wasm.local_get(sym_local);
-                                    wasm.i32_const(v.union_offset() as i32);
+                                    wasm.u32_const(v.union_offset());
                                     wasm.i32_add();
 
                                     wasm.read(wty);
@@ -1886,7 +1886,7 @@ impl Analyzer<'_, '_, '_> {
                 
                 for f in sfields.iter() {
                     if f.name == *field_name {
-                        wasm.i32_const(f.offset.try_into().unwrap());
+                        wasm.u32_const(f.offset.try_into().unwrap());
                         wasm.i32_add();
                         wasm.read(f.ty.to_wasm_ty(&self.types));
                         return AnalysisResult::new(f.ty, value.is_mut);
@@ -1988,7 +1988,7 @@ impl Analyzer<'_, '_, '_> {
 
                                 let field = sym.fields[c];
                                 wasm.sptr_const(sp);
-                                wasm.i32_const(field.offset.try_into().unwrap());
+                                wasm.u32_const(field.offset.try_into().unwrap());
                                 wasm.i32_add();
                                 wasm.read(sig_arg.2.to_wasm_ty(&self.types));
 
@@ -2011,7 +2011,7 @@ impl Analyzer<'_, '_, '_> {
                         let TypeSymbolKind::Struct(sym) = ty_sym.kind() else { unreachable!() };
                         for sym_arg in sym.fields.iter().rev().skip(1) {
                             wasm.sptr_const(ptr);
-                            wasm.i32_const(sym_arg.offset as i32);
+                            wasm.u32_const(sym_arg.offset.try_into().unwrap());
                             wasm.i32_add();
 
                             wasm.write(sym_arg.ty.to_wasm_ty(&self.types));
@@ -2026,7 +2026,7 @@ impl Analyzer<'_, '_, '_> {
 
                             let field = sym.fields[c];
                             wasm.sptr_const(ptr);
-                            wasm.i32_const(field.offset.try_into().unwrap());
+                            wasm.u32_const(field.offset.try_into().unwrap());
                             wasm.i32_add();
                             wasm.read(sig_arg.2.to_wasm_ty(&self.types));
 
@@ -2041,7 +2041,7 @@ impl Analyzer<'_, '_, '_> {
                         {
                             let r = sym.fields.last().unwrap();
                             wasm.sptr_const(ptr);
-                            wasm.i32_const(r.offset as i32);
+                            wasm.u32_const(r.offset.try_into().unwrap());
                             wasm.i32_add();
 
                             wasm.read(r.ty.to_wasm_ty(&self.types));
@@ -2200,7 +2200,102 @@ impl Analyzer<'_, '_, '_> {
             },
 
 
-            Expression::CastAny { .. } => todo!(),
+            Expression::CastAny { lhs, data_type  } => {
+                let lhs_anal = self.node(scope, wasm, &lhs);
+                let ty = self.convert_ty(*scope, *data_type);
+                let ty = match ty {
+                    Ok(v) => v,
+                    Err(e) => {
+                        wasm.error(self.error(e));
+                        return AnalysisResult::error();
+                    }
+                };
+
+                if !lhs_anal.ty.eq_sem(Type::Any) {
+                    wasm.error(self.error(Error::InvalidType {
+                        source, found: lhs_anal.ty, expected: Type::Any }));
+                    return AnalysisResult::error();
+                }
+
+                let ptr = wasm.local(lhs_anal.ty.to_wasm_ty(&self.types));
+                wasm.local_set(ptr);
+               
+                // read the type id
+                {
+                    wasm.local_get(ptr);
+                    wasm.u32_read();
+                }
+
+                wasm.u32_const(ty.type_id().as_u32());
+                wasm.i32_eq();
+
+                let option_ty = self.make_option(ty);
+
+                wasm.ite(
+                    self,
+                    |slf, wasm| {
+                        let tuple = slf.make_tuple(
+                            Vec::from_array_in(&*ArenaPool::tls_get_rec(), [Type::I32, ty]), 
+                            source);
+
+                        let TypeSymbolKind::Struct(sym) = slf.types.get(tuple).kind()
+                        else { unreachable!() };
+
+                        let field = sym.fields[1];
+
+                        wasm.local_get(ptr);
+                        wasm.u32_const(field.offset.try_into().unwrap());
+                        wasm.i32_add();
+
+                        wasm.read(ty.to_wasm_ty(&slf.types));
+
+                        let func = slf.namespaces.get_type(Type::Custom(option_ty));
+                        let func = slf.namespaces.get(func).get_func(StringMap::SOME);
+                        let func = slf.funcs.get(func.unwrap());
+
+                        let func_ret_wasm_ty = func.ret.to_wasm_ty(&slf.types);
+                        if func_ret_wasm_ty.stack_size() != 0 {
+                            let alloc = wasm.alloc_stack(func_ret_wasm_ty.stack_size());
+
+                            wasm.sptr_const(alloc);
+                            wasm.call(func.wasm_id);
+
+                            wasm.sptr_const(alloc);
+                        } else {
+                            wasm.call(func.wasm_id);
+                        }
+
+                        let local = wasm.local(Type::Custom(tuple).to_wasm_ty(&slf.types));
+                        wasm.local_set(local);
+
+                        (local, ())
+                    }, 
+
+
+                    |(slf, local), wasm| {
+                        let func = slf.namespaces.get_type(Type::Custom(option_ty));
+                        let func = slf.namespaces.get(func).get_func(StringMap::NONE);
+                        let func = slf.funcs.get(func.unwrap());
+
+                        let func_ret_wasm_ty = func.ret.to_wasm_ty(&slf.types);
+                        if func_ret_wasm_ty.stack_size() != 0 {
+                            let alloc = wasm.alloc_stack(func_ret_wasm_ty.stack_size());
+
+                            wasm.sptr_const(alloc);
+                            wasm.call(func.wasm_id);
+
+                            wasm.sptr_const(alloc);
+                        } else {
+                            wasm.call(func.wasm_id);
+                        }
+
+                        wasm.local_set(local);
+                    }
+                );
+                
+
+                AnalysisResult::new(Type::Custom(option_ty), true)
+            },
 
 
             Expression::AsCast { lhs, data_type } => {
@@ -2261,6 +2356,45 @@ impl Analyzer<'_, '_, '_> {
                                 wasm.local_set(local);
                             }
                         );
+                    }
+
+
+                    (_, Type::Any) => {
+                        let tuple = self.make_tuple(
+                            Vec::from_slice_in(
+                                &*ArenaPool::tls_get_rec(),
+                                &[Type::I64, lhs_anal.ty]
+                            ), source);
+                        
+                        let tuple = self.types.get(tuple);
+                        let TypeSymbolKind::Struct(sym) = tuple.kind()
+                        else { unreachable!() };
+
+                        let alloc = wasm.alloc_stack(tuple.size());
+
+                        {
+                            let field = sym.fields[0];
+
+                            wasm.u32_const(lhs_anal.ty.type_id().as_u32().try_into().unwrap());
+
+                            wasm.sptr_const(alloc);
+                            wasm.u32_const(field.offset.try_into().unwrap());
+                            wasm.i32_add();
+
+                            wasm.i32_write();
+                        }
+
+                        {
+                            let field = sym.fields[1];
+
+                            wasm.sptr_const(alloc);
+                            wasm.u32_const(field.offset.try_into().unwrap());
+                            wasm.i32_add();
+
+                            wasm.write(lhs_anal.ty.to_wasm_ty(&self.types));
+                        }
+
+                        wasm.sptr_const(alloc);
                     }
 
                     _ => {
@@ -2326,7 +2460,7 @@ impl Analyzer<'_, '_, '_> {
                             }
 
                             wasm.local_get(dup);
-                            wasm.i32_const(v.union_offset() as i32);
+                            wasm.u32_const(v.union_offset().try_into().unwrap());
                             wasm.i32_add();
                             wasm.read(ty.to_wasm_ty(&self.types));
                             wasm.local_set(local)
@@ -2494,7 +2628,7 @@ impl Analyzer<'_, '_, '_> {
                                             let ty = v.fields()[1].ty().unwrap_or(Type::Unit);
 
                                             wasm.local_get(dup);
-                                            wasm.i32_const(v.union_offset() as i32);
+                                            wasm.u32_const(v.union_offset().try_into().unwrap());
                                             wasm.i32_add();
                                             wasm.read(ty.to_wasm_ty(&slf.types));
                                         },
@@ -2536,7 +2670,7 @@ impl Analyzer<'_, '_, '_> {
                             }
 
                             wasm.local_get(dup);
-                            wasm.i32_const(v.union_offset() as i32);
+                            wasm.u32_const(v.union_offset().try_into().unwrap());
                             wasm.i32_add();
                             wasm.read(ty.to_wasm_ty(&slf.types));
                             wasm.local_set(local)
@@ -2613,7 +2747,7 @@ impl Analyzer<'_, '_, '_> {
 
                 for sf in sfields.iter() {
                     if sf.name == *field_name {
-                        wasm.i32_const(sf.offset.try_into().unwrap());
+                        wasm.u32_const(sf.offset.try_into().unwrap());
                         wasm.i32_add();
 
                         if depth == 0 {

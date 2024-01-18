@@ -1,17 +1,21 @@
-use std ( add, A, io )
+use std/println
 
 mod std {
-    fn add(v: int, v2: int) : int { v + v2 }
+    extern "libstdlib" {
+        fn println(str: str)
+    }
 
-    struct A { i: int }
-
-
-    mod io {
-        struct IO {i: A}
+    impl int {
+        fn to_string(self): str {
+            extern "libstdlib" { fn to_string(slf: int): str }
+            to_string(self)
+        }
     }
 }
 
 @startup
-system fn main(): bool { 
-    69 as bool 
+system fn main() : int { 
+    (69 as any).cast(int)!
 }
+
+

@@ -417,7 +417,7 @@ impl<'a> WasmFunctionBuilder<'a> {
             WasmType::F32 => self.f32_write(),
             WasmType::F64 => self.f64_write(),
             WasmType::Ptr { size } => {
-                self.i32_const(size.try_into().unwrap());
+                self.u32_const(size.try_into().unwrap());
                 self.call_template("memcpy");
             },
         }
