@@ -13,7 +13,7 @@ use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping, UseItemKind, UseItem}, DataTypeKind, DataType};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeSymbol}};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeSymbol, TypeStructStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
@@ -35,6 +35,7 @@ pub struct Analyzer<'me, 'out, 'str> {
     options_map: HashMap<Type, TypeId>,
     results_map: HashMap<(Type, Type), TypeId>,
     tuple_map: HashMap<&'out [Type], TypeId>,
+    rc_map: HashMap<Type, TypeId>,
 }
 
 
@@ -111,6 +112,43 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let scope = self.scopes.push(scope);
                 self.convert_ty(scope, *dt)?
             }
+
+
+            DataTypeKind::Rc(ty) => {
+                let ty = self.convert_ty(scope, *ty)?;
+                if let Some(ty) = self.rc_map.get(&ty) { return Ok(Type::Custom(*ty)) }
+
+                let tyid = {
+                    let temp = ArenaPool::tls_get_temp();
+                    let name = {
+                        let mut str = sti::string::String::new_in(&*temp);
+                        str.push_char('*');
+                        str.push(ty.display(self.string_map, &self.types));
+
+                        self.string_map.insert(str.as_str())
+                    };
+
+                    let mut tyb = TypeBuilder::new(&temp);
+
+                    let tyid = self.types.pending();
+                    tyb.add_ty(tyid, name, SourceRange::new(0, 0));
+                    tyb.set_struct_fields(tyid, 
+                        [
+                            (StringMap::INT, Type::I64),
+                            (StringMap::VALUE, ty),
+                        ].iter().copied(),
+                        TypeStructStatus::Rc,
+                    );
+
+                    let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+                    tyb.finalise(data, &mut self.errors);
+
+                    tyid
+                };
+
+                self.rc_map.insert(ty, tyid);
+                Type::Custom(tyid)
+            },
         };
 
         Ok(ty)
@@ -139,12 +177,12 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
         let tyid = self.types.pending();
         tyb.add_ty(tyid, name, source);
-        tyb.set_struct_fields(tyid, true, vec.iter().enumerate().map(|(i, x)| {
+        tyb.set_struct_fields(tyid, vec.iter().enumerate().map(|(i, x)| {
             let mut str = sti::string::String::new_in(&*temp);
             let _ = write!(str, "{}", i);
             let id = self.string_map.insert(&str);
             (id, *x)
-        }));
+        }), TypeStructStatus::Tuple);
 
         let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
         tyb.finalise(data, &mut self.errors);
@@ -254,6 +292,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             options_map: HashMap::new(),
             results_map: HashMap::new(),
             tuple_map: HashMap::new(),
+            rc_map: HashMap::new(),
             startup_functions: Vec::new(),
         };
 
@@ -282,11 +321,11 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
                 type_builder.add_ty(TypeId::STR, StringMap::STR, SourceRange::new(0, 0));
                 type_builder.set_struct_fields(
                     TypeId::STR,
-                    false,
                     [
                         (slf.string_map.insert("len"), Type::I64),
                         (slf.string_map.insert("ptr"), Type::I64),
                     ].into_iter(),
+                    TypeStructStatus::User
                 );
             }
 
@@ -719,7 +758,7 @@ impl Analyzer<'_, '_, '_> {
                             None
                         });
 
-                    type_builder.set_struct_fields(ty, false, fields);
+                    type_builder.set_struct_fields(ty, fields, TypeStructStatus::User);
                 },
 
 
@@ -1220,7 +1259,7 @@ impl Analyzer<'_, '_, '_> {
                         return Err(());
                     };
 
-                    if !sym.is_tuple {
+                    if sym.status != TypeStructStatus::Tuple {
                         wasm.error(self.error(Error::VariableValueNotTuple(rhs.range())));
                         return Err(());
                     }

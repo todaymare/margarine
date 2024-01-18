@@ -1,7 +1,7 @@
 pub mod nodes;
 pub mod errors;
 
-use std::ops::Deref;
+use std::{ops::Deref, hash::Hash};
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
@@ -9,7 +9,7 @@ use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, StructKind, NodeKind, Declaration, FunctionArgument,
     ExternFunction, Expression, BinaryOperator, Statement, EnumMapping, UseItem, UseItemKind, Attribute};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
+use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in, alloc::Alloc};
 
 use crate::nodes::MatchMapping;
 
@@ -48,6 +48,7 @@ pub enum DataTypeKind<'a> {
     Result(&'a DataType<'a>, &'a DataType<'a>),
     Tuple(&'a [DataType<'a>]),
     Within(StringIndex, &'a DataType<'a>),
+    Rc(&'a DataType<'a>),
     CustomType(StringIndex),
 }
 
@@ -99,6 +100,11 @@ impl std::hash::Hash for DataTypeKind<'_> {
                 name.hash(state);
                 dt.kind().hash(state);
             },
+
+            DataTypeKind::Rc(v) => {
+                12.hash(state);
+                v.kind().hash(state);
+            }
         }
     }
 }
@@ -354,6 +360,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     )
                 }
             }
+        } else if self.current_is(TokenKind::Star) {
+            self.advance();
+            let ty = self.expect_type()?;
+            DataType::new(
+                SourceRange::new(start, ty.range().end()),
+                DataTypeKind::Rc(self.arena.alloc_new(ty)),
+            )
         } else {
             let identifier = self.expect_identifier()?;
             let result = if self.peek_is(TokenKind::DoubleColon) {
