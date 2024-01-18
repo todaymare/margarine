@@ -5,7 +5,7 @@ use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
 use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}};
 
-use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag, TypeEnumStatus}};
+use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag, TypeEnumStatus, TypeStructStatus}};
 
 #[derive(Debug)]
 pub struct TypeBuilder<'a> {
@@ -37,7 +37,7 @@ pub struct PartialType<'a> {
 pub enum PartialTypeKind<'a> {
     Struct {
         fields: &'a mut [PartialStructField],
-        is_tuple: bool,
+        status: TypeStructStatus,
     },
 
     Enum {
@@ -99,8 +99,8 @@ impl<'a> TypeBuilder<'a> {
     pub fn set_struct_fields(
         &mut self, 
         ty: TypeId, 
-        is_tuple: bool,
         iter: impl Iterator<Item=(StringIndex, Type)>,
+        status: TypeStructStatus,
     ) {
         let fields = Vec::from_in(
             self.storage, 
@@ -109,7 +109,7 @@ impl<'a> TypeBuilder<'a> {
         
         let fields = fields.leak();
 
-        self.set_kind(ty, PartialTypeKind::Struct { fields, is_tuple })
+        self.set_kind(ty, PartialTypeKind::Struct { fields, status })
     }
 
 
@@ -215,8 +215,8 @@ impl<'out> TypeBuilder<'_> {
             let kind = kind.take().unwrap();
 
             match kind {
-                PartialTypeKind::Struct { fields, is_tuple } => 
-                    self.process_struct(data, fields, name, is_tuple),
+                PartialTypeKind::Struct { fields, status } => 
+                    self.process_struct(data, fields, name, status),
 
 
                 PartialTypeKind::Enum { mappings, status } => { 
@@ -267,7 +267,7 @@ impl<'out> TypeBuilder<'_> {
         data: &mut TypeBuilderData<'_, 'out, '_>,
         fields: &[PartialStructField],
         name: StringIndex,
-        is_tuple: bool,
+        status: TypeStructStatus,
     ) -> Result<TypeSymbol<'out>, Error> {
         let mut align = 1;
         let mut cursor = 0;
@@ -295,7 +295,7 @@ impl<'out> TypeBuilder<'_> {
         let fields : &[_] = new_fields.leak();
 
         // Finalise
-        let kind = TypeStruct::new(fields, is_tuple);
+        let kind = TypeStruct::new(fields, status);
         let kind = TypeSymbolKind::Struct(kind);
         let symbol = TypeSymbol::new(name, align, size, kind);
 
