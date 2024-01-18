@@ -8,6 +8,19 @@ define_key!(u32, pub TypeId);
 impl TypeId {
     pub const BOOL : TypeId = TypeId(0);
     pub const STR  : TypeId = TypeId(1);
+
+    pub const I32  : TypeId = TypeId(u32::MAX);
+    pub const I64  : TypeId = TypeId(u32::MAX - 1);
+    pub const F64  : TypeId = TypeId(u32::MAX - 2);
+    pub const ANY  : TypeId = TypeId(u32::MAX - 3);
+    pub const UNIT : TypeId = TypeId(u32::MAX - 4);
+    pub const NEVER: TypeId = TypeId(u32::MAX - 5);
+    pub const ERROR: TypeId = TypeId(u32::MAX - 6);
+
+
+    pub fn as_u32(self) -> u32 {
+        self.0
+    }
 }
 
 

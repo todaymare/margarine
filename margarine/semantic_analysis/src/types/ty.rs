@@ -28,6 +28,18 @@ impl Type {
 
 
 impl Type {
+    pub fn type_id(self) -> TypeId {
+        match self {
+            Type::I64 => TypeId::I64,
+            Type::I32 => TypeId::I32,
+            Type::F64 => TypeId::F64,
+            Type::Any => TypeId::ANY,
+            Type::Unit => TypeId::UNIT,
+            Type::Never => TypeId::NEVER,
+            Type::Error => TypeId::ERROR,
+            Type::Custom(v) => v,
+        }
+    }
 
     ///
     /// Returns the textual representation of

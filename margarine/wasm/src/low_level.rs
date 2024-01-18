@@ -209,7 +209,7 @@ impl WasmFunctionBuilder<'_> {
     #[inline(always)]
     pub fn string_const(&mut self, ptr: StringAddress) {
         write!(self.body, "global.get $string_pointer ");
-        self.i32_const(ptr.address as i32);
+        self.u32_const(ptr.address.try_into().unwrap());
         self.i32_add();
         
         self.i32_as_i64();
@@ -234,7 +234,7 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn ptr_veq(&mut self, size: usize) {
-        self.i32_const(size.try_into().unwrap());
+        self.u32_const(size.try_into().unwrap());
         self.call_template("bcmp");
     }
 }
@@ -247,6 +247,14 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn i32_const(&mut self, num: i32) { write!(self.body, "i32.const {num} "); }
+    
+    ///
+    /// Pushes an `u32` constant to the stack
+    /// () -> `u32`
+    ///
+    #[inline(always)]
+    pub fn u32_const(&mut self, num: u32) { write!(self.body, "i32.const {} ", i32::from_ne_bytes(num.to_ne_bytes())); }
+
 
     #[inline(always)]
     pub fn i32_eq(&mut self) { write!(self.body, "i32.eq "); }
