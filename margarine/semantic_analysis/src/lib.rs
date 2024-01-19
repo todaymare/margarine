@@ -114,7 +114,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
             }
 
 
-            DataTypeKind::Rc(ty) => {
+            | DataTypeKind::RcConst(ty)
+            | DataTypeKind::RcMut(ty) => {
                 let ty = self.convert_ty(scope, *ty)?;
                 if let Some(ty) = self.rc_map.get(&ty) { return Ok(Type::Custom(*ty)) }
 
@@ -137,7 +138,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             (StringMap::INT, Type::I64),
                             (StringMap::VALUE, ty),
                         ].iter().copied(),
-                        TypeStructStatus::Rc,
+                        if matches!(dt.kind(), DataTypeKind::RcConst(_)) { TypeStructStatus::Rc }
+                        else { TypeStructStatus::RcMut },
                     );
 
                     let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
