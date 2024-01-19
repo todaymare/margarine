@@ -57,6 +57,7 @@ pub enum TypeStructStatus {
     User,
     Tuple,
     Rc,
+    RcMut,
 }
 
 
