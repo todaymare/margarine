@@ -6,7 +6,7 @@ pub mod funcs;
 
 use std::fmt::Write;
 
-use common::{source::SourceRange, string_map::StringMap};
+use common::{source::{SourceRange, FileData, Extension}, string_map::StringMap};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
@@ -589,29 +589,73 @@ impl Analyzer<'_, '_, '_> {
         scope: &mut ScopeId,
         ns_id: NamespaceId,
     ) {
+        fn get_module(
+            anal: &mut Analyzer,
+            scope: ScopeId,
+            path: &mut sti::string::String<&'_ Arena>,
+            item: &UseItem<'_>,
+        ) -> Result<NamespaceId, Error> {
+            let scope = anal.scopes.get(scope);
+
+            let module = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
+            if let Some(module) = module {
+                return Ok(module);
+            }
+
+
+            let len = path.len();
+            path.push(anal.string_map.get(item.name()));
+
+            let result = (|| {
+                let len = path.len();
+
+                path.push(".mar");
+                let file = std::fs::read_to_string(&**path);
+                unsafe { path.inner_mut() }.truncate(len);
+
+                let Ok(file) = file
+                else { return Err(()) };
+
+                let fd = FileData::new(file, anal.string_map.insert(&path), Extension::Mar);
+
+                let tokens = lexer::lex(&fd, anal.string_map);
+
+                todo!();
+
+                Ok(())
+            })();
+
+            unsafe { path.inner_mut() }.truncate(len);
+
+            if result.is_err() {
+                return Err(Error::NamespaceNotFound {
+                    source: item.range(),
+                    namespace: item.name() });
+            }
+            todo!()
+        }
+
+
         fn resolve_item(
             anal: &mut Analyzer,
             scope_id: ScopeId,
             ns: NamespaceId,
             item: &UseItem,
+            path: &mut sti::string::String<&'_ Arena>,
         ) -> Result<Scope, ErrorId> {
             let result = match item.kind() {
                 UseItemKind::List { list } => {
-                    let scope = anal.scopes.get(scope_id);
-                    let module = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
-                    let Some(module) = module
-                    else {
-                        return Err(anal.error(Error::NamespaceNotFound {
-                            source: item.range(),
-                            namespace: item.name() }));
+                    let module = match get_module(anal, scope_id, path, item) {
+                        Ok(v) => v,
+                        Err(e) => return Err(anal.error(e)),
                     };
 
-                    let mut curr_scope = scope;
+                    let mut curr_scope = anal.scopes.get(scope_id);
                     let module_scope = Scope::new(ScopeKind::ImplicitNamespace(module), None.into());
                     let module_scope = anal.scopes.push(module_scope);
                     
                     for i in list.iter() {
-                        let mut scope = resolve_item(anal, module_scope, ns, i)?;
+                        let mut scope = resolve_item(anal, module_scope, ns, i, path)?;
 
                         // swap out the parent
                         {
@@ -643,8 +687,8 @@ impl Analyzer<'_, '_, '_> {
 
                 UseItemKind::BringName => {
                     let scope = anal.scopes.get(scope_id);
-                    let i = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
-                    if let Some(module) = i {
+                    let i = get_module(anal, scope_id, path, item);
+                    if let Ok(module) = i {
                         let scope = ExplicitNamespace {
                             name: item.name(),
                             namespace: module,
@@ -681,13 +725,9 @@ impl Analyzer<'_, '_, '_> {
                 },
 
                 UseItemKind::All  => {
-                    let scope = anal.scopes.get(scope_id);
-                    let module = scope.get_mod(item.name(), &anal.scopes, &anal.namespaces);
-                    let Some(module) = module
-                    else {
-                        return Err(anal.error(Error::NamespaceNotFound {
-                            source: item.range(),
-                            namespace: item.name() }));
+                    let module = match get_module(anal, scope_id, path, item) {
+                        Ok(v) => v,
+                        Err(e) => return Err(anal.error(e)),
                     };
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(module), scope_id.some());
@@ -713,7 +753,7 @@ impl Analyzer<'_, '_, '_> {
             else { continue };
 
 
-            match resolve_item(self, *scope, ns_id, item) {
+            match resolve_item(self, *scope, ns_id, item, &mut String::new_in(&*ArenaPool::tls_get_rec())) {
                 Ok(v) => *scope = self.scopes.push(v),
                 Err(e) => {
                     builder.error(e);
