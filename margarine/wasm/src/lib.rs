@@ -386,7 +386,7 @@ impl WasmFunctionBuilder<'_> {
 impl<'a> WasmFunctionBuilder<'a> {
     ///
     /// This function expects:
-    /// - A pointer to memory with type `ty`
+    /// `ptr($ty)` -> `$ty`
     ///
     #[inline(always)]
     pub fn read(&mut self, ty: WasmType) {

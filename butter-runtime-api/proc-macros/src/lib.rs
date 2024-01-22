@@ -32,19 +32,18 @@ pub fn margarine(_: TokenStream, item: TokenStream) -> TokenStream {
 
 
 fn margarine_function(func: ItemFn) -> TokenStream {
-    let name = func.sig.ident;
-    let inputs = func.sig.inputs;
-    let ret = func.sig.output;
+    let name = &func.sig.ident;
+    let inputs = &func.sig.inputs;
+    let ret = &func.sig.output;
     let ret = match ret {
         syn::ReturnType::Default => Type::Tuple(syn::parse2(quote!(())).unwrap()),
-        syn::ReturnType::Type(_, v) => *v,
+        syn::ReturnType::Type(_, v) => *v.clone(),
     };
-    let body = func.block;
 
     let struct_name = format!("__Args_{}", name.to_string());
     let struct_name = Ident::new(&struct_name, name.span());
     let mut vec = vec![];
-    for v in &inputs {
+    for v in inputs {
         let ident = match v {
             syn::FnArg::Receiver(_) => todo!(),
             syn::FnArg::Typed(PatType { pat, .. }) => match *pat.clone() {
@@ -80,15 +79,11 @@ fn margarine_function(func: ItemFn) -> TokenStream {
     
         #[no_mangle]
         pub extern "C" fn #name(ctx: &Ctx, __argp: *mut #struct_name) {
-            let (#(#vec),*) = {
-                let data = unsafe { &*__argp };
-                (#(data.#vec),*)
-            };
+            #func
 
-            let ret = || -> #ret { #body };
-            let ret = ret();
-
-            unsafe { *__argp }.__ret = ret;
+            let data = unsafe { &*__argp };
+            let ret = #name(#(data.#vec),*);
+            unsafe { &mut *__argp }.__ret = ret;
         }
     );
 

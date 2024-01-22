@@ -1160,7 +1160,6 @@ impl Analyzer<'_, '_, '_> {
                 }
 
                 wasm.set_finaliser(string.clone_in(self.module_builder.arena));
-                wasm.export(*name);
 
                 let (anal, _) = self.block(&mut wasm, scope, &body);
                 if !anal.ty.eq_sem(func.ret) {
@@ -2084,13 +2083,6 @@ impl Analyzer<'_, '_, '_> {
                     },
 
                     FunctionKind::Extern { ty } => {
-                        let ty_sym = self.types.get(ty);
-                        let ptr = {
-                            wasm.alloc_stack(ty_sym.size())
-                        };
-
-                        let TypeSymbolKind::Struct(sym) = ty_sym.kind() else { unreachable!() };
-                        
                         let mut errored = false;
                         for (sig_arg, call_arg) in func.args.iter().zip(aargs.iter()) {
                             if !sig_arg.2.eq_sem(call_arg.0.ty) {
@@ -2110,6 +2102,13 @@ impl Analyzer<'_, '_, '_> {
                             return AnalysisResult::error();
                         }
 
+                        let ty_sym = self.types.get(ty);
+                        let ptr = {
+                            wasm.alloc_stack(ty_sym.size())
+                        };
+
+                        let TypeSymbolKind::Struct(sym) = ty_sym.kind() else { unreachable!() };
+                        
                         for sym_arg in sym.fields.iter().rev().skip(1) {
                             wasm.sptr_const(ptr);
                             wasm.u32_const(sym_arg.offset.try_into().unwrap());
@@ -2141,6 +2140,7 @@ impl Analyzer<'_, '_, '_> {
 
                         {
                             let r = sym.fields.last().unwrap();
+                            dbg!(r);
                             wasm.sptr_const(ptr);
                             wasm.u32_const(r.offset.try_into().unwrap());
                             wasm.i32_add();
