@@ -2090,6 +2090,26 @@ impl Analyzer<'_, '_, '_> {
                         };
 
                         let TypeSymbolKind::Struct(sym) = ty_sym.kind() else { unreachable!() };
+                        
+                        let mut errored = false;
+                        for (sig_arg, call_arg) in func.args.iter().zip(aargs.iter()) {
+                            if !sig_arg.2.eq_sem(call_arg.0.ty) {
+                                errored = true;
+                                wasm.error(self.error(Error::InvalidType {
+                                    source: call_arg.1, found: call_arg.0.ty, expected: sig_arg.2 }));
+                            }
+
+                            if sig_arg.1 && !call_arg.2 {
+                                errored = true;
+                                wasm.error(self.error(Error::InOutValueWithoutInOutBinding {
+                                    value_range: call_arg.1 }))
+                            }
+                        }
+
+                        if errored {
+                            return AnalysisResult::error();
+                        }
+
                         for sym_arg in sym.fields.iter().rev().skip(1) {
                             wasm.sptr_const(ptr);
                             wasm.u32_const(sym_arg.offset.try_into().unwrap());
