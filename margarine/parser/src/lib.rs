@@ -1,14 +1,14 @@
 pub mod nodes;
 pub mod errors;
 
-use std::{ops::Deref, hash::Hash};
+use std::ops::Deref;
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind}};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in, alloc::Alloc};
+use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::expr::BinaryOperator;
 
@@ -965,16 +965,15 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
             parser.expect(TokenKind::RightParenthesis)?;
-            parser.advance();
 
 
             let end;
             let return_type = 
-                if parser.current_is(TokenKind::Colon) { 
+                if parser.peek_is(TokenKind::Colon) { 
+                    parser.advance();
                     parser.advance();
                     let typ = parser.expect_type()?;
                     end = parser.current_range().end();
-                    parser.advance();
                     typ
                 }
                 else {
