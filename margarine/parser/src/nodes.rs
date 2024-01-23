@@ -1,3 +1,9 @@
+pub mod expr;
+pub mod stmt;
+pub mod decl;
+pub mod attr;
+pub mod err;
+
 use std::fmt::Display;
 
 use common::{string_map::StringIndex, source::SourceRange};
@@ -6,577 +12,58 @@ use lexer::Literal;
 
 use crate::{DataType, Block};
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub struct Node<'a> {
-    kind: NodeKind<'a>,
-    pub(crate) source_range: SourceRange,
-    tags: &'a [Tag],
-}
-
-impl<'arena> Node<'arena> {
-    pub fn new(kind: NodeKind<'arena>, source_range: SourceRange) -> Self { 
-        Self {
-            kind, 
-            source_range,
-            tags: &[],
-        } 
-    }
-
-
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange {
-        self.source_range
-    }
-
-
-    #[inline(always)]
-    pub fn kind(&self) -> &NodeKind<'arena> {
-        &self.kind
-    }
-}
+use self::{decl::DeclarationNode, stmt::StatementNode, expr::ExpressionNode, attr::AttributeNode, err::ErrorNode};
 
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum NodeKind<'a> {
-    Declaration(Declaration<'a>),
-    Statement(Statement<'a>),
-    Expression(Expression<'a>),
-    Attribute(Attribute<'a>, &'a Node<'a>),
-    Error(ErrorId),
+pub enum Node<'a> {
+    Declaration(DeclarationNode<'a>),
+    Statement(StatementNode<'a>),
+    Expression(ExpressionNode<'a>),
+    Attribute(&'a AttributeNode<'a>),
+    Error(ErrorNode),
 }
 
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Declaration<'a> {
-    Struct {
-        kind: StructKind,
-        name: StringIndex,
-        header: SourceRange,
-        fields: &'a [(StringIndex, DataType<'a>, SourceRange)],
-    },
-
-    Enum {
-        name: StringIndex,
-        header: SourceRange,
-        mappings: &'a [EnumMapping<'a>],
-    },
-
-    Function {
-        is_system: bool,
-        name: StringIndex,
-        header: SourceRange,
-        arguments: &'a [FunctionArgument<'a>],
-        return_type: DataType<'a>,
-        body: Block<'a>,
-    },
-    
-    Impl {
-        data_type: DataType<'a>,
-        body: Block<'a>,
-    },
-
-    Using {
-        item: UseItem<'a>,
-    },
-
-    Module {
-        name: StringIndex,
-        body: Block<'a>,
-    },
-
-    Extern {
-        file: StringIndex,
-        functions: &'a [ExternFunction<'a>],
-    }
-
-}
-
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Statement<'a> {
-    Variable {
-        name: StringIndex,
-        hint: Option<DataType<'a>>,
-        is_mut: bool,
-        rhs: &'a Node<'a>,
-    },
-
-
-    VariableTuple {
-        names: &'a [(StringIndex, bool)],
-        hint: Option<DataType<'a>>,
-        rhs: &'a Node<'a>,
-    },
-
-
-    UpdateValue {
-        lhs: &'a Node<'a>,
-        rhs: &'a Node<'a>,
-    },
-}
-
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Expression<'a> {
-    Unit,
-    
-    Literal(Literal),
-
-    Identifier(StringIndex),
-
-    BinaryOp {
-        operator: BinaryOperator,
-        lhs: &'a Node<'a>,
-        rhs: &'a Node<'a>,
-    },
-
-    UnaryOp {
-        operator: UnaryOperator,
-        rhs: &'a Node<'a>,
-    },
-
-    If {
-        condition: &'a Node<'a>,
-        body: Block<'a>,
-        else_block: Option<&'a Node<'a>>,
-    },
-
-    Match {
-        value: &'a Node<'a>,
-        taken_as_inout: bool,
-        mappings: &'a [MatchMapping<'a>],
-    },
-
-    Block {
-        block: Block<'a>,
-    },
-
-    CreateStruct {
-        data_type: DataType<'a>,
-        fields: &'a [(StringIndex, SourceRange, Node<'a>)],
-    },
-
-    AccessField {
-        val: &'a Node<'a>,
-        field_name: StringIndex,
-    },
-
-    CallFunction {
-        name: StringIndex,
-        is_accessor: bool,
-        args: &'a [(Node<'a>, bool)],
-    },
-
-    WithinNamespace {
-        namespace: StringIndex,
-        namespace_source: SourceRange,
-        action: &'a Node<'a>,
-    },
-
-    WithinTypeNamespace {
-        namespace: DataType<'a>,
-        action: &'a Node<'a>,
-    },
-
-    Loop {
-        body: Block<'a>,
-    },
-    
-    Return(&'a Node<'a>),
-    Continue,
-    Break,
-
-    Tuple(&'a [Node<'a>]),
-
-    CastAny {
-        lhs: &'a Node<'a>,
-        data_type: DataType<'a>,
-    },
-
-    AsCast {
-        lhs: &'a Node<'a>,
-        data_type: DataType<'a>,
-    },
-
-    Unwrap(&'a Node<'a>),
-
-    OrReturn(&'a Node<'a>),
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Tag {
-    StartupFunction,
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StructKind {
-    Component,
-    Resource,
-    Normal,
-}
-
-
-#[derive(Debug, PartialEq)]
-pub struct ExternFunction<'arena> {
-    name: StringIndex,
-    path: StringIndex,
-    args: &'arena [FunctionArgument<'arena>],
-    return_type: DataType<'arena>,
-    source_range: SourceRange,
-}
-
-impl<'arena> ExternFunction<'arena> {
-    pub(crate) fn new(name: StringIndex, path: StringIndex, args: &'arena [FunctionArgument<'arena>], return_type: DataType<'arena>, source_range: SourceRange) -> Self { 
-        Self { name, args, return_type, source_range, path } 
-    }
-
-
-    #[inline(always)]
-    pub fn name(&self) -> StringIndex { self.name }
-    #[inline(always)]
-    pub fn path(&self) -> StringIndex { self.path }
-    #[inline(always)]
-    pub fn args(&self) -> &[FunctionArgument<'arena>] { &self.args }
-    #[inline(always)]
-    pub fn return_type(&self) -> DataType<'arena> { self.return_type }
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange { self.source_range }
-
-}
-
-
-#[derive(Debug, PartialEq)]
-pub struct FunctionArgument<'a> {
-    name: StringIndex,
-    data_type: DataType<'a>,
-    is_inout: bool,
-    source_range: SourceRange,
-}
-
-
-impl<'arena> FunctionArgument<'arena> {
-    pub fn new(name: StringIndex, data_type: DataType<'arena>, is_inout: bool, source_range: SourceRange) -> Self { 
-        Self { name, data_type, is_inout, source_range } 
-    }
-
-
-    #[inline(always)]
-    pub fn data_type(&self) -> DataType<'arena> { self.data_type }
-    #[inline(always)]
-    pub fn name(&self) -> StringIndex { self.name }
-    #[inline(always)]
-    pub fn is_inout(&self) -> bool { self.is_inout }
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange { self.source_range }
-}
-
-
-#[derive(Debug, PartialEq)]
-pub struct MatchMapping<'a> {
-    variant: StringIndex,
-    binding: StringIndex,
-    binding_range: SourceRange,
-    source_range: SourceRange,
-    expression: Node<'a>,
-    is_inout: bool,
-}
-
-
-impl<'arena> MatchMapping<'arena> {
-    pub fn new(
-        variant: StringIndex, 
-        binding: StringIndex, 
-        binding_range: SourceRange,
-        source_range: SourceRange, 
-        expression: Node<'arena>,
-        is_inout: bool,
-    ) -> Self { 
-        Self { 
-            variant, 
-            binding, 
-            expression,
-            source_range, 
-            is_inout,
-            binding_range,
-        } 
-    }
-
-    
-    #[inline(always)]
-    pub fn name(&self) -> StringIndex { self.variant }
-    #[inline(always)]
-    pub fn binding(&self) -> StringIndex { self.binding }
-    #[inline(always)]
-    pub fn node(&self) -> &Node<'arena> { &self.expression }
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange { self.source_range }
-    #[inline(always)]
-    pub fn binding_range(&self) -> SourceRange { self.binding_range }
-    #[inline(always)]
-    pub fn is_inout(&self) -> bool { self.is_inout }
-
-}
-
-
-#[derive(Debug, PartialEq)]
-pub struct EnumMapping<'a> {
-    name: StringIndex,
-    number: u16,
-    data_type: DataType<'a>,
-    source_range: SourceRange,
-    is_implicit_unit: bool,
-}
-
-impl<'arena> EnumMapping<'arena> {
-    pub fn new(name: StringIndex, number: u16, data_type: DataType<'arena>, source_range: SourceRange, is_implicit_unit: bool) -> Self { 
-        if is_implicit_unit {
-            assert!(data_type.kind().is(&crate::DataTypeKind::Unit));
-        }
-
-        Self { name, data_type, source_range, is_implicit_unit, number } 
-    }
-
-    
-    #[inline(always)]
-    pub fn name(&self) -> StringIndex { self.name }
-    #[inline(always)]
-    pub fn data_type(&self) -> &DataType<'arena> { &self.data_type }
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange { self.source_range }
-    #[inline(always)]
-    pub fn is_implicit_unit(&self) -> bool { self.is_implicit_unit }
-    #[inline(always)]
-    pub fn number(&self) -> u16 { self.number }
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BinaryOperator {
-    /// '+'
-    Add,
-    /// '-'
-    Sub,
-    /// '*'
-    Mul,
-    /// '/'
-    Div,
-    /// '%'
-    Rem,
-
-    /// '<<'
-    BitshiftLeft,
-    /// '>>'
-    BitshiftRight,
-    /// '&'
-    BitwiseAnd,
-    /// '|'
-    BitwiseOr,
-    /// '^'
-    BitwiseXor,
-
-    /// '=='
-    Eq,
-    /// '!='
-    Ne,
-    /// '>'
-    Gt,
-    /// '>='
-    Ge,
-    /// '<'
-    Lt,
-    /// '<='
-    Le,
-}
-
-impl BinaryOperator {
-    pub fn is_arith(self) -> bool {
+impl Node<'_> {
+    pub fn range(self) -> SourceRange {
         match self {
-            | BinaryOperator::BitshiftLeft
-            | BinaryOperator::BitshiftRight
-            | BinaryOperator::BitwiseAnd
-            | BinaryOperator::BitwiseOr
-            | BinaryOperator::BitwiseXor
-            | BinaryOperator::Eq
-            | BinaryOperator::Ne
-            | BinaryOperator::Gt
-            | BinaryOperator::Ge
-            | BinaryOperator::Lt
-            | BinaryOperator::Le 
-             => false,
-            
-            | BinaryOperator::Add
-            | BinaryOperator::Sub
-            | BinaryOperator::Mul
-            | BinaryOperator::Div
-            | BinaryOperator::Rem
-             => true,
-        }
-
-    }
-
-    
-    pub fn is_bw(self) -> bool {
-        match self {
-            | BinaryOperator::Eq
-            | BinaryOperator::Ne
-            | BinaryOperator::Gt
-            | BinaryOperator::Ge
-            | BinaryOperator::Lt
-            | BinaryOperator::Le
-            | BinaryOperator::Add
-            | BinaryOperator::Sub
-            | BinaryOperator::Mul
-            | BinaryOperator::Div
-            | BinaryOperator::Rem
-             => false,
-
-            | BinaryOperator::BitshiftLeft
-            | BinaryOperator::BitshiftRight
-            | BinaryOperator::BitwiseAnd
-            | BinaryOperator::BitwiseOr
-            | BinaryOperator::BitwiseXor
-             => true,
-        }
-
-    }
-
-    
-    pub fn is_ocomp(self) -> bool {
-        match self {
-            | BinaryOperator::Add
-            | BinaryOperator::Sub
-            | BinaryOperator::Mul
-            | BinaryOperator::Div
-            | BinaryOperator::Rem
-            | BinaryOperator::BitshiftLeft
-            | BinaryOperator::BitshiftRight
-            | BinaryOperator::BitwiseAnd
-            | BinaryOperator::BitwiseOr
-            | BinaryOperator::BitwiseXor
-            | BinaryOperator::Eq
-            | BinaryOperator::Ne
-             => false,
-
-            | BinaryOperator::Gt
-            | BinaryOperator::Ge
-            | BinaryOperator::Lt
-            | BinaryOperator::Le
-             => true,
-        }
-    }
-
-    
-    pub fn is_ecomp(self) -> bool {
-        match self {
-            | BinaryOperator::Add
-            | BinaryOperator::Sub
-            | BinaryOperator::Mul
-            | BinaryOperator::Div
-            | BinaryOperator::Rem
-            | BinaryOperator::BitshiftLeft
-            | BinaryOperator::BitshiftRight
-            | BinaryOperator::BitwiseAnd
-            | BinaryOperator::BitwiseOr
-            | BinaryOperator::BitwiseXor
-            | BinaryOperator::Gt
-            | BinaryOperator::Ge
-            | BinaryOperator::Lt
-            | BinaryOperator::Le
-             => false,
-
-            | BinaryOperator::Eq
-            | BinaryOperator::Ne
-             => true,
+            Node::Declaration(v) => v.range(),
+            Node::Statement(v) => v.range(),
+            Node::Expression(v) => v.range(),
+            Node::Attribute(v) => v.range(),
+            Node::Error(v) => v.range(),
         }
     }
 }
 
 
-impl Display for BinaryOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            BinaryOperator::Add => "+",
-            BinaryOperator::Sub => "-",
-            BinaryOperator::Mul => "*",
-            BinaryOperator::Div => "/",
-            BinaryOperator::Rem => "%",
-            BinaryOperator::BitshiftLeft => ">>",
-            BinaryOperator::BitshiftRight => "<<",
-            BinaryOperator::BitwiseAnd => "&",
-            BinaryOperator::BitwiseOr => "|",
-            BinaryOperator::BitwiseXor => "^",
-            BinaryOperator::Eq => "==",
-            BinaryOperator::Ne => "!=",
-            BinaryOperator::Gt => ">",
-            BinaryOperator::Ge => ">=",
-            BinaryOperator::Lt => "<",
-            BinaryOperator::Le => "<=",
-        })
+impl<'a> From<DeclarationNode<'a>> for Node<'a> {
+    fn from(value: DeclarationNode<'a>) -> Self {
+        Self::Declaration(value)
     }
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum UnaryOperator {
-    Not,
-    Neg,
-}
-
-
-impl Display for UnaryOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            UnaryOperator::Not => "!",
-            UnaryOperator::Neg => "-",
-        })
+impl<'a> From<StatementNode<'a>> for Node<'a> {
+    fn from(value: StatementNode<'a>) -> Self {
+        Self::Statement(value)
     }
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct UseItem<'a> {
-    kind: UseItemKind<'a>,
-    name: StringIndex,
-    range: SourceRange,
+impl<'a> From<ExpressionNode<'a>> for Node<'a> {
+    fn from(value: ExpressionNode<'a>) -> Self {
+        Self::Expression(value)
+    }
 }
 
-impl<'a> UseItem<'a> {
-    pub fn new(name: StringIndex, kind: UseItemKind<'a>, range: SourceRange) -> Self { Self { kind, range, name } }
-    #[inline(always)]
-    pub fn name(self) -> StringIndex { self.name}
-    #[inline(always)]
-    pub fn kind(self) -> UseItemKind<'a> { self.kind }
-    #[inline(always)]
-    pub fn range(self) -> SourceRange { self.range }
+impl<'a> From<&'a AttributeNode<'a>> for Node<'a> {
+    fn from(value: &'a AttributeNode<'a>) -> Self {
+        Self::Attribute(value)
+    }
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum UseItemKind<'a> {
-    List {
-        list: &'a [UseItem<'a>],
-    },
-    BringName,
-    All,
+impl<'a> From<ErrorNode> for Node<'a> {
+    fn from(value: ErrorNode) -> Self {
+        Self::Error(value)
+    }
 }
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Attribute<'a> {
-    subs: &'a [Attribute<'a>],
-    name: StringIndex,
-    range: SourceRange,
-}
-
-impl<'a> Attribute<'a> {
-    pub fn new(name: StringIndex, subs: &'a [Attribute<'a>], range: SourceRange) -> Self { Self { subs, range, name } }
-    #[inline(always)]
-    pub fn name(self) -> StringIndex { self.name}
-    #[inline(always)]
-    pub fn subs(self) -> &'a [Attribute<'a>] { self.subs }
-    #[inline(always)]
-    pub fn range(self) -> SourceRange { self.range }
-}
-
