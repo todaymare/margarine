@@ -6,18 +6,18 @@ pub mod funcs;
 
 use std::fmt::Write;
 
-use common::{source::{SourceRange, FileData, Extension}, string_map::StringMap};
+use common::{source::SourceRange, string_map::StringMap};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{nodes::{Node, NodeKind, Expression, Declaration, BinaryOperator, UnaryOperator, Statement, MatchMapping, UseItemKind, UseItem}, DataTypeKind, DataType};
+use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeSymbol, TypeStructStatus}};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
-use crate::{types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::TypeStruct}, scope::ExplicitNamespace};
+use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::TypeStruct};
 
 #[derive(Debug)]
 pub struct Analyzer<'me, 'out, 'str> {
@@ -379,16 +379,19 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             let namespace = Namespace::new();
             let namespace = self.namespaces.put(namespace);
 
-            self.collect_type_names(nodes, builder, &mut ty_builder, namespace);
+            self.collect_type_names(
+                as_decl_iterator(nodes.iter().copied()),
+                builder, &mut ty_builder, namespace
+            );
 
             (Scope::new(ScopeKind::ImplicitNamespace(namespace), scope.some()), namespace)
         };
         
         let mut scope = self.scopes.push(scope);
 
-        self.collect_impls(builder, &mut ty_builder, nodes, scope, ns_id);
-        self.collect_uses(nodes, builder, scope, ns_id);
-        self.resolve_names(nodes, builder, &mut ty_builder, scope, ns_id);
+        self.collect_impls(builder, &mut ty_builder, as_decl_iterator(nodes.iter().copied()), scope, ns_id);
+        self.collect_uses(as_decl_iterator(nodes.iter().copied()), builder, scope, ns_id);
+        self.resolve_names(as_decl_iterator(nodes.iter().copied()), builder, &mut ty_builder, scope, ns_id);
         
         {
             let err_len = self.errors.len();
@@ -405,7 +408,7 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
             }
         }
         
-        self.resolve_functions(nodes, builder, scope, ns_id);
+        self.resolve_functions(as_decl_iterator(nodes.iter().copied()), builder, scope, ns_id);
 
         let mut ty = Type::Unit;
         for (id, n) in nodes.iter().enumerate() {
@@ -425,30 +428,18 @@ impl<'me, 'out, 'str> Analyzer<'me, 'out, 'str> {
 
 
 impl Analyzer<'_, '_, '_> {
-    pub fn collect_type_names(
+    pub fn collect_type_names<'a>(
         &mut self,
-        nodes: &[Node],
+        decls: impl Iterator<Item=DeclarationNode<'a>>,
         
         builder: &mut WasmFunctionBuilder,
         type_builder: &mut TypeBuilder,
         namespace: NamespaceId,
     ) {
-        for node in nodes {
-            let source = node.range();
-            let decl = match node.kind() {
-                NodeKind::Declaration(decl) => decl,
-                NodeKind::Attribute(_, node) => {
-                    self.collect_type_names(std::slice::from_ref(node), builder, type_builder, namespace);
-                    continue
-                }
-
-                _ => continue,
-            };
-
-
-            match *decl {
-                | parser::nodes::Declaration::Enum { name, header, .. }
-                | parser::nodes::Declaration::Struct { name, header, .. } => {
+        for decl in decls {
+            match decl.kind() {
+                | Declaration::Enum { name, header, .. }
+                | Declaration::Struct { name, header, .. } => {
                     let namespace = self.namespaces.get_mut(namespace);
                     if namespace.get_type(name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
@@ -463,7 +454,7 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                parser::nodes::Declaration::Function { name, header, .. } => {
+                Declaration::Function { name, header, .. } => {
                     let namespace = self.namespaces.get_mut(namespace);
                     if namespace.get_func(name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
@@ -474,15 +465,15 @@ impl Analyzer<'_, '_, '_> {
 
                     namespace.add_func(name, self.funcs.pending())
                 },
-                parser::nodes::Declaration::Impl { .. } => (),
+                Declaration::Impl { .. } => (),
 
-                parser::nodes::Declaration::Using { .. } => (),
+                Declaration::Using { .. } => (),
 
-                parser::nodes::Declaration::Module { name, .. } => {
+                Declaration::Module { name, .. } => {
                     let ns = self.namespaces.get_mut(namespace);
                     if ns.get_mod(name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
-                           source, name }));
+                           source: decl.range(), name }));
 
                         continue
                     }
@@ -494,7 +485,7 @@ impl Analyzer<'_, '_, '_> {
                     namespace.add_mod(name, ns);
                 },
 
-                parser::nodes::Declaration::Extern { functions, .. } => {
+                Declaration::Extern { functions, .. } => {
                     for f in functions.iter() {
                         let namespace = self.namespaces.get_mut(namespace);
                         if namespace.get_func(f.name()).is_some() {
@@ -517,26 +508,15 @@ impl Analyzer<'_, '_, '_> {
         &mut self,
         builder: &mut WasmFunctionBuilder,
         type_builder: &mut TypeBuilder,
-        nodes: &[Node],
+        decls: impl Iterator<Item=DeclarationNode<'a>>,
         
         scope: ScopeId,
         ns_id: NamespaceId,
     ) {
-        for node in nodes {
-            let decl = match node.kind() {
-                NodeKind::Declaration(decl) => decl,
-                NodeKind::Attribute(_, node) => {
-                    self.collect_impls(builder, type_builder, std::slice::from_ref(node), scope, ns_id);
-                    continue
-                }
-
-                _ => continue,
-            };
-
-
-            match decl {
+        for decl in decls {
+            match decl.kind() {
                 Declaration::Impl { data_type, body } => {
-                    let ty = match self.convert_ty(scope, *data_type) {
+                    let ty = match self.convert_ty(scope, data_type) {
                         Ok(v) => v,
                         Err(e) => {
                             builder.error(self.error(e));
@@ -547,28 +527,22 @@ impl Analyzer<'_, '_, '_> {
                     let ns_id = self.namespaces.get_type(ty);
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns_id), scope.some());
-                    let mut scope = self.scopes.push(scope);
-                    let before = scope;
+                    let scope = self.scopes.push(scope);
 
-                    self.collect_type_names(body, builder, type_builder, ns_id);
-                    self.collect_impls(builder, type_builder, body, scope, ns_id);
-
-                    assert_eq!(before, scope);
+                    self.collect_type_names(body.iter().copied(), builder, type_builder, ns_id);
+                    self.collect_impls(builder, type_builder, body.iter().copied(), scope, ns_id);
                 }
 
 
                 Declaration::Module { name, body } => {
                     let ns_id = self.namespaces.get(ns_id);
-                    let ns = ns_id.get_mod(*name).unwrap();
+                    let ns = ns_id.get_mod(name).unwrap();
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                    let mut scope = self.scopes.push(scope);
-                    let before = scope;
+                    let scope = self.scopes.push(scope);
 
-                    self.collect_type_names(body, builder, type_builder, ns);
-                    self.collect_impls(builder, type_builder, body, scope, ns);
-
-                    assert_eq!(before, scope);
+                    self.collect_type_names(body.iter().copied(), builder, type_builder, ns);
+                    self.collect_impls(builder, type_builder, body.iter().copied(), scope, ns);
                 }
 
 
@@ -583,24 +557,14 @@ impl Analyzer<'_, '_, '_> {
 
     pub fn collect_uses<'a>(
         &mut self,
-        nodes: &[Node],
+        decls: impl Iterator<Item=DeclarationNode<'a>>,
 
-        builder: &mut WasmFunctionBuilder,
-        scope: ScopeId,
-        ns_id: NamespaceId,
+        _builder: &mut WasmFunctionBuilder,
+        _scope: ScopeId,
+        _ns_id: NamespaceId,
     ) {
-        for node in nodes {
-            let decl = match node.kind() {
-                NodeKind::Declaration(decl) => decl,
-                NodeKind::Attribute(_, node) => {
-                    self.collect_uses(std::slice::from_ref(node), builder, scope, ns_id);
-                    continue
-                }
-
-                _ => continue,
-            };
-
-            let Declaration::Using { item } = decl
+        for decl in decls {
+            let Declaration::Using { item: _ } = decl.kind()
             else { continue };
 
             todo!()
@@ -612,27 +576,17 @@ impl Analyzer<'_, '_, '_> {
 
     pub fn resolve_names<'a>(
         &mut self,
-        nodes: &[Node],
+        decls: impl Iterator<Item=DeclarationNode<'a>>,
 
         builder: &mut WasmFunctionBuilder,
         type_builder: &mut TypeBuilder,
         scope: ScopeId,
         ns_id: NamespaceId,
     ) {
-        for node in nodes {
-            let decl = match node.kind() {
-                NodeKind::Declaration(decl) => decl,
-                NodeKind::Attribute(_, node) => {
-                    self.resolve_names(std::slice::from_ref(node), builder, type_builder, scope, ns_id);
-                    continue
-                }
-
-                _ => continue,
-            };
-
-            match decl {
+        for decl in decls {
+            match decl.kind() {
                 Declaration::Struct { name, fields, .. } => {
-                    let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
+                    let ty = self.namespaces.get(ns_id).get_type(name).unwrap();
                     let fields = fields.iter()
                         .filter_map(|(name, ty, _)| {
                             let ty = self.convert_ty(scope, *ty);
@@ -649,7 +603,7 @@ impl Analyzer<'_, '_, '_> {
 
 
                 Declaration::Enum { name, mappings, .. } => {
-                    let ty = self.namespaces.get(ns_id).get_type(*name).unwrap();
+                    let ty = self.namespaces.get(ns_id).get_type(name).unwrap();
                     let mappings = mappings.iter()
                         .filter_map(|mapping| {
                             let ty = match mapping.is_implicit_unit() {
@@ -679,7 +633,7 @@ impl Analyzer<'_, '_, '_> {
 
                 Declaration::Impl { data_type, body } => {
                     let ns = {
-                        let Ok(ty) = self.convert_ty(scope, *data_type)
+                        let Ok(ty) = self.convert_ty(scope, data_type)
                         else { continue };
 
                         self.namespaces.get_type(ty)
@@ -688,17 +642,17 @@ impl Analyzer<'_, '_, '_> {
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
                     
-                    self.resolve_names(body, builder, type_builder, scope, ns);
+                    self.resolve_names(body.iter().copied(), builder, type_builder, scope, ns);
                 },
 
                 Declaration::Module { name, body } => {
                     let ns = self.namespaces.get(ns_id);
-                    let ns = ns.get_mod(*name).unwrap();
+                    let ns = ns.get_mod(name).unwrap();
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
 
-                    self.resolve_names(body, builder, type_builder, scope, ns)
+                    self.resolve_names(body.iter().copied(), builder, type_builder, scope, ns)
                 },
 
                 Declaration::Using { .. } => (),
@@ -711,26 +665,14 @@ impl Analyzer<'_, '_, '_> {
 
     pub fn resolve_functions<'a>(
         &mut self,
-        nodes: &[Node],
+        decls: impl Iterator<Item=DeclarationNode<'a>>,
 
         builder: &mut WasmFunctionBuilder,
         scope: ScopeId,
         ns_id: NamespaceId,
     ) {
-        for node in nodes {
-            let source = node.range();
-
-            let decl = match node.kind() {
-                NodeKind::Declaration(decl) => decl,
-                NodeKind::Attribute(_, node) => {
-                    self.resolve_functions(std::slice::from_ref(node), builder, scope, ns_id);
-                    continue
-                }
-
-                _ => continue,
-            };
-
-            match decl {
+        for decl in decls {
+            match decl.kind() {
                 Declaration::Function { name, arguments, return_type, .. } => {
                     let args = {
                         let mut args = Vec::with_cap_in(self.output, arguments.len());
@@ -751,7 +693,7 @@ impl Analyzer<'_, '_, '_> {
                         args
                     };
 
-                    let ret = match self.convert_ty(scope, *return_type) {
+                    let ret = match self.convert_ty(scope, return_type) {
                         Ok(v) => v,
                         Err(e) => {
                             builder.error(self.error(e));
@@ -763,14 +705,14 @@ impl Analyzer<'_, '_, '_> {
                         let temp = ArenaPool::tls_get_temp();
                         let tuple = Vec::from_in(&*temp,
                                                    args.iter().map(|a| a.2));
-                        Some(self.make_tuple(tuple, source))
+                        Some(self.make_tuple(tuple, decl.range()))
                     } else { None };
 
                     let ns = self.namespaces.get_mut(ns_id);
-                    let func_id = ns.get_func(*name).unwrap();
+                    let func_id = ns.get_func(name).unwrap();
                     let func = FunctionKind::UserDefined {
                         inout: inout_ty_id,  };
-                    let func = Function::new(*name, args.leak(), ret, self.module_builder.function_id(), func);
+                    let func = Function::new(name, args.leak(), ret, self.module_builder.function_id(), func);
                     self.funcs.put(func_id, func);
                 },
 
@@ -809,10 +751,10 @@ impl Analyzer<'_, '_, '_> {
                             let mut vec = Vec::with_cap_in(&*pool, args.len() + 1);
                             vec.extend(args.iter().map(|x| x.2));
                             vec.push(ret);
-                            self.make_tuple(vec, source)
+                            self.make_tuple(vec, decl.range())
                         };
 
-                        let wfid = self.module_builder.extern_func(*file, f.path());
+                        let wfid = self.module_builder.extern_func(file, f.path());
                         
                         let ns = self.namespaces.get_mut(ns_id);
                         let func_id = ns.get_func(f.name()).unwrap();
@@ -824,7 +766,7 @@ impl Analyzer<'_, '_, '_> {
 
 
                 Declaration::Impl { data_type, body } => {
-                    let ty = match self.convert_ty(scope, *data_type) {
+                    let ty = match self.convert_ty(scope, data_type) {
                         Ok(v) => v,
                         Err(e) => {
                             builder.error(self.error(e));
@@ -838,18 +780,18 @@ impl Analyzer<'_, '_, '_> {
                     let scope = self.scopes.push(scope);
 
 
-                    self.resolve_functions(body, builder, scope, ns_id);
+                    self.resolve_functions(body.iter().copied(), builder, scope, ns_id);
                 }
 
 
                 Declaration::Module { name, body } => {
                     let ns_id = self.namespaces.get_mut(ns_id);
-                    let ns = ns_id.get_mod(*name).unwrap();
+                    let ns = ns_id.get_mod(name).unwrap();
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
 
-                    self.resolve_functions(body, builder, scope, ns)
+                    self.resolve_functions(body.iter().copied(), builder, scope, ns)
                 }
 
                 _ => continue,
@@ -866,16 +808,15 @@ impl Analyzer<'_, '_, '_> {
 
         node: &Node<'_>,
     ) -> AnalysisResult {
-        let kind = node.kind();
-        match kind {
-            NodeKind::Declaration(decl) => {
-                self.decl(decl, *scope);
+        match node {
+            Node::Declaration(decl) => {
+                self.decl(*decl, *scope);
                 wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
             },
 
-            NodeKind::Statement(stmt) => {
-                if self.stmt(stmt, node.range(), scope, wasm).is_err() {
+            Node::Statement(stmt) => {
+                if self.stmt(*stmt, scope, wasm).is_err() {
                     wasm.unit();
                     return AnalysisResult::error()
                 }
@@ -884,39 +825,53 @@ impl Analyzer<'_, '_, '_> {
 
             },
 
-            NodeKind::Expression(expr) => self.expr(expr, node.range(), scope, wasm),
+            Node::Expression(expr) => self.expr(*expr, *scope, wasm),
 
-            NodeKind::Error(err) => {
-                wasm.error(*err);
+            Node::Error(err) => {
+                wasm.error(err.id());
                 wasm.unit();
                 AnalysisResult::error()
             },
 
-            NodeKind::Attribute(attr, node) => {
-                match self.string_map.get(attr.name()) {
+            Node::Attribute(attr) => {
+                match self.string_map.get(attr.attr().name()) {
                     "startup" => {
-                        if !matches!(node.kind(), NodeKind::Declaration(Declaration::Function { is_system: true, .. })) {
-                            wasm.error(self.error(Error::InvalidValueForAttr {
-                                attr: (attr.range(), attr.name()),
-                                value: node.range(),
-                                expected: "a system function",
-                            }));
-                            wasm.unit();
-                            return AnalysisResult::error();
-                        }
+                        let check = || {
+                            let Node::Declaration(decl) = attr.node()
+                            else { return Err(()) };
 
-                        let result = self.node(scope, wasm, node);
-                        let NodeKind::Declaration(Declaration::Function { name, .. }) = node.kind()
+                            if matches!(decl.kind(), Declaration::Function { is_system: true, .. }) {
+                                Ok(decl)
+                            } else { Err(()) }
+                        };
+
+                        let decl = match check() {
+                            Ok(val) => val,
+                            Err(_) => {
+                                wasm.error(self.error(Error::InvalidValueForAttr {
+                                    attr: (attr.range(), attr.attr().name()),
+                                    value: node.range(),
+                                    expected: "a system function",
+                                }));
+                                wasm.unit();
+                                return AnalysisResult::error();
+                            }
+                        };
+
+                        self.decl(decl, *scope);
+
+                        let Declaration::Function { name, .. } = decl.kind()
                         else { unreachable!() };
 
-                        let func = self.scopes.get(*scope).get_func(*name, &self.scopes, &self.namespaces).unwrap();
+                        let func = self.scopes.get(*scope).get_func(name, &self.scopes, &self.namespaces).unwrap();
 
                         self.startup_functions.push(func);
 
-                        result
+                        wasm.unit();
+                        AnalysisResult::new(Type::Unit, true)
                     }
                     _ => {
-                        wasm.error(self.error(Error::UnknownAttr(attr.range(), attr.name())));
+                        wasm.error(self.error(Error::UnknownAttr(attr.range(), attr.attr().name())));
                         wasm.unit();
                         AnalysisResult::error()
                     }
@@ -928,16 +883,16 @@ impl Analyzer<'_, '_, '_> {
 
     fn decl(
         &mut self,
-        decl: &Declaration,
+        decl: DeclarationNode,
         scope: ScopeId,
     ) {
-        match decl {
+        match decl.kind() {
             Declaration::Struct { .. } => (),
             Declaration::Enum { .. } => (),
 
 
             Declaration::Function { name, header, return_type, body, .. } => {
-                let func = self.scopes.get(scope).get_func(*name, &self.scopes, &self.namespaces).unwrap();
+                let func = self.scopes.get(scope).get_func(name, &self.scopes, &self.namespaces).unwrap();
                 let func = self.funcs.get(func);
                 let FunctionKind::UserDefined { inout } = func.kind
                 else { unreachable!() };
@@ -1007,7 +962,7 @@ impl Analyzer<'_, '_, '_> {
                 let (anal, _) = self.block(&mut wasm, scope, &body);
                 if !anal.ty.eq_sem(func.ret) {
                     wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
-                        header: *header, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
+                        header, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
                         return_type: func.ret, body_type: anal.ty }));
                 }
 
@@ -1016,37 +971,27 @@ impl Analyzer<'_, '_, '_> {
 
 
             Declaration::Impl { data_type, body } => {
-                let Ok(ns) = self.convert_ty(scope, *data_type)
+                let Ok(ns) = self.convert_ty(scope, data_type)
                 else { return };
 
                 let ns = self.namespaces.get_type(ns);
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                 let scope = self.scopes.push(scope);
 
-                for n in body.iter() {
-                    
-                    let decl = match n.kind() {
-                        NodeKind::Declaration(d) => d,
-                        NodeKind::Error(_) => continue,
-                        _ => panic!("{n:?}"),
-                    };
-
-                    self.decl(decl, scope);
+                for decl in body.iter() {
+                    self.decl(*decl, scope);
                 }
             },
 
             Declaration::Using { .. } => (),
             Declaration::Module { name, body } => {
                 let ns = self.scopes.get(scope);
-                let ns = ns.get_mod(*name, &self.scopes, &self.namespaces).unwrap();
+                let ns = ns.get_mod(name, &self.scopes, &self.namespaces).unwrap();
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                 let scope = self.scopes.push(scope);
 
-                for n in body.iter() {
-                    let NodeKind::Declaration(decl) = n.kind()
-                    else { panic!() };
-
-                    self.decl(decl, scope);
+                for decl in body.iter() {
+                    self.decl(*decl, scope);
                 }
             },
 
@@ -1057,22 +1002,22 @@ impl Analyzer<'_, '_, '_> {
 
     fn stmt(
         &mut self,
-        stmt: &Statement,
-        source: SourceRange,
+        stmt: StatementNode,
 
         scope: &mut ScopeId,
         wasm: &mut WasmFunctionBuilder,
     ) -> Result<(), ()> {
-        match stmt {
+        let source = stmt.range();
+        match stmt.kind() {
             Statement::Variable { name, hint, is_mut, rhs } => {
                 let mut func = || -> Result<(), ()> {
-                    let rhs_anal = self.node(scope, wasm, rhs);
+                    let rhs_anal = self.expr(*rhs, *scope, wasm);
                     if rhs_anal.ty.eq_lit(Type::Error) {
                         return Err(());
                     }
 
                     if let Some(hint) = hint {
-                        let hint = match self.convert_ty(*scope, *hint) {
+                        let hint = match self.convert_ty(*scope, hint) {
                             Ok(v) => v,
                             Err(e) => {
                                 wasm.error(self.error(e));
@@ -1090,7 +1035,7 @@ impl Analyzer<'_, '_, '_> {
                     let local = wasm.local(rhs_anal.ty.to_wasm_ty(&self.types));
                     wasm.local_set(local);
 
-                    let variable_scope = VariableScope::new(*name, *is_mut, rhs_anal.ty, local);
+                    let variable_scope = VariableScope::new(name, is_mut, rhs_anal.ty, local);
                     *scope = self.scopes.push(
                         Scope::new(ScopeKind::Variable(variable_scope), scope.some()));
 
@@ -1098,7 +1043,7 @@ impl Analyzer<'_, '_, '_> {
                 };
 
                 if func().is_err() {
-                    let dummy = VariableScope::new(*name, *is_mut, Type::Error, wasm.local(WasmType::I64));
+                    let dummy = VariableScope::new(name, is_mut, Type::Error, wasm.local(WasmType::I64));
                     *scope = self.scopes.push(Scope::new(ScopeKind::Variable(dummy), scope.some()));
                     return Err(());
                 }
@@ -1108,13 +1053,13 @@ impl Analyzer<'_, '_, '_> {
 
             Statement::VariableTuple { names, hint, rhs } => {
                 let mut func = || -> Result<(), ()> {
-                    let rhs_anal = self.node(scope, wasm, rhs);
+                    let rhs_anal = self.expr(*rhs, *scope, wasm);
                     if rhs_anal.ty.eq_lit(Type::Error) {
                         return Err(());
                     }
 
                     if let Some(hint) = hint {
-                        let hint = match self.convert_ty(*scope, *hint) {
+                        let hint = match self.convert_ty(*scope, hint) {
                             Ok(v) => v,
                             Err(e) => {
                                 wasm.error(self.error(e));
@@ -1183,8 +1128,8 @@ impl Analyzer<'_, '_, '_> {
 
 
             Statement::UpdateValue { lhs, rhs } => {
-                let rhs_anal = self.node(scope, wasm, rhs);
-                if let Err(e) = self.assign(wasm, *scope, lhs, rhs_anal.ty, 0) {
+                let rhs_anal = self.expr(*rhs, *scope, wasm);
+                if let Err(e) = self.assign(wasm, *scope, *lhs, rhs_anal.ty, 0) {
                     wasm.error(self.error(e));
                     return Err(());
                 }
@@ -1196,13 +1141,13 @@ impl Analyzer<'_, '_, '_> {
 
     fn expr(
         &mut self,
-        expr: &Expression,
-        source: SourceRange,
+        expr: ExpressionNode,
 
-        scope: &ScopeId,
+        scope: ScopeId,
         wasm: &mut WasmFunctionBuilder,
     ) -> AnalysisResult {
-        match expr {
+        let source = expr.range();
+        match expr.kind() {
             Expression::Unit => {
                 wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
@@ -1211,7 +1156,7 @@ impl Analyzer<'_, '_, '_> {
             Expression::Literal(l) => {
                 match l {
                     lexer::Literal::Integer(i) => {
-                        wasm.i64_const(*i);
+                        wasm.i64_const(i);
                         AnalysisResult::new(Type::I64, true)
                     },
 
@@ -1223,7 +1168,7 @@ impl Analyzer<'_, '_, '_> {
 
 
                     lexer::Literal::String(v) => {
-                        let str = self.string_map.get(*v);
+                        let str = self.string_map.get(v);
                         let string_ptr = self.module_builder.add_string(str);
                         
                         let ty = self.types.get(TypeId::STR);
@@ -1256,7 +1201,7 @@ impl Analyzer<'_, '_, '_> {
 
                     lexer::Literal::Bool(v) => {
                         let ty = Type::BOOL;
-                        let name = if *v { StringMap::TRUE } else { StringMap::FALSE };
+                        let name = if v { StringMap::TRUE } else { StringMap::FALSE };
 
                         let func = self.namespaces.get_type(ty);
                         let func = self.namespaces.get(func).get_func(name).unwrap();
@@ -1270,9 +1215,9 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::Identifier(ident) => {
-                let Some(variable) = self.scopes.get(*scope).get_var(*ident, &self.scopes)
+                let Some(variable) = self.scopes.get(scope).get_var(ident, &self.scopes)
                 else {
-                    wasm.error(self.error(Error::VariableNotFound { name: *ident, source }));
+                    wasm.error(self.error(Error::VariableNotFound { name: ident, source }));
                     return AnalysisResult::error()
                 };
 
@@ -1282,8 +1227,8 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::BinaryOp { operator, lhs, rhs } => {
-                let lhs_anal = self.node(scope, wasm, lhs);
-                let rhs_anal = self.node(scope, wasm, rhs);
+                let lhs_anal = self.expr(*lhs, scope, wasm);
+                let rhs_anal = self.expr(*rhs, scope, wasm);
 
                 let mut type_check = || {
                     if lhs_anal.ty.eq_lit(Type::Error)
@@ -1302,7 +1247,7 @@ impl Analyzer<'_, '_, '_> {
                     if operator.is_arith() 
                         && !(lhs_anal.ty.is_number() && rhs_anal.ty.is_number()) {
                         wasm.error(self.error(Error::InvalidBinaryOp {
-                            operator: *operator, lhs: lhs_anal.ty,
+                            operator, lhs: lhs_anal.ty,
                             rhs: rhs_anal.ty, source 
                         }));
 
@@ -1380,27 +1325,27 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::UnaryOp { operator, rhs } => {
-                let rhs_anal = self.node(scope, wasm, rhs);
+                let rhs_anal = self.expr(*rhs, scope, wasm);
                 
                 let mut type_check = || {
                     if rhs_anal.ty.eq_lit(Type::Error) {
                         return Err(())
                     }
 
-                    if *operator == UnaryOperator::Not
+                    if operator == UnaryOperator::Not
                         && !rhs_anal.ty.eq_sem(Type::BOOL) {
 
                         wasm.error(self.error(Error::InvalidUnaryOp {
-                            operator: *operator, rhs: rhs_anal.ty, source
+                            operator, rhs: rhs_anal.ty, source
                         }));
 
                         return Err(())
 
-                    } else if *operator == UnaryOperator::Neg
+                    } else if operator == UnaryOperator::Neg
                         && !rhs_anal.ty.is_number() {
 
                         wasm.error(self.error(Error::InvalidUnaryOp {
-                            operator: *operator, rhs: rhs_anal.ty, source
+                            operator, rhs: rhs_anal.ty, source
                         }));
 
                         return Err(())
@@ -1436,7 +1381,7 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::If { condition, body, else_block } => {
-                let cond = self.node(scope, wasm, &condition);
+                let cond = self.expr(*condition, scope, wasm);
 
                 if !cond.ty.eq_sem(Type::BOOL) {
                     wasm.error(self.error(Error::InvalidType {
@@ -1459,14 +1404,14 @@ impl Analyzer<'_, '_, '_> {
                 let (local, l, r) = wasm.ite(
                     &mut (&mut slf, scope),
                     |(slf, scope), wasm| {
-                        let (body, ..) = slf.block(wasm, **scope, body);
+                        let body = slf.expr(*body, *scope, wasm);
                         let wty = body.ty.to_wasm_ty(&slf.types);
                         let local = wasm.local(wty);
                         (local, Some((body, wasm.offset())))
                     },
                     |((slf, scope), _), wasm| {
                         if let Some(else_block) = else_block {
-                            return Some((slf.node(scope, wasm, else_block), wasm.offset()))
+                            return Some((slf.expr(*else_block, *scope, wasm), wasm.offset()))
                         }
 
                         None
@@ -1507,8 +1452,8 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::Match { value, taken_as_inout, mappings } => {
-                let anal = self.node(scope, wasm, value);
-                if *taken_as_inout && !anal.is_mut {
+                let anal = self.expr(*value, scope, wasm);
+                if taken_as_inout && !anal.is_mut {
                     wasm.error(self.error(Error::InOutValueIsntMut(value.range())));
                     return AnalysisResult::error();
                 }
@@ -1661,9 +1606,9 @@ impl Analyzer<'_, '_, '_> {
                             );
 
                             let scope = Scope::new(ScopeKind::Variable(var_scope), scope.some());
-                            let mut scope = anal.scopes.push(scope);
+                            let scope = anal.scopes.push(scope);
 
-                            let analysis = anal.node(&mut scope, wasm, mapping.node());
+                            let analysis = anal.expr(mapping.node(), scope, wasm);
 
                             final_result = Some(if let Some((ty, local, src)) = result {
                                 if analysis.ty.eq_sem(ty) {
@@ -1688,8 +1633,8 @@ impl Analyzer<'_, '_, '_> {
                         Some(final_result.unwrap())
                     }
 
-                    let result = do_mapping(self, wasm, mappings, sym, sym_local, tag, *taken_as_inout,
-                               value.range(), *scope, 0);
+                    let result = do_mapping(self, wasm, mappings, sym, sym_local, tag, taken_as_inout,
+                               value.range(), scope, 0);
 
                     if let Some(result) = result {
                         wasm.local_get(result.1);
@@ -1701,10 +1646,10 @@ impl Analyzer<'_, '_, '_> {
                 }
             },
 
-            Expression::Block { block } => self.block(wasm, *scope, block).0,
+            Expression::Block { block } => self.block(wasm, scope, &*block).0,
 
             Expression::CreateStruct { data_type, fields } => {
-                let ty = match self.convert_ty(*scope, *data_type) {
+                let ty = match self.convert_ty(scope, data_type) {
                     Ok(v) => v,
                     Err(e) => {
                         wasm.error(self.error(e));
@@ -1766,7 +1711,7 @@ impl Analyzer<'_, '_, '_> {
                     let val = fields.iter().find(|x| x.0 == sf.name).unwrap();
                     let ptr = alloc.add(sf.offset);
 
-                    let node = self.node(scope, wasm, &val.2);
+                    let node = self.expr(val.2, scope, wasm);
                     if !node.ty.eq_sem(sf.ty) {
                         wasm.error(self.error(Error::InvalidType 
                             { source: val.1, found: node.ty, expected: sf.ty }));
@@ -1784,7 +1729,7 @@ impl Analyzer<'_, '_, '_> {
             
             
             Expression::AccessField { val, field_name } => {
-                let value = self.node(scope, wasm, val);
+                let value = self.expr(*val, scope, wasm);
 
                 let tyid = match value.ty {
                     Type::Custom(v) => v,
@@ -1808,7 +1753,7 @@ impl Analyzer<'_, '_, '_> {
                 };
                 
                 for f in sfields.iter() {
-                    if f.name == *field_name {
+                    if f.name == field_name {
                         wasm.u32_const(f.offset.try_into().unwrap());
                         wasm.i32_add();
                         wasm.read(f.ty.to_wasm_ty(&self.types));
@@ -1817,27 +1762,27 @@ impl Analyzer<'_, '_, '_> {
                 }
 
                 wasm.error(self.error(Error::FieldDoesntExist {
-                    source, field: *field_name, typ: value.ty }));
+                    source, field: field_name, typ: value.ty }));
                 AnalysisResult::error()
             },
 
 
             Expression::CallFunction { name, is_accessor, args } => {
-                let mut scope_id = *scope;
+                let mut scope_id = scope;
                 let pool = ArenaPool::tls_get_rec();
                 let aargs = {
                     let mut vec = Vec::new_in(&*pool);
                     
                     for a in args.iter() {
-                        let mut scope = scope_id;
-                        let anal = self.node(&mut scope, wasm, &a.0);
+                        let scope = scope_id;
+                        let anal = self.expr(a.0, scope, wasm);
                         vec.push((anal, a.0.range(), a.1))
                     }
 
                     vec
                 };
 
-                if *is_accessor {
+                if is_accessor {
                     let ty = aargs[0].0.ty;
                     let ns = self.namespaces.get_type(ty);
                     scope_id = self.scopes.push(
@@ -1845,9 +1790,9 @@ impl Analyzer<'_, '_, '_> {
                 }
 
                 let scope = self.scopes.get(scope_id);
-                let Some(func) = scope.get_func(*name, &self.scopes, &self.namespaces)
+                let Some(func) = scope.get_func(name, &self.scopes, &self.namespaces)
                 else {
-                    wasm.error(self.error(Error::FunctionNotFound { source, name: *name }));
+                    wasm.error(self.error(Error::FunctionNotFound { source, name }));
                     return AnalysisResult::error();
                 };
 
@@ -1915,7 +1860,7 @@ impl Analyzer<'_, '_, '_> {
                                 wasm.i32_add();
                                 wasm.read(sig_arg.2.to_wasm_ty(&self.types));
 
-                                if let Err(e) = self.assign(wasm, scope_id, &args[i].0, sig_arg.2, 0) {
+                                if let Err(e) = self.assign(wasm, scope_id, args[i].0, sig_arg.2, 0) {
                                     wasm.error(self.error(e));
                                 }
 
@@ -1973,7 +1918,7 @@ impl Analyzer<'_, '_, '_> {
                             wasm.i32_add();
                             wasm.read(sig_arg.2.to_wasm_ty(&self.types));
 
-                            if let Err(e) = self.assign(wasm, scope_id, &args[i].0, sig_arg.2, 0) {
+                            if let Err(e) = self.assign(wasm, scope_id, args[i].0, sig_arg.2, 0) {
                                 wasm.error(self.error(e));
                             }
 
@@ -1998,21 +1943,21 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::WithinNamespace { namespace, namespace_source, action } => {
-                let Some(ns) = self.scopes.get(*scope).get_ns(*namespace, &self.scopes, &mut self.namespaces)
+                let Some(ns) = self.scopes.get(scope).get_ns(namespace, &self.scopes, &mut self.namespaces)
                 else {
                     wasm.error(self.error(Error::NamespaceNotFound 
-                                          { source: *namespace_source, namespace: *namespace }));
+                                          { source: namespace_source, namespace }));
                     return AnalysisResult::error();
                 };
 
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                let mut scope = self.scopes.push(scope);
-                self.node(&mut scope, wasm, action)
+                let scope = self.scopes.push(scope);
+                self.expr(*action, scope, wasm)
             },
 
 
             Expression::WithinTypeNamespace { namespace, action } => {
-                let namespace = self.convert_ty(*scope, *namespace);
+                let namespace = self.convert_ty(scope, namespace);
                 let namespace = match namespace {
                     Ok(v) => v,
                     Err(e) => {
@@ -2023,8 +1968,8 @@ impl Analyzer<'_, '_, '_> {
 
                 let namespace = self.namespaces.get_type(namespace);
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(namespace), scope.some());
-                let mut scope = self.scopes.push(scope);
-                self.node(&mut scope, wasm, action)
+                let scope = self.scopes.push(scope);
+                self.expr(*action, scope, wasm)
             },
 
             
@@ -2034,7 +1979,7 @@ impl Analyzer<'_, '_, '_> {
                     let nscope = Scope::new(ScopeKind::Loop(nscope), scope.some());
                     let nscope = self.scopes.push(nscope);
 
-                    self.block(wasm, nscope, body);
+                    self.block(wasm, nscope, &*body);
                 });
 
                 wasm.unit();
@@ -2043,10 +1988,10 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::Return(v) => {
-                let value = self.node(scope, wasm, v);
+                let value = self.expr(*v, scope, wasm);
 
                 let func_return = {
-                    let scope = self.scopes.get(*scope);
+                    let scope = self.scopes.get(scope);
                     match scope.get_func_def(&self.scopes) {
                         Some(v) => v,
                         None => {
@@ -2071,7 +2016,7 @@ impl Analyzer<'_, '_, '_> {
 
             Expression::Continue => {
                 let loop_val = {
-                    let scope = self.scopes.get(*scope);
+                    let scope = self.scopes.get(scope);
                     match scope.get_loop(&self.scopes) {
                         Some(v) => v,
                         None => {
@@ -2088,7 +2033,7 @@ impl Analyzer<'_, '_, '_> {
 
             Expression::Break => {
                 let loop_val = {
-                    let scope = self.scopes.get(*scope);
+                    let scope = self.scopes.get(scope);
                     match scope.get_loop(&self.scopes) {
                         Some(v) => v,
                         None => {
@@ -2107,7 +2052,7 @@ impl Analyzer<'_, '_, '_> {
                 let pool = ArenaPool::tls_get_rec();
                 let mut vec = Vec::with_cap_in(&*pool, v.len());
                 for n in v.iter() {
-                    let anal = self.node(scope, wasm, n);
+                    let anal = self.expr(*n, scope, wasm);
                     vec.push(anal.ty);
                 }
 
@@ -2145,8 +2090,8 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::CastAny { lhs, data_type  } => {
-                let lhs_anal = self.node(scope, wasm, &lhs);
-                let ty = self.convert_ty(*scope, *data_type);
+                let lhs_anal = self.expr(*lhs, scope, wasm);
+                let ty = self.convert_ty(scope, data_type);
                 let ty = match ty {
                     Ok(v) => v,
                     Err(e) => {
@@ -2243,8 +2188,8 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::AsCast { lhs, data_type } => {
-                let lhs_anal = self.node(scope, wasm, &lhs);
-                let ty = self.convert_ty(*scope, *data_type);
+                let lhs_anal = self.expr(*lhs, scope, wasm);
+                let ty = self.convert_ty(scope, data_type);
                 let ty = match ty {
                     Ok(v) => v,
                     Err(e) => {
@@ -2352,7 +2297,7 @@ impl Analyzer<'_, '_, '_> {
 
 
             Expression::Unwrap(v) => {
-                let anal = self.node(scope, wasm, v);
+                let anal = self.expr(*v, scope, wasm);
                 let ty = match anal.ty {
                     Type::Custom(v) => self.types.get(v),
 
@@ -2417,8 +2362,10 @@ impl Analyzer<'_, '_, '_> {
 
                 AnalysisResult::new(ret_ty, true)
             },
+
+
             Expression::OrReturn(v) => {
-                let anal = self.node(scope, wasm, v);
+                let anal = self.expr(*v, scope, wasm);
                 let ty = match anal.ty {
                     Type::Custom(v) => self.types.get(v),
 
@@ -2441,7 +2388,7 @@ impl Analyzer<'_, '_, '_> {
                     return AnalysisResult::error();
                 }
 
-                let func = self.scopes.get(*scope).get_func_def(&self.scopes).unwrap();
+                let func = self.scopes.get(scope).get_func_def(&self.scopes).unwrap();
 
                 let mut err = |anal: &mut Self| {
                     if enum_sym.status() == TypeEnumStatus::Result {
@@ -2636,15 +2583,15 @@ impl Analyzer<'_, '_, '_> {
         &mut self, 
         wasm: &mut WasmFunctionBuilder,
         scope: ScopeId, 
-        node: &Node,
+        node: ExpressionNode,
         val_ty: Type,
         depth: usize
     ) -> Result<Type, Error> {
         match node.kind() {
-            NodeKind::Expression(Expression::Identifier(ident)) => {
-                let Some(val) = self.scopes.get(scope).get_var(*ident, &self.scopes)
+            Expression::Identifier(ident) => {
+                let Some(val) = self.scopes.get(scope).get_var(ident, &self.scopes)
                 else {
-                    return Err(Error::VariableNotFound { name: *ident, source: node.range() });
+                    return Err(Error::VariableNotFound { name: ident, source: node.range() });
                 };
 
                 if !val.is_mutable {
@@ -2667,8 +2614,8 @@ impl Analyzer<'_, '_, '_> {
             }
 
             
-            NodeKind::Expression(Expression::AccessField { val, field_name }) => {
-                let ty = self.assign(wasm, scope, val, val_ty, depth + 1)?;
+            Expression::AccessField { val, field_name } => {
+                let ty = self.assign(wasm, scope, *val, val_ty, depth + 1)?;
 
                 let tyid = match ty {
                     Type::Custom(v) => v,
@@ -2690,7 +2637,7 @@ impl Analyzer<'_, '_, '_> {
                 };
 
                 for sf in sfields.iter() {
-                    if sf.name == *field_name {
+                    if sf.name == field_name {
                         wasm.u32_const(sf.offset.try_into().unwrap());
                         wasm.i32_add();
 
@@ -2707,13 +2654,30 @@ impl Analyzer<'_, '_, '_> {
                 }
 
                 Err(Error::FieldDoesntExist {
-                    source: node.range(), field: *field_name, typ: ty })
+                    source: node.range(), field: field_name, typ: ty })
             }
 
-            NodeKind::Error(_) => return Err(Error::Bypass),
             _ => return Err(Error::AssignIsNotLHSValue { source: node.range() }),
         }
     }
 }
 
 
+fn as_decl_iterator<'a>(iter: impl Iterator<Item=Node<'a>>) -> impl Iterator<Item=DeclarationNode<'a>> {
+    iter
+        .filter_map(|x| {
+            match x {
+                Node::Declaration(v) => Some(v),
+                Node::Attribute(mut attr) => {
+                    loop {
+                        match attr.node() {
+                            Node::Declaration(v) => break Some(v),
+                            Node::Attribute(v) => attr = v,
+                            _ => break None
+                        }
+                    }
+                }
+                _ => None
+            }
+        })
+}

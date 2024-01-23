@@ -1,7 +1,6 @@
 use common::source::SourceRange;
 use errors::ErrorId;
 
-use super::Node;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct ErrorNode {
@@ -16,5 +15,6 @@ impl ErrorNode {
     }
 
     pub fn range(self) -> SourceRange { self.source_range }
+    pub fn id(self) -> ErrorId { self.id }
 }
 
