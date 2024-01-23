@@ -34,6 +34,10 @@ pub enum Error {
         found: TokenKind,
         expected: &'static [TokenKind],
     },
+
+    DeclarationOnlyBlock {
+        source: SourceRange,
+    }
 }
 
 
@@ -102,6 +106,12 @@ impl ErrorType<()> for Error {
                         *source,
                         &format!("expected {message}, found '{found:?}'"),
                     )
+            },
+
+
+            Error::DeclarationOnlyBlock { source } => {
+                fmt.error("this block only allows declarations")
+                    .highlight(*source);
             },
         }
     }
