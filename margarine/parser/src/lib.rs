@@ -1,13 +1,13 @@
 pub mod nodes;
 pub mod errors;
 
-use std::ops::Deref;
+use std::{ops::Deref, process::Termination};
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind}};
+use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind}, Pattern, PatternKind};
 use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::expr::BinaryOperator;
@@ -504,6 +504,101 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
+    fn parse_pattern(&mut self) -> Result<Pattern<'ta>, ErrorId> {
+        let start = self.current_range().start();
+        
+        let pool = ArenaPool::tls_get_temp();
+        let mut vec = Vec::new_in(&*pool);
+        loop {
+            if !vec.is_empty() {
+                if self.peek_is(TokenKind::Comma) { self.advance(); self.advance() }
+                else { break }
+            }
+
+            if self.current_is(TokenKind::LeftParenthesis) {
+                self.advance();
+
+                let pattern = self.parse_pattern()?;
+                self.advance();
+
+                self.expect(TokenKind::RightParenthesis)?;
+
+                vec.push(pattern);
+                continue
+            }
+
+            let pattern;
+
+            let is_inout = self.is_inout();
+
+            let ident = self.expect_identifier()?;
+
+            if self.peek_is(TokenKind::DoubleColon) { pattern = self.parse_pattern_struct()? }
+            else if self.peek_is(TokenKind::LeftBracket) { pattern = self.parse_pattern_struct()? }
+            else { pattern = Pattern::new(self.current_range(), is_inout, PatternKind::Ident(ident)) }
+
+            vec.push(pattern)
+        }
+
+        if vec.len() == 1 { return Ok(vec[0]) }
+
+        Ok(Pattern::new(
+            SourceRange::new(start, self.current_range().end()),
+            vec.iter().any(|x| x.is_inout()),
+            PatternKind::Tuple(vec.move_into(self.arena).leak()),
+        ))
+    }
+
+
+    #[inline(always)]
+    fn is_inout(&mut self) -> bool {
+        if self.current_is(TokenKind::Ampersand) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+
+    fn parse_pattern_struct(&mut self) -> Result<Pattern<'ta>, ErrorId> {
+        let start = self.current_range().start();
+        let is_inout = self.is_inout();
+        let ty = self.expect_type()?;
+        self.advance();
+
+        self.expect(TokenKind::LeftBracket)?;
+        self.advance();
+
+        let fields = self.list(TokenKind::RightBracket, Some(TokenKind::Comma), 
+        |parser, _| {
+            let is_inout = parser.is_inout();
+            let ident = parser.expect_identifier()?;
+
+            if !parser.peek_is(TokenKind::Colon) {
+                return Ok((ident, Pattern::new(parser.current_range(), is_inout, PatternKind::Ident(ident))));
+            }
+
+            parser.advance();
+            parser.advance();
+
+            let pattern = parser.parse_pattern()?;
+            Ok((
+                ident,
+                pattern,
+            ))
+        }
+        )?;
+
+
+        Ok(Pattern::new(
+            SourceRange::new(start, self.current_range().end()), 
+            is_inout,
+            PatternKind::Struct(ty, fields),
+        ))
+    }
+
+
     fn current_is(&self, token_kind: TokenKind) -> bool {
         self.current_kind() == token_kind
     }
@@ -668,6 +763,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
             TokenKind::Keyword(Keyword::Let) => self.let_statement()?.into(),
+            TokenKind::Keyword(Keyword::For) => self.for_statement()?.into(),
 
 
             TokenKind::At => {
@@ -759,14 +855,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let arguments = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma), |parser, index| {
-            let is_inout = {
-                if parser.current_is(TokenKind::Ampersand) {
-                    parser.advance();
-                    true
-                } else {
-                    false
-                }
-            };
+            let is_inout = parser.is_inout();
             
             let start = parser.current_range().start();
             let name = parser.expect_identifier()?;
@@ -1115,6 +1204,42 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
+    fn for_statement(&mut self) -> StatementResult<'ta> {
+        let start = self.current_range().start();
+        self.expect(TokenKind::Keyword(Keyword::For))?;
+        self.advance();
+
+        let is_binding_inout = self.is_inout();
+
+        let binding = self.parse_pattern()?;
+        self.advance();
+
+        self.expect(TokenKind::Keyword(Keyword::In))?;
+        self.advance();
+
+        let is_expr_inout = self.is_inout();
+
+        let expr = self.expression(
+            &ParserSettings { can_parse_struct_creation: false, ..Default::default() })?;
+        self.advance();
+
+
+        let block_start = self.current_range().start();
+        self.expect(TokenKind::LeftBracket)?;
+        self.advance();
+
+        let block = self.parse_till(TokenKind::RightBracket, block_start, &ParserSettings::default())?;
+
+        Ok(StatementNode::new(
+            Statement::ForLoop {
+                binding: (is_binding_inout, binding),
+                expr: (is_expr_inout, expr),
+                body: block
+            },
+            SourceRange::new(start, self.current_range().end()),
+        ))
+    }
+
     fn let_statement(&mut self) -> StatementResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Let))?;
@@ -1157,7 +1282,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         let source = SourceRange::new(start, self.current_range().end());
         let rhs = self.expression(&ParserSettings::default())?;
-        let rhs = self.arena.alloc_new(rhs);
         
         Ok(StatementNode::new(if bindings.len() == 1 {
             let b = bindings[0];
@@ -1170,6 +1294,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
         }, source))
         
     }
+
+
 
     fn assignment(&mut self, settings: &ParserSettings<'ta>) -> Result<Node<'ta>, ErrorId> {
         fn binary_op_assignment<'la>(
@@ -1185,18 +1311,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let rhs = parser.expression(settings)?;
             let range = SourceRange::new(lhs.range().start(), parser.current_range().end());
 
-            let lhs = parser.arena.alloc_new(lhs);
             Ok(StatementNode::new(
                 Statement::UpdateValue { 
                     lhs,
-                    rhs: parser.arena.alloc_new(ExpressionNode::new(
+                    rhs: ExpressionNode::new(
                         Expression::BinaryOp {
                             operator, 
-                            lhs, 
+                            lhs: parser.arena.alloc_new(lhs), 
                             rhs: parser.arena.alloc_new(rhs),
                         },
                         range,
-                    ))
+                    )
                 },
                 range
             ))
@@ -1220,8 +1345,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
                 StatementNode::new(
                     Statement::UpdateValue { 
-                        lhs: self.arena.alloc_new(lhs), 
-                        rhs: self.arena.alloc_new(rhs) 
+                        lhs, 
+                        rhs,
                     },
                     SourceRange::new(start, self.current_range().end())
                 ).into()
@@ -1731,8 +1856,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Match))?;
         self.advance();
 
-        let taken_as_inout = if self.current_is(TokenKind::Ampersand) { self.advance(); true }
-                             else { false };
+        let taken_as_inout = self.is_inout();
         let val = {
             let settings = ParserSettings {
                 can_parse_struct_creation: false,
@@ -1762,10 +1886,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     parser.advance();
 
                     let binding_start = parser.current_range().start();
-                    let is_inout = if parser.current_is(TokenKind::Ampersand) {
-                        parser.advance();
-                        true
-                    } else { false };
+                    let is_inout = parser.is_inout();
                     
                     let name = parser.expect_identifier()?;
                     let binding_range = SourceRange::new(binding_start, parser.current_range().end());
@@ -1910,8 +2031,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
 
 
-            let is_inout = if self.current_is(TokenKind::Ampersand) { self.advance(); true }
-                            else { false };
+            let is_inout = self.is_inout();
             let expr = self.expression(&ParserSettings::default())?;
             self.advance();
             

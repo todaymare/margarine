@@ -1011,7 +1011,7 @@ impl Analyzer<'_, '_, '_> {
         match stmt.kind() {
             Statement::Variable { name, hint, is_mut, rhs } => {
                 let mut func = || -> Result<(), ()> {
-                    let rhs_anal = self.expr(*rhs, *scope, wasm);
+                    let rhs_anal = self.expr(rhs, *scope, wasm);
                     if rhs_anal.ty.eq_lit(Type::Error) {
                         return Err(());
                     }
@@ -1053,7 +1053,7 @@ impl Analyzer<'_, '_, '_> {
 
             Statement::VariableTuple { names, hint, rhs } => {
                 let mut func = || -> Result<(), ()> {
-                    let rhs_anal = self.expr(*rhs, *scope, wasm);
+                    let rhs_anal = self.expr(rhs, *scope, wasm);
                     if rhs_anal.ty.eq_lit(Type::Error) {
                         return Err(());
                     }
@@ -1128,12 +1128,15 @@ impl Analyzer<'_, '_, '_> {
 
 
             Statement::UpdateValue { lhs, rhs } => {
-                let rhs_anal = self.expr(*rhs, *scope, wasm);
-                if let Err(e) = self.assign(wasm, *scope, *lhs, rhs_anal.ty, 0) {
+                let rhs_anal = self.expr(rhs, *scope, wasm);
+                if let Err(e) = self.assign(wasm, *scope, lhs, rhs_anal.ty, 0) {
                     wasm.error(self.error(e));
                     return Err(());
                 }
             },
+
+
+            Statement::ForLoop { binding, expr, body } => todo!(),
         };
         Ok(())
    }

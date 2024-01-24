@@ -1,8 +1,8 @@
 use common::{source::SourceRange, string_map::StringIndex};
 
-use crate::DataType;
+use crate::{DataType, Block};
 
-use super::expr::ExpressionNode;
+use super::{expr::ExpressionNode, Pattern};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct StatementNode<'a> {
@@ -39,19 +39,26 @@ pub enum Statement<'a> {
         name: StringIndex,
         hint: Option<DataType<'a>>,
         is_mut: bool,
-        rhs: &'a ExpressionNode<'a>,
+        rhs: ExpressionNode<'a>,
     },
 
 
     VariableTuple {
         names: &'a [(StringIndex, bool)],
         hint: Option<DataType<'a>>,
-        rhs: &'a ExpressionNode<'a>,
+        rhs: ExpressionNode<'a>,
     },
 
 
     UpdateValue {
-        lhs: &'a ExpressionNode<'a>,
-        rhs: &'a ExpressionNode<'a>,
+        lhs: ExpressionNode<'a>,
+        rhs: ExpressionNode<'a>,
     },
+
+
+    ForLoop {
+        binding: (bool, Pattern<'a>),
+        expr: (bool, ExpressionNode<'a>),
+        body: Block<'a>,
+    }
 }

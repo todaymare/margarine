@@ -5,7 +5,9 @@ pub mod attr;
 pub mod err;
 
 
-use common::source::SourceRange;
+use common::{source::SourceRange, string_map::StringIndex};
+
+use crate::DataType;
 
 use self::{decl::DeclarationNode, stmt::StatementNode, expr::ExpressionNode, attr::AttributeNode, err::ErrorNode};
 
@@ -61,4 +63,28 @@ impl<'a> From<ErrorNode> for Node<'a> {
     fn from(value: ErrorNode) -> Self {
         Self::Error(value)
     }
+}
+
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub struct Pattern<'a> {
+    source: SourceRange,
+    is_inout: bool,
+    kind: PatternKind<'a>,
+}
+
+
+impl<'a> Pattern<'a> {
+    pub fn new(source: SourceRange, is_inout: bool, kind: PatternKind<'a>) -> Self { Self { source, kind, is_inout } }
+
+    #[inline(always)]
+    pub fn is_inout(&self) -> bool { self.is_inout }
+}
+
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum PatternKind<'a> {
+    Ident(StringIndex),
+    Tuple(&'a [Pattern<'a>]),
+    Struct(DataType<'a>, &'a [(StringIndex, Pattern<'a>)]),
 }
