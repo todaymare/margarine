@@ -530,11 +530,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let pattern;
 
             let is_inout = self.is_inout();
-
             let ident = self.expect_identifier()?;
 
-            if self.peek_is(TokenKind::DoubleColon) { pattern = self.parse_pattern_struct()? }
-            else if self.peek_is(TokenKind::LeftBracket) { pattern = self.parse_pattern_struct()? }
+            if self.peek_is(TokenKind::DoubleColon) { pattern = self.parse_pattern_struct(is_inout)? }
+            else if self.peek_is(TokenKind::LeftBracket) { pattern = self.parse_pattern_struct(is_inout)? }
             else { pattern = Pattern::new(self.current_range(), is_inout, PatternKind::Ident(ident)) }
 
             vec.push(pattern)
@@ -561,9 +560,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn parse_pattern_struct(&mut self) -> Result<Pattern<'ta>, ErrorId> {
+    fn parse_pattern_struct(&mut self, is_inout: bool) -> Result<Pattern<'ta>, ErrorId> {
         let start = self.current_range().start();
-        let is_inout = self.is_inout();
         let ty = self.expect_type()?;
         self.advance();
 
@@ -593,7 +591,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(Pattern::new(
             SourceRange::new(start, self.current_range().end()), 
-            is_inout,
+            is_inout || fields.iter().any(|x| x.1.is_inout()),
             PatternKind::Struct(ty, fields),
         ))
     }
@@ -1209,8 +1207,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::For))?;
         self.advance();
 
-        let is_binding_inout = self.is_inout();
-
         let binding = self.parse_pattern()?;
         self.advance();
 
@@ -1232,7 +1228,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(StatementNode::new(
             Statement::ForLoop {
-                binding: (is_binding_inout, binding),
+                binding,
                 expr: (is_expr_inout, expr),
                 body: block
             },

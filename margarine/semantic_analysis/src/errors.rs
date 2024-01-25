@@ -113,16 +113,20 @@ pub enum Error {
         range: SourceRange,
         value: Type,
     },
-    
+     
     MissingMatch {
         name: Vec<StringIndex>,
+        range: SourceRange,
+    },
+
+    ValueIsntAnIterator {
+        ty: Type,
         range: SourceRange,
     },
      
     InOutValueWithoutInOutBinding {
         value_range: SourceRange,
     },
-
 
     InOutBindingWithoutInOutValue {
         value_range: SourceRange,
@@ -696,6 +700,14 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
                                   from_ty.display(fmt.string_map(), types),
                                   to_ty.display(fmt.string_map(), types));
                 fmt.error("invalid as cast")
+                    .highlight_with_note(*range, &msg);
+            },
+
+            Error::ValueIsntAnIterator { ty, range } => {
+                let msg = format!("'{}' is not an iterator",
+                                  ty.display(fmt.string_map(), types));
+
+                fmt.error("expression isn't an iterator")
                     .highlight_with_note(*range, &msg);
             },
 

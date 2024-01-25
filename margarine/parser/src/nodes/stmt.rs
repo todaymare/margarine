@@ -57,7 +57,7 @@ pub enum Statement<'a> {
 
 
     ForLoop {
-        binding: (bool, Pattern<'a>),
+        binding: Pattern<'a>,
         expr: (bool, ExpressionNode<'a>),
         body: Block<'a>,
     }
