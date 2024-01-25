@@ -1136,7 +1136,39 @@ impl Analyzer<'_, '_, '_> {
             },
 
 
-            Statement::ForLoop { binding, expr, body } => todo!(),
+            Statement::ForLoop { binding, expr, body } => {
+                let expr_anal = self.expr(expr.1, *scope, wasm);
+
+                if !expr_anal.is_mut && expr.0 {
+                    wasm.error(self.error(Error::InOutValueIsntMut(expr.1.range())));
+                    return Err(());
+                }
+
+                if binding.is_inout() && !expr.0 {
+                    wasm.error(self.error(Error::InOutBindingWithoutInOutValue {
+                        value_range: expr.1.range(), binding_range: binding.range() }));
+                    return Err(());
+                }
+
+                if !binding.is_inout() && expr.0 {
+                    wasm.error(self.error(Error::InOutValueWithoutInOutBinding { value_range: expr.1.range() }));
+                    return Err(());
+                }
+
+                let ty_ns = self.namespaces.get_type(expr_anal.ty);
+                let ty_ns = self.namespaces.get(ty_ns);
+                
+                let Some(func) = ty_ns.get_func(StringMap::ITER_NEXT_FUNC)
+                else {
+                    wasm.error(self.error(Error::ValueIsntAnIterator {
+                        ty: expr_anal.ty, range: expr.1.range() }));
+                    return Err(())
+                };
+
+                let func = self.funcs.get(func);
+
+                todo!()
+            },
         };
         Ok(())
    }

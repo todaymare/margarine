@@ -79,6 +79,8 @@ impl<'a> Pattern<'a> {
 
     #[inline(always)]
     pub fn is_inout(&self) -> bool { self.is_inout }
+    #[inline(always)]
+    pub fn range(&self) -> SourceRange { self.source }
 }
 
 
