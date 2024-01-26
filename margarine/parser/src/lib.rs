@@ -7,7 +7,7 @@ use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind}, Pattern, PatternKind};
+use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind, FunctionSignature}, Pattern, PatternKind};
 use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::expr::BinaryOperator;
@@ -919,12 +919,14 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(DeclarationNode::new(
             Declaration::Function {
-                is_system, 
-                name,
-                arguments, 
-                return_type, 
+                sig: FunctionSignature::new(
+                     is_system, 
+                     name, 
+                     header,
+                     arguments,
+                     return_type
+                ),
                 body,
-                header,
             },
 
             SourceRange::new(start, end)
