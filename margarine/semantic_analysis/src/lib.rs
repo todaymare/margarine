@@ -11,7 +11,7 @@ use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
+use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
@@ -454,16 +454,16 @@ impl Analyzer<'_, '_, '_> {
                 },
 
 
-                Declaration::Function { name, header, .. } => {
+                Declaration::Function { sig, .. } => {
                     let namespace = self.namespaces.get_mut(namespace);
-                    if namespace.get_func(name).is_some() {
+                    if namespace.get_func(sig.name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
-                           source: header, name }));
+                           source: sig.source, name: sig.name }));
 
                         continue
                     }
 
-                    namespace.add_func(name, self.funcs.pending())
+                    namespace.add_func(sig.name, self.funcs.pending())
                 },
                 Declaration::Impl { .. } => (),
 
@@ -499,6 +499,7 @@ impl Analyzer<'_, '_, '_> {
                     }
 
                 },
+                Declaration::Trait { name, sigs } => todo!(),
             }
         }
     }
@@ -673,11 +674,11 @@ impl Analyzer<'_, '_, '_> {
     ) {
         for decl in decls {
             match decl.kind() {
-                Declaration::Function { name, arguments, return_type, .. } => {
+                Declaration::Function { sig, .. } => {
                     let args = {
-                        let mut args = Vec::with_cap_in(self.output, arguments.len());
+                        let mut args = Vec::with_cap_in(self.output, sig.arguments.len());
 
-                        for arg in arguments.iter() {
+                        for arg in sig.arguments.iter() {
                             let ty = self.convert_ty(scope, arg.data_type());
                             let ty = match ty {
                                 Ok(v) => v,
@@ -693,7 +694,7 @@ impl Analyzer<'_, '_, '_> {
                         args
                     };
 
-                    let ret = match self.convert_ty(scope, return_type) {
+                    let ret = match self.convert_ty(scope, sig.return_type) {
                         Ok(v) => v,
                         Err(e) => {
                             builder.error(self.error(e));
@@ -709,10 +710,10 @@ impl Analyzer<'_, '_, '_> {
                     } else { None };
 
                     let ns = self.namespaces.get_mut(ns_id);
-                    let func_id = ns.get_func(name).unwrap();
+                    let func_id = ns.get_func(sig.name).unwrap();
                     let func = FunctionKind::UserDefined {
                         inout: inout_ty_id,  };
-                    let func = Function::new(name, args.leak(), ret, self.module_builder.function_id(), func);
+                    let func = Function::new(sig.name, args.leak(), ret, self.module_builder.function_id(), func);
                     self.funcs.put(func_id, func);
                 },
 
@@ -840,7 +841,9 @@ impl Analyzer<'_, '_, '_> {
                             let Node::Declaration(decl) = attr.node()
                             else { return Err(()) };
 
-                            if matches!(decl.kind(), Declaration::Function { is_system: true, .. }) {
+                            if matches!(decl.kind(), Declaration::Function {
+                                sig: FunctionSignature { is_system: true, .. }, .. }) {
+
                                 Ok(decl)
                             } else { Err(()) }
                         };
@@ -860,10 +863,10 @@ impl Analyzer<'_, '_, '_> {
 
                         self.decl(decl, *scope);
 
-                        let Declaration::Function { name, .. } = decl.kind()
+                        let Declaration::Function { sig, .. } = decl.kind()
                         else { unreachable!() };
 
-                        let func = self.scopes.get(*scope).get_func(name, &self.scopes, &self.namespaces).unwrap();
+                        let func = self.scopes.get(*scope).get_func(sig.name, &self.scopes, &self.namespaces).unwrap();
 
                         self.startup_functions.push(func);
 
@@ -891,8 +894,8 @@ impl Analyzer<'_, '_, '_> {
             Declaration::Enum { .. } => (),
 
 
-            Declaration::Function { name, header, return_type, body, .. } => {
-                let func = self.scopes.get(scope).get_func(name, &self.scopes, &self.namespaces).unwrap();
+            Declaration::Function { sig, body } => {
+                let func = self.scopes.get(scope).get_func(sig.name, &self.scopes, &self.namespaces).unwrap();
                 let func = self.funcs.get(func);
                 let FunctionKind::UserDefined { inout } = func.kind
                 else { unreachable!() };
@@ -903,7 +906,7 @@ impl Analyzer<'_, '_, '_> {
 
                 let scope = Scope::new(
                     ScopeKind::FunctionDefinition(
-                        FunctionDefinitionScope::new(func.ret, return_type.range())
+                        FunctionDefinitionScope::new(func.ret, sig.return_type.range())
                     ),
                     scope.some()
                 );
@@ -962,7 +965,7 @@ impl Analyzer<'_, '_, '_> {
                 let (anal, _) = self.block(&mut wasm, scope, &body);
                 if !anal.ty.eq_sem(func.ret) {
                     wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
-                        header, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
+                        header: sig.source, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
                         return_type: func.ret, body_type: anal.ty }));
                 }
 
@@ -996,6 +999,7 @@ impl Analyzer<'_, '_, '_> {
             },
 
             Declaration::Extern { .. } => (),
+            Declaration::Trait { name, sigs } => todo!(),
         }
     }
 

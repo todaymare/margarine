@@ -47,11 +47,7 @@ pub enum Declaration<'a> {
     },
 
     Function {
-        is_system: bool,
-        name: StringIndex,
-        header: SourceRange,
-        arguments: &'a [FunctionArgument<'a>],
-        return_type: DataType<'a>,
+        sig: FunctionSignature<'a>,
         body: Block<'a>,
     },
     
@@ -72,7 +68,12 @@ pub enum Declaration<'a> {
     Extern {
         file: StringIndex,
         functions: &'a [ExternFunction<'a>],
-    }
+    },
+
+    Trait {
+        name: StringIndex,
+        sigs: &'a [FunctionSignature<'a>],
+    },
 }
 
 
@@ -81,6 +82,20 @@ pub enum StructKind {
     Component,
     Resource,
     Normal,
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FunctionSignature<'a> {
+    pub is_system: bool,
+    pub name: StringIndex,
+    pub source: SourceRange,
+    pub arguments: &'a [FunctionArgument<'a>],
+    pub return_type: DataType<'a>,
+}
+
+impl<'a> FunctionSignature<'a> {
+    pub fn new(is_system: bool, name: StringIndex, source: SourceRange, arguments: &'a [FunctionArgument<'a>], return_type: DataType<'a>) -> Self { Self { is_system, name, source, arguments, return_type } }
 }
 
 
