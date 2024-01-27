@@ -35,6 +35,7 @@ impl<'a> TypeSymbol<'a> {
 pub enum TypeSymbolKind<'a> {
     Struct(TypeStruct<'a>),
     Enum(TypeEnum<'a>),
+    Generic,
 }
 
 

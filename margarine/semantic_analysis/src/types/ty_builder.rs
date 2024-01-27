@@ -147,11 +147,11 @@ impl<'a> TypeBuilder<'a> {
 }
 
 
-pub struct TypeBuilderData<'me, 'out, 'str> {
+pub struct TypeBuilderData<'me, 'out, 'str, 'ast> {
     arena: &'out Arena,
     type_map: &'me mut TypeMap<'out>,
-    namespace_map: &'me mut NamespaceMap,
-    function_map: &'me mut FunctionMap<'out>,
+    namespace_map: &'me mut NamespaceMap<'out>,
+    function_map: &'me mut FunctionMap<'out, 'ast>,
     module_builder: &'me mut WasmModuleBuilder<'out, 'str>,
 }
 
@@ -159,7 +159,7 @@ pub struct TypeBuilderData<'me, 'out, 'str> {
 impl<'out> TypeBuilder<'_> {
     pub fn finalise(
         mut self,
-        mut data: TypeBuilderData<'_, 'out, '_>,
+        mut data: TypeBuilderData<'_, 'out, '_, '_>,
         errors: &mut KVec<SemaError, Error>,
     ) {
         let pool = ArenaPool::tls_get_temp();
@@ -176,7 +176,7 @@ impl<'out> TypeBuilder<'_> {
 
     fn resolve_type(
         &mut self,
-        data: &mut TypeBuilderData<'_, 'out, '_>,
+        data: &mut TypeBuilderData<'_, 'out, '_, '_>,
         ty: TypeId,
     ) -> Result<TypeSymbol<'out>, Error> {
         if let Some(v) = data.type_map.get_opt(ty) {
@@ -264,7 +264,7 @@ impl<'out> TypeBuilder<'_> {
     #[must_use]
     fn process_struct(
         &mut self,
-        data: &mut TypeBuilderData<'_, 'out, '_>,
+        data: &mut TypeBuilderData<'_, 'out, '_, '_>,
         fields: &[PartialStructField],
         name: StringIndex,
         status: TypeStructStatus,
@@ -314,7 +314,7 @@ impl<'out> TypeBuilder<'_> {
     #[must_use]
     fn process_enum(
         &mut self,
-        data: &mut TypeBuilderData<'_, 'out, '_>,
+        data: &mut TypeBuilderData<'_, 'out, '_, '_>,
         fields: &[PartialEnumField],
         status: TypeEnumStatus,
         name: StringIndex,
@@ -404,11 +404,11 @@ impl<'out> TypeBuilder<'_> {
     
     fn register_enum_methods(
         &mut self,
-        data: &mut TypeBuilderData<'_, 'out, '_>,
+        data: &mut TypeBuilderData<'_, 'out, '_, '_>,
         ty: TypeId,
         kind: TypeEnum,
     ) {
-        let mut ns = Namespace::new();
+        let mut ns = Namespace::new(data.arena);
         
         match kind.kind() {
             TypeEnumKind::TaggedUnion(sym) => {
@@ -491,7 +491,7 @@ impl<'out> TypeBuilder<'_> {
 
     fn align(
         &mut self,
-        data: &mut TypeBuilderData<'_, 'out, '_>,
+        data: &mut TypeBuilderData<'_, 'out, '_, '_>,
         ty: Type
     ) -> Result<usize, Error> {
         Ok(match ty {
@@ -509,7 +509,7 @@ impl<'out> TypeBuilder<'_> {
 
     fn size(
         &mut self,
-        data: &mut TypeBuilderData<'_, 'out, '_>,
+        data: &mut TypeBuilderData<'_, 'out, '_, '_>,
         ty: Type
     ) -> Result<usize, Error> {
         Ok(match ty {
@@ -526,11 +526,11 @@ impl<'out> TypeBuilder<'_> {
 }
 
 
-impl<'me, 'out, 'str> TypeBuilderData<'me, 'out, 'str> {
+impl<'me, 'out, 'str, 'ast> TypeBuilderData<'me, 'out, 'str, 'ast> {
     pub fn new(
         type_map: &'me mut TypeMap<'out>, 
-        namespace_map: &'me mut NamespaceMap, 
-        function_map: &'me mut FunctionMap<'out>, 
+        namespace_map: &'me mut NamespaceMap<'out>, 
+        function_map: &'me mut FunctionMap<'out, 'ast>, 
         module_builder: &'me mut WasmModuleBuilder<'out, 'str>
     ) -> Self {
         Self { arena: module_builder.arena, type_map, namespace_map, function_map, module_builder }
