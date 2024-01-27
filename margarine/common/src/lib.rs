@@ -1,6 +1,7 @@
 pub mod string_map;
 pub mod hashables;
 pub mod source;
+pub mod toggle_buffer;
 
 use std::time::Instant;
 

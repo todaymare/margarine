@@ -1,3 +1,5 @@
+use std::thread::current;
+
 use common::{string_map::{StringIndex, StringMap}, source::SourceRange, Swap};
 use sti::{packed_option::PackedOption, define_key, keyed::KVec};
 use wasm::{LocalId, LoopId};
@@ -7,15 +9,15 @@ use crate::{namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::Ty
 define_key!(u32, pub ScopeId);
 
 #[derive(Debug, Clone, Copy)]
-pub struct Scope {
+pub struct Scope<'a> {
     parent: PackedOption<ScopeId>,
-    kind: ScopeKind,
+    kind: ScopeKind<'a>,
 }
 
 
-impl Scope {
+impl<'a> Scope<'a> {
     #[inline(always)]
-    pub fn new(kind: ScopeKind, parent: PackedOption<ScopeId>) -> Self {
+    pub fn new(kind: ScopeKind<'a>, parent: PackedOption<ScopeId>) -> Self {
         Self {
             parent,
             kind,
@@ -26,18 +28,26 @@ impl Scope {
     pub fn parent(self) -> PackedOption<ScopeId> { self.parent }
 
     #[inline(always)]
-    pub fn kind(self) -> ScopeKind { self.kind }
+    pub fn kind(self) -> ScopeKind<'a> { self.kind }
 
     pub fn get_type(
         self,
         name: StringIndex,
         scopes: &ScopeMap,
         namespaces: &NamespaceMap,
-    ) -> Option<TypeId> {
+    ) -> Option<Type> {
         self.over(scopes, |current| {
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
                 let ns = namespaces.get(ns);
-                if let Some(val) = ns.get_type(name) { return Some(val) }
+                if let Some(val) = ns.get_type(name) { return Some(Type::Custom(val)) }
+            }
+
+            if let ScopeKind::Generics(gens) = current.kind() {
+                for n in gens.generics.iter() {
+                    if n.0 == name {
+                        return Some(n.1)
+                    }
+                }
             }
 
             None
@@ -176,7 +186,7 @@ impl Scope {
     ///
     pub fn over<T>(
         self,
-        scopes: &ScopeMap,
+        scopes: &ScopeMap<'a>,
         mut func: impl FnMut(Self) -> Option<T>
     ) -> Option<T> {
         let mut current = self;
@@ -197,12 +207,13 @@ impl Scope {
 
 
 #[derive(Debug, Clone, Copy)]
-pub enum ScopeKind {
+pub enum ScopeKind<'a> {
     ExplicitNamespace(ExplicitNamespace),
     ImplicitNamespace(NamespaceId),
     FunctionDefinition(FunctionDefinitionScope),
     Variable(VariableScope),
     Loop(LoopScope),
+    Generics(GenericsScope<'a>),
     Root,
 }
 
@@ -217,7 +228,12 @@ pub struct VariableScope {
 
 impl VariableScope {
     pub fn new(name: StringIndex, is_mutable: bool, ty: Type, local_id: LocalId) -> Self { Self { name, is_mutable, ty, local_id } }
+}
 
+
+#[derive(Debug, Clone, Copy)]
+pub struct GenericsScope<'a> {
+    generics: &'a [(StringIndex, Type)],
 }
 
 
@@ -250,25 +266,25 @@ impl LoopScope {
 
 
 #[derive(Debug)]
-pub struct ScopeMap {
-    map: KVec<ScopeId, Scope>,
+pub struct ScopeMap<'a> {
+    map: KVec<ScopeId, Scope<'a>>,
 }
 
-impl ScopeMap {
+impl<'a> ScopeMap<'a> {
     pub fn new() -> Self { Self { map: KVec::new() } }
 
     #[inline(always)]
-    pub fn push(&mut self, scope: Scope) -> ScopeId {
+    pub fn push(&mut self, scope: Scope<'a>) -> ScopeId {
         self.map.push(scope)
     }
 
     #[inline(always)]
-    pub fn get(&self, scope_id: ScopeId) -> Scope {
+    pub fn get(&self, scope_id: ScopeId) -> Scope<'a> {
         *self.map.get(scope_id).unwrap()
     }
 
     #[inline(always)]
-    pub fn swap(&mut self, scope_id: ScopeId, scope: Scope) -> Scope {
+    pub fn swap(&mut self, scope_id: ScopeId, scope: Scope<'a>) -> Scope {
         self.map.get_mut(scope_id).unwrap().swap(scope)
     }
 }

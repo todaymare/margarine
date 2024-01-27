@@ -142,6 +142,8 @@ impl Type {
                             TypeEnumKind::Tag(_) => WasmType::I32,
                         }
                     },
+
+                    TypeSymbolKind::Generic => WasmType::Ptr { size: 0 },
                 }
             },
         }

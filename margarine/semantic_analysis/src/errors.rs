@@ -14,10 +14,15 @@ pub enum Error {
         from_ty: Type,
         to_ty: Type,
     },
+
     InvalidValueForAttr {
         attr: (SourceRange, StringIndex),
         value: SourceRange,
         expected: &'static str,
+    },
+
+    GenericAlreadyDefined {
+        source: SourceRange,
     },
 
     UnknownAttr(SourceRange, StringIndex),
@@ -709,6 +714,11 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
 
                 fmt.error("expression isn't an iterator")
                     .highlight_with_note(*range, &msg);
+            },
+
+            Error::GenericAlreadyDefined { source } => {
+                fmt.error("generic is already defined")
+                    .highlight(*source)
             },
 
             Error::Bypass => (),

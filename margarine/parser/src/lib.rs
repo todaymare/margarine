@@ -7,7 +7,7 @@ use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind, FunctionSignature}, Pattern, PatternKind};
+use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind, FunctionSignature, Generic}, Pattern, PatternKind};
 use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::expr::BinaryOperator;
@@ -596,6 +596,18 @@ impl<'ta> Parser<'_, 'ta, '_> {
         ))
     }
 
+    
+    pub fn parse_generics(&mut self) -> Result<&'ta [Generic], ErrorId> {
+        self.expect(TokenKind::LeftAngle)?;
+        self.advance();
+
+        self.list(TokenKind::RightAngle, Some(TokenKind::Comma), 
+        |parser, _| {
+            let ident = parser.expect_identifier()?;
+            Ok(Generic::new(ident, parser.current_range()))
+        })
+    }
+
 
     fn current_is(&self, token_kind: TokenKind) -> bool {
         self.current_kind() == token_kind
@@ -849,6 +861,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
 
+        let generics = if self.current_is(TokenKind::LeftAngle) {
+            let generics = self.parse_generics()?;
+            self.advance();
+            generics
+        } else { &[] };
+
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();
 
@@ -924,7 +942,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
                      name, 
                      header,
                      arguments,
-                     return_type
+                     generics,
+                     return_type,
                 ),
                 body,
             },
