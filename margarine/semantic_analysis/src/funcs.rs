@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use common::{string_map::StringIndex, Swap};
-use parser::Block;
+use parser::{Block, nodes::decl::{Generic, FunctionArgument}, DataType};
 use sti::{define_key, keyed::KVec};
 use wasm::FunctionId;
 
@@ -8,7 +10,7 @@ use crate::{types::{ty::Type, ty_map::TypeId}, scope::ScopeId};
 define_key!(u32, pub FuncId);
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Function<'a, 'ast> {
     pub name: StringIndex,
     pub args: &'a [(StringIndex, bool, Type)],
@@ -30,7 +32,10 @@ pub enum FunctionKind<'ast> {
 
     Template {
         body: Block<'ast>,
+        args: &'ast [FunctionArgument<'ast>],
+        ret: DataType<'ast>,
         scope: ScopeId,
+        generics: &'ast [Generic],
     },
 }
 
@@ -42,7 +47,7 @@ impl<'a, 'ast> Function<'a, 'ast> {
 
 #[derive(Debug)]
 pub struct FunctionMap<'a, 'ast> {
-    map: KVec<FuncId, Option<Function<'a, 'ast>>>,
+    map: KVec<FuncId, Option<(Function<'a, 'ast>, HashMap<&'a [(StringIndex, Type)], FuncId>)>>,
 }
 
 
@@ -55,8 +60,13 @@ impl<'a, 'ast> FunctionMap<'a, 'ast> {
 
 
     #[inline(always)]
-    pub fn get(&self, id: FuncId) -> Function<'a, 'ast> {
-        self.map.get(id).unwrap().unwrap()
+    pub fn get(&self, id: FuncId) -> &Function<'a, 'ast> {
+        &self.map.get(id).unwrap().as_ref().unwrap().0
+    }
+
+
+    pub fn get_func_variant(&self, func_id: FuncId, ty: &[(StringIndex, Type)]) -> Option<FuncId> {
+        self.map[func_id].as_ref().unwrap().1.get(ty).copied()
     }
 
 
@@ -68,6 +78,12 @@ impl<'a, 'ast> FunctionMap<'a, 'ast> {
 
     #[inline(always)]
     pub fn put(&mut self, func_id: FuncId, ns: Function<'a, 'ast>) {
-        assert!(self.map[func_id].swap(Some(ns)).is_none());
+        assert!(self.map[func_id].swap(Some((ns, HashMap::new()))).is_none());
+    }
+
+
+    #[inline(always)]
+    pub fn put_variant(&mut self, base: FuncId, gens: &'a [(StringIndex, Type)], variant: FuncId) {
+        assert!(self.map[base].as_mut().unwrap().1.insert(gens, variant).is_none());
     }
 }

@@ -2,13 +2,27 @@ use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
-use parser::nodes::expr::{BinaryOperator, UnaryOperator};
+use parser::{nodes::expr::{BinaryOperator, UnaryOperator}, DataType};
 use sti::vec::Vec;
 
 use crate::types::{ty::Type, ty_map::TypeMap};
 
 #[derive(Clone, Debug)]
-pub enum Error {
+pub enum Error<'a> {
+    GenericInferredEarlier {
+        name: StringIndex,
+        inferred: DataType<'a>,
+        found: DataType<'a>,
+    },
+
+    FunctionGenericCountMissmatch {
+        source: SourceRange,
+        expected: usize,
+        found: usize,
+    },
+
+    FunctionHasNoGenerics(SourceRange),
+
     InvalidCast {
         range: SourceRange,
         from_ty: Type,
@@ -240,7 +254,7 @@ pub enum Error {
 }
 
 
-impl<'a> ErrorType<TypeMap<'_>> for Error {
+impl<'a> ErrorType<TypeMap<'_>> for Error<'_> {
     fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, types: &TypeMap) {
         match self {
             Error::NameIsAlreadyDefined { source, name } => {
@@ -720,6 +734,24 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
                 fmt.error("generic is already defined")
                     .highlight(*source)
             },
+
+
+            Error::FunctionHasNoGenerics(source) => {
+                fmt.error("function has no generics")
+                    .highlight(*source)
+            },
+
+            Error::FunctionGenericCountMissmatch { source, expected, found } => {
+                fmt.error("function generic count missmatch")
+                    .highlight_with_note(*source, &format!("expected {expected} generics found {found}"))
+            },
+
+
+            Error::GenericInferredEarlier { name, inferred, found } => {
+                fmt.error("generic type missmatch, inferred earlier")
+                    .highlight_with_note(source, note)
+            },
+
 
             Error::Bypass => (),
         }

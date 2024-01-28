@@ -6,13 +6,13 @@ pub mod funcs;
 
 use std::fmt::Write;
 
-use common::{source::SourceRange, string_map::StringMap};
+use common::{source::SourceRange, string_map::{StringMap, StringIndex}, Either};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
-use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
+use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope, GenericsScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus, TypeSymbol}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
@@ -723,22 +723,26 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                             Type::Error
                         },
                     };
-
-                    let inout_ty_id = if args.iter().any(|a| a.1) {
-                        let temp = ArenaPool::tls_get_temp();
-                        let tuple = Vec::from_in(&*temp,
-                                                   args.iter().map(|a| a.2));
-                        Some(self.make_tuple(tuple, decl.range()))
-                    } else { None };
-
                     let ns = self.namespaces.get_mut(ns_id);
                     let func_id = ns.get_func(sig.name).unwrap();
-                    let func = if sig.generics.is_empty() { FunctionKind::UserDefined {
-                        inout: inout_ty_id,  }
+                    let func = if sig.generics.is_empty() {
+                        let inout_ty_id = if args.iter().any(|a| a.1) {
+                            let temp = ArenaPool::tls_get_temp();
+                            let tuple = Vec::from_in(&*temp,
+                                                       args.iter().map(|a| a.2));
+                            Some(self.make_tuple(tuple, decl.range()))
+                        } else { None };
+
+                        FunctionKind::UserDefined {
+                            inout: inout_ty_id,
+                        }
                     } else {
                         FunctionKind::Template {
                             body,
                             scope,
+                            generics: sig.generics,
+                            args: sig.arguments,
+                            ret: sig.return_type
                         }
                     };
                     let func = Function::new(sig.name, args.leak(), ret, self.module_builder.function_id(), func);
@@ -990,11 +994,13 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
 
                         wasm.set_finaliser(string.clone_in(self.module_builder.arena));
 
+                        let func_ret = func.ret;
+
                         let (anal, _) = self.block(&mut wasm, scope, &body);
-                        if !anal.ty.eq_sem(func.ret) {
+                        if !anal.ty.eq_sem(func_ret) {
                             wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
                                 header: sig.source, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
-                                return_type: func.ret, body_type: anal.ty }));
+                                return_type: func_ret, body_type: anal.ty }));
                         }
 
                         self.module_builder.register(wasm);
@@ -1025,11 +1031,12 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                             scope = self.scopes.push(t);
                         }
 
+                        let func_ret = func.ret;
                         let (anal, _) = self.block(&mut wasm, scope, &body);
-                        if !anal.ty.eq_sem(func.ret) {
+                        if !anal.ty.eq_sem(func_ret) {
                             wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
                                 header: sig.source, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
-                                return_type: func.ret, body_type: anal.ty }));
+                                return_type: func_ret, body_type: anal.ty }));
                         }
                     },
 
@@ -1872,7 +1879,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
             },
 
 
-            Expression::CallFunction { name, is_accessor, args } => {
+            Expression::CallFunction { name, is_accessor, args, generics } => {
                 let mut scope_id = scope;
                 let pool = ArenaPool::tls_get_rec();
                 let aargs = {
@@ -1901,19 +1908,23 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     return AnalysisResult::error();
                 };
 
-                let func = self.funcs.get(func);
-               
-                let _ = self.call_func(
+                let ty = self.call_func(
                     func, 
                     aargs.leak(),
+                    generics,
                     source,
                     scope_id,
                     wasm
                 );
 
                 drop(pool);
+
+                let ty = match ty {
+                    Ok(v) => v,
+                    Err(_) => Type::Error,
+                };
                 
-                AnalysisResult::new(func.ret, true)
+                AnalysisResult::new(ty, true)
             },
 
 
@@ -2639,13 +2650,21 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
 
     fn call_func(
         &mut self,
-        func: Function,
+        func_id: FuncId,
         args: &[(Type, SourceRange, Option<ExpressionNode>)],
+        generics: Option<&[DataType]>,
         source: SourceRange,
         scope: ScopeId,
 
         wasm: &mut WasmFunctionBuilder,
-    ) -> Result<(), ()> {
+    ) -> Result<Type, ()> {
+        let func = self.funcs.get(func_id);
+        let func = func.clone();
+
+        if generics.is_some() && !matches!(func.kind, FunctionKind::Template { .. }) { 
+            wasm.error(self.error(Error::FunctionHasNoGenerics(source)));
+        }
+
         if func.args.len() != args.len() {
             wasm.error(self.error(Error::FunctionArgsMismatch {
                 source, sig_len: func.args.len(), call_len: args.len() }));
@@ -2723,6 +2742,8 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
 
                     }
                 }
+
+                Ok(func.ret)
             },
 
             FunctionKind::Extern { ty } => {
@@ -2796,15 +2817,114 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
 
                     wasm.read(r.ty.to_wasm_ty(&self.types));
                 }
+
+                return Ok(func.ret)
             },
 
 
-            FunctionKind::Template { body, scope } => {
-                todo!()
-            },
-        };
+            FunctionKind::Template { body, scope, generics: sig_generics, args: sig_args, ret } => {
+                let gens = match generics {
+                    Some(v) => {
+                        if v.len() != sig_generics.len() {
+                            wasm.error(self.error(Error::FunctionGenericCountMissmatch {
+                                source, expected: sig_generics.len(), found: v.len() }));
+                            return Err(());
+                        }
 
-        Ok(())
+                        
+                        let mut vec = Vec::with_cap_in(self.output, v.len());
+                        v.iter().map(|x| {
+                            match self.convert_ty(scope, *x) {
+                                Ok(v) => v,
+                                Err(v) => {
+                                    wasm.error(self.error(v));
+                                    Type::Error
+                                },
+                            }
+                        }).zip(sig_generics.iter())
+                        .for_each(|(x, s)| vec.push((s.name(), x)));
+
+                        vec
+                    },
+                    None => panic!("todo: generic inference"),
+                };
+
+                let call_func_id = match self.funcs.get_func_variant(func_id, &gens) {
+                    Some(v) => v,
+                    None => {
+                        let func_name = func.name;
+
+                        let generics = GenericsScope::new(gens.clone().leak());
+                        let scope = Scope::new(ScopeKind::Generics(generics), scope.some());
+                        let mut scope = self.scopes.push(scope);
+
+                        let func_id = self.module_builder.function_id();
+                        let mut builder = WasmFunctionBuilder::new(self.output, func_id);
+
+                        let args = {
+                            let mut vec = Vec::with_cap_in(self.output, sig_args.len());
+
+                            for a in sig_args {
+                                let ty = self.convert_ty(scope, a.data_type());
+                                let ty = match ty {
+                                    Ok(v) => v,
+                                    Err(v) => {
+                                        wasm.error(self.error(v));
+                                        Type::Error
+                                    },
+                                };
+
+                                let wasm_ty = ty.to_wasm_ty(&self.types);
+
+                                let local_id = builder.param(wasm_ty);
+                                let t = Scope::new(
+                                    ScopeKind::Variable(VariableScope::new(a.name(), a.is_inout(), ty, local_id)),
+                                    scope.some(),
+                                );
+
+                                scope = self.scopes.push(t);
+                                vec.push((a.name(), a.is_inout(), ty))
+                            }
+
+                            vec.leak()
+                        };
+
+                        let ret = match self.convert_ty(scope, ret) {
+                            Ok(v) => v,
+                            Err(v) => {
+                                wasm.error(self.error(v));
+                                Type::Error
+                            },
+                        };
+
+                        let (_, _) = self.block(&mut builder, scope, &*body);
+
+                        builder.return_value(ret.to_wasm_ty(&self.types));
+
+                        self.module_builder.register(builder);
+
+                        let inout_ty_id = if args.iter().any(|a| a.1) {
+                            let temp = ArenaPool::tls_get_temp();
+                            let tuple = Vec::from_in(&*temp,
+                                                       args.iter().map(|a| a.2));
+                            Some(self.make_tuple(tuple, source))
+                        } else { None };
+
+
+                        let func = Function::new(func_name, args, ret, func_id, FunctionKind::UserDefined {
+                            inout: inout_ty_id });
+
+                        let func_id = self.funcs.pending();
+                        self.funcs.put(func_id, func);
+
+                        func_id
+                    }
+                };
+
+                self.funcs.put_variant(func_id, gens.leak(), call_func_id);
+                self.call_func(call_func_id, args, None, source, scope, wasm)
+            },
+        }
     }
 }
 
@@ -2826,4 +2946,39 @@ fn as_decl_iterator<'a>(iter: impl Iterator<Item=Node<'a>>) -> impl Iterator<Ite
                 _ => None
             }
         })
+}
+
+
+fn infer<'a>(base: DataType, given: DataType<'a>, names: &mut [(StringIndex, Option<DataType<'a>>)]) -> Result<(), Error> {
+    if base.kind() == given.kind() { return Ok(()) }
+
+    match base.kind() {
+        | DataTypeKind::Within(_, v)
+        | DataTypeKind::RcConst(v)
+        | DataTypeKind::RcMut(v)
+        | DataTypeKind::Option(v) => infer(*v, given, names)?,
+
+        DataTypeKind::Result(v1, v2) => {
+            infer(*v1, given, names)?;
+            infer(*v2, given, names)?;
+        },
+
+        DataTypeKind::Tuple(v) => for i in v { infer(*i, given, names)? },
+
+        DataTypeKind::CustomType(n) => {
+            for i in names {
+                if i.0 != n { continue }
+                
+                match i.1 {
+                    Some(v) => if v.kind() != given.kind() {
+                    },
+                    None => todo!(),
+                }
+            }
+        },
+
+        _ => ()
+    };
+
+    Ok(())
 }

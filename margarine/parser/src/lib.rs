@@ -233,7 +233,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     #[inline(always)]
     fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.index+1)
+        self.peek_n(1)
+    }
+
+
+    #[inline(always)]
+    fn peek_n(&self, n: usize) -> Option<&Token> {
+        self.tokens.get(self.index+n)
     }
 
 
@@ -605,6 +611,22 @@ impl<'ta> Parser<'_, 'ta, '_> {
         |parser, _| {
             let ident = parser.expect_identifier()?;
             Ok(Generic::new(ident, parser.current_range()))
+        })
+    }
+
+
+
+    pub fn parse_generic_usage(&mut self) -> Result<&'ta [DataType<'ta>], ErrorId> {
+        self.expect(TokenKind::DoubleColon)?;
+        self.advance();
+
+        self.expect(TokenKind::LeftAngle)?;
+        self.advance();
+
+        self.list(TokenKind::RightAngle, Some(TokenKind::Comma), 
+        |parser, _| {
+            let ty = parser.expect_type()?;
+            Ok(ty)
         })
     }
 
@@ -1611,8 +1633,16 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 continue
             }
 
-            if self.peek_kind() == Some(TokenKind::LeftParenthesis) {
+            if matches!(self.peek_kind(), Some(TokenKind::LeftParenthesis | TokenKind::DoubleColon)) {
                 self.advance();
+                
+                let generics = if self.current_is(TokenKind::DoubleColon) {
+                    let generics = self.parse_generic_usage()?;
+                    self.advance();
+                    Some(generics)
+                } else { None };
+
+                self.expect(TokenKind::LeftParenthesis)?;
                 self.advance();
 
                 let args = self.parse_function_call_args(Some(result))?;
@@ -1622,6 +1652,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         name: ident, 
                         args,
                         is_accessor: true, 
+                        generics,
                     },
                     SourceRange::new(start, self.current_range().end())
                 )
@@ -1720,9 +1751,14 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 if self.peek_kind() == Some(TokenKind::DoubleColon) {
                     let source = self.current_range();
                     let start = self.current_range().start();
-                    self.advance();
-                    self.advance();
 
+                    if let Some(s) = self.peek_n(2) {
+                        if matches!(s.kind(), TokenKind::LeftAngle) {
+                            return self.function_call_expression()
+                        }
+                    }
+
+                    self.advance();
                     let expr = self.atom(settings)?;
                     
                     return Ok(ExpressionNode::new(
@@ -1998,6 +2034,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
 
+        let generics = if self.current_is(TokenKind::DoubleColon) {
+            let generics = self.parse_generic_usage()?;
+            self.advance();
+            Some(generics)
+        } else { None };
+
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();
 
@@ -2005,7 +2047,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(ExpressionNode::new(
-            Expression::CallFunction { name, args, is_accessor: false },
+            Expression::CallFunction { name, args, is_accessor: false, generics },
             SourceRange::new(start, end)
         ))
         
