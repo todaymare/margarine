@@ -79,3 +79,9 @@ pub fn num_size(num: u32) -> u32 {
     num.checked_ilog10().unwrap_or(0) + 1
 }
 
+
+
+pub enum Either<T, A> {
+    Left(T),
+    Right(A),
+}

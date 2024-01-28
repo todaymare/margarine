@@ -236,6 +236,10 @@ pub struct GenericsScope<'a> {
     generics: &'a [(StringIndex, Type)],
 }
 
+impl<'a> GenericsScope<'a> {
+    pub fn new(generics: &'a [(StringIndex, Type)]) -> Self { Self { generics } }
+}
+
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExplicitNamespace {

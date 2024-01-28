@@ -83,6 +83,7 @@ pub enum Expression<'a> {
         name: StringIndex,
         is_accessor: bool,
         args: &'a [(ExpressionNode<'a>, bool)],
+        generics: Option<&'a [DataType<'a>]>,
     },
 
     WithinNamespace {
