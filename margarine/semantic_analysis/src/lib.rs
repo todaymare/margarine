@@ -2926,59 +2926,73 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
             },
         }
     }
+
+
+    fn infer<'a>(
+        &mut self, base: Type,
+        (given, source): (Type, SourceRange),
+        names: &mut [(StringIndex, Option<Type>)]
+    ) -> Result<(), Error> {
+        // If they're equal, nothing to infer
+        if base == given { return Ok(()) }
+
+        // Infer the fields
+        let do_fields = || {
+            // Primitive types don't have generics
+            let Type::Custom(ty_id) = given
+            else { return };
+
+            let ty = self.types.get(ty_id);
+        };
+
+        do_fields();
+
+        // Primitive types don't have generics
+        let Type::Custom(ty_id) = base
+        else { return Ok(()) };
+
+        let ty = self.types.get(ty_id);
+
+        // For any type to have a generic in them
+        // they'd need to be a generic kind
+        if !matches!(ty.kind(), TypeSymbolKind::Generic) { return Ok(()) }
+
+        for n in names.iter_mut() {
+            if n.0 != ty.display_name() { continue }
+
+            match n.1 {
+                Some(v) => {
+                    if v != base {
+                        return Err(Error::InvalidType { source, found: given, expected: v })
+                    }
+                },
+
+                None => n.1 = Some(given),
+            }
+        }
+
+        Ok(())
+    }
 }
 
 
 fn as_decl_iterator<'a>(iter: impl Iterator<Item=Node<'a>>) -> impl Iterator<Item=DeclarationNode<'a>> {
     iter
-        .filter_map(|x| {
-            match x {
-                Node::Declaration(v) => Some(v),
-                Node::Attribute(mut attr) => {
-                    loop {
-                        match attr.node() {
-                            Node::Declaration(v) => break Some(v),
-                            Node::Attribute(v) => attr = v,
-                            _ => break None
-                        }
+    .filter_map(|x| {
+        match x {
+            Node::Declaration(v) => Some(v),
+            Node::Attribute(mut attr) => {
+                loop {
+                    match attr.node() {
+                        Node::Declaration(v) => break Some(v),
+                        Node::Attribute(v) => attr = v,
+                        _ => break None
                     }
                 }
-                _ => None
             }
-        })
+            _ => None
+        }
+    })
 }
 
 
-fn infer<'a>(base: DataType, given: DataType<'a>, names: &mut [(StringIndex, Option<DataType<'a>>)]) -> Result<(), Error> {
-    if base.kind() == given.kind() { return Ok(()) }
-
-    match base.kind() {
-        | DataTypeKind::Within(_, v)
-        | DataTypeKind::RcConst(v)
-        | DataTypeKind::RcMut(v)
-        | DataTypeKind::Option(v) => infer(*v, given, names)?,
-
-        DataTypeKind::Result(v1, v2) => {
-            infer(*v1, given, names)?;
-            infer(*v2, given, names)?;
-        },
-
-        DataTypeKind::Tuple(v) => for i in v { infer(*i, given, names)? },
-
-        DataTypeKind::CustomType(n) => {
-            for i in names {
-                if i.0 != n { continue }
-                
-                match i.1 {
-                    Some(v) => if v.kind() != given.kind() {
-                    },
-                    None => todo!(),
-                }
-            }
-        },
-
-        _ => ()
-    };
-
-    Ok(())
-}
