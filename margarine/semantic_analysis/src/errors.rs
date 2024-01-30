@@ -8,13 +8,7 @@ use sti::vec::Vec;
 use crate::types::{ty::Type, ty_map::TypeMap};
 
 #[derive(Clone, Debug)]
-pub enum Error<'a> {
-    GenericInferredEarlier {
-        name: StringIndex,
-        inferred: DataType<'a>,
-        found: DataType<'a>,
-    },
-
+pub enum Error {
     FunctionGenericCountMissmatch {
         source: SourceRange,
         expected: usize,
@@ -254,7 +248,7 @@ pub enum Error<'a> {
 }
 
 
-impl<'a> ErrorType<TypeMap<'_>> for Error<'_> {
+impl<'a> ErrorType<TypeMap<'_>> for Error {
     fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, types: &TypeMap) {
         match self {
             Error::NameIsAlreadyDefined { source, name } => {
@@ -745,13 +739,6 @@ impl<'a> ErrorType<TypeMap<'_>> for Error<'_> {
                 fmt.error("function generic count missmatch")
                     .highlight_with_note(*source, &format!("expected {expected} generics found {found}"))
             },
-
-
-            Error::GenericInferredEarlier { name, inferred, found } => {
-                fmt.error("generic type missmatch, inferred earlier")
-                    .highlight_with_note(source, note)
-            },
-
 
             Error::Bypass => (),
         }

@@ -6,36 +6,71 @@ use super::ty::Type;
 #[derive(Debug, Clone, Copy)] 
 pub struct TypeSymbol<'a> {
     display_name: StringIndex,
-
-    align: usize,
-    size: usize,
-
     kind: TypeSymbolKind<'a>,
 }
 
 
 impl<'a> TypeSymbol<'a> {
-    pub fn new(display_name: StringIndex, align: usize,
-               size: usize, kind: TypeSymbolKind<'a>) -> Self {
-        Self { display_name, align, size, kind }
+    pub fn new(display_name: StringIndex,
+               kind: TypeSymbolKind<'a>) -> Self {
+        Self { display_name, kind }
     }
 
     #[inline(always)]
     pub fn display_name(self) -> StringIndex { self.display_name }
     #[inline(always)]
-    pub fn align(self) -> usize { self.align }
-    #[inline(always)]
-    pub fn size(self) -> usize { self.size }
-    #[inline(always)]
     pub fn kind(self) -> TypeSymbolKind<'a> { self.kind }
+
+    #[inline(always)]
+    pub fn as_concrete(self) -> ConcreteType<'a> {
+        match self.kind {
+            TypeSymbolKind::Template(v) => panic!(),
+
+            TypeSymbolKind::Concrete(conc) => return conc,
+
+            TypeSymbolKind::GenericPlaceholder => return ConcreteType {
+                align: 0,
+                size: 0,
+                kind: ConcreteTypeKind::Struct(TypeStruct::new(&[], TypeStructStatus::User)),
+            },
+        };
+    }
 }
 
 
 #[derive(Debug, Clone, Copy)]
 pub enum TypeSymbolKind<'a> {
+    Concrete(ConcreteType<'a>),
+    Template(TemplateType<'a>),
+    GenericPlaceholder,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConcreteType<'a> {
+    pub align: usize,
+    pub size: usize,
+
+    pub kind: ConcreteTypeKind<'a>
+}
+
+impl<'a> ConcreteType<'a> {
+    pub fn new(align: usize, size: usize, kind: ConcreteTypeKind<'a>) -> Self { Self { align, size, kind } }
+}
+
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum TemplateType<'a> {
     Struct(TypeStruct<'a>),
     Enum(TypeEnum<'a>),
-    Generic,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum ConcreteTypeKind<'a> {
+    Struct(TypeStruct<'a>),
+    Enum(TypeEnum<'a>),
 }
 
 
