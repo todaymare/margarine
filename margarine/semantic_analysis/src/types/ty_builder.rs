@@ -5,7 +5,7 @@ use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
 use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}};
 
-use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag, TypeEnumStatus, TypeStructStatus}};
+use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag, TypeEnumStatus, TypeStructStatus, ConcreteTypeKind, ConcreteType}};
 
 #[derive(Debug)]
 pub struct TypeBuilder<'a> {
@@ -243,7 +243,7 @@ impl<'out> TypeBuilder<'_> {
         };
 
         
-        if let TypeSymbolKind::Enum(val) = sym.kind() {
+        if let ConcreteTypeKind::Enum(val) = sym.as_concrete().kind {
             self.register_enum_methods(data, ty, val);
         }
 
@@ -296,8 +296,9 @@ impl<'out> TypeBuilder<'_> {
 
         // Finalise
         let kind = TypeStruct::new(fields, status);
-        let kind = TypeSymbolKind::Struct(kind);
-        let symbol = TypeSymbol::new(name, align, size, kind);
+        let kind = ConcreteTypeKind::Struct(kind);
+        let kind = ConcreteType::new(align, size, kind);
+        let symbol = TypeSymbol::new(name, TypeSymbolKind::Concrete(kind));
 
         Ok(symbol)
     }
@@ -365,11 +366,11 @@ impl<'out> TypeBuilder<'_> {
             size = sti::num::ceil_to_multiple_pow2(size, tag_align);
             size += tag_align;
             size = sti::num::ceil_to_multiple_pow2(size, tag_align);
-            return Ok(TypeSymbol::new(
-                    name, tag_align,
-                    size, TypeSymbolKind::Enum(TypeEnum::new(TypeEnumStatus::User, TypeEnumKind::Tag(TypeTag::new(
-                            Vec::from_in(data.arena, fields.iter().map(|x| x.name)).leak()))))
-                    ));
+
+            let kind = TypeTag::new(Vec::from_in(data.arena, fields.iter().map(|x| x.name)).leak());
+            let kind = TypeEnum::new(TypeEnumStatus::User, TypeEnumKind::Tag(kind));
+            let kind = ConcreteType::new(tag_align, size, ConcreteTypeKind::Enum(kind));
+            return Ok(TypeSymbol::new(name, TypeSymbolKind::Concrete(kind)))
         }
 
         // Smush 'Em Together
@@ -398,7 +399,9 @@ impl<'out> TypeBuilder<'_> {
         
         // Finalise
         let kind = TypeEnum::new(status, TypeEnumKind::TaggedUnion(TypeTaggedUnion::new(union_offset.try_into().unwrap(), fields)));
-        Ok(TypeSymbol::new(name, align, size, TypeSymbolKind::Enum(kind)))
+        let kind = ConcreteTypeKind::Enum(kind);
+        let kind = ConcreteType::new(align, size, kind);
+        Ok(TypeSymbol::new(name, TypeSymbolKind::Concrete(kind)))
     } 
 
     
@@ -412,8 +415,8 @@ impl<'out> TypeBuilder<'_> {
         
         match kind.kind() {
             TypeEnumKind::TaggedUnion(sym) => {
-                let tysym = data.type_map.get(ty);
-                let wasm_ty = WasmType::Ptr { size: tysym.size() };
+                let tysym = data.type_map.get(ty).as_concrete();
+                let wasm_ty = WasmType::Ptr { size: tysym.size };
 
                 for (i, f) in sym.fields().into_iter().enumerate() {
                     let wfid = data.module_builder.function_id();
@@ -502,7 +505,7 @@ impl<'out> TypeBuilder<'_> {
             Type::Unit  => 1,
             Type::Never => todo!(),
             Type::Error => 1,
-            Type::Custom(v) => self.resolve_type(data, v)?.align(),
+            Type::Custom(v) => self.resolve_type(data, v)?.as_concrete().align,
         })
     }
 
@@ -520,7 +523,7 @@ impl<'out> TypeBuilder<'_> {
             Type::Unit  => 1,
             Type::Never => todo!(),
             Type::Error => 0,
-            Type::Custom(v) => self.resolve_type(data, v)?.size(),
+            Type::Custom(v) => self.resolve_type(data, v)?.as_concrete().size,
         })
     }
 }

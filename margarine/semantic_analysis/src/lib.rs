@@ -13,11 +13,11 @@ use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope, GenericsScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus, TypeSymbol}};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus, TypeSymbol, ConcreteType}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
-use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::TypeStruct};
+use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::{TypeStruct, ConcreteTypeKind}};
 
 #[derive(Debug)]
 pub struct Analyzer<'me, 'out, 'str, 'ast> {
@@ -685,7 +685,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                                 continue
                             }
 
-                            let ty = TypeSymbol::new(g.name(), 0, 0, TypeSymbolKind::Generic);
+                            let ty = TypeSymbol::new(g.name(), TypeSymbolKind::GenericPlaceholder);
                             let ty_id = self.types.pending();
                             self.types.put(ty_id, ty);
 
@@ -946,7 +946,9 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                         let mut scope = self.scopes.push(scope);
 
                         let fields = inout.map(|inout| self.types.get(inout).kind()).map(|x| {
-                            let TypeSymbolKind::Struct(val) = x else { unreachable!() };
+                            let TypeSymbolKind::Concrete(conc) = x else { unreachable!() };
+                            let ConcreteType { kind, .. } = conc else { unreachable!() };
+                            let ConcreteTypeKind::Struct(val) = kind else { unreachable!() };
                             val
                         });
 
@@ -970,7 +972,11 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                             scope = self.scopes.push(t);
                         }
 
-                        let inout_param = inout.map(|inout| wasm.param(WasmType::Ptr { size: self.types.get(inout).size() }));
+                        let inout_param = inout.map(|inout| {
+                            let TypeSymbolKind::Concrete(conc) = self.types.get(inout).kind()
+                            else { unreachable!() };
+                            wasm.param(WasmType::Ptr { size: conc.size })
+                        });
                         for i in ids.iter() {
                             wasm.write_to(&mut string, |wasm| {
                                 let f = fields.unwrap().fields[counter];
@@ -1159,7 +1165,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                         }
                     };
 
-                    let TypeSymbolKind::Struct(sym) = rty.kind()
+                    let ConcreteTypeKind::Struct(sym) = rty.as_concrete().kind
                     else {
                         wasm.error(self.error(Error::VariableValueNotTuple(rhs.range())));
                         return Err(());
@@ -1283,11 +1289,11 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                         let str = self.string_map.get(v);
                         let string_ptr = self.module_builder.add_string(str);
                         
-                        let ty = self.types.get(TypeId::STR);
-                        let TypeSymbolKind::Struct(strct) = ty.kind()
+                        let ty = self.types.get(TypeId::STR).as_concrete();
+                        let ConcreteTypeKind::Struct(strct) = ty.kind
                         else { unreachable!() };
 
-                        let alloc = wasm.alloc_stack(ty.size());
+                        let alloc = wasm.alloc_stack(ty.size);
 
                         // len
                         {
@@ -1508,8 +1514,8 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     return AnalysisResult::error();
                 }
 
-                let ty = self.types.get(TypeId::BOOL);
-                let TypeSymbolKind::Enum(e) = ty.kind() else { panic!() };
+                let ty = self.types.get(TypeId::BOOL).as_concrete();
+                let ConcreteTypeKind::Enum(e) = ty.kind else { panic!() };
                 e.get_tag(wasm);
 
                 let mut slf = self;
@@ -1585,8 +1591,8 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     }
                 };
 
-                let ty = self.types.get(tyid); 
-                let TypeSymbolKind::Enum(sym) = ty.kind()
+                let ty = self.types.get(tyid).as_concrete(); 
+                let ConcreteTypeKind::Enum(sym) = ty.kind
                 else { 
                     wasm.error(self.error(Error::MatchValueIsntEnum {
                         source: value.range(), typ: anal.ty }));
@@ -1783,8 +1789,8 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                 };
 
 
-                let strct = self.types.get(tyid);
-                let TypeSymbolKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind() 
+                let strct = self.types.get(tyid).as_concrete();
+                let ConcreteTypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind 
                 else {
                     wasm.error(self.error(Error::StructCreationOnNonStruct {
                         source, typ: ty }));
@@ -1818,7 +1824,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                 }
 
                 
-                let alloc = wasm.alloc_stack(strct.size());
+                let alloc = wasm.alloc_stack(strct.size);
                 for sf in sfields.iter() {
                     let val = fields.iter().find(|x| x.0 == sf.name).unwrap();
                     let ptr = alloc.add(sf.offset);
@@ -1856,8 +1862,8 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                 };
 
 
-                let strct = self.types.get(tyid);
-                let TypeSymbolKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind() 
+                let strct = self.types.get(tyid).as_concrete();
+                let ConcreteTypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind 
                 else {
                     wasm.error(self.error(Error::FieldAccessOnNonEnumOrStruct {
                         source, typ: value.ty }));
@@ -2049,9 +2055,9 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     },
                 };
 
-                let ty = self.types.get(ty_id);
-                let TypeSymbolKind::Struct(sym) = ty.kind() else { unreachable!() };
-                let ptr = wasm.alloc_stack(ty.size());
+                let ty = self.types.get(ty_id).as_concrete();
+                let ConcreteTypeKind::Struct(sym) = ty.kind else { unreachable!() };
+                let ptr = wasm.alloc_stack(ty.size);
 
                 let mut errored = false;
                 for ((sf, f), n) in sym.fields.iter().zip(vec.iter()).zip(v.iter()).rev() {
@@ -2113,7 +2119,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                             Vec::from_array_in(&*ArenaPool::tls_get_rec(), [Type::I32, ty]), 
                             source);
 
-                        let TypeSymbolKind::Struct(sym) = slf.types.get(tuple).kind()
+                        let ConcreteTypeKind::Struct(sym) = slf.types.get(tuple).as_concrete().kind
                         else { unreachable!() };
 
                         let field = sym.fields[1];
@@ -2241,11 +2247,11 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                                 &[Type::I64, lhs_anal.ty]
                             ), source);
                         
-                        let tuple = self.types.get(tuple);
-                        let TypeSymbolKind::Struct(sym) = tuple.kind()
+                        let tuple = self.types.get(tuple).as_concrete();
+                        let ConcreteTypeKind::Struct(sym) = tuple.kind
                         else { unreachable!() };
 
-                        let alloc = wasm.alloc_stack(tuple.size());
+                        let alloc = wasm.alloc_stack(tuple.size);
 
                         {
                             let field = sym.fields[0];
@@ -2285,7 +2291,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
             Expression::Unwrap(v) => {
                 let anal = self.expr(*v, scope, wasm);
                 let ty = match anal.ty {
-                    Type::Custom(v) => self.types.get(v),
+                    Type::Custom(v) => self.types.get(v).as_concrete(),
 
                     Type::Error => return AnalysisResult::error(),
 
@@ -2295,7 +2301,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     }
                 };
                 
-                let TypeSymbolKind::Enum(e) = ty.kind()
+                let ConcreteTypeKind::Enum(e) = ty.kind
                 else {
                     wasm.error(self.error(Error::CantUnwrapOnGivenType(v.range(), anal.ty)));
                     return AnalysisResult::error();
@@ -2353,7 +2359,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
             Expression::OrReturn(v) => {
                 let anal = self.expr(*v, scope, wasm);
                 let ty = match anal.ty {
-                    Type::Custom(v) => self.types.get(v),
+                    Type::Custom(v) => self.types.get(v).as_concrete(),
 
                     Type::Error => return AnalysisResult::error(),
 
@@ -2363,7 +2369,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     }
                 };
                 
-                let TypeSymbolKind::Enum(enum_sym) = ty.kind()
+                let ConcreteTypeKind::Enum(enum_sym) = ty.kind
                 else {
                     wasm.error(self.error(Error::CantTryOnGivenType(v.range(), anal.ty)));
                     return AnalysisResult::error();
@@ -2387,7 +2393,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     return AnalysisResult::error();
                 };
 
-                let TypeSymbolKind::Enum(func_sym) = ty.kind()
+                let ConcreteTypeKind::Enum(func_sym) = ty.kind
                 else {
                     return err(self);
                 };
@@ -2615,8 +2621,8 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                 };
 
 
-                let strct = self.types.get(tyid);
-                let TypeSymbolKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind() 
+                let strct = self.types.get(tyid).as_concrete();
+                let ConcreteTypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind 
                 else {
                     return Err(Error::FieldAccessOnNonEnumOrStruct {
                         source: node.range(), typ: ty });
@@ -2675,8 +2681,8 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
         match func.kind {
             FunctionKind::UserDefined { inout } => {
                 let inout = inout.map(|inout| {
-                    let ty = self.types.get(inout);
-                    let sp = wasm.alloc_stack(ty.size());
+                    let ty = self.types.get(inout).as_concrete();
+                    let sp = wasm.alloc_stack(ty.size);
                     wasm.sptr_const(sp);
                     (ty, sp)
                 });
@@ -2722,7 +2728,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                 }
 
                 if let Some((ty, sp)) = inout {
-                    let TypeSymbolKind::Struct(sym) = ty.kind() else { unreachable!() };
+                    let ConcreteTypeKind::Struct(sym) = ty.kind else { unreachable!() };
                     let mut c = 0;
                     for (i, sig_arg) in func.args.iter().enumerate() {
                         if !sig_arg.1 { continue }
@@ -2772,12 +2778,13 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     return Err(());
                 }
 
-                let ty_sym = self.types.get(ty);
+                let ty_sym = self.types.get(ty).as_concrete();
                 let ptr = {
-                    wasm.alloc_stack(ty_sym.size())
+                    wasm.alloc_stack(ty_sym.size)
                 };
 
-                let TypeSymbolKind::Struct(sym) = ty_sym.kind() else { unreachable!() };
+                let ConcreteTypeKind::Struct(sym) = ty_sym.kind 
+                else { unreachable!() };
                 
                 for sym_arg in sym.fields.iter().rev().skip(1) {
                     wasm.sptr_const(ptr);
@@ -2955,7 +2962,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
 
         // For any type to have a generic in them
         // they'd need to be a generic kind
-        if !matches!(ty.kind(), TypeSymbolKind::Generic) { return Ok(()) }
+        if !matches!(ty.kind(), TypeSymbolKind::Template(_)) { return Ok(()) }
 
         for n in names.iter_mut() {
             if n.0 != ty.display_name() { continue }

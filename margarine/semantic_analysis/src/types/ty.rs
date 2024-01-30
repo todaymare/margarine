@@ -3,7 +3,7 @@ use wasm::WasmType;
 
 use crate::types::ty_map::TypeId;
 
-use super::{ty_map::TypeMap, ty_sym::{TypeSymbolKind, TypeEnumKind}};
+use super::{ty_map::TypeMap, ty_sym::{TypeSymbolKind, TypeEnumKind, ConcreteTypeKind}};
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,19 +131,17 @@ impl Type {
             Type::Error => WasmType::I64,
 
             Type::Custom(v) => {
-                let ty = ty_map.get(v);
-                match ty.kind() {
-                    TypeSymbolKind::Struct(_)
-                        => WasmType::Ptr { size: ty.size() },
+                let ty = ty_map.get(v).as_concrete();
+                match ty.kind {
+                    ConcreteTypeKind::Struct(_)
+                        => WasmType::Ptr { size: ty.size },
 
-                    TypeSymbolKind::Enum(v) => {
+                    ConcreteTypeKind::Enum(v) => {
                         match v.kind() {
-                            TypeEnumKind::TaggedUnion(_) => WasmType::Ptr { size: ty.size() },
+                            TypeEnumKind::TaggedUnion(_) => WasmType::Ptr { size: ty.size },
                             TypeEnumKind::Tag(_) => WasmType::I32,
                         }
                     },
-
-                    TypeSymbolKind::Generic => WasmType::Ptr { size: 0 },
                 }
             },
         }
