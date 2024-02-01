@@ -947,7 +947,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
 
                         let fields = inout.map(|inout| self.types.get(inout).kind()).map(|x| {
                             let TypeSymbolKind::Concrete(conc) = x else { unreachable!() };
-                            let ConcreteType { kind, .. } = conc else { unreachable!() };
+                            let ConcreteType { kind, .. } = conc;
                             let ConcreteTypeKind::Struct(val) = kind else { unreachable!() };
                             val
                         });
@@ -2853,7 +2853,37 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
 
                         vec
                     },
-                    None => panic!("todo: generic inference"),
+                    None => {
+                        let pool = ArenaPool::tls_get_rec();
+                        let mut names = Vec::with_cap_in(&*pool, sig_generics.len());
+                        sig_generics.iter().for_each(|x| names.push((x.name(), None)));
+                        for (sarg, arg) in func.args.iter().zip(args.iter()) {
+                            let result = self.infer(sarg.2, (arg.0, arg.1), &mut *names);
+                            if let Err(err) = result {
+                                wasm.error(self.error(err));
+                                return Err(());
+                            }
+                        }
+
+                        let mut vec = Vec::with_cap_in(self.output, names.len());
+                        for n in names.iter() {
+                            let Some(ty) = n.1
+                            else {
+                                wasm.error(self.error(Error::UnableToInferGeneric {
+                                    source,
+                                    name: n.0,
+                                }));
+
+                                return Err(());
+                            };
+
+                            vec.push((n.0, ty))
+                        }
+
+                        dbg!(&vec);
+
+                        vec
+                    },
                 };
 
                 let call_func_id = match self.funcs.get_func_variant(func_id, &gens) {
@@ -2940,31 +2970,26 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
         (given, source): (Type, SourceRange),
         names: &mut [(StringIndex, Option<Type>)]
     ) -> Result<(), Error> {
+        println!("1");
         // If they're equal, nothing to infer
         if base == given { return Ok(()) }
 
-        // Infer the fields
-        let do_fields = || {
-            // Primitive types don't have generics
-            let Type::Custom(ty_id) = given
-            else { return };
-
-            let ty = self.types.get(ty_id);
-        };
-
-        do_fields();
-
+        println!("2");
         // Primitive types don't have generics
         let Type::Custom(ty_id) = base
         else { return Ok(()) };
 
+        println!("3");
         let ty = self.types.get(ty_id);
 
         // For any type to have a generic in them
-        // they'd need to be a generic kind
-        if !matches!(ty.kind(), TypeSymbolKind::Template(_)) { return Ok(()) }
+        // they'd need to be a generic placeholder
+        if !matches!(ty.kind(), TypeSymbolKind::GenericPlaceholder) { return Ok(()) }
+
+        println!("4");
 
         for n in names.iter_mut() {
+            dbg!(&n);
             if n.0 != ty.display_name() { continue }
 
             match n.1 {

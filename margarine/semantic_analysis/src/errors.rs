@@ -9,6 +9,11 @@ use crate::types::{ty::Type, ty_map::TypeMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {
+    UnableToInferGeneric {
+        source: SourceRange,
+        name: StringIndex
+    },
+
     FunctionGenericCountMissmatch {
         source: SourceRange,
         expected: usize,
@@ -738,6 +743,12 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             Error::FunctionGenericCountMissmatch { source, expected, found } => {
                 fmt.error("function generic count missmatch")
                     .highlight_with_note(*source, &format!("expected {expected} generics found {found}"))
+            },
+
+            Error::UnableToInferGeneric { source, name } => {
+                let msg = format!("unable to infer '{}', please consider explicitly providing it", fmt.string(*name));
+                fmt.error("unable to infer generic")
+                    .highlight_with_note(*source, &msg)
             },
 
             Error::Bypass => (),
