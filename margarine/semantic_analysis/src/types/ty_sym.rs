@@ -1,4 +1,5 @@
 use common::string_map::StringIndex;
+use parser::nodes::decl::Generic;
 use wasm::WasmFunctionBuilder;
 
 use super::ty::Type;
@@ -29,7 +30,7 @@ impl<'a> TypeSymbol<'a> {
             TypeSymbolKind::Concrete(conc) => return conc,
 
             TypeSymbolKind::GenericPlaceholder => return ConcreteType {
-                align: 0,
+                align: 1,
                 size: 0,
                 kind: ConcreteTypeKind::Struct(TypeStruct::new(&[], TypeStructStatus::User)),
             },
@@ -59,12 +60,16 @@ impl<'a> ConcreteType<'a> {
 }
 
 
-
 #[derive(Debug, Clone, Copy)]
-pub enum TemplateType<'a> {
-    Struct(TypeStruct<'a>),
-    Enum(TypeEnum<'a>),
+pub struct TemplateType<'a> {
+    pub generics: &'a [Generic],
+    pub kind: ConcreteTypeKind<'a>
 }
+
+impl<'a> TemplateType<'a> {
+    pub fn new(generics: &'a [Generic], kind: TemplateTypeKind<'a>) -> Self { Self { generics, kind } }
+}
+
 
 
 #[derive(Debug, Clone, Copy)]

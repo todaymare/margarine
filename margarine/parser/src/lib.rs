@@ -604,14 +604,19 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     
     pub fn parse_generics(&mut self) -> Result<&'ta [Generic], ErrorId> {
-        self.expect(TokenKind::LeftAngle)?;
+        if !self.current_is(TokenKind::LeftAngle) {
+            return Ok(&[])
+        }
+
         self.advance();
 
-        self.list(TokenKind::RightAngle, Some(TokenKind::Comma), 
+        let list = self.list(TokenKind::RightAngle, Some(TokenKind::Comma), 
         |parser, _| {
             let ident = parser.expect_identifier()?;
             Ok(Generic::new(ident, parser.current_range()))
-        })
+        });
+        self.advance();
+        list
     }
 
 
@@ -836,6 +841,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let header = SourceRange::new(start, self.current_range().end());
         self.advance();
 
+        let generics = self.parse_generics()?;
+
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
@@ -860,7 +867,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::RightBracket)?;
         let end = self.current_range().end();
 
-        let node = Declaration::Struct { kind, name, header, fields };
+        let node = Declaration::Struct { kind, name, header, fields, generics };
 
         Ok(DeclarationNode::new(
             node, 
@@ -883,11 +890,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
 
-        let generics = if self.current_is(TokenKind::LeftAngle) {
-            let generics = self.parse_generics()?;
-            self.advance();
-            generics
-        } else { &[] };
+        let generics = self.parse_generics()?;
 
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();

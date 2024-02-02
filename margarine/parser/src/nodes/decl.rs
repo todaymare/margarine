@@ -38,6 +38,7 @@ pub enum Declaration<'a> {
         name: StringIndex,
         header: SourceRange,
         fields: &'a [(StringIndex, DataType<'a>, SourceRange)],
+        generics: &'a [Generic],
     },
 
     Enum {

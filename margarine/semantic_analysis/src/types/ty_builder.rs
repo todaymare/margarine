@@ -1,11 +1,12 @@
 use common::{string_map::{StringIndex, StringMap}, source::SourceRange};
 use errors::SemaError;
+use parser::nodes::decl::Generic;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
 use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeSymbolKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}};
 
-use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag, TypeEnumStatus, TypeStructStatus, ConcreteTypeKind, ConcreteType}};
+use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, TypeEnum, TypeTag, TypeEnumStatus, TypeStructStatus, ConcreteTypeKind, ConcreteType, TemplateType}};
 
 #[derive(Debug)]
 pub struct TypeBuilder<'a> {
@@ -38,6 +39,7 @@ pub enum PartialTypeKind<'a> {
     Struct {
         fields: &'a mut [PartialStructField],
         status: TypeStructStatus,
+        generics: &'a [Generic],
     },
 
     Enum {
@@ -100,6 +102,7 @@ impl<'a> TypeBuilder<'a> {
         &mut self, 
         ty: TypeId, 
         iter: impl Iterator<Item=(StringIndex, Type)>,
+        generics: &'a [Generic],
         status: TypeStructStatus,
     ) {
         let fields = Vec::from_in(
@@ -109,7 +112,7 @@ impl<'a> TypeBuilder<'a> {
         
         let fields = fields.leak();
 
-        self.set_kind(ty, PartialTypeKind::Struct { fields, status })
+        self.set_kind(ty, PartialTypeKind::Struct { fields, status, generics })
     }
 
 
@@ -215,8 +218,10 @@ impl<'out> TypeBuilder<'_> {
             let kind = kind.take().unwrap();
 
             match kind {
-                PartialTypeKind::Struct { fields, status } => 
-                    self.process_struct(data, fields, name, status),
+                PartialTypeKind::Struct { fields, status, generics } => {
+                    if !generics.is_empty() { todo!() }
+                    self.process_struct(data, fields, name, status)
+                }
 
 
                 PartialTypeKind::Enum { mappings, status } => { 
@@ -246,7 +251,6 @@ impl<'out> TypeBuilder<'_> {
         if let ConcreteTypeKind::Enum(val) = sym.as_concrete().kind {
             self.register_enum_methods(data, ty, val);
         }
-
 
         Ok(sym)
     }
@@ -296,6 +300,38 @@ impl<'out> TypeBuilder<'_> {
 
         // Finalise
         let kind = TypeStruct::new(fields, status);
+        let kind = ConcreteTypeKind::Struct(kind);
+        let kind = ConcreteType::new(align, size, kind);
+        let symbol = TypeSymbol::new(name, TypeSymbolKind::Concrete(kind));
+
+        Ok(symbol)
+    }
+
+    ///
+    /// Processes and generates a generic struct type
+    ///
+    /// This function does **NOT** register the
+    /// type into the type map
+    ///
+    /// # Errors
+    /// - If any of the type's fields are cyclic
+    ///
+    #[must_use]
+    fn process_generic_struct(
+        &mut self,
+        data: &mut TypeBuilderData<'_, 'out, '_, '_>,
+        fields: &[PartialStructField],
+        name: StringIndex,
+        generics: &[Generic],
+        status: TypeStructStatus,
+    ) -> Result<TypeSymbol<'out>, Error> {
+        for f in fields.iter() {
+            // to make sure it's not cyclic
+            let Type::Custom(ty) = f.ty else { continue };
+            self.resolve_type(data, ty)?;
+        }
+        // Finalise
+        let kind = TemplateType::new(generics, ConcreteTypeKind::Struct());
         let kind = ConcreteTypeKind::Struct(kind);
         let kind = ConcreteType::new(align, size, kind);
         let symbol = TypeSymbol::new(name, TypeSymbolKind::Concrete(kind));
