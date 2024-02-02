@@ -11,7 +11,7 @@ use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
+use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature, Generic}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope, GenericsScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus, TypeSymbol, ConcreteType}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
@@ -138,6 +138,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                             (StringMap::INT, Type::I64),
                             (StringMap::VALUE, ty),
                         ].iter().copied(),
+                        &[],
                         if matches!(dt.kind(), DataTypeKind::RcConst(_)) { TypeStructStatus::Rc }
                         else { TypeStructStatus::RcMut },
                     );
@@ -184,7 +185,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
             let _ = write!(str, "{}", i);
             let id = self.string_map.insert(&str);
             (id, *x)
-        }), TypeStructStatus::Tuple);
+        }), &[], TypeStructStatus::Tuple);
 
         let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
         tyb.finalise(data, &mut self.errors);
@@ -271,6 +272,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
      
 
     pub fn error(&mut self, err: Error) -> ErrorId {
+        panic!();
         ErrorId::Sema(self.errors.push(err))
     }
 }
@@ -327,6 +329,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
                         (slf.string_map.insert("len"), Type::I64),
                         (slf.string_map.insert("ptr"), Type::I64),
                     ].into_iter(),
+                    &[],
                     TypeStructStatus::User
                 );
             }
@@ -427,7 +430,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
 }
 
 
-impl<'ast> Analyzer<'_, '_, '_, 'ast> {
+impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
     pub fn collect_type_names<'a>(
         &mut self,
         decls: impl Iterator<Item=DeclarationNode<'a>>,
@@ -575,19 +578,24 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
 
 
 
-    pub fn resolve_names<'a>(
+    pub fn resolve_names<'builder, 'a: 'builder>(
         &mut self,
         decls: impl Iterator<Item=DeclarationNode<'a>>,
 
         builder: &mut WasmFunctionBuilder,
-        type_builder: &mut TypeBuilder,
+        type_builder: &mut TypeBuilder<'builder>,
         scope: ScopeId,
         ns_id: NamespaceId,
     ) {
         for decl in decls {
             match decl.kind() {
-                Declaration::Struct { name, fields, .. } => {
+                Declaration::Struct { name, fields, generics, .. } => {
                     let ty = self.namespaces.get(ns_id).get_type(name).unwrap();
+                    let ns = self.generics_namespace(builder, generics);
+                    let ns = self.namespaces.put(ns);
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                    let scope = self.scopes.push(scope);
+
                     let fields = fields.iter()
                         .filter_map(|(name, ty, _)| {
                             let ty = self.convert_ty(scope, *ty);
@@ -597,9 +605,10 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                             };
 
                             None
-                        });
+                        }
+                    );
 
-                    type_builder.set_struct_fields(ty, fields, TypeStructStatus::User);
+                    type_builder.set_struct_fields(ty, fields, generics, TypeStructStatus::User);
                 },
 
 
@@ -677,21 +686,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                 Declaration::Function { sig, body } => {
                     let mut nscope = scope;
                     if !sig.generics.is_empty() {
-                        let mut ns = Namespace::new(self.output);
-                        for g in sig.generics {
-                            if ns.get_type(g.name()).is_some() {
-                                builder.error(self.error(Error::GenericAlreadyDefined 
-                                                         { source: g.range() }));
-                                continue
-                            }
-
-                            let ty = TypeSymbol::new(g.name(), TypeSymbolKind::GenericPlaceholder);
-                            let ty_id = self.types.pending();
-                            self.types.put(ty_id, ty);
-
-                            ns.add_type(g.name(), ty_id);
-                        }
-
+                        let ns = self.generics_namespace(builder, sig.generics);
                         let ns = self.namespaces.put(ns);
                         let s = Scope::new(ScopeKind::ImplicitNamespace(ns), nscope.some());
                         nscope = self.scopes.push(s);
@@ -1788,60 +1783,7 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
                     }
                 };
 
-
-                let strct = self.types.get(tyid).as_concrete();
-                let ConcreteTypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind 
-                else {
-                    wasm.error(self.error(Error::StructCreationOnNonStruct {
-                        source, typ: ty }));
-                    return AnalysisResult::error();
-                };
-
-
-                for f in fields.iter() {
-                    if !sfields.iter().any(|x| x.name == f.0) {
-                        wasm.error(self.error(Error::FieldDoesntExist {
-                            source: f.1,
-                            field: f.0,
-                            typ: ty,
-                        }));
-
-                        return AnalysisResult::error();
-                    }
-                }
-                
-                let mut vec = Vec::new();
-                for sf in sfields.iter() {
-                    if !fields.iter().any(|x| x.0 == sf.name) {
-                        vec.push(sf.name);
-                    }
-                }
-
-
-                if !vec.is_empty() {
-                    wasm.error(self.error(Error::MissingFields { source, fields: vec }));
-                    return AnalysisResult::error();
-                }
-
-                
-                let alloc = wasm.alloc_stack(strct.size);
-                for sf in sfields.iter() {
-                    let val = fields.iter().find(|x| x.0 == sf.name).unwrap();
-                    let ptr = alloc.add(sf.offset);
-
-                    let node = self.expr(val.2, scope, wasm);
-                    if !node.ty.eq_sem(sf.ty) {
-                        wasm.error(self.error(Error::InvalidType 
-                            { source: val.1, found: node.ty, expected: sf.ty }));
-                        return AnalysisResult::error();
-                    }
-
-                    let wty = sf.ty.to_wasm_ty(&self.types);
-                    wasm.sptr_const(ptr);
-                    wasm.write(wty);
-                }
-
-                wasm.sptr_const(alloc);
+                self.create_struct(wasm, scope, tyid, fields, source);
                 AnalysisResult::new(ty, true)
             },
             
@@ -2964,29 +2906,109 @@ impl<'ast> Analyzer<'_, '_, '_, 'ast> {
         }
     }
 
+    
+    fn create_struct(
+        &mut self,
+        wasm: &mut WasmFunctionBuilder,
+        scope: ScopeId,
+        ty: TypeId,
+        fields: &[(StringIndex, SourceRange, ExpressionNode)],
+        source: SourceRange,
+    ) {
+        let strct = self.types.get(ty).as_concrete();
+        let ConcreteTypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind 
+        else {
+            wasm.error(self.error(Error::StructCreationOnNonStruct {
+                source, typ: Type::Custom(ty) }));
+            return;
+        };
+
+
+        for f in fields.iter() {
+            if !sfields.iter().any(|x| x.name == f.0) {
+                wasm.error(self.error(Error::FieldDoesntExist {
+                    source: f.1,
+                    field: f.0,
+                    typ: Type::Custom(ty),
+                }));
+
+                return;
+            }
+        }
+        
+        let mut vec = Vec::new();
+        for sf in sfields.iter() {
+            if !fields.iter().any(|x| x.0 == sf.name) {
+                vec.push(sf.name);
+            }
+        }
+
+
+        if !vec.is_empty() {
+            wasm.error(self.error(Error::MissingFields { source, fields: vec }));
+            return;
+        }
+
+        
+        let alloc = wasm.alloc_stack(strct.size);
+        for sf in sfields.iter() {
+            let val = fields.iter().find(|x| x.0 == sf.name).unwrap();
+            let ptr = alloc.add(sf.offset);
+
+            let node = self.expr(val.2, scope, wasm);
+            if !node.ty.eq_sem(sf.ty) {
+                wasm.error(self.error(Error::InvalidType 
+                    { source: val.1, found: node.ty, expected: sf.ty }));
+                return;
+            }
+
+            let wty = sf.ty.to_wasm_ty(&self.types);
+            wasm.sptr_const(ptr);
+            wasm.write(wty);
+        }
+
+        wasm.sptr_const(alloc);
+
+    }
+
+
+    fn generics_namespace(&mut self, builder: &mut WasmFunctionBuilder, generics: &[Generic]) -> Namespace<'out> {
+        let mut ns = Namespace::new(self.output);
+        for g in generics {
+            if ns.get_type(g.name()).is_some() {
+                builder.error(self.error(Error::GenericAlreadyDefined 
+                                         { source: g.range() }));
+                continue
+            }
+
+            let ty = TypeSymbol::new(g.name(), TypeSymbolKind::GenericPlaceholder);
+            let ty_id = self.types.pending();
+            self.types.put(ty_id, ty);
+
+            ns.add_type(g.name(), ty_id);
+        }
+
+        ns
+    }
+
 
     fn infer<'a>(
         &mut self, base: Type,
         (given, source): (Type, SourceRange),
         names: &mut [(StringIndex, Option<Type>)]
     ) -> Result<(), Error> {
-        println!("1");
         // If they're equal, nothing to infer
         if base == given { return Ok(()) }
 
-        println!("2");
         // Primitive types don't have generics
         let Type::Custom(ty_id) = base
         else { return Ok(()) };
 
-        println!("3");
         let ty = self.types.get(ty_id);
 
         // For any type to have a generic in them
         // they'd need to be a generic placeholder
         if !matches!(ty.kind(), TypeSymbolKind::GenericPlaceholder) { return Ok(()) }
-
-        println!("4");
 
         for n in names.iter_mut() {
             dbg!(&n);
