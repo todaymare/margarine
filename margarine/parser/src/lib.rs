@@ -621,8 +621,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
 
-    pub fn parse_generic_usage(&mut self) -> Result<&'ta [DataType<'ta>], ErrorId> {
-        self.expect(TokenKind::DoubleColon)?;
+    pub fn parse_generic_usage(&mut self) -> Result<Option<&'ta [DataType<'ta>]>, ErrorId> {
+        if !self.current_is(TokenKind::DoubleColon) {
+            return Ok(None)
+        }
+
         self.advance();
 
         self.expect(TokenKind::LeftAngle)?;
@@ -632,7 +635,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         |parser, _| {
             let ty = parser.expect_type()?;
             Ok(ty)
-        })
+        }).map(|x| Some(x))
     }
 
 
@@ -1630,7 +1633,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 _ => self.expect_identifier()?,
             };
 
-            if self.string_map.get(ident) == "cast" {
+            if ident == StringMap::CAST {
                 self.advance();
                 result = self.cast_expr(result)?;
                 continue
@@ -1639,11 +1642,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             if matches!(self.peek_kind(), Some(TokenKind::LeftParenthesis | TokenKind::DoubleColon)) {
                 self.advance();
                 
-                let generics = if self.current_is(TokenKind::DoubleColon) {
-                    let generics = self.parse_generic_usage()?;
-                    self.advance();
-                    Some(generics)
-                } else { None };
+                let generics = self.parse_generic_usage()?;
 
                 self.expect(TokenKind::LeftParenthesis)?;
                 self.advance();
@@ -2037,11 +2036,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
 
-        let generics = if self.current_is(TokenKind::DoubleColon) {
-            let generics = self.parse_generic_usage()?;
-            self.advance();
-            Some(generics)
-        } else { None };
+        let generics = self.parse_generic_usage()?;
 
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();
@@ -2135,7 +2130,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(ExpressionNode::new(
-            Expression::CreateStruct { data_type, fields },
+            Expression::CreateStruct { data_type, fields, generics: todo!() },
             SourceRange::new(start, end),
         ))
     }

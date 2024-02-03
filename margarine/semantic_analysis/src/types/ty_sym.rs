@@ -2,6 +2,8 @@ use common::string_map::StringIndex;
 use parser::nodes::decl::Generic;
 use wasm::WasmFunctionBuilder;
 
+use crate::scope::ScopeId;
+
 use super::ty::Type;
 
 #[derive(Debug, Clone, Copy)] 
@@ -25,14 +27,14 @@ impl<'a> TypeSymbol<'a> {
     #[inline(always)]
     pub fn as_concrete(self) -> ConcreteType<'a> {
         match self.kind {
-            TypeSymbolKind::Template(v) => panic!(),
+            TypeSymbolKind::Template(..) => panic!(),
 
             TypeSymbolKind::Concrete(conc) => return conc,
 
             TypeSymbolKind::GenericPlaceholder => return ConcreteType {
                 align: 1,
                 size: 0,
-                kind: ConcreteTypeKind::Struct(TypeStruct::new(&[], TypeStructStatus::User)),
+                kind: ConcreteTypeKind::Struct(ConcreteTypeStruct::new(&[], TypeStructStatus::User)),
             },
         };
     }
@@ -63,7 +65,7 @@ impl<'a> ConcreteType<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct TemplateType<'a> {
     pub generics: &'a [Generic],
-    pub kind: ConcreteTypeKind<'a>
+    pub kind: TemplateTypeKind<'a>
 }
 
 impl<'a> TemplateType<'a> {
@@ -73,9 +75,16 @@ impl<'a> TemplateType<'a> {
 
 
 #[derive(Debug, Clone, Copy)]
+pub enum TemplateTypeKind<'a> {
+    Struct(TemplateTypeStruct<'a>),
+    Enum(()),
+}
+
+
+#[derive(Debug, Clone, Copy)]
 pub enum ConcreteTypeKind<'a> {
-    Struct(TypeStruct<'a>),
-    Enum(TypeEnum<'a>),
+    Struct(ConcreteTypeStruct<'a>),
+    Enum(ConcreteTypeEnum<'a>),
 }
 
 
@@ -83,13 +92,24 @@ pub enum ConcreteTypeKind<'a> {
 // Struct
 //
 #[derive(Debug, Clone, Copy)]
-pub struct TypeStruct<'a> {
+pub struct TemplateTypeStruct<'a> {
     pub fields: &'a [StructField],
     pub status: TypeStructStatus,
 }
 
-impl<'a> TypeStruct<'a> {
+impl<'a> TemplateTypeStruct<'a> {
     pub fn new(fields: &'a [StructField], status: TypeStructStatus) -> Self { Self { fields, status } }
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConcreteTypeStruct<'a> {
+    pub fields: &'a [(StructField, usize)],
+    pub status: TypeStructStatus,
+}
+
+impl<'a> ConcreteTypeStruct<'a> {
+    pub fn new(fields: &'a [(StructField, usize)], status: TypeStructStatus) -> Self { Self { fields, status } }
 }
 
 
@@ -106,12 +126,12 @@ pub enum TypeStructStatus {
 pub struct StructField {
     pub name: StringIndex,
     pub ty: Type,
-    pub offset: usize,
 }
 
+
 impl StructField {
-    pub fn new(name: StringIndex, ty: Type, offset: usize) -> Self {
-        Self { name, ty, offset }
+    pub fn new(name: StringIndex, ty: Type) -> Self {
+        Self { name, ty }
     }
 }
 
@@ -120,14 +140,14 @@ impl StructField {
 // Enum
 //
 #[derive(Debug, Clone, Copy)]
-pub struct TypeEnum<'a> {
-    status: TypeEnumStatus,
-    kind: TypeEnumKind<'a>,
+pub struct ConcreteTypeEnum<'a> {
+    status: ConcreteTypeEnumStatus,
+    kind: ConcreteTypeEnumKind<'a>,
 }
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TypeEnumStatus {
+pub enum ConcreteTypeEnumStatus {
     User,
     Result,
     Option,
@@ -135,7 +155,7 @@ pub enum TypeEnumStatus {
 
 
 #[derive(Debug, Clone, Copy)]
-pub enum TypeEnumKind<'a> {
+pub enum ConcreteTypeEnumKind<'a> {
     TaggedUnion(TypeTaggedUnion<'a>),
     Tag(TypeTag<'a>),
 }
@@ -161,39 +181,39 @@ pub struct TypeTag<'a> {
 }
 
 
-impl<'a> TypeEnum<'a> {
-    pub fn new(status: TypeEnumStatus, kind: TypeEnumKind<'a>) -> Self { Self { status, kind } }
+impl<'a> ConcreteTypeEnum<'a> {
+    pub fn new(status: ConcreteTypeEnumStatus, kind: ConcreteTypeEnumKind<'a>) -> Self { Self { status, kind } }
 
     pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
         match self.kind {
-            TypeEnumKind::TaggedUnion(_) => {
+            ConcreteTypeEnumKind::TaggedUnion(_) => {
                 wasm.i32_read();
             },
 
 
-            TypeEnumKind::Tag(_) => (),
+            ConcreteTypeEnumKind::Tag(_) => (),
         }
     }
 
 
     #[inline(always)]
-    pub fn kind(self) -> TypeEnumKind<'a> {
+    pub fn kind(self) -> ConcreteTypeEnumKind<'a> {
         self.kind
     }
 
 
     #[inline(always)]
-    pub fn status(self) -> TypeEnumStatus {
+    pub fn status(self) -> ConcreteTypeEnumStatus {
         self.status
     }
 }
 
 
-impl<'a> TypeEnumKind<'a> {
+impl<'a> ConcreteTypeEnumKind<'a> {
     pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
         match self {
-            TypeEnumKind::TaggedUnion(_) => wasm.i32_read(),
-            TypeEnumKind::Tag(_) => (), // value on the stack is already the tag
+            ConcreteTypeEnumKind::TaggedUnion(_) => wasm.i32_read(),
+            ConcreteTypeEnumKind::Tag(_) => (), // value on the stack is already the tag
         }
     }
 }

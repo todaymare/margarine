@@ -72,6 +72,7 @@ pub enum Expression<'a> {
     CreateStruct {
         data_type: DataType<'a>,
         fields: &'a [(StringIndex, SourceRange, ExpressionNode<'a>)],
+        generics: Option<&'a [DataType<'a>]>,
     },
 
     AccessField {
