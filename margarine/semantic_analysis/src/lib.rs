@@ -4,7 +4,7 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
-use std::fmt::Write;
+use std::fmt::Write; 
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}, Either};
 use ::errors::{ErrorId, SemaError};
@@ -13,11 +13,11 @@ use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature, Generic}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope, GenericsScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeSymbolKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus, TypeSymbol, ConcreteType}};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{ConcreteTypeEnum, TypeSymbolKind, ConcreteTypeEnumKind, ConcreteTypeEnumStatus, TypeStructStatus, TypeSymbol, ConcreteType, TemplateTypeKind, TemplateTypeStruct}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
-use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::{TypeStruct, ConcreteTypeKind}};
+use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::{ConcreteTypeStruct, ConcreteTypeKind}};
 
 #[derive(Debug)]
 pub struct Analyzer<'me, 'out, 'str, 'ast> {
@@ -220,7 +220,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 (self.string_map.insert("ok"), Some(v1)),
                 (self.string_map.insert("err"),Some(v2)),
                 ].iter().copied(),
-                TypeEnumStatus::Result,
+                ConcreteTypeEnumStatus::Result,
             );
 
             let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
@@ -257,7 +257,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 (self.string_map.insert("some"), Some(ty)),
                 (self.string_map.insert("none"), None),
                 ].iter().copied(),
-                TypeEnumStatus::Option,
+                ConcreteTypeEnumStatus::Option,
             );
 
             let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
@@ -272,7 +272,6 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
      
 
     pub fn error(&mut self, err: Error) -> ErrorId {
-        panic!();
         ErrorId::Sema(self.errors.push(err))
     }
 }
@@ -287,8 +286,8 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
         let mut slf = Self {
             scopes: ScopeMap::new(),
             namespaces: NamespaceMap::new(output),
-            types: TypeMap::new(),
-            funcs: FunctionMap::new(),
+            types: TypeMap::new(output),
+            funcs: FunctionMap::new(output),
             module_builder: WasmModuleBuilder::new(output),
             errors: KVec::new(),
             output,
@@ -315,7 +314,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
                 type_builder.set_enum_fields(
                     TypeId::BOOL,
                     [(StringMap::FALSE, None), (StringMap::TRUE, None)].into_iter(),
-                    TypeEnumStatus::User,
+                    ConcreteTypeEnumStatus::User,
                 );
             }
             {
@@ -637,7 +636,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             Some((mapping.name(), ty))
                         });
 
-                    type_builder.set_enum_fields(ty, mappings, TypeEnumStatus::User)
+                    type_builder.set_enum_fields(ty, mappings, ConcreteTypeEnumStatus::User)
                 },
 
 
@@ -979,10 +978,10 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                                 wasm.local_get(*i);
 
                                 wasm.local_get(inout);
-                                wasm.u32_const(f.offset.try_into().unwrap());
+                                wasm.u32_const(f.1.try_into().unwrap());
                                 wasm.i32_add();
 
-                                wasm.write(f.ty.to_wasm_ty(&self.types));
+                                wasm.write(f.0.ty.to_wasm_ty(&self.types));
 
                                 counter += 1;
                             });
@@ -1176,17 +1175,17 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                     for (binding, sym) in names.iter().zip(sym.fields.iter()) {
                         wasm.local_get(ptr);
-                        wasm.u32_const(sym.offset.try_into().unwrap());
+                        wasm.u32_const(sym.1.try_into().unwrap());
                         wasm.i32_add();
 
 
-                        let sym_ty = sym.ty.to_wasm_ty(&self.types);
+                        let sym_ty = sym.0.ty.to_wasm_ty(&self.types);
                         wasm.read(sym_ty);
 
                         let local = wasm.local(sym_ty);
                         wasm.local_set(local);
 
-                        let variable_scope = VariableScope::new(binding.0, binding.1, sym.ty, local);
+                        let variable_scope = VariableScope::new(binding.0, binding.1, sym.0.ty, local);
                         *scope = self.scopes.push(
                             Scope::new(ScopeKind::Variable(variable_scope), scope.some()));
                     }
@@ -1232,18 +1231,6 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     wasm.error(self.error(Error::InOutValueWithoutInOutBinding { value_range: expr.1.range() }));
                     return Err(());
                 }
-
-                let ty_ns = self.namespaces.get_type(expr_anal.ty);
-                let ty_ns = self.namespaces.get(ty_ns);
-                
-                let Some(func) = ty_ns.get_func(StringMap::ITER_NEXT_FUNC)
-                else {
-                    wasm.error(self.error(Error::ValueIsntAnIterator {
-                        ty: expr_anal.ty, range: expr.1.range() }));
-                    return Err(())
-                };
-
-                let func = self.funcs.get(func);
 
                 todo!()
             },
@@ -1293,7 +1280,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         // len
                         {
 
-                            let ptr = alloc.add(strct.fields[0].offset);
+                            let ptr = alloc.add(strct.fields[0].1);
                             wasm.i64_const(str.len() as i64);
                             wasm.sptr_const(ptr);
                             wasm.i64_write();
@@ -1301,7 +1288,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                         // ptr
                         {
-                            let ptr = alloc.add(strct.fields[1].offset);
+                            let ptr = alloc.add(strct.fields[1].1);
                             wasm.string_const(string_ptr);
                             wasm.sptr_const(ptr);
                             wasm.i64_write();
@@ -1609,7 +1596,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 }
 
                 match sym.kind() {
-                    TypeEnumKind::TaggedUnion(v) => {
+                    ConcreteTypeEnumKind::TaggedUnion(v) => {
                         for m in mappings.iter() {
                             if !v.fields().iter().any(|x| x.name() == m.name()) {
                                 wasm.error(self.error(Error::InvalidMatch { 
@@ -1629,7 +1616,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                     },
 
-                    TypeEnumKind::Tag(v) => {
+                    ConcreteTypeEnumKind::Tag(v) => {
                         for m in mappings.iter() {
                             if !v.fields().contains(&m.name()) {
                                 wasm.error(self.error(Error::InvalidMatch { 
@@ -1654,7 +1641,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         anal: &mut Analyzer<'_, '_, '_, 'ast>,
                         wasm: &mut WasmFunctionBuilder,
                         mappings: &[MatchMapping<'ast>],
-                        enum_sym: TypeEnum,
+                        enum_sym: ConcreteTypeEnum,
                         sym_local: LocalId,
                         tag: LocalId,
                         taken_as_inout: bool,
@@ -1691,7 +1678,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             }
 
                             let (ty, local) = match enum_sym.kind() {
-                                TypeEnumKind::TaggedUnion(v) => {
+                                ConcreteTypeEnumKind::TaggedUnion(v) => {
                                     let emapping = v.fields().iter().find(|x| x.name() == mapping.name()).unwrap();
                                     let ty = emapping.ty().unwrap_or(Type::Unit);
                                     let wty = ty.to_wasm_ty(&anal.types);
@@ -1707,7 +1694,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                                     (ty, local)
                                 },
 
-                                TypeEnumKind::Tag(_) => {
+                                ConcreteTypeEnumKind::Tag(_) => {
                                     let local = wasm.local(Type::Unit.to_wasm_ty(&anal.types));
                                     (Type::Unit, local)
                                 },
@@ -1761,7 +1748,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
             Expression::Block { block } => self.block(wasm, scope, &*block).0,
 
-            Expression::CreateStruct { data_type, fields } => {
+            Expression::CreateStruct { data_type, fields, generics } => {
                 let ty = match self.convert_ty(scope, data_type) {
                     Ok(v) => v,
                     Err(e) => {
@@ -1783,7 +1770,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     }
                 };
 
-                self.create_struct(wasm, scope, tyid, fields, source);
+                self.create_struct(wasm, scope, tyid, fields, generics, source);
                 AnalysisResult::new(ty, true)
             },
             
@@ -1805,7 +1792,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
 
                 let strct = self.types.get(tyid).as_concrete();
-                let ConcreteTypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind 
+                let ConcreteTypeKind::Struct(ConcreteTypeStruct { fields: sfields, .. }) = strct.kind 
                 else {
                     wasm.error(self.error(Error::FieldAccessOnNonEnumOrStruct {
                         source, typ: value.ty }));
@@ -1813,11 +1800,11 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 };
                 
                 for f in sfields.iter() {
-                    if f.name == field_name {
-                        wasm.u32_const(f.offset.try_into().unwrap());
+                    if f.0.name == field_name {
+                        wasm.u32_const(f.1.try_into().unwrap());
                         wasm.i32_add();
-                        wasm.read(f.ty.to_wasm_ty(&self.types));
-                        return AnalysisResult::new(f.ty, value.is_mut);
+                        wasm.read(f.0.ty.to_wasm_ty(&self.types));
+                        return AnalysisResult::new(f.0.ty, value.is_mut);
                     }
                 }
 
@@ -2003,17 +1990,17 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                 let mut errored = false;
                 for ((sf, f), n) in sym.fields.iter().zip(vec.iter()).zip(v.iter()).rev() {
-                    if !sf.ty.eq_sem(*f) {
+                    if !sf.0.ty.eq_sem(*f) {
                         errored = true;
                         wasm.pop();
                         wasm.error(self.error(Error::InvalidType {
-                            source: n.range(), found: *f, expected: sf.ty }));
+                            source: n.range(), found: *f, expected: sf.0.ty }));
                         continue
                     }
 
-                    let ptr = ptr.add(sf.offset);
+                    let ptr = ptr.add(sf.1);
                     wasm.sptr_const(ptr);
-                    wasm.write(sf.ty.to_wasm_ty(&self.types));
+                    wasm.write(sf.0.ty.to_wasm_ty(&self.types));
                 }
 
                 if errored { return AnalysisResult::error() }
@@ -2067,7 +2054,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         let field = sym.fields[1];
 
                         wasm.local_get(ptr);
-                        wasm.u32_const(field.offset.try_into().unwrap());
+                        wasm.u32_const(field.1.try_into().unwrap());
                         wasm.i32_add();
 
                         wasm.read(ty.to_wasm_ty(&slf.types));
@@ -2201,7 +2188,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             wasm.u32_const(lhs_anal.ty.type_id().as_u32().try_into().unwrap());
 
                             wasm.sptr_const(alloc);
-                            wasm.u32_const(field.offset.try_into().unwrap());
+                            wasm.u32_const(field.1.try_into().unwrap());
                             wasm.i32_add();
 
                             wasm.i32_write();
@@ -2211,7 +2198,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             let field = sym.fields[1];
 
                             wasm.sptr_const(alloc);
-                            wasm.u32_const(field.offset.try_into().unwrap());
+                            wasm.u32_const(field.1.try_into().unwrap());
                             wasm.i32_add();
 
                             wasm.write(lhs_anal.ty.to_wasm_ty(&self.types));
@@ -2249,7 +2236,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return AnalysisResult::error();
                 };
 
-                if !matches!(e.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
+                if !matches!(e.status(), ConcreteTypeEnumStatus::Option | ConcreteTypeEnumStatus::Result) {
                     wasm.error(self.error(Error::CantUnwrapOnGivenType(v.range(), anal.ty)));
                     return AnalysisResult::error();
                 }
@@ -2266,8 +2253,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     // TODO: Error messages, add it once errors are properly made
                     wasm.unreachable();
                     let ty = match e.kind() {
-                        TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
-                        TypeEnumKind::Tag(_) => Type::Unit,
+                        ConcreteTypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
+                        ConcreteTypeEnumKind::Tag(_) => Type::Unit,
                     };
 
                     ret_ty = ty;
@@ -2276,7 +2263,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 },
                 |(_, local), wasm| {
                     match e.kind() {
-                        TypeEnumKind::TaggedUnion(v) => {
+                        ConcreteTypeEnumKind::TaggedUnion(v) => {
                             let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
                             if ty == Type::Unit {
                                 return
@@ -2289,7 +2276,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             wasm.local_set(local)
                         },
 
-                        TypeEnumKind::Tag(_) => wasm.unit(),
+                        ConcreteTypeEnumKind::Tag(_) => wasm.unit(),
                     }
 
                 });
@@ -2317,7 +2304,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return AnalysisResult::error();
                 };
 
-                if !matches!(enum_sym.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
+                if !matches!(enum_sym.status(), ConcreteTypeEnumStatus::Option | ConcreteTypeEnumStatus::Result) {
                     wasm.error(self.error(Error::CantTryOnGivenType(v.range(), anal.ty)));
                     return AnalysisResult::error();
                 }
@@ -2325,10 +2312,10 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 let func = self.scopes.get(scope).get_func_def(&self.scopes).unwrap();
 
                 let mut err = |anal: &mut Self| {
-                    if enum_sym.status() == TypeEnumStatus::Result {
+                    if enum_sym.status() == ConcreteTypeEnumStatus::Result {
                         wasm.error(anal.error(Error::FunctionDoesntReturnAResult {
                             source, func_typ: func.return_type }));
-                    } else if enum_sym.status() == TypeEnumStatus::Option {
+                    } else if enum_sym.status() == ConcreteTypeEnumStatus::Option {
                         wasm.error(anal.error(Error::FunctionDoesntReturnAnOption {
                             source, func_typ: func.return_type }));
                     } else { unreachable!() }
@@ -2340,7 +2327,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return err(self);
                 };
 
-                if !matches!(func_sym.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
+                if !matches!(func_sym.status(), ConcreteTypeEnumStatus::Option | ConcreteTypeEnumStatus::Result) {
                     return err(self);
                 }
 
@@ -2355,10 +2342,10 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 wasm.ite(self, |slf, wasm| {
 
                     match func_sym.status() {
-                        TypeEnumStatus::Option => {
+                        ConcreteTypeEnumStatus::Option => {
                             let some_val = match enum_sym.kind() {
-                                TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
-                                TypeEnumKind::Tag(_) => Type::Unit,
+                                ConcreteTypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
+                                ConcreteTypeEnumKind::Tag(_) => Type::Unit,
                             };
 
                             ret_ty = some_val;
@@ -2366,7 +2353,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                             // Check the functions return signature for failure
                             {
-                                if func_sym.status() != TypeEnumStatus::Option {
+                                if func_sym.status() != ConcreteTypeEnumStatus::Option {
                                     wasm.error(slf.error(Error::FunctionDoesntReturnAnOption {
                                         source, func_typ: func.return_type }));
                                     return (local, ());
@@ -2403,13 +2390,13 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         },
 
 
-                        TypeEnumStatus::Result => {
+                        ConcreteTypeEnumStatus::Result => {
                             let (ok, err) = match enum_sym.kind() {
-                                TypeEnumKind::TaggedUnion(v) => (
+                                ConcreteTypeEnumKind::TaggedUnion(v) => (
                                     v.fields()[0].ty().unwrap_or(Type::Unit),
                                     v.fields()[1].ty().unwrap_or(Type::Unit),
                                 ),
-                                TypeEnumKind::Tag(_) => (Type::Unit, Type::Unit),
+                                ConcreteTypeEnumKind::Tag(_) => (Type::Unit, Type::Unit),
                             };
 
                             ret_ty = ok;
@@ -2417,16 +2404,16 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                             // Check the functions return signature for failure
                             {
-                                if func_sym.status() != TypeEnumStatus::Result {
+                                if func_sym.status() != ConcreteTypeEnumStatus::Result {
                                     wasm.error(slf.error(Error::FunctionDoesntReturnAResult {
                                         source, func_typ: func.return_type }));
                                     return (local, ());
                                 }
 
                                 let ferr = match func_sym.kind() {
-                                    TypeEnumKind::TaggedUnion(v) => 
+                                    ConcreteTypeEnumKind::TaggedUnion(v) => 
                                         v.fields()[1].ty().unwrap_or(Type::Unit),
-                                    TypeEnumKind::Tag(_) => Type::Unit,
+                                    ConcreteTypeEnumKind::Tag(_) => Type::Unit,
                                 };
 
                                 if !ferr.eq_sem(err) {
@@ -2449,7 +2436,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                                 // Get the error value
                                 {
                                     match enum_sym.kind() {
-                                        TypeEnumKind::TaggedUnion(v) => {
+                                        ConcreteTypeEnumKind::TaggedUnion(v) => {
                                             let ty = v.fields()[1].ty().unwrap_or(Type::Unit);
 
                                             wasm.local_get(dup);
@@ -2458,7 +2445,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                                             wasm.read(ty.to_wasm_ty(&slf.types));
                                         },
 
-                                        TypeEnumKind::Tag(_) => wasm.unit(),
+                                        ConcreteTypeEnumKind::Tag(_) => wasm.unit(),
                                     }
                                 }
 
@@ -2488,7 +2475,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                 |(slf, local), wasm| {
                     match enum_sym.kind() {
-                        TypeEnumKind::TaggedUnion(v) => {
+                        ConcreteTypeEnumKind::TaggedUnion(v) => {
                             let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
                             if ty == Type::Unit {
                                 return
@@ -2501,7 +2488,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             wasm.local_set(local)
                         },
 
-                        TypeEnumKind::Tag(_) => wasm.unit(),
+                        ConcreteTypeEnumKind::Tag(_) => wasm.unit(),
                     }
                 });
 
@@ -2564,26 +2551,26 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
 
                 let strct = self.types.get(tyid).as_concrete();
-                let ConcreteTypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind 
+                let ConcreteTypeKind::Struct(ConcreteTypeStruct { fields: sfields, .. }) = strct.kind 
                 else {
                     return Err(Error::FieldAccessOnNonEnumOrStruct {
                         source: node.range(), typ: ty });
                 };
 
                 for sf in sfields.iter() {
-                    if sf.name == field_name {
-                        wasm.u32_const(sf.offset.try_into().unwrap());
+                    if sf.0.name == field_name {
+                        wasm.u32_const(sf.1.try_into().unwrap());
                         wasm.i32_add();
 
                         if depth == 0 {
-                            if !sf.ty.eq_sem(val_ty) {
+                            if !sf.0.ty.eq_sem(val_ty) {
                                 return Err(Error::ValueUpdateTypeMismatch 
-                                           { lhs: sf.ty, rhs: val_ty, source: node.range() })
+                                           { lhs: sf.0.ty, rhs: val_ty, source: node.range() })
                             }
                             wasm.write(val_ty.to_wasm_ty(&self.types));
                         }
 
-                        return Ok(sf.ty);
+                        return Ok(sf.0.ty);
                     }
                 }
 
@@ -2610,7 +2597,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
         let func = func.clone();
 
         if generics.is_some() && !matches!(func.kind, FunctionKind::Template { .. }) { 
-            wasm.error(self.error(Error::FunctionHasNoGenerics(source)));
+            wasm.error(self.error(Error::SymbolHasNoGenerics(source)));
         }
 
         if func.args.len() != args.len() {
@@ -2677,7 +2664,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                         let field = sym.fields[c];
                         wasm.sptr_const(sp);
-                        wasm.u32_const(field.offset.try_into().unwrap());
+                        wasm.u32_const(field.1.try_into().unwrap());
                         wasm.i32_add();
                         wasm.read(sig_arg.2.to_wasm_ty(&self.types));
 
@@ -2730,10 +2717,10 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 
                 for sym_arg in sym.fields.iter().rev().skip(1) {
                     wasm.sptr_const(ptr);
-                    wasm.u32_const(sym_arg.offset.try_into().unwrap());
+                    wasm.u32_const(sym_arg.1.try_into().unwrap());
                     wasm.i32_add();
 
-                    wasm.write(sym_arg.ty.to_wasm_ty(&self.types));
+                    wasm.write(sym_arg.0.ty.to_wasm_ty(&self.types));
                 }
 
                 wasm.sptr_const(ptr);
@@ -2745,7 +2732,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                     let field = sym.fields[c];
                     wasm.sptr_const(ptr);
-                    wasm.u32_const(field.offset.try_into().unwrap());
+                    wasm.u32_const(field.1.try_into().unwrap());
                     wasm.i32_add();
                     wasm.read(sig_arg.2.to_wasm_ty(&self.types));
 
@@ -2761,21 +2748,21 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 {
                     let r = sym.fields.last().unwrap();
                     wasm.sptr_const(ptr);
-                    wasm.u32_const(r.offset.try_into().unwrap());
+                    wasm.u32_const(r.1.try_into().unwrap());
                     wasm.i32_add();
 
-                    wasm.read(r.ty.to_wasm_ty(&self.types));
+                    wasm.read(r.0.ty.to_wasm_ty(&self.types));
                 }
 
                 return Ok(func.ret)
             },
 
 
-            FunctionKind::Template { body, scope, generics: sig_generics, args: sig_args, ret } => {
+            FunctionKind::Template { body, scope: func_scope, generics: sig_generics, args: sig_args, ret } => {
                 let gens = match generics {
                     Some(v) => {
                         if v.len() != sig_generics.len() {
-                            wasm.error(self.error(Error::FunctionGenericCountMissmatch {
+                            wasm.error(self.error(Error::SymbolGenericCountMissmatch {
                                 source, expected: sig_generics.len(), found: v.len() }));
                             return Err(());
                         }
@@ -2783,7 +2770,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         
                         let mut vec = Vec::with_cap_in(self.output, v.len());
                         v.iter().map(|x| {
-                            match self.convert_ty(scope, *x) {
+                            match self.convert_ty(func_scope, *x) {
                                 Ok(v) => v,
                                 Err(v) => {
                                     wasm.error(self.error(v));
@@ -2793,8 +2780,13 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         }).zip(sig_generics.iter())
                         .for_each(|(x, s)| vec.push((s.name(), x)));
 
+                        for s in sig_generics.iter().skip(vec.len()) {
+                            vec.push((s.name(), Type::Error));
+                        }
+
                         vec
                     },
+
                     None => {
                         let pool = ArenaPool::tls_get_rec();
                         let mut names = Vec::with_cap_in(&*pool, sig_generics.len());
@@ -2834,7 +2826,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         let func_name = func.name;
 
                         let generics = GenericsScope::new(gens.clone().leak());
-                        let scope = Scope::new(ScopeKind::Generics(generics), scope.some());
+                        let scope = Scope::new(ScopeKind::Generics(generics), func_scope.some());
                         let mut scope = self.scopes.push(scope);
 
                         let func_id = self.module_builder.function_id();
@@ -2901,7 +2893,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 };
 
                 self.funcs.put_variant(func_id, gens.leak(), call_func_id);
-                self.call_func(call_func_id, args, None, source, scope, wasm)
+                self.call_func(call_func_id, args, None, source, func_scope, wasm)
             },
         }
     }
@@ -2912,63 +2904,196 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
         wasm: &mut WasmFunctionBuilder,
         scope: ScopeId,
         ty: TypeId,
-        fields: &[(StringIndex, SourceRange, ExpressionNode)],
+        fields: &'ast [(StringIndex, SourceRange, ExpressionNode)],
+        generics: Option<&[DataType]>,
         source: SourceRange,
     ) {
-        let strct = self.types.get(ty).as_concrete();
-        let ConcreteTypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind 
-        else {
-            wasm.error(self.error(Error::StructCreationOnNonStruct {
-                source, typ: Type::Custom(ty) }));
-            return;
-        };
+        let tyv = self.types.get(ty);
+
+        if generics.is_some() && !matches!(tyv.kind(), TypeSymbolKind::Template { .. }) {
+            wasm.error(self.error(Error::SymbolHasNoGenerics(source)));
+        }
+
+        match tyv.kind() {
+            | TypeSymbolKind::GenericPlaceholder
+            | TypeSymbolKind::Concrete(_) => {
+                let strct = tyv.as_concrete();
+                let ConcreteTypeKind::Struct(ConcreteTypeStruct { fields: sfields, .. }) = strct.kind 
+                else {
+                    wasm.error(self.error(Error::StructCreationOnNonStruct {
+                        source, typ: Type::Custom(ty) }));
+                    return;
+                };
 
 
-        for f in fields.iter() {
-            if !sfields.iter().any(|x| x.name == f.0) {
-                wasm.error(self.error(Error::FieldDoesntExist {
-                    source: f.1,
-                    field: f.0,
-                    typ: Type::Custom(ty),
-                }));
+                for f in fields.iter() {
+                    if !sfields.iter().any(|x| x.0.name == f.0) {
+                        wasm.error(self.error(Error::FieldDoesntExist {
+                            source: f.1,
+                            field: f.0,
+                            typ: Type::Custom(ty),
+                        }));
 
-                return;
+                        return;
+                    }
+                }
+                
+                let mut vec = Vec::new();
+                for sf in sfields.iter() {
+                    if !fields.iter().any(|x| x.0 == sf.0.name) {
+                        vec.push(sf.0.name);
+                    }
+                }
+
+
+                if !vec.is_empty() {
+                    wasm.error(self.error(Error::MissingFields { source, fields: vec }));
+                    return;
+                }
+
+                
+                let alloc = wasm.alloc_stack(strct.size);
+                for sf in sfields.iter() {
+                    let val = fields.iter().find(|x| x.0 == sf.0.name).unwrap();
+                    let ptr = alloc.add(sf.1);
+
+                    let node = self.expr(val.2, scope, wasm);
+                    if !node.ty.eq_sem(sf.0.ty) {
+                        wasm.error(self.error(Error::InvalidType 
+                            { source: val.1, found: node.ty, expected: sf.0.ty }));
+                        return;
+                    }
+
+                    let wty = sf.0.ty.to_wasm_ty(&self.types);
+                    wasm.sptr_const(ptr);
+                    wasm.write(wty);
+                }
+
+                wasm.sptr_const(alloc);
+
             }
+
+
+            TypeSymbolKind::Template(strct) => {
+                let TemplateTypeKind::Struct(TemplateTypeStruct { fields: sfields, .. }) = strct.kind
+                else {
+                    wasm.error(self.error(Error::StructCreationOnNonStruct {
+                        source, typ: Type::Custom(ty) }));
+                    return;
+                };
+
+
+                for f in fields.iter() {
+                    if !sfields.iter().any(|x| x.name == f.0) {
+                        wasm.error(self.error(Error::FieldDoesntExist {
+                            source: f.1,
+                            field: f.0,
+                            typ: Type::Custom(ty),
+                        }));
+
+                        return;
+                    }
+                }
+                
+                let mut vec = Vec::new();
+                for sf in sfields.iter() {
+                    if !fields.iter().any(|x| x.0 == sf.name) {
+                        vec.push(sf.name);
+                    }
+                }
+
+                if !vec.is_empty() {
+                    wasm.error(self.error(Error::MissingFields { source, fields: vec }));
+                    return;
+                }
+
+                let pool = ArenaPool::tls_get_rec();
+                let field_tys = {
+                    let mut vec = Vec::with_cap_in(&*pool, fields.len());
+                    fields.iter().for_each(|x| vec.push(self.expr(x.2, scope, wasm).ty));
+                    vec
+                };
+
+                let gens = match generics {
+                    Some(v) => {
+                        if v.len() != strct.generics.len() {
+                            wasm.error(self.error(Error::SymbolGenericCountMissmatch {
+                                source, expected: strct.generics.len(), found: v.len() }));
+                        }
+
+                        let mut vec = Vec::with_cap_in(self.output, strct.generics.len());
+
+                        v.iter().map(|x| {
+                            match self.convert_ty(scope, *x) {
+                                Ok(v) => v,
+                                Err(v) => {
+                                    wasm.error(self.error(v));
+                                    Type::Error
+                                },
+                            }
+                        }).zip(strct.generics.iter())
+                        .for_each(|(x, s)| vec.push((s.name(), x)));
+
+                        for s in strct.generics.iter().skip(vec.len()) {
+                            vec.push((s.name(), Type::Error));
+                        }
+
+                        vec
+                    },
+
+                    None => {
+                        let mut names = Vec::with_cap_in(&*pool, strct.generics.len());
+                        strct.generics.iter().for_each(|x| names.push((x.name(), None)));
+                        for ((sarg, arg), arg_ty) in sfields.iter()
+                                                            .zip(fields.iter())
+                                                            .zip(field_tys.iter()) {
+
+                            let result = self.infer(sarg.ty, (*arg_ty, arg.1), &mut *names);
+
+                            if let Err(err) = result {
+                                wasm.error(self.error(err));
+                                return;
+                            }
+                        }
+
+                        let mut vec = Vec::with_cap_in(self.output, names.len());
+                        for n in names.iter() {
+                            let Some(ty) = n.1
+                            else {
+                                wasm.error(self.error(Error::UnableToInferGeneric {
+                                    source,
+                                    name: n.0,
+                                }));
+
+                                return;
+                            };
+
+                            vec.push((n.0, ty))
+                        }
+
+                        vec
+                    },
+                };
+
+
+                let ty_id = match self.types.get_ty_variant(ty, &gens) {
+                    Some(v) => v,
+                    None => {
+                        let ty_name = tyv.display_name();
+
+                        let generics = GenericsScope::new(gens.clone().leak());
+                        let scope = Scope::new(ScopeKind::Generics(generics), scope.some());
+                        let mut scope = self.scopes.push(scope);
+                        
+                        let ty_id = self.types.pending();
+
+                        todo!()
+                    },
+                };
+
+
+            },
         }
-        
-        let mut vec = Vec::new();
-        for sf in sfields.iter() {
-            if !fields.iter().any(|x| x.0 == sf.name) {
-                vec.push(sf.name);
-            }
-        }
-
-
-        if !vec.is_empty() {
-            wasm.error(self.error(Error::MissingFields { source, fields: vec }));
-            return;
-        }
-
-        
-        let alloc = wasm.alloc_stack(strct.size);
-        for sf in sfields.iter() {
-            let val = fields.iter().find(|x| x.0 == sf.name).unwrap();
-            let ptr = alloc.add(sf.offset);
-
-            let node = self.expr(val.2, scope, wasm);
-            if !node.ty.eq_sem(sf.ty) {
-                wasm.error(self.error(Error::InvalidType 
-                    { source: val.1, found: node.ty, expected: sf.ty }));
-                return;
-            }
-
-            let wty = sf.ty.to_wasm_ty(&self.types);
-            wasm.sptr_const(ptr);
-            wasm.write(wty);
-        }
-
-        wasm.sptr_const(alloc);
-
     }
 
 
@@ -3026,6 +3151,16 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
         }
 
         Ok(())
+    }
+
+
+    fn replace_generics(
+        &mut self, ty_id: Type,
+        gens: &[(StringIndex, Type)],
+    ) -> Type {
+
+
+        todo!()
     }
 }
 

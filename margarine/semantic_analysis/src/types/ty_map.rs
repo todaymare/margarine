@@ -1,6 +1,7 @@
-use sti::{define_key, keyed::KVec};
+use common::string_map::StringIndex;
+use sti::{define_key, keyed::KVec, hash::{HashMap, DefaultSeed}, arena::Arena};
 
-use super::ty_sym::TypeSymbol;
+use super::{ty_sym::TypeSymbol, ty::Type};
 
 define_key!(u32, pub TypeId);
 
@@ -26,13 +27,19 @@ impl TypeId {
 
 #[derive(Debug)]
 pub struct TypeMap<'out> {
-    map: KVec<TypeId, Option<TypeSymbol<'out>>>
+    map: KVec<
+        TypeId, 
+        Option<(
+            TypeSymbol<'out>, 
+            HashMap<&'out [(StringIndex, Type)], TypeId, DefaultSeed, &'out Arena>,
+    )>>,
+    arena: &'out Arena,
 }
 
 
 impl<'out> TypeMap<'out> {
-    pub fn new() -> Self {
-        Self { map: KVec::new() }
+    pub fn new(arena: &'out Arena) -> Self {
+        Self { map: KVec::new(), arena }
     }
 
     #[inline(always)]
@@ -40,7 +47,7 @@ impl<'out> TypeMap<'out> {
 
     #[inline(always)]
     pub fn put(&mut self, ty_id: TypeId, sym: TypeSymbol<'out>) { 
-        let old = self.map[ty_id].replace(sym);
+        let old = self.map[ty_id].replace((sym, HashMap::new_in(self.arena)));
         assert!(old.is_none(), "replaced an already initialised value");
     }
 
@@ -51,6 +58,10 @@ impl<'out> TypeMap<'out> {
 
     #[inline(always)]
     pub fn get_opt(&self, ty_id: TypeId) -> Option<TypeSymbol<'out>> {
-        *self.map.get(ty_id).unwrap()
+        self.map.get(ty_id).as_ref().unwrap().as_ref().map(|x| x.0)
+    }
+
+    pub fn get_ty_variant(&self, ty_id: TypeId, ty: &[(StringIndex, Type)]) -> Option<TypeId> {
+        self.map[ty_id].as_ref().unwrap().1.get(ty).copied()
     }
 }

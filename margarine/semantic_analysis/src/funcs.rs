@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
 use common::{string_map::StringIndex, Swap};
 use parser::{Block, nodes::decl::{Generic, FunctionArgument}, DataType};
-use sti::{define_key, keyed::KVec};
+use sti::{define_key, keyed::KVec, hash::{HashMap, DefaultSeed}, arena::Arena};
 use wasm::FunctionId;
 
 use crate::{types::{ty::Type, ty_map::TypeId}, scope::ScopeId};
@@ -47,14 +45,21 @@ impl<'a, 'ast> Function<'a, 'ast> {
 
 #[derive(Debug)]
 pub struct FunctionMap<'a, 'ast> {
-    map: KVec<FuncId, Option<(Function<'a, 'ast>, HashMap<&'a [(StringIndex, Type)], FuncId>)>>,
+    map: KVec<
+        FuncId, 
+        Option<(
+            Function<'a, 'ast>,
+            HashMap<&'a [(StringIndex, Type)], FuncId, DefaultSeed, &'a Arena>
+    )>>,
+    arena: &'a Arena,
 }
 
 
 impl<'a, 'ast> FunctionMap<'a, 'ast> {
-    pub fn new() -> Self {
+    pub fn new(arena: &'a Arena) -> Self {
         Self {
             map: KVec::new(),
+            arena,
         }
     }
 
@@ -78,7 +83,7 @@ impl<'a, 'ast> FunctionMap<'a, 'ast> {
 
     #[inline(always)]
     pub fn put(&mut self, func_id: FuncId, ns: Function<'a, 'ast>) {
-        assert!(self.map[func_id].swap(Some((ns, HashMap::new()))).is_none());
+        assert!(self.map[func_id].swap(Some((ns, HashMap::new_in(self.arena)))).is_none());
     }
 
 

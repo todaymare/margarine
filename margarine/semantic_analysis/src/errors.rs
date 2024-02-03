@@ -14,13 +14,13 @@ pub enum Error {
         name: StringIndex
     },
 
-    FunctionGenericCountMissmatch {
+    SymbolGenericCountMissmatch {
         source: SourceRange,
         expected: usize,
         found: usize,
     },
 
-    FunctionHasNoGenerics(SourceRange),
+    SymbolHasNoGenerics(SourceRange),
 
     InvalidCast {
         range: SourceRange,
@@ -735,13 +735,13 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             },
 
 
-            Error::FunctionHasNoGenerics(source) => {
-                fmt.error("function has no generics")
+            Error::SymbolHasNoGenerics(source) => {
+                fmt.error("symbol has no generics")
                     .highlight(*source)
             },
 
-            Error::FunctionGenericCountMissmatch { source, expected, found } => {
-                fmt.error("function generic count missmatch")
+            Error::SymbolGenericCountMissmatch { source, expected, found } => {
+                fmt.error("symbol generic count missmatch")
                     .highlight_with_note(*source, &format!("expected {expected} generics found {found}"))
             },
 
