@@ -27,7 +27,7 @@ impl<'a> StringMap<'a> {
     pub const SOME : StringIndex = StringIndex(11);
     pub const NONE : StringIndex = StringIndex(12);
     pub const SELF : StringIndex = StringIndex(13);
-    pub const CAST : StringIndex = StringIndex(15);
+    pub const CAST : StringIndex = StringIndex(14);
  
     #[inline(always)]
     pub fn new(arena: &'a Arena) -> Self {

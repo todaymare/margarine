@@ -1,4 +1,4 @@
-use common::{string_map::{StringIndex, StringMap}, source::SourceRange};
+use common::{string_map::{StringIndex, StringMap}, source::SourceRange, copy_in};
 use errors::SemaError;
 use parser::nodes::decl::Generic;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
@@ -219,8 +219,9 @@ impl<'out> TypeBuilder<'_> {
 
             match kind {
                 PartialTypeKind::Struct { fields, status, generics } => {
-                    if !generics.is_empty() { todo!() }
-                    self.process_struct(data, fields, name, status)
+                    if !generics.is_empty() { self.process_generic_struct(
+                            data, fields, name, copy_in(generics, data.arena), status) }
+                    else { self.process_struct(data, fields, name, status) }
                 }
 
 
@@ -248,8 +249,10 @@ impl<'out> TypeBuilder<'_> {
         };
 
         
-        if let ConcreteTypeKind::Enum(val) = sym.as_concrete().kind {
+        if let TypeSymbolKind::Concrete(conc) = sym.kind() {
+        if let ConcreteTypeKind::Enum(val) = conc.kind {
             self.register_enum_methods(data, ty, val);
+        }
         }
 
         Ok(sym)
@@ -337,7 +340,7 @@ impl<'out> TypeBuilder<'_> {
         }
 
         // Finalise
-        let kind = TemplateTypeStruct::new(new_fields.leak(), TypeStructStatus::User);
+        let kind = TemplateTypeStruct::new(new_fields.leak(), status);
         let kind = TemplateType::new(generics, TemplateTypeKind::Struct(kind));
         let symbol = TypeSymbol::new(name, TypeSymbolKind::Template(kind));
 
