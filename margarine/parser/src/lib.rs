@@ -631,11 +631,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::LeftAngle)?;
         self.advance();
 
-        self.list(TokenKind::RightAngle, Some(TokenKind::Comma), 
+        let list = self.list(TokenKind::RightAngle, Some(TokenKind::Comma), 
         |parser, _| {
             let ty = parser.expect_type()?;
             Ok(ty)
-        }).map(|x| Some(x))
+        }).map(|x| Some(x));
+        self.advance();
+        list
     }
 
 
@@ -2105,6 +2107,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let data_type = self.expect_type()?;
         self.advance();
 
+        let gens = self.parse_generic_usage()?;
+
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
@@ -2119,7 +2123,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             let expr = parser.expression(&ParserSettings::default())?;
             let end = parser.current_range().end();
-            parser.advance();
             
             Ok((name, SourceRange::new(start, end), expr))
         })?;
@@ -2130,7 +2133,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(ExpressionNode::new(
-            Expression::CreateStruct { data_type, fields, generics: todo!() },
+            Expression::CreateStruct { data_type, fields, generics: gens },
             SourceRange::new(start, end),
         ))
     }

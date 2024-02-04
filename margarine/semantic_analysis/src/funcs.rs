@@ -30,8 +30,6 @@ pub enum FunctionKind<'ast> {
 
     Template {
         body: Block<'ast>,
-        args: &'ast [FunctionArgument<'ast>],
-        ret: DataType<'ast>,
         scope: ScopeId,
         generics: &'ast [Generic],
     },
