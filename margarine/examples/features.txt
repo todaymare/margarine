@@ -65,14 +65,14 @@ mod std {
 // is assumed to be ran at once every frame
 // These systems can still take resources
 //
-system fn(
+system fn update_time_resource(
 	// The `&` symbol specifies that the said
 	// value should be taken as in-out. This might
 	// prevent the engine from running this system
 	// in parallel with other systems to prevent
 	// data-races.
 	// 
-	// If the `&` symbol isn't specifies it is
+	// If the `&` symbol isn't specified it is
 	// assumed to be immutable.
 	&time: Time
 ) {
@@ -89,7 +89,7 @@ system fn(
 // '&' indicating a in-out value
 //
 system fn move_player(&pos: Position, time: Time) {
-	pos.x += 50 * time.delta()
+	pos.x += 50.0 * time.delta()
 }
 
 
@@ -103,22 +103,19 @@ system fn move_player(&pos: Position, time: Time) {
 // at runtime. Here's an example of a suggested
 // safe pattern that won't cause runtime errors
 //
-// The `int?` syntax is also a new thing, it implies
-// an optional value which is an annonymous enum
+// The `Option<int>` syntax is also a new thing, it implies
+// an optional int value which is defined as an enum
 //
-fn add_int(val: any, rhs: int): int? {
+fn add_int(val: any, rhs: int): Option<int> {
     //
 	// `any::cast_to` will return a value of type
-	// `<type> ~ CastError` which we will have to handle
-	//
-	// The `<type> ~ <type>` syntax is new and it implies
-	// a result, this is also an annonymous enum
+	// `Result<type, CastError>` which we will have to handle
 	//
 	// The `any::cast_to` function does involve *some*
 	// compiler black magic as it requires you to pass
 	// in a type and not a value.
     //
-	let value = val.cast_to(int)
+	let value = (val as any).cast_to::<int>()
 	
 	let int_value = match value {
         //
@@ -127,11 +124,14 @@ fn add_int(val: any, rhs: int): int? {
 		// type, this plays into the fact that 
 		// these are annonymous enums
         //
-		ok: val => { val },
+		ok: val => val,
 
-		// The `as <identifier>` part is optional
+		// The `: <identifier>` part is optional
 		// if you don't need the value in the branch
-		err => { return }
+        //
+        // By default all programs automatically import
+        // `Option::*`
+		err => return none,
 	}
 
 
@@ -140,13 +140,11 @@ fn add_int(val: any, rhs: int): int? {
 
 
 //
-// An example of how `<type>?` could
-// be implemented manually, granted
-// the above type does inclued some
-// compiler magic to avoid using any
+// An example of how `Option<type>` could
+// be implemented manually
 //
-enum Option {
-	some: any,
+enum Option<T> {
+	some: T,
 
 	// No types automatically assigns
 	// the value to be of type unit
@@ -161,7 +159,7 @@ fn test_option() {
 
 	match option {
 		some: val => {
-			assert(val.cast_to(int), 50)
+			assert(val, 50)
 		},
 		none => { assert(false, "unexpected") }
 	}

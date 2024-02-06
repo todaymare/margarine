@@ -152,6 +152,8 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 self.rc_map.insert(ty, tyid);
                 Type::Custom(tyid)
             },
+
+            DataTypeKind::WithGenerics(v, _) => self.convert_ty(scope, *v)?,
         };
 
         Ok(ty)
@@ -717,6 +719,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             Type::Error
                         },
                     };
+
                     let ns = self.namespaces.get_mut(ns_id);
                     let func_id = ns.get_func(sig.name).unwrap();
                     let func = if sig.generics.is_empty() {
@@ -1304,9 +1307,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                         let func = self.namespaces.get_type(ty);
                         let func = self.namespaces.get(func).get_func(name).unwrap();
-                        let func = self.funcs.get(func);
                         
-                        wasm.call(func.wasm_id);
+                        self.call_func(func, &[], None, source, scope, wasm).unwrap();
                         AnalysisResult::new(Type::BOOL, true)
                     },
                 }
@@ -1377,15 +1379,16 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     (BinaryOperator::Add, Type::F64) => wfunc!(f64_add, Type::F64),
 
                     (BinaryOperator::Sub, Type::I64) => wfunc!(i64_sub, Type::I64),
-                    (BinaryOperator::Sub, Type::F64) => wfunc!(f64_sub, Type::I64),
+                    (BinaryOperator::Sub, Type::F64) => wfunc!(f64_sub, Type::F64),
 
                     (BinaryOperator::Mul, Type::I64) => wfunc!(i64_mul, Type::I64),
-                    (BinaryOperator::Mul, Type::F64) => wfunc!(f64_mul, Type::I64),
+                    (BinaryOperator::Mul, Type::F64) => wfunc!(f64_mul, Type::F64),
 
                     (BinaryOperator::Div, Type::I64) => wfunc!(i64_div, Type::I64),
+                    (BinaryOperator::Div, Type::F64) => wfunc!(f64_div, Type::F64),
 
                     (BinaryOperator::Rem, Type::I64) => wfunc!(i64_rem, Type::I64),
-                    (BinaryOperator::Rem, Type::F64) => wfunc!(f64_rem, Type::I64),
+                    (BinaryOperator::Rem, Type::F64) => wfunc!(f64_rem, Type::F64),
 
                     (BinaryOperator::BitshiftLeft, Type::I64) => wfunc!(i64_bw_left_shift, Type::I64),
 
@@ -1850,8 +1853,6 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     scope_id,
                     wasm
                 );
-
-                drop(pool);
 
                 let ty = match ty {
                     Ok(v) => v,
