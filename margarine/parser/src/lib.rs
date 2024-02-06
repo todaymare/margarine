@@ -1,14 +1,14 @@
 pub mod nodes;
 pub mod errors;
 
-use std::{ops::Deref, process::Termination};
+use std::{ops::Deref, process::Termination, hash::Hash};
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind, FunctionSignature, Generic}, Pattern, PatternKind};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
+use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in, alloc::Alloc};
 
 use crate::nodes::expr::BinaryOperator;
 
@@ -49,6 +49,7 @@ pub enum DataTypeKind<'a> {
     RcConst(&'a DataType<'a>),
     RcMut(&'a DataType<'a>),
     CustomType(StringIndex),
+    WithGenerics(&'a DataType<'a>, &'a [DataType<'a>]),
 }
 
 
@@ -109,6 +110,12 @@ impl std::hash::Hash for DataTypeKind<'_> {
                 13.hash(state);
                 v.kind().hash(state);
             }
+
+            DataTypeKind::WithGenerics(v, g) => {
+                14.hash(state);
+                v.kind().hash(state);
+                g.iter().for_each(|g| g.kind().hash(state));
+            },
         }
     }
 }
@@ -326,7 +333,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn expect_type(&mut self) -> Result<DataType<'ta>, ErrorId> {
         let start = self.current_range().start();
-        let mut result = 
+        let result = 
         if self.current_is(TokenKind::Bang) {
             DataType::new(self.current_range(), DataTypeKind::Never)
         } else if self.current_is(TokenKind::LeftParenthesis) { 
@@ -401,55 +408,47 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     _ => DataTypeKind::CustomType(identifier),
                 }
             };
-
-            DataType::new(
+            
+            let mut result = DataType::new(
                 SourceRange::new(start, self.current_range().end()), 
                 result
-            )
+            );
+
+            if self.peek_is(TokenKind::LeftAngle) {
+                self.advance();
+                self.advance();
+
+                let pool = ArenaPool::tls_get_rec();
+                let mut vec = Vec::new_in(&*pool);
+
+                loop {
+                    if self.current_is(TokenKind::RightAngle) {
+                        break
+                    }
+
+                    if !vec.is_empty() {
+                        self.expect(TokenKind::Comma)?;
+                        self.advance();
+                    }
+                    
+                    if self.current_is(TokenKind::RightAngle) {
+                        break
+                    }
+
+                    let typ = self.expect_type()?;
+                    vec.push(typ);
+                    self.advance();
+                }
+
+                self.expect(TokenKind::RightAngle)?;
+
+                let dtk = DataTypeKind::WithGenerics(self.arena.alloc_new(result), vec.move_into(self.arena).leak());
+                result = DataType::new(SourceRange::new(start, self.current_range().end()), dtk);
+            }
+
+            result
+
         };
-        
-
-        loop {
-            let mut has_updated = false;
-            if self.peek_is(TokenKind::QuestionMark) {
-                self.advance();
-                let end = self.current_range().end();
-                let option_result = DataTypeKind::Option(self.arena.alloc_new(result));
-                let option_result = DataType::new(
-                    SourceRange::new(start, end),
-                    option_result,
-                );
-
-                result = option_result;
-                has_updated = true;
-            }
-
-            if self.peek_is(TokenKind::SquigglyDash) {
-                self.advance();
-                self.advance();
-
-                let oth_typ = self.expect_type()?;
-
-                let range = SourceRange::new(result.range().start(), oth_typ.range().end());
-
-                let new_result = DataTypeKind::Result(
-                    self.arena.alloc_new(result), 
-                    self.arena.alloc_new(oth_typ)
-                );
-
-                let new_result = DataType::new(
-                    range,
-                    new_result,
-                );
-
-                result = new_result;
-                has_updated = true;
-            }
-
-            if !has_updated {
-                break
-            }
-        }
 
         Ok(result)
     }
@@ -862,7 +861,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             let datatype = parser.expect_type()?;
             let end = parser.current_range().end();
-            parser.advance();
 
             Ok((name, datatype, SourceRange::new(start, end)))
         });
@@ -1152,6 +1150,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let header = SourceRange::new(start, self.current_range().end());
         self.advance();
 
+        let gens = self.parse_generics()?;
+
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
@@ -1178,7 +1178,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 };
 
             let end = parser.current_range().end();
-            parser.advance();
             
             let mapping = EnumMapping::new(
                 name, 
@@ -1643,7 +1642,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             if matches!(self.peek_kind(), Some(TokenKind::LeftParenthesis | TokenKind::DoubleColon)) {
                 self.advance();
-                
+
                 let generics = self.parse_generic_usage()?;
 
                 self.expect(TokenKind::LeftParenthesis)?;
@@ -1762,6 +1761,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         }
                     }
 
+                    println!("{}", self.string_map.get(v));
+                    self.advance();
                     self.advance();
                     let expr = self.atom(settings)?;
                     
@@ -1959,7 +1960,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             parser.advance();
 
             let expr = parser.expression(&ParserSettings::default())?;
-            parser.advance();
+            dbg!(expr);
 
             Ok(MatchMapping::new(name, bind_to, binding_range, source_range, expr, is_inout))
         })?;
