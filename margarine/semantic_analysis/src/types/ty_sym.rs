@@ -2,8 +2,6 @@ use common::string_map::StringIndex;
 use parser::nodes::decl::Generic;
 use wasm::WasmFunctionBuilder;
 
-use crate::scope::ScopeId;
-
 use super::ty::Type;
 
 #[derive(Debug, Clone, Copy)] 
@@ -140,14 +138,21 @@ impl StructField {
 // Enum
 //
 #[derive(Debug, Clone, Copy)]
+pub struct TemplateTypeEnum<'a> {
+    status: TypeEnumStatus,
+    mappings: &'a [TaggedUnionField],
+}
+
+
+#[derive(Debug, Clone, Copy)]
 pub struct ConcreteTypeEnum<'a> {
-    status: ConcreteTypeEnumStatus,
+    status: TypeEnumStatus,
     kind: ConcreteTypeEnumKind<'a>,
 }
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ConcreteTypeEnumStatus {
+pub enum TypeEnumStatus {
     User,
     Result,
     Option,
@@ -182,7 +187,7 @@ pub struct TypeTag<'a> {
 
 
 impl<'a> ConcreteTypeEnum<'a> {
-    pub fn new(status: ConcreteTypeEnumStatus, kind: ConcreteTypeEnumKind<'a>) -> Self { Self { status, kind } }
+    pub fn new(status: TypeEnumStatus, kind: ConcreteTypeEnumKind<'a>) -> Self { Self { status, kind } }
 
     pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
         match self.kind {
@@ -203,7 +208,7 @@ impl<'a> ConcreteTypeEnum<'a> {
 
 
     #[inline(always)]
-    pub fn status(self) -> ConcreteTypeEnumStatus {
+    pub fn status(self) -> TypeEnumStatus {
         self.status
     }
 }

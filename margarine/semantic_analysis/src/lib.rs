@@ -13,7 +13,7 @@ use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature, Generic}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope, GenericsScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{ConcreteTypeEnum, TypeSymbolKind, ConcreteTypeEnumKind, ConcreteTypeEnumStatus, TypeStructStatus, TypeSymbol, ConcreteType, TemplateTypeKind, TemplateTypeStruct}};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{ConcreteTypeEnum, TypeSymbolKind, ConcreteTypeEnumKind, TypeEnumStatus, TypeStructStatus, TypeSymbol, ConcreteType, TemplateTypeKind, TemplateTypeStruct}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
@@ -222,7 +222,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 (self.string_map.insert("ok"), Some(v1)),
                 (self.string_map.insert("err"),Some(v2)),
                 ].iter().copied(),
-                ConcreteTypeEnumStatus::Result,
+                TypeEnumStatus::Result,
             );
 
             let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
@@ -259,7 +259,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 (self.string_map.insert("some"), Some(ty)),
                 (self.string_map.insert("none"), None),
                 ].iter().copied(),
-                ConcreteTypeEnumStatus::Option,
+                TypeEnumStatus::Option,
             );
 
             let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
@@ -316,7 +316,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
                 type_builder.set_enum_fields(
                     TypeId::BOOL,
                     [(StringMap::FALSE, None), (StringMap::TRUE, None)].into_iter(),
-                    ConcreteTypeEnumStatus::User,
+                    TypeEnumStatus::User,
                 );
             }
             {
@@ -638,7 +638,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             Some((mapping.name(), ty))
                         });
 
-                    type_builder.set_enum_fields(ty, mappings, ConcreteTypeEnumStatus::User)
+                    type_builder.set_enum_fields(ty, mappings, TypeEnumStatus::User)
                 },
 
 
@@ -2236,7 +2236,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return AnalysisResult::error();
                 };
 
-                if !matches!(e.status(), ConcreteTypeEnumStatus::Option | ConcreteTypeEnumStatus::Result) {
+                if !matches!(e.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
                     wasm.error(self.error(Error::CantUnwrapOnGivenType(v.range(), anal.ty)));
                     return AnalysisResult::error();
                 }
@@ -2304,7 +2304,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return AnalysisResult::error();
                 };
 
-                if !matches!(enum_sym.status(), ConcreteTypeEnumStatus::Option | ConcreteTypeEnumStatus::Result) {
+                if !matches!(enum_sym.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
                     wasm.error(self.error(Error::CantTryOnGivenType(v.range(), anal.ty)));
                     return AnalysisResult::error();
                 }
@@ -2312,10 +2312,10 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 let func = self.scopes.get(scope).get_func_def(&self.scopes).unwrap();
 
                 let mut err = |anal: &mut Self| {
-                    if enum_sym.status() == ConcreteTypeEnumStatus::Result {
+                    if enum_sym.status() == TypeEnumStatus::Result {
                         wasm.error(anal.error(Error::FunctionDoesntReturnAResult {
                             source, func_typ: func.return_type }));
-                    } else if enum_sym.status() == ConcreteTypeEnumStatus::Option {
+                    } else if enum_sym.status() == TypeEnumStatus::Option {
                         wasm.error(anal.error(Error::FunctionDoesntReturnAnOption {
                             source, func_typ: func.return_type }));
                     } else { unreachable!() }
@@ -2327,7 +2327,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return err(self);
                 };
 
-                if !matches!(func_sym.status(), ConcreteTypeEnumStatus::Option | ConcreteTypeEnumStatus::Result) {
+                if !matches!(func_sym.status(), TypeEnumStatus::Option | TypeEnumStatus::Result) {
                     return err(self);
                 }
 
@@ -2342,7 +2342,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 wasm.ite(self, |slf, wasm| {
 
                     match func_sym.status() {
-                        ConcreteTypeEnumStatus::Option => {
+                        TypeEnumStatus::Option => {
                             let some_val = match enum_sym.kind() {
                                 ConcreteTypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
                                 ConcreteTypeEnumKind::Tag(_) => Type::Unit,
@@ -2353,7 +2353,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                             // Check the functions return signature for failure
                             {
-                                if func_sym.status() != ConcreteTypeEnumStatus::Option {
+                                if func_sym.status() != TypeEnumStatus::Option {
                                     wasm.error(slf.error(Error::FunctionDoesntReturnAnOption {
                                         source, func_typ: func.return_type }));
                                     return (local, ());
@@ -2390,7 +2390,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         },
 
 
-                        ConcreteTypeEnumStatus::Result => {
+                        TypeEnumStatus::Result => {
                             let (ok, err) = match enum_sym.kind() {
                                 ConcreteTypeEnumKind::TaggedUnion(v) => (
                                     v.fields()[0].ty().unwrap_or(Type::Unit),
@@ -2404,7 +2404,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                             // Check the functions return signature for failure
                             {
-                                if func_sym.status() != ConcreteTypeEnumStatus::Result {
+                                if func_sym.status() != TypeEnumStatus::Result {
                                     wasm.error(slf.error(Error::FunctionDoesntReturnAResult {
                                         source, func_typ: func.return_type }));
                                     return (local, ());

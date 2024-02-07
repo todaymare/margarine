@@ -6,7 +6,7 @@ use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
 use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeSymbolKind, ConcreteTypeStruct, TypeTaggedUnion, TaggedUnionField, ConcreteTypeEnumKind}, scope::ScopeId};
 
-use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, ConcreteTypeEnum, TypeTag, ConcreteTypeEnumStatus, TypeStructStatus, ConcreteTypeKind, ConcreteType, TemplateType, TemplateTypeKind, TemplateTypeStruct}};
+use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, ConcreteTypeEnum, TypeTag, TypeEnumStatus, TypeStructStatus, ConcreteTypeKind, ConcreteType, TemplateType, TemplateTypeKind, TemplateTypeStruct}};
 
 #[derive(Debug)]
 pub struct TypeBuilder<'a> {
@@ -44,7 +44,7 @@ pub enum PartialTypeKind<'a> {
 
     Enum {
         mappings: &'a mut [PartialEnumField],
-        status: ConcreteTypeEnumStatus,
+        status: TypeEnumStatus,
     }
 }
 
@@ -126,7 +126,7 @@ impl<'a> TypeBuilder<'a> {
         &mut self, 
         ty: TypeId, 
         iter: impl Iterator<Item=(StringIndex, Option<Type>)>,
-        status: ConcreteTypeEnumStatus,
+        status: TypeEnumStatus,
     ) {
         let mappings = Vec::from_in(
             self.storage, 
@@ -361,7 +361,7 @@ impl<'out> TypeBuilder<'_> {
         &mut self,
         data: &mut TypeBuilderData<'_, 'out, '_, '_>,
         fields: &[PartialEnumField],
-        status: ConcreteTypeEnumStatus,
+        status: TypeEnumStatus,
         name: StringIndex,
     ) -> Result<TypeSymbol<'out>, Error> {
         // Tag
@@ -412,7 +412,7 @@ impl<'out> TypeBuilder<'_> {
             size = sti::num::ceil_to_multiple_pow2(size, tag_align);
 
             let kind = TypeTag::new(Vec::from_in(data.arena, fields.iter().map(|x| x.name)).leak());
-            let kind = ConcreteTypeEnum::new(ConcreteTypeEnumStatus::User, ConcreteTypeEnumKind::Tag(kind));
+            let kind = ConcreteTypeEnum::new(TypeEnumStatus::User, ConcreteTypeEnumKind::Tag(kind));
             let kind = ConcreteType::new(tag_align, size, ConcreteTypeKind::Enum(kind));
             return Ok(TypeSymbol::new(name, TypeSymbolKind::Concrete(kind)))
         }
