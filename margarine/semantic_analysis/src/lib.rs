@@ -6,7 +6,7 @@ pub mod funcs;
 
 use std::fmt::Write; 
 
-use common::{source::SourceRange, string_map::{StringMap, StringIndex}, Either};
+use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
@@ -153,7 +153,24 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 Type::Custom(tyid)
             },
 
-            DataTypeKind::WithGenerics(v, _) => self.convert_ty(scope, *v)?,
+            DataTypeKind::WithGenerics(v, tys) => {
+                let ty_id = self.convert_ty(scope, *v)?;
+                let Type::Custom(ty_id) = ty_id
+                else { return Err(Error::SymbolHasNoGenerics(dt.range())) };
+
+                let ty = self.types.get(ty_id);
+                let TypeSymbolKind::Template(sym) = ty.kind()
+                else { return Err(Error::SymbolHasNoGenerics(dt.range())) }; 
+
+                let pool = ArenaPool::tls_get_rec();
+                let mut vec = Vec::new_in(&*pool);
+
+                for (ty, gen) in tys.iter().zip(sym.generics.iter()) {
+                    vec.push((gen.name(), self.convert_ty(scope, *ty)?))
+                }
+
+                Type::Custom(self.get_ty(ty_id, &*vec, dt.range()))
+            },
         };
 
         Ok(ty)
@@ -222,6 +239,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 (self.string_map.insert("ok"), Some(v1)),
                 (self.string_map.insert("err"),Some(v2)),
                 ].iter().copied(),
+                &[],
                 TypeEnumStatus::Result,
             );
 
@@ -259,6 +277,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 (self.string_map.insert("some"), Some(ty)),
                 (self.string_map.insert("none"), None),
                 ].iter().copied(),
+                &[],
                 TypeEnumStatus::Option,
             );
 
@@ -316,6 +335,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
                 type_builder.set_enum_fields(
                     TypeId::BOOL,
                     [(StringMap::FALSE, None), (StringMap::TRUE, None)].into_iter(),
+                    &[],
                     TypeEnumStatus::User,
                 );
             }
@@ -613,8 +633,13 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 },
 
 
-                Declaration::Enum { name, mappings, .. } => {
+                Declaration::Enum { name, mappings, generics, .. } => {
                     let ty = self.namespaces.get(ns_id).get_type(name).unwrap();
+                    let ns = self.generics_namespace(builder, generics);
+                    let ns = self.namespaces.put(ns);
+                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
+                    let scope = self.scopes.push(scope);
+
                     let mappings = mappings.iter()
                         .filter_map(|mapping| {
                             let ty = match mapping.is_implicit_unit() {
@@ -638,7 +663,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             Some((mapping.name(), ty))
                         });
 
-                    type_builder.set_enum_fields(ty, mappings, TypeEnumStatus::User)
+                    type_builder.set_enum_fields(ty, mappings, generics, TypeEnumStatus::User)
                 },
 
 
@@ -3060,28 +3085,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 };
 
 
-                let ty_id = match self.types.get_ty_variant(ty, &gens) {
-                    Some(v) => v,
-                    None => {
-                        let ty_name = tyv.display_name();
-                        let ty_id = self.types.pending();
-
-                        let mut ty_builder = TypeBuilder::new(&*pool);
-                        ty_builder.add_ty(ty_id, ty_name, source);
-                        ty_builder.set_struct_fields(
-                            ty_id, 
-                            sfields.iter().map(|s| (s.name, self.replace_generics(s.ty, &gens))),
-                            &[],
-                            TypeStructStatus::User,
-                        );
-
-                        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, 
-                                                        &mut self.funcs, &mut self.module_builder);
-                        ty_builder.finalise(data, &mut self.errors);
-
-                        ty_id
-                    },
-                };
+                let ty_id = self.get_ty(ty, &*gens, source) ;
 
                 let strct = self.types.get(ty_id);
                 let TypeSymbolKind::Concrete(conc) = strct.kind() else { unreachable!() };
@@ -3105,6 +3109,76 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                 wasm.sptr_const(alloc);
                 Type::Custom(ty_id)
+            },
+        }
+    }
+
+
+    fn get_ty(&mut self, ty_id: TypeId, gens: &[(StringIndex, Type)], source: SourceRange) -> TypeId {
+        let ty = self.types.get(ty_id);
+
+        let t = match ty.kind() {
+            | TypeSymbolKind::Concrete(_)
+            | TypeSymbolKind::GenericPlaceholder => return ty_id,
+
+            TypeSymbolKind::Template(v) => v,
+        };
+
+        match t.kind {
+            TemplateTypeKind::Struct(v) => {
+                let pool = ArenaPool::tls_get_rec();
+                let ty_id = match self.types.get_ty_variant(ty_id, &gens) {
+                    Some(v) => v,
+                    None => {
+                        let ty_name = ty.display_name();
+                        let ty_id = self.types.pending();
+
+                        let mut ty_builder = TypeBuilder::new(&*pool);
+                        ty_builder.add_ty(ty_id, ty_name, source);
+                        ty_builder.set_struct_fields(
+                            ty_id, 
+                            v.fields.iter().map(|s| (s.name, self.replace_generics(s.ty, &gens))),
+                            &[],
+                            TypeStructStatus::User,
+                        );
+
+                        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, 
+                                                        &mut self.funcs, &mut self.module_builder);
+                        ty_builder.finalise(data, &mut self.errors);
+
+                        ty_id
+                    },
+                };
+
+                ty_id
+            },
+
+            TemplateTypeKind::Enum(v) => {
+                let pool = ArenaPool::tls_get_rec();
+                let ty_id = match self.types.get_ty_variant(ty_id, &gens) {
+                    Some(v) => v,
+                    None => {
+                        let ty_name = ty.display_name();
+                        let ty_id = self.types.pending();
+
+                        let mut ty_builder = TypeBuilder::new(&*pool);
+                        ty_builder.add_ty(ty_id, ty_name, source);
+                        ty_builder.set_enum_fields(
+                            ty_id, 
+                            v.mappings.iter().map(|s| (s.name(), s.ty().map(|ty| self.replace_generics(ty, &gens)))),
+                            &[],
+                            TypeEnumStatus::User,
+                        );
+
+                        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, 
+                                                        &mut self.funcs, &mut self.module_builder);
+                        ty_builder.finalise(data, &mut self.errors);
+
+                        ty_id
+                    },
+                };
+
+                ty_id
             },
         }
     }

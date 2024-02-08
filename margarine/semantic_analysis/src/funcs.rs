@@ -1,5 +1,5 @@
 use common::{string_map::StringIndex, Swap};
-use parser::{Block, nodes::decl::{Generic, FunctionArgument}, DataType};
+use parser::{Block, nodes::decl::Generic};
 use sti::{define_key, keyed::KVec, hash::{HashMap, DefaultSeed}, arena::Arena};
 use wasm::FunctionId;
 

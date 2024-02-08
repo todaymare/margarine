@@ -45,6 +45,7 @@ pub enum Declaration<'a> {
         name: StringIndex,
         header: SourceRange,
         mappings: &'a [EnumMapping<'a>],
+        generics: &'a [Generic],
     },
 
     Function {

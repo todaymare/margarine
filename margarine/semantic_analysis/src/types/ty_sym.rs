@@ -75,7 +75,7 @@ impl<'a> TemplateType<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum TemplateTypeKind<'a> {
     Struct(TemplateTypeStruct<'a>),
-    Enum(()),
+    Enum(TemplateTypeEnum<'a>),
 }
 
 
@@ -139,8 +139,12 @@ impl StructField {
 //
 #[derive(Debug, Clone, Copy)]
 pub struct TemplateTypeEnum<'a> {
-    status: TypeEnumStatus,
-    mappings: &'a [TaggedUnionField],
+    pub status: TypeEnumStatus,
+    pub mappings: &'a [TaggedUnionField],
+}
+
+impl<'a> TemplateTypeEnum<'a> {
+    pub fn new(mappings: &'a [TaggedUnionField], status: TypeEnumStatus) -> Self { Self { status, mappings } }
 }
 
 

@@ -1,14 +1,14 @@
 pub mod nodes;
 pub mod errors;
 
-use std::{ops::Deref, process::Termination, hash::Hash};
+use std::ops::Deref;
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind, FunctionSignature, Generic}, Pattern, PatternKind};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in, alloc::Alloc};
+use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::expr::BinaryOperator;
 
@@ -1194,7 +1194,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(DeclarationNode::new(
-            Declaration::Enum { name, mappings, header },
+            Declaration::Enum { name, mappings, header, generics: gens },
             SourceRange::new(start, end)
         ))
     }
