@@ -6,7 +6,7 @@ use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
 use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeSymbolKind, ConcreteTypeStruct, TypeTaggedUnion, TaggedUnionField, ConcreteTypeEnumKind}, scope::ScopeId};
 
-use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeSymbol, ConcreteTypeEnum, TypeTag, TypeEnumStatus, TypeStructStatus, ConcreteTypeKind, ConcreteType, TemplateType, TemplateTypeKind, TemplateTypeStruct}};
+use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{ConcreteType, ConcreteTypeEnum, ConcreteTypeKind, TemplateType, TemplateTypeEnum, TemplateTypeKind, TemplateTypeStruct, TypeEnumStatus, TypeStructStatus, TypeSymbol, TypeTag}};
 
 #[derive(Debug)]
 pub struct TypeBuilder<'a> {
@@ -45,6 +45,7 @@ pub enum PartialTypeKind<'a> {
     Enum {
         mappings: &'a mut [PartialEnumField],
         status: TypeEnumStatus,
+        generics: &'a [Generic],
     }
 }
 
@@ -126,6 +127,7 @@ impl<'a> TypeBuilder<'a> {
         &mut self, 
         ty: TypeId, 
         iter: impl Iterator<Item=(StringIndex, Option<Type>)>,
+        generics: &'a [Generic],
         status: TypeEnumStatus,
     ) {
         let mappings = Vec::from_in(
@@ -135,7 +137,7 @@ impl<'a> TypeBuilder<'a> {
         
         let mappings = mappings.leak();
 
-        self.set_kind(ty, PartialTypeKind::Enum { mappings, status })
+        self.set_kind(ty, PartialTypeKind::Enum { mappings, status, generics })
     }
 }
 
@@ -225,10 +227,10 @@ impl<'out> TypeBuilder<'_> {
                 }
 
 
-                PartialTypeKind::Enum { mappings, status } => { 
-                    let sym = self.process_enum(data, mappings, status, name);
-
-                    sym
+                PartialTypeKind::Enum { mappings, status, generics } => { 
+                    if !generics.is_empty() { self.process_generic_enum(
+                            data, mappings, name, copy_in(generics, data.arena), status) }
+                    else { self.process_enum(data, mappings, status, name) }
                 },
             }
         };
@@ -310,6 +312,44 @@ impl<'out> TypeBuilder<'_> {
         Ok(symbol)
     }
 
+
+    ///
+    /// Processes and generates a generic struct type
+    ///
+    /// This function does **NOT** register the
+    /// type into the type map
+    ///
+    /// # Errors
+    /// - If any of the type's fields are cyclic
+    ///
+    #[must_use]
+    fn process_generic_enum(
+        &mut self,
+        data: &mut TypeBuilderData<'_, 'out, '_, '_>,
+        fields: &[PartialEnumField],
+        name: StringIndex,
+        generics: &'out [Generic],
+        status: TypeEnumStatus,
+    ) -> Result<TypeSymbol<'out>, Error> {
+
+        let mut new_fields = Vec::with_cap_in(data.arena, fields.len());
+
+        for f in fields.iter() {
+            // to make sure it's not cyclic
+            if let Some(ty) = f.ty {
+                let Type::Custom(ty) = ty else { continue };
+                self.resolve_type(data, ty)?;
+            }
+            new_fields.push(TaggedUnionField::new(f.name, f.ty));
+        }
+
+        // Finalise
+        let kind = TemplateTypeEnum::new(new_fields.leak(), status);
+        let kind = TemplateType::new(generics, TemplateTypeKind::Enum(kind));
+        let symbol = TypeSymbol::new(name, TypeSymbolKind::Template(kind));
+
+        Ok(symbol)
+    }
     ///
     /// Processes and generates a generic struct type
     ///
@@ -367,18 +407,6 @@ impl<'out> TypeBuilder<'_> {
         // Tag
 
         // TODO: Don't assume u32
-        /*
-        let tag_size = {
-            let mut c = fields.len() as f64;
-            let mut tag_size = 0;
-            while c > 1.0 {
-                c /= 256.0;
-                tag_size += 1;
-            }
-
-            tag_size
-        };
-        */
 
         assert!(fields.len() < u64::MAX as usize, "enums with more than u32::MAX variants are not yet supported");
         let tag_align = 4;

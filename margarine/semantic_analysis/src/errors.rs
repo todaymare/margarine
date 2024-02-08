@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
-use parser::{nodes::expr::{BinaryOperator, UnaryOperator}, DataType};
+use parser::nodes::expr::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
 use crate::types::{ty::Type, ty_map::TypeMap};

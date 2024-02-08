@@ -18,8 +18,6 @@ define_key!(u32, pub LexerError);
 define_key!(u32, pub ParserError);
 define_key!(u32, pub SemaError);
 
-pub struct ErrorCode(u32);
-
 pub trait ErrorType<T> {
     fn display(&self, fmt: &mut ErrorFormatter, data: &T);
 }
