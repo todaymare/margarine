@@ -8,8 +8,6 @@ use wasmtime::{Config, Engine, Module, Linker, Store, Val};
 type ExternFunction<'a> = Symbol<'a, ExternFunctionRaw>;
 type ExternFunctionRaw = unsafe extern "C" fn(*const Ctx, *mut u8);
 
-static mut CTX : Ctx = Ctx::new();
-
 fn main() {
     let file = env::current_exe().unwrap();
     let file = fs::read(file).unwrap();
@@ -25,6 +23,8 @@ fn main() {
     let module = unsafe { Module::deserialize(&engine, data) }.unwrap();
     let mut linker = Linker::new(&engine);
     let mut libs = Vec::with_capacity(imports_data.len());
+
+    let mut ctx = Ctx::new();
 
     for (path, items) in imports_data {
         let path_noext = path;
@@ -53,14 +53,14 @@ fn main() {
             linker.func_wrap(&*path_noext, i, move |param: i32| {
                 let ptr = u32::from_ne_bytes(param.to_ne_bytes());
                 let ptr = WasmPtr::from_u32(ptr);
-                let ptr = ptr.as_mut(unsafe { &CTX });
+                let ptr = ptr.as_mut(&ctx);
 
-                unsafe { sym(&CTX, ptr); };
+                unsafe { sym(&ctx, ptr); };
             }).unwrap();
         }
 
         if let Ok(f) = unsafe { library.get::<unsafe extern "C" fn(&Ctx)>(b"_init") } {
-            unsafe { f(&CTX) };
+            unsafe { f(&ctx) };
         }
 
         libs.push(library);
@@ -71,11 +71,9 @@ fn main() {
     let memory = instance.get_memory(&mut store, "memory").unwrap();
 
     let ptr = memory.data_ptr(&store);
-    unsafe { 
-        CTX.set_base(ptr);
-        let size = memory.data_size(&store) - 1;
-        CTX.set_size(size.try_into().unwrap());
-    };
+    ctx.set_base(ptr);
+    let size = memory.data_size(&store) - 1;
+    ctx.set_size(size.try_into().unwrap());
 
     instance
         .get_global(&mut store, "host_memory_offset").unwrap()
@@ -87,7 +85,7 @@ fn main() {
 
     for l in libs {
         if let Ok(f) = unsafe { l.get::<unsafe extern "C" fn(&Ctx)>(b"_finalise") } {
-            unsafe { f(&CTX) };
+            unsafe { f(&ctx) };
         }
     }
 }

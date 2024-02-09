@@ -19,7 +19,7 @@ impl WasmPtr {
     #[inline(always)]
     pub extern "C" fn as_ptr(self, ctx: &Ctx) -> *const u8 {
         assert!(ctx.size >= self.0);
-        unsafe { ctx.base.add(self.0 as usize) }
+        unsafe { ctx.base.0.add(self.0 as usize) }
     }
 
 
@@ -71,23 +71,29 @@ unsafe impl<T> Send for Ptr<T> {}
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Ctx {
-    base: *const u8,
+    base: SendPtr,
     size: u32,
 }
 
 impl Ctx {
-    pub const fn new() -> Self { Self { base: null(), size: 0 } }
+    pub const fn new() -> Self { Self { base: SendPtr(null()), size: 0 } }
 
     pub fn set_base(&mut self, ptr: *const u8) {
-        assert!(self.base.is_null());
+        assert!(self.base.0.is_null());
         assert!(!ptr.is_null());
-        self.base = ptr;
+        self.base.0 = ptr;
     }
 
     pub fn set_size(&mut self, len: u32) {
         self.size = len;
     }
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SendPtr(*const u8);
+unsafe impl Send for SendPtr {}
+unsafe impl Sync for SendPtr {}
 
 
 #[margarine]
