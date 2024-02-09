@@ -1380,6 +1380,10 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         return Err(())
                     }
 
+                    if lhs_anal.ty.eq_lit(Type::Never) || rhs_anal.ty.eq_lit(Type::Never) {
+                        return Err(())
+                    }
+
                     Ok(())
                 };
 
@@ -1444,7 +1448,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     (BinaryOperator::Le, Type::I64)   => wfunc!(i64_le, Type::BOOL),
                     (BinaryOperator::Le, Type::F64) => wfunc!(f64_le, Type::BOOL),
 
-                    _ => unreachable!()
+                    _ => panic!("unreachable: {:?} {:?} {:?}", lhs_anal.ty, operator, rhs_anal.ty)
                 };
 
                 AnalysisResult::new(ty, true)
@@ -1706,6 +1710,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                             let (ty, local) = match enum_sym.kind() {
                                 ConcreteTypeEnumKind::TaggedUnion(v) => {
+                                    dbg!(v, mapping.name(), &anal.string_map);
                                     let emapping = v.fields().iter().find(|x| x.name() == mapping.name()).unwrap();
                                     let ty = emapping.ty().unwrap_or(Type::Unit);
                                     let wty = ty.to_wasm_ty(&anal.types);
