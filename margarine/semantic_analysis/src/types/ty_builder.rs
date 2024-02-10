@@ -350,6 +350,7 @@ impl<'out> TypeBuilder<'_> {
 
         Ok(symbol)
     }
+
     ///
     /// Processes and generates a generic struct type
     ///
@@ -408,7 +409,7 @@ impl<'out> TypeBuilder<'_> {
 
         // TODO: Don't assume u32
 
-        assert!(fields.len() < u64::MAX as usize, "enums with more than u32::MAX variants are not yet supported");
+        assert!(fields.len() < u64::MAX as usize, "enums with more than u32::MAX variants are not supported");
         let tag_align = 4;
         let tag_size = 4;
 
@@ -429,9 +430,8 @@ impl<'out> TypeBuilder<'_> {
 
             union_align = union_align.max(f_align);
             union_size = union_size.max(f_size);
-
-
         }
+
 
         if new_fields.iter().all(|x| x.ty() == None){
             let mut size = 0;

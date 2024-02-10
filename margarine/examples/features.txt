@@ -1,3 +1,4 @@
+
 // This is a line comment
 // We do not have block comments
 
@@ -124,14 +125,14 @@ fn add_int(val: any, rhs: int): Option<int> {
 		// type, this plays into the fact that 
 		// these are annonymous enums
         //
-		ok: val => val,
+		some: val => val,
 
 		// The `: <identifier>` part is optional
 		// if you don't need the value in the branch
         //
         // By default all programs automatically import
         // `Option::*`
-		err => return none,
+		none=> return Option::none(),
 	}
 
 
@@ -149,6 +150,11 @@ enum Option<T> {
 	// No types automatically assigns
 	// the value to be of type unit
 	none,
+}
+
+
+impl any {
+    fn cast_to<T>(self): Option<T> { Option::some::<T>() }
 }
 
 

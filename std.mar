@@ -1,0 +1,12 @@
+struct IntVec {
+    ptr: int,
+}
+
+
+impl IntVec {
+    extern "std" {
+        fn new(): IntVec
+        fn push(s: IntVec, v: int)
+        fn pop(s: IntVec): int?
+    }
+}

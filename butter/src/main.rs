@@ -3,7 +3,7 @@ use std::{env, fs::{self}};
 use game_runtime::encode;
 use margarine::{FileData, StringMap, DropTimer};
 use sti::prelude::Arena;
-use wasmtime::{Config, Engine};
+use wasmtime::{Config, Engine, OptLevel};
 
 const GAME_RUNTIME : &[u8] = include_bytes!("../../target/release/game-runtime");
 
@@ -23,12 +23,13 @@ fn main() -> Result<(), &'static str> {
          // println!("{tokens:#?}");
 
          let mut arena = Arena::new();
+         let arena_ref = &mut arena;
          let (ast, parse_errors) = DropTimer::with_timer("parsing", || {
-             let ast = margarine::parse(tokens, &mut arena, &mut string_map);
+             let ast = margarine::parse(tokens, arena_ref, &mut string_map);
              ast
          });
 
-         println!("{ast:#?}");
+         // println!("{ast:#?}");
 
          let ns_arena = Arena::new();
          let _scopes = Arena::new();
@@ -39,7 +40,6 @@ fn main() -> Result<(), &'static str> {
 
          // println!("{sema:#?}");
 
-         dbg!(&sema);
 
          if !lex_errors.is_empty() {
              let report = margarine::display(lex_errors.as_slice().inner(), &sema.string_map, &file, &());
@@ -59,13 +59,8 @@ fn main() -> Result<(), &'static str> {
 
          let code = sema.module_builder.build(&mut sema.string_map);
 
-         /*
-         println!("symbol map arena {:?} ns_arena: {ns_arena:?}, arena: {arena:?}", string_map.arena_stats());
-         println!("{:?}", &*ArenaPool::tls_get_temp());
-         println!("{:?}", &*ArenaPool::tls_get_rec());
-         */
-         
          fs::write("out.wat", &*code).unwrap();
+
          // Run
          {
             let data = &*code;
@@ -74,6 +69,7 @@ fn main() -> Result<(), &'static str> {
             let mut config = Config::new();
             config.strategy(wasmtime::Strategy::Cranelift);
             config.wasm_bulk_memory(true);
+            config.cranelift_opt_level(OptLevel::Speed);
             let engine = Engine::new(&config).unwrap();
             let data = engine.precompile_module(&data).unwrap();
                    

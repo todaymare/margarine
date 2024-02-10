@@ -1761,7 +1761,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         }
                     }
 
-                    println!("{}", self.string_map.get(v));
                     self.advance();
                     self.advance();
                     let expr = self.atom(settings)?;

@@ -1,0 +1,97 @@
+pub mod string_map;
+pub mod hashables;
+pub mod source;
+pub mod toggle_buffer;
+
+use std::{time::Instant, alloc::Layout, mem::{size_of, align_of}};
+
+use sti::{prelude::Alloc, vec::Vec, arena::Arena};
+use colourful::*;
+
+
+
+pub struct DropTimer<'a> {
+    message: &'a str,
+    time: Instant,
+}
+
+
+impl<'a> DropTimer<'a> {
+    pub fn new(message: &'a str) -> Self {
+        Self {
+            message,
+            time: Instant::now(),
+        }
+    }
+
+
+    #[inline(always)]
+    pub fn with_timer<T, F: FnOnce() -> T>(message: &'a str, block: F) -> T {
+        let _drop = DropTimer::new(message);
+        block()
+    }
+}
+
+
+impl Drop for DropTimer<'_> {
+    fn drop(&mut self) {
+        println!("droptimer: ran '{}' in {} seconds", self.message, self.time.elapsed().as_secs_f32());
+    }
+}
+
+
+pub trait Swap {
+    ///
+    /// Swaps the current value with the given value
+    /// returning the current value
+    ///
+    #[inline(always)]
+    fn swap(&mut self, val: Self) -> Self where Self: Sized {
+        core::mem::replace(self, val)
+    }
+}
+
+
+impl<T> Swap for T {}
+
+
+pub trait CopyIn: Copy {
+    #[inline(always)]
+    fn clone_in(&self, a: &'_ Arena) -> &'_ Self {
+        let a = a.alloc(Layout::from_size_align(size_of::<Self>(), align_of::<Self>())).unwrap();
+        let ptr = std::ptr::write(a.as_ptr(), *self);
+        todo!()
+    }
+}
+
+
+pub fn find_duplicate<'a, T: PartialEq, A: Alloc>(
+    fields: &'a [T], 
+    buff: &mut Vec<(&'a T, &'a T), A>
+) {
+
+    for i in 0..fields.len() {
+        for j in 0..i {
+            if fields[i] == fields[j] {
+                buff.push((&fields[i], &fields[j]))
+            }
+        }
+    }
+}
+
+
+pub fn warn(string: &str) {
+    println!("{}: {string}", "warn".colour(Colour::rgb(207, 188, 148)).bold())
+}
+
+#[inline(always)]
+pub fn num_size(num: u32) -> u32 {
+    num.checked_ilog10().unwrap_or(0) + 1
+}
+
+
+
+pub enum Either<T, A> {
+    Left(T),
+    Right(A),
+}
