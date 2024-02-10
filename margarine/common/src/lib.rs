@@ -55,16 +55,6 @@ pub trait Swap {
 impl<T> Swap for T {}
 
 
-pub fn copy_in<'a, T: Copy>(slice: &[T], a: &'a Arena) -> &'a [T] {
-    let a = a.alloc(Layout::from_size_align(size_of::<T>() * slice.len(), align_of::<T>()).unwrap()).unwrap();
-    let mut a = a.cast::<T>();
-    unsafe { std::ptr::copy_nonoverlapping::<T>(
-            slice.as_ptr(), a.as_mut(), slice.len()) };
-
-    unsafe { std::slice::from_raw_parts(a.as_ptr(), slice.len()) }
-}
-
-
 pub fn find_duplicate<'a, T: PartialEq, A: Alloc>(
     fields: &'a [T], 
     buff: &mut Vec<(&'a T, &'a T), A>

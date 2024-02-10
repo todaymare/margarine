@@ -1,5 +1,4 @@
 use common::string_map::StringIndex;
-use parser::nodes::decl::Generic;
 use wasm::WasmFunctionBuilder;
 
 use super::ty::Type;
@@ -7,82 +6,35 @@ use super::ty::Type;
 #[derive(Debug, Clone, Copy)] 
 pub struct TypeSymbol<'a> {
     display_name: StringIndex,
-    kind: TypeSymbolKind<'a>,
+    align: usize,
+    size: usize,
+    kind: TypeKind<'a>,
 }
 
 
 impl<'a> TypeSymbol<'a> {
     pub fn new(display_name: StringIndex,
-               kind: TypeSymbolKind<'a>) -> Self {
-        Self { display_name, kind }
+               align: usize,
+               size: usize,
+               kind: TypeKind<'a>) -> Self {
+        Self { display_name, kind, align, size }
     }
 
     #[inline(always)]
     pub fn display_name(self) -> StringIndex { self.display_name }
     #[inline(always)]
-    pub fn kind(self) -> TypeSymbolKind<'a> { self.kind }
-
+    pub fn kind(self) -> TypeKind<'a> { self.kind }
     #[inline(always)]
-    pub fn as_concrete(self) -> ConcreteType<'a> {
-        match self.kind {
-            TypeSymbolKind::Template(..) => panic!(),
-
-            TypeSymbolKind::Concrete(conc) => return conc,
-
-            TypeSymbolKind::GenericPlaceholder => return ConcreteType {
-                align: 1,
-                size: 0,
-                kind: ConcreteTypeKind::Struct(ConcreteTypeStruct::new(&[], TypeStructStatus::User)),
-            },
-        };
-    }
+    pub fn align(self) -> usize  { self.align}
+    #[inline(always)]
+    pub fn size(self) -> usize { self.size }
 }
 
 
 #[derive(Debug, Clone, Copy)]
-pub enum TypeSymbolKind<'a> {
-    Concrete(ConcreteType<'a>),
-    Template(TemplateType<'a>),
-    GenericPlaceholder,
-}
-
-
-#[derive(Debug, Clone, Copy)]
-pub struct ConcreteType<'a> {
-    pub align: usize,
-    pub size: usize,
-
-    pub kind: ConcreteTypeKind<'a>
-}
-
-impl<'a> ConcreteType<'a> {
-    pub fn new(align: usize, size: usize, kind: ConcreteTypeKind<'a>) -> Self { Self { align, size, kind } }
-}
-
-
-#[derive(Debug, Clone, Copy)]
-pub struct TemplateType<'a> {
-    pub generics: &'a [Generic],
-    pub kind: TemplateTypeKind<'a>
-}
-
-impl<'a> TemplateType<'a> {
-    pub fn new(generics: &'a [Generic], kind: TemplateTypeKind<'a>) -> Self { Self { generics, kind } }
-}
-
-
-
-#[derive(Debug, Clone, Copy)]
-pub enum TemplateTypeKind<'a> {
-    Struct(TemplateTypeStruct<'a>),
-    Enum(TemplateTypeEnum<'a>),
-}
-
-
-#[derive(Debug, Clone, Copy)]
-pub enum ConcreteTypeKind<'a> {
-    Struct(ConcreteTypeStruct<'a>),
-    Enum(ConcreteTypeEnum<'a>),
+pub enum TypeKind<'a> {
+    Struct(TypeStruct<'a>),
+    Enum(TypeEnum<'a>),
 }
 
 
@@ -90,23 +42,12 @@ pub enum ConcreteTypeKind<'a> {
 // Struct
 //
 #[derive(Debug, Clone, Copy)]
-pub struct TemplateTypeStruct<'a> {
-    pub fields: &'a [StructField],
-    pub status: TypeStructStatus,
-}
-
-impl<'a> TemplateTypeStruct<'a> {
-    pub fn new(fields: &'a [StructField], status: TypeStructStatus) -> Self { Self { fields, status } }
-}
-
-
-#[derive(Debug, Clone, Copy)]
-pub struct ConcreteTypeStruct<'a> {
+pub struct TypeStruct<'a> {
     pub fields: &'a [(StructField, usize)],
     pub status: TypeStructStatus,
 }
 
-impl<'a> ConcreteTypeStruct<'a> {
+impl<'a> TypeStruct<'a> {
     pub fn new(fields: &'a [(StructField, usize)], status: TypeStructStatus) -> Self { Self { fields, status } }
 }
 
@@ -138,18 +79,7 @@ impl StructField {
 // Enum
 //
 #[derive(Debug, Clone, Copy)]
-pub struct TemplateTypeEnum<'a> {
-    pub status: TypeEnumStatus,
-    pub mappings: &'a [TaggedUnionField],
-}
-
-impl<'a> TemplateTypeEnum<'a> {
-    pub fn new(mappings: &'a [TaggedUnionField], status: TypeEnumStatus) -> Self { Self { status, mappings } }
-}
-
-
-#[derive(Debug, Clone, Copy)]
-pub struct ConcreteTypeEnum<'a> {
+pub struct TypeEnum<'a> {
     status: TypeEnumStatus,
     kind: ConcreteTypeEnumKind<'a>,
 }
@@ -190,7 +120,7 @@ pub struct TypeTag<'a> {
 }
 
 
-impl<'a> ConcreteTypeEnum<'a> {
+impl<'a> TypeEnum<'a> {
     pub fn new(status: TypeEnumStatus, kind: ConcreteTypeEnumKind<'a>) -> Self { Self { status, kind } }
 
     pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {

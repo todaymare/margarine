@@ -1,25 +1,24 @@
 use common::{string_map::StringIndex, Swap};
-use parser::{Block, nodes::decl::Generic};
 use sti::{define_key, keyed::KVec, hash::{HashMap, DefaultSeed}, arena::Arena};
 use wasm::FunctionId;
 
-use crate::{types::{ty::Type, ty_map::TypeId}, scope::ScopeId};
+use crate::types::{ty::Type, ty_map::TypeId};
 
 define_key!(u32, pub FuncId);
 
 
 #[derive(Debug, Clone)]
-pub struct Function<'a, 'ast> {
+pub struct Function<'a> {
     pub name: StringIndex,
     pub args: &'a [(StringIndex, bool, Type)],
     pub ret : Type,
-    pub kind: FunctionKind<'ast>,
+    pub kind: FunctionKind,
     pub wasm_id: FunctionId,
 }
 
 
 #[derive(Debug, Clone, Copy)]
-pub enum FunctionKind<'ast> {
+pub enum FunctionKind {
     UserDefined {
         inout: Option<TypeId>,
     },
@@ -27,33 +26,27 @@ pub enum FunctionKind<'ast> {
     Extern {
         ty: TypeId,
     }, 
-
-    Template {
-        body: Block<'ast>,
-        scope: ScopeId,
-        generics: &'ast [Generic],
-    },
 }
 
 
-impl<'a, 'ast> Function<'a, 'ast> {
-    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type, wasm_id: FunctionId, kind: FunctionKind<'ast>) -> Self { Self { name, args, ret, kind, wasm_id } }
+impl<'a> Function<'a> {
+    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type, wasm_id: FunctionId, kind: FunctionKind) -> Self { Self { name, args, ret, kind, wasm_id } }
 }
 
 
 #[derive(Debug)]
-pub struct FunctionMap<'a, 'ast> {
+pub struct FunctionMap<'a> {
     map: KVec<
         FuncId, 
         Option<(
-            Function<'a, 'ast>,
+            Function<'a>,
             HashMap<&'a [(StringIndex, Type)], FuncId, DefaultSeed, &'a Arena>
     )>>,
     arena: &'a Arena,
 }
 
 
-impl<'a, 'ast> FunctionMap<'a, 'ast> {
+impl<'a> FunctionMap<'a> {
     pub fn new(arena: &'a Arena) -> Self {
         Self {
             map: KVec::new(),
@@ -63,7 +56,7 @@ impl<'a, 'ast> FunctionMap<'a, 'ast> {
 
 
     #[inline(always)]
-    pub fn get(&self, id: FuncId) -> &Function<'a, 'ast> {
+    pub fn get(&self, id: FuncId) -> &Function<'a> {
         &self.map.get(id).unwrap().as_ref().unwrap().0
     }
 
@@ -80,7 +73,7 @@ impl<'a, 'ast> FunctionMap<'a, 'ast> {
 
 
     #[inline(always)]
-    pub fn put(&mut self, func_id: FuncId, ns: Function<'a, 'ast>) {
+    pub fn put(&mut self, func_id: FuncId, ns: Function<'a>) {
         assert!(self.map[func_id].swap(Some((ns, HashMap::new_in(self.arena)))).is_none());
     }
 

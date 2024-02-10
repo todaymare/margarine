@@ -7,7 +7,7 @@ use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind, FunctionSignature, Generic}, Pattern, PatternKind};
+use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind, FunctionSignature}, Pattern, PatternKind};
 use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::expr::BinaryOperator;
@@ -49,7 +49,6 @@ pub enum DataTypeKind<'a> {
     RcConst(&'a DataType<'a>),
     RcMut(&'a DataType<'a>),
     CustomType(StringIndex),
-    WithGenerics(&'a DataType<'a>, &'a [DataType<'a>]),
 }
 
 
@@ -110,12 +109,6 @@ impl std::hash::Hash for DataTypeKind<'_> {
                 13.hash(state);
                 v.kind().hash(state);
             }
-
-            DataTypeKind::WithGenerics(v, g) => {
-                14.hash(state);
-                v.kind().hash(state);
-                g.iter().for_each(|g| g.kind().hash(state));
-            },
         }
     }
 }
@@ -409,42 +402,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 }
             };
             
-            let mut result = DataType::new(
+            let result = DataType::new(
                 SourceRange::new(start, self.current_range().end()), 
                 result
             );
-
-            if self.peek_is(TokenKind::LeftAngle) {
-                self.advance();
-                self.advance();
-
-                let pool = ArenaPool::tls_get_rec();
-                let mut vec = Vec::new_in(&*pool);
-
-                loop {
-                    if self.current_is(TokenKind::RightAngle) {
-                        break
-                    }
-
-                    if !vec.is_empty() {
-                        self.expect(TokenKind::Comma)?;
-                        self.advance();
-                    }
-                    
-                    if self.current_is(TokenKind::RightAngle) {
-                        break
-                    }
-
-                    let typ = self.expect_type()?;
-                    vec.push(typ);
-                    self.advance();
-                }
-
-                self.expect(TokenKind::RightAngle)?;
-
-                let dtk = DataTypeKind::WithGenerics(self.arena.alloc_new(result), vec.move_into(self.arena).leak());
-                result = DataType::new(SourceRange::new(start, self.current_range().end()), dtk);
-            }
 
             result
 
@@ -601,45 +562,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         ))
     }
 
-    
-    pub fn parse_generics(&mut self) -> Result<&'ta [Generic], ErrorId> {
-        if !self.current_is(TokenKind::LeftAngle) {
-            return Ok(&[])
-        }
-
-        self.advance();
-
-        let list = self.list(TokenKind::RightAngle, Some(TokenKind::Comma), 
-        |parser, _| {
-            let ident = parser.expect_identifier()?;
-            Ok(Generic::new(ident, parser.current_range()))
-        });
-        self.advance();
-        list
-    }
-
-
-
-    pub fn parse_generic_usage(&mut self) -> Result<Option<&'ta [DataType<'ta>]>, ErrorId> {
-        if !self.current_is(TokenKind::DoubleColon) {
-            return Ok(None)
-        }
-
-        self.advance();
-
-        self.expect(TokenKind::LeftAngle)?;
-        self.advance();
-
-        let list = self.list(TokenKind::RightAngle, Some(TokenKind::Comma), 
-        |parser, _| {
-            let ty = parser.expect_type()?;
-            Ok(ty)
-        }).map(|x| Some(x));
-        self.advance();
-        list
-    }
-
-
+   
     fn current_is(&self, token_kind: TokenKind) -> bool {
         self.current_kind() == token_kind
     }
@@ -845,8 +768,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let header = SourceRange::new(start, self.current_range().end());
         self.advance();
 
-        let generics = self.parse_generics()?;
-
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
@@ -870,7 +791,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::RightBracket)?;
         let end = self.current_range().end();
 
-        let node = Declaration::Struct { kind, name, header, fields, generics };
+        let node = Declaration::Struct { kind, name, header, fields };
 
         Ok(DeclarationNode::new(
             node, 
@@ -892,8 +813,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         let name = self.expect_identifier()?;
         self.advance();
-
-        let generics = self.parse_generics()?;
 
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();
@@ -970,7 +889,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                      name, 
                      header,
                      arguments,
-                     generics,
                      return_type,
                 ),
                 body,
@@ -1150,8 +1068,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let header = SourceRange::new(start, self.current_range().end());
         self.advance();
 
-        let gens = self.parse_generics()?;
-
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
@@ -1194,7 +1110,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(DeclarationNode::new(
-            Declaration::Enum { name, mappings, header, generics: gens },
+            Declaration::Enum { name, mappings, header },
             SourceRange::new(start, end)
         ))
     }
@@ -1640,12 +1556,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 continue
             }
 
-            if matches!(self.peek_kind(), Some(TokenKind::LeftParenthesis | TokenKind::DoubleColon)) {
+            if self.peek_is(TokenKind::LeftParenthesis) {
                 self.advance();
-
-                let generics = self.parse_generic_usage()?;
-
-                self.expect(TokenKind::LeftParenthesis)?;
                 self.advance();
 
                 let args = self.parse_function_call_args(Some(result))?;
@@ -1655,7 +1567,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         name: ident, 
                         args,
                         is_accessor: true, 
-                        generics,
                     },
                     SourceRange::new(start, self.current_range().end())
                 )
@@ -1755,13 +1666,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     let source = self.current_range();
                     let start = self.current_range().start();
 
-                    if let Some(s) = self.peek_n(2) {
-                        if matches!(s.kind(), TokenKind::LeftAngle) {
-                            return self.function_call_expression()
-                        }
-                    }
-
-                    println!("{}", self.string_map.get(v));
                     self.advance();
                     self.advance();
                     let expr = self.atom(settings)?;
@@ -2039,8 +1943,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
 
-        let generics = self.parse_generic_usage()?;
-
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();
 
@@ -2048,7 +1950,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(ExpressionNode::new(
-            Expression::CallFunction { name, args, is_accessor: false, generics },
+            Expression::CallFunction { name, args, is_accessor: false },
             SourceRange::new(start, end)
         ))
         
@@ -2108,8 +2010,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let data_type = self.expect_type()?;
         self.advance();
 
-        let gens = self.parse_generic_usage()?;
-
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
@@ -2134,7 +2034,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(ExpressionNode::new(
-            Expression::CreateStruct { data_type, fields, generics: gens },
+            Expression::CreateStruct { data_type, fields },
             SourceRange::new(start, end),
         ))
     }

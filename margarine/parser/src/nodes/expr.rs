@@ -72,7 +72,6 @@ pub enum Expression<'a> {
     CreateStruct {
         data_type: DataType<'a>,
         fields: &'a [(StringIndex, SourceRange, ExpressionNode<'a>)],
-        generics: Option<&'a [DataType<'a>]>,
     },
 
     AccessField {
@@ -84,7 +83,6 @@ pub enum Expression<'a> {
         name: StringIndex,
         is_accessor: bool,
         args: &'a [(ExpressionNode<'a>, bool)],
-        generics: Option<&'a [DataType<'a>]>,
     },
 
     WithinNamespace {

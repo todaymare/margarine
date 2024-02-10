@@ -11,20 +11,20 @@ use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature, Generic}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
-use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope, GenericsScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{ConcreteTypeEnum, TypeSymbolKind, ConcreteTypeEnumKind, TypeEnumStatus, TypeStructStatus, TypeSymbol, ConcreteType, TemplateTypeKind, TemplateTypeStruct}};
+use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
+use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeKind, ConcreteTypeEnumKind, TypeEnumStatus, TypeStructStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
-use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::{ConcreteTypeStruct, ConcreteTypeKind}};
+use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::TypeStruct};
 
 #[derive(Debug)]
-pub struct Analyzer<'me, 'out, 'str, 'ast> {
-    scopes: ScopeMap<'out>,
+pub struct Analyzer<'me, 'out, 'str> {
+    scopes: ScopeMap,
     namespaces: NamespaceMap<'out>,
     pub types: TypeMap<'out>,
-    pub funcs: FunctionMap<'out, 'ast>,
+    pub funcs: FunctionMap<'out>,
     output: &'out Arena,
     pub string_map: &'me mut StringMap<'str>,
 
@@ -54,7 +54,7 @@ impl AnalysisResult {
 }
 
 
-impl<'out> Analyzer<'_, 'out, '_, '_> {
+impl<'out> Analyzer<'_, 'out, '_> {
      pub fn convert_ty(&mut self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
         let ty = match dt.kind() {
             DataTypeKind::Int => Type::I64,
@@ -138,7 +138,6 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                             (StringMap::INT, Type::I64),
                             (StringMap::VALUE, ty),
                         ].iter().copied(),
-                        &[],
                         if matches!(dt.kind(), DataTypeKind::RcConst(_)) { TypeStructStatus::Rc }
                         else { TypeStructStatus::RcMut },
                     );
@@ -151,25 +150,6 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
 
                 self.rc_map.insert(ty, tyid);
                 Type::Custom(tyid)
-            },
-
-            DataTypeKind::WithGenerics(v, tys) => {
-                let ty_id = self.convert_ty(scope, *v)?;
-                let Type::Custom(ty_id) = ty_id
-                else { return Err(Error::SymbolHasNoGenerics(dt.range())) };
-
-                let ty = self.types.get(ty_id);
-                let TypeSymbolKind::Template(sym) = ty.kind()
-                else { return Err(Error::SymbolHasNoGenerics(dt.range())) }; 
-
-                let pool = ArenaPool::tls_get_rec();
-                let mut vec = Vec::new_in(&*pool);
-
-                for (ty, gen) in tys.iter().zip(sym.generics.iter()) {
-                    vec.push((gen.name(), self.convert_ty(scope, *ty)?))
-                }
-
-                Type::Custom(self.get_ty(ty_id, &*vec, dt.range()))
             },
         };
 
@@ -204,7 +184,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
             let _ = write!(str, "{}", i);
             let id = self.string_map.insert(&str);
             (id, *x)
-        }), &[], TypeStructStatus::Tuple);
+        }), TypeStructStatus::Tuple);
 
         let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
         tyb.finalise(data, &mut self.errors);
@@ -239,7 +219,6 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 (self.string_map.insert("ok"), Some(v1)),
                 (self.string_map.insert("err"),Some(v2)),
                 ].iter().copied(),
-                &[],
                 TypeEnumStatus::Result,
             );
 
@@ -277,7 +256,6 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
                 (self.string_map.insert("some"), Some(ty)),
                 (self.string_map.insert("none"), None),
                 ].iter().copied(),
-                &[],
                 TypeEnumStatus::Option,
             );
 
@@ -298,7 +276,7 @@ impl<'out> Analyzer<'_, 'out, '_, '_> {
 }
 
 
-impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
+impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
     pub fn run(
         output: &'out Arena,
         string_map: &'me mut StringMap<'str>,
@@ -335,7 +313,6 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
                 type_builder.set_enum_fields(
                     TypeId::BOOL,
                     [(StringMap::FALSE, None), (StringMap::TRUE, None)].into_iter(),
-                    &[],
                     TypeEnumStatus::User,
                 );
             }
@@ -350,7 +327,6 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
                         (slf.string_map.insert("len"), Type::I64),
                         (slf.string_map.insert("ptr"), Type::I64),
                     ].into_iter(),
-                    &[],
                     TypeStructStatus::User
                 );
             }
@@ -451,7 +427,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str, 'ast> {
 }
 
 
-impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
+impl<'out> Analyzer<'_, 'out, '_> {
     pub fn collect_type_names<'a>(
         &mut self,
         decls: impl Iterator<Item=DeclarationNode<'a>>,
@@ -610,12 +586,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
     ) {
         for decl in decls {
             match decl.kind() {
-                Declaration::Struct { name, fields, generics, .. } => {
+                Declaration::Struct { name, fields,  .. } => {
                     let ty = self.namespaces.get(ns_id).get_type(name).unwrap();
-                    let ns = self.generics_namespace(builder, generics);
-                    let ns = self.namespaces.put(ns);
-                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                    let scope = self.scopes.push(scope);
 
                     let fields = fields.iter()
                         .filter_map(|(name, ty, _)| {
@@ -629,16 +601,12 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         }
                     );
 
-                    type_builder.set_struct_fields(ty, fields, generics, TypeStructStatus::User);
+                    type_builder.set_struct_fields(ty, fields, TypeStructStatus::User);
                 },
 
 
-                Declaration::Enum { name, mappings, generics, .. } => {
+                Declaration::Enum { name, mappings, .. } => {
                     let ty = self.namespaces.get(ns_id).get_type(name).unwrap();
-                    let ns = self.generics_namespace(builder, generics);
-                    let ns = self.namespaces.put(ns);
-                    let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                    let scope = self.scopes.push(scope);
 
                     let mappings = mappings.iter()
                         .filter_map(|mapping| {
@@ -663,7 +631,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             Some((mapping.name(), ty))
                         });
 
-                    type_builder.set_enum_fields(ty, mappings, generics, TypeEnumStatus::User)
+                    type_builder.set_enum_fields(ty, mappings, TypeEnumStatus::User)
                 },
 
 
@@ -699,9 +667,9 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
     }
 
 
-    pub fn resolve_functions(
+    pub fn resolve_functions<'a>(
         &mut self,
-        decls: impl Iterator<Item=DeclarationNode<'ast>>,
+        decls: impl Iterator<Item=DeclarationNode<'a>>,
 
         builder: &mut WasmFunctionBuilder,
         scope: ScopeId,
@@ -710,19 +678,11 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
         for decl in decls {
             match decl.kind() {
                 Declaration::Function { sig, body } => {
-                    let mut nscope = scope;
-                    if !sig.generics.is_empty() {
-                        let ns = self.generics_namespace(builder, sig.generics);
-                        let ns = self.namespaces.put(ns);
-                        let s = Scope::new(ScopeKind::ImplicitNamespace(ns), nscope.some());
-                        nscope = self.scopes.push(s);
-                    }
-
                     let args = {
                         let mut args = Vec::with_cap_in(self.output, sig.arguments.len());
 
                         for arg in sig.arguments.iter() {
-                            let ty = self.convert_ty(nscope, arg.data_type());
+                            let ty = self.convert_ty(scope, arg.data_type());
                             let ty = match ty {
                                 Ok(v) => v,
                                 Err(e) => {
@@ -737,7 +697,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         args
                     };
 
-                    let ret = match self.convert_ty(nscope, sig.return_type) {
+                    let ret = match self.convert_ty(scope, sig.return_type) {
                         Ok(v) => v,
                         Err(e) => {
                             builder.error(self.error(e));
@@ -747,7 +707,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                     let ns = self.namespaces.get_mut(ns_id);
                     let func_id = ns.get_func(sig.name).unwrap();
-                    let func = if sig.generics.is_empty() {
+                    let func = {
                         let inout_ty_id = if args.iter().any(|a| a.1) {
                             let temp = ArenaPool::tls_get_temp();
                             let tuple = Vec::from_in(&*temp,
@@ -757,12 +717,6 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                         FunctionKind::UserDefined {
                             inout: inout_ty_id,
-                        }
-                    } else {
-                        FunctionKind::Template {
-                            body,
-                            scope,
-                            generics: sig.generics,
                         }
                     };
                     let func = Function::new(sig.name, args.leak(), ret, self.module_builder.function_id(), func);
@@ -859,7 +813,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
         scope: &mut ScopeId,
         wasm: &mut WasmFunctionBuilder,
 
-        node: &Node<'ast>,
+        node: &Node,
     ) -> AnalysisResult {
         match node {
             Node::Declaration(decl) => {
@@ -938,7 +892,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
     fn decl(
         &mut self,
-        decl: DeclarationNode<'ast>,
+        decl: DeclarationNode,
         scope: ScopeId,
     ) {
         match decl.kind() {
@@ -966,9 +920,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         let mut scope = self.scopes.push(scope);
 
                         let fields = inout.map(|inout| self.types.get(inout).kind()).map(|x| {
-                            let TypeSymbolKind::Concrete(conc) = x else { unreachable!() };
-                            let ConcreteType { kind, .. } = conc;
-                            let ConcreteTypeKind::Struct(val) = kind else { unreachable!() };
+                            let TypeKind::Struct(val) = x else { unreachable!() };
                             val
                         });
 
@@ -993,9 +945,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         }
 
                         let inout_param = inout.map(|inout| {
-                            let TypeSymbolKind::Concrete(conc) = self.types.get(inout).kind()
-                            else { unreachable!() };
-                            wasm.param(WasmType::Ptr { size: conc.size })
+                            let ty = self.types.get(inout);
+                            wasm.param(WasmType::Ptr { size: ty.size() })
                         });
                         for i in ids.iter() {
                             wasm.write_to(&mut string, |wasm| {
@@ -1030,40 +981,6 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         }
 
                         self.module_builder.register(wasm);
-                    },
-
-
-                    FunctionKind::Template { .. } => {
-                        let pool = &*ArenaPool::tls_get_rec();
-                        let mut wasm = WasmFunctionBuilder::new(&*pool, func.wasm_id);
-                        let scope = Scope::new(
-                            ScopeKind::FunctionDefinition(
-                                FunctionDefinitionScope::new(func.ret, sig.return_type.range())
-                            ),
-                            scope.some()
-                        );
-
-                        let mut scope = self.scopes.push(scope);
-
-                        for a in func.args.iter() {
-                            let wasm_ty = a.2.to_wasm_ty(&self.types);
-
-                            let local_id = wasm.param(wasm_ty);
-                            let t = Scope::new(
-                                ScopeKind::Variable(VariableScope::new(a.0, a.1, a.2, local_id)),
-                                scope.some(),
-                            );
-
-                            scope = self.scopes.push(t);
-                        }
-
-                        let func_ret = func.ret;
-                        let (anal, _) = self.block(&mut wasm, scope, &body);
-                        if !anal.ty.eq_sem(func_ret) {
-                            wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
-                                header: sig.source, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
-                                return_type: func_ret, body_type: anal.ty }));
-                        }
                     },
 
 
@@ -1105,7 +1022,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
     fn stmt(
         &mut self,
-        stmt: StatementNode<'ast>,
+        stmt: StatementNode,
 
         scope: &mut ScopeId,
         wasm: &mut WasmFunctionBuilder,
@@ -1186,7 +1103,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         }
                     };
 
-                    let ConcreteTypeKind::Struct(sym) = rty.as_concrete().kind
+                    let TypeKind::Struct(sym) = rty.kind()
                     else {
                         wasm.error(self.error(Error::VariableValueNotTuple(rhs.range())));
                         return Err(());
@@ -1268,7 +1185,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
     fn expr(
         &mut self,
-        expr: ExpressionNode<'ast>,
+        expr: ExpressionNode,
 
         scope: ScopeId,
         wasm: &mut WasmFunctionBuilder,
@@ -1298,11 +1215,11 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         let str = self.string_map.get(v);
                         let string_ptr = self.module_builder.add_string(str);
                         
-                        let ty = self.types.get(TypeId::STR).as_concrete();
-                        let ConcreteTypeKind::Struct(strct) = ty.kind
+                        let ty = self.types.get(TypeId::STR);
+                        let TypeKind::Struct(strct) = ty.kind()
                         else { unreachable!() };
 
-                        let alloc = wasm.alloc_stack(ty.size);
+                        let alloc = wasm.alloc_stack(ty.size());
 
                         // len
                         {
@@ -1333,7 +1250,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                         let func = self.namespaces.get_type(ty);
                         let func = self.namespaces.get(func).get_func(name).unwrap();
                         
-                        self.call_func(func, &[], None, source, scope, wasm).unwrap();
+                        self.call_func(func, &[], source, scope, wasm).unwrap();
                         AnalysisResult::new(Type::BOOL, true)
                     },
                 }
@@ -1527,8 +1444,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return AnalysisResult::error();
                 }
 
-                let ty = self.types.get(TypeId::BOOL).as_concrete();
-                let ConcreteTypeKind::Enum(e) = ty.kind else { panic!() };
+                let ty = self.types.get(TypeId::BOOL);
+                let TypeKind::Enum(e) = ty.kind() else { panic!() };
                 e.get_tag(wasm);
 
                 let mut slf = self;
@@ -1604,8 +1521,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     }
                 };
 
-                let ty = self.types.get(tyid).as_concrete(); 
-                let ConcreteTypeKind::Enum(sym) = ty.kind
+                let ty = self.types.get(tyid); 
+                let TypeKind::Enum(sym) = ty.kind()
                 else { 
                     wasm.error(self.error(Error::MatchValueIsntEnum {
                         source: value.range(), typ: anal.ty }));
@@ -1669,10 +1586,10 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
                 {
                     fn do_mapping<'ast>(
-                        anal: &mut Analyzer<'_, '_, '_, 'ast>,
+                        anal: &mut Analyzer<'_, '_, '_>,
                         wasm: &mut WasmFunctionBuilder,
                         mappings: &[MatchMapping<'ast>],
-                        enum_sym: ConcreteTypeEnum,
+                        enum_sym: TypeEnum,
                         sym_local: LocalId,
                         tag: LocalId,
                         taken_as_inout: bool,
@@ -1780,7 +1697,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
 
             Expression::Block { block } => self.block(wasm, scope, &*block).0,
 
-            Expression::CreateStruct { data_type, fields, generics } => {
+            Expression::CreateStruct { data_type, fields } => {
                 let ty = match self.convert_ty(scope, data_type) {
                     Ok(v) => v,
                     Err(e) => {
@@ -1802,7 +1719,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     }
                 };
 
-                let ty = self.create_struct(wasm, scope, tyid, fields, generics, source);
+                let ty = self.create_struct(wasm, scope, tyid, fields, source);
                 AnalysisResult::new(ty, true)
             },
             
@@ -1823,8 +1740,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 };
 
 
-                let strct = self.types.get(tyid).as_concrete();
-                let ConcreteTypeKind::Struct(ConcreteTypeStruct { fields: sfields, .. }) = strct.kind 
+                let strct = self.types.get(tyid);
+                let TypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind()
                 else {
                     wasm.error(self.error(Error::FieldAccessOnNonEnumOrStruct {
                         source, typ: value.ty }));
@@ -1846,7 +1763,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
             },
 
 
-            Expression::CallFunction { name, is_accessor, args, generics } => {
+            Expression::CallFunction { name, is_accessor, args } => {
                 let mut scope_id = scope;
                 let pool = ArenaPool::tls_get_rec();
                 let aargs = {
@@ -1878,7 +1795,6 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 let ty = self.call_func(
                     func, 
                     aargs.leak(),
-                    generics,
                     source,
                     scope_id,
                     wasm
@@ -2014,9 +1930,9 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     },
                 };
 
-                let ty = self.types.get(ty_id).as_concrete();
-                let ConcreteTypeKind::Struct(sym) = ty.kind else { unreachable!() };
-                let ptr = wasm.alloc_stack(ty.size);
+                let ty = self.types.get(ty_id);
+                let TypeKind::Struct(sym) = ty.kind() else { unreachable!() };
+                let ptr = wasm.alloc_stack(ty.size());
 
                 let mut errored = false;
                 for ((sf, f), n) in sym.fields.iter().zip(vec.iter()).zip(v.iter()).rev() {
@@ -2078,7 +1994,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                             Vec::from_array_in(&*ArenaPool::tls_get_rec(), [Type::I32, ty]), 
                             source);
 
-                        let ConcreteTypeKind::Struct(sym) = slf.types.get(tuple).as_concrete().kind
+                        let TypeKind::Struct(sym) = slf.types.get(tuple).kind()
                         else { unreachable!() };
 
                         let field = sym.fields[1];
@@ -2206,11 +2122,11 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                                 &[Type::I64, lhs_anal.ty]
                             ), source);
                         
-                        let tuple = self.types.get(tuple).as_concrete();
-                        let ConcreteTypeKind::Struct(sym) = tuple.kind
+                        let tuple = self.types.get(tuple);
+                        let TypeKind::Struct(sym) = tuple.kind()
                         else { unreachable!() };
 
-                        let alloc = wasm.alloc_stack(tuple.size);
+                        let alloc = wasm.alloc_stack(tuple.size());
 
                         {
                             let field = sym.fields[0];
@@ -2250,7 +2166,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
             Expression::Unwrap(v) => {
                 let anal = self.expr(*v, scope, wasm);
                 let ty = match anal.ty {
-                    Type::Custom(v) => self.types.get(v).as_concrete(),
+                    Type::Custom(v) => self.types.get(v),
 
                     Type::Error => return AnalysisResult::error(),
 
@@ -2260,7 +2176,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     }
                 };
                 
-                let ConcreteTypeKind::Enum(e) = ty.kind
+                let TypeKind::Enum(e) = ty.kind()
                 else {
                     wasm.error(self.error(Error::CantUnwrapOnGivenType(v.range(), anal.ty)));
                     return AnalysisResult::error();
@@ -2318,7 +2234,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
             Expression::OrReturn(v) => {
                 let anal = self.expr(*v, scope, wasm);
                 let ty = match anal.ty {
-                    Type::Custom(v) => self.types.get(v).as_concrete(),
+                    Type::Custom(v) => self.types.get(v),
 
                     Type::Error => return AnalysisResult::error(),
 
@@ -2328,7 +2244,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     }
                 };
                 
-                let ConcreteTypeKind::Enum(enum_sym) = ty.kind
+                let TypeKind::Enum(enum_sym) = ty.kind()
                 else {
                     wasm.error(self.error(Error::CantTryOnGivenType(v.range(), anal.ty)));
                     return AnalysisResult::error();
@@ -2352,7 +2268,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return AnalysisResult::error();
                 };
 
-                let ConcreteTypeKind::Enum(func_sym) = ty.kind
+                let TypeKind::Enum(func_sym) = ty.kind()
                 else {
                     return err(self);
                 };
@@ -2580,8 +2496,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 };
 
 
-                let strct = self.types.get(tyid).as_concrete();
-                let ConcreteTypeKind::Struct(ConcreteTypeStruct { fields: sfields, .. }) = strct.kind 
+                let strct = self.types.get(tyid);
+                let TypeKind::Struct(TypeStruct { fields: sfields, .. }) = strct.kind()
                 else {
                     return Err(Error::FieldAccessOnNonEnumOrStruct {
                         source: node.range(), typ: ty });
@@ -2617,7 +2533,6 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
         &mut self,
         func_id: FuncId,
         args: &[(Type, SourceRange, Option<ExpressionNode>)],
-        generics: Option<&[DataType]>,
         source: SourceRange,
         scope: ScopeId,
 
@@ -2625,10 +2540,6 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
     ) -> Result<Type, ()> {
         let func = self.funcs.get(func_id);
         let func = func.clone();
-
-        if generics.is_some() && !matches!(func.kind, FunctionKind::Template { .. }) { 
-            wasm.error(self.error(Error::SymbolHasNoGenerics(source)));
-        }
 
         if func.args.len() != args.len() {
             wasm.error(self.error(Error::FunctionArgsMismatch {
@@ -2640,8 +2551,8 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
         match func.kind {
             FunctionKind::UserDefined { inout } => {
                 let inout = inout.map(|inout| {
-                    let ty = self.types.get(inout).as_concrete();
-                    let sp = wasm.alloc_stack(ty.size);
+                    let ty = self.types.get(inout);
+                    let sp = wasm.alloc_stack(ty.size());
                     wasm.sptr_const(sp);
                     (ty, sp)
                 });
@@ -2687,7 +2598,7 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 }
 
                 if let Some((ty, sp)) = inout {
-                    let ConcreteTypeKind::Struct(sym) = ty.kind else { unreachable!() };
+                    let TypeKind::Struct(sym) = ty.kind() else { unreachable!() };
                     let mut c = 0;
                     for (i, sig_arg) in func.args.iter().enumerate() {
                         if !sig_arg.1 { continue }
@@ -2737,12 +2648,12 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                     return Err(());
                 }
 
-                let ty_sym = self.types.get(ty).as_concrete();
+                let ty_sym = self.types.get(ty);
                 let ptr = {
-                    wasm.alloc_stack(ty_sym.size)
+                    wasm.alloc_stack(ty_sym.size())
                 };
 
-                let ConcreteTypeKind::Struct(sym) = ty_sym.kind 
+                let TypeKind::Struct(sym) = ty_sym.kind()
                 else { unreachable!() };
                 
                 for sym_arg in sym.fields.iter().rev().skip(1) {
@@ -2787,127 +2698,6 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
                 return Ok(func.ret)
             },
 
-
-            FunctionKind::Template { body, scope: func_scope, generics: sig_generics } => {
-                let gens = match generics {
-                    Some(v) => {
-                        if v.len() != sig_generics.len() {
-                            wasm.error(self.error(Error::SymbolGenericCountMissmatch {
-                                source, expected: sig_generics.len(), found: v.len() }));
-                            return Err(());
-                        }
-
-                        
-                        let mut vec = Vec::with_cap_in(self.output, v.len());
-                        v.iter().map(|x| {
-                            match self.convert_ty(func_scope, *x) {
-                                Ok(v) => v,
-                                Err(v) => {
-                                    wasm.error(self.error(v));
-                                    Type::Error
-                                },
-                            }
-                        }).zip(sig_generics.iter())
-                        .for_each(|(x, s)| vec.push((s.name(), x)));
-
-                        for s in sig_generics.iter().skip(vec.len()) {
-                            vec.push((s.name(), Type::Error));
-                        }
-
-                        vec
-                    },
-
-                    None => {
-                        let pool = ArenaPool::tls_get_rec();
-                        let mut names = Vec::with_cap_in(&*pool, sig_generics.len());
-                        sig_generics.iter().for_each(|x| names.push((x.name(), None)));
-                        for (sarg, arg) in func.args.iter().zip(args.iter()) {
-                            let result = self.infer(sarg.2, (arg.0, arg.1), &mut *names);
-                            if let Err(err) = result {
-                                wasm.error(self.error(err));
-                                return Err(());
-                            }
-                        }
-
-                        let mut vec = Vec::with_cap_in(self.output, names.len());
-                        for n in names.iter() {
-                            let Some(ty) = n.1
-                            else {
-                                wasm.error(self.error(Error::UnableToInferGeneric {
-                                    source,
-                                    name: n.0,
-                                }));
-
-                                return Err(());
-                            };
-
-                            vec.push((n.0, ty))
-                        }
-
-                        vec
-                    },
-                };
-
-                let call_func_id = match self.funcs.get_func_variant(func_id, &gens) {
-                    Some(v) => v,
-                    None => {
-                        let func_name = func.name;
-
-                        let generics = GenericsScope::new(gens.clone().leak());
-                        let scope = Scope::new(ScopeKind::Generics(generics), func_scope.some());
-                        let mut scope = self.scopes.push(scope);
-
-                        let func_id = self.module_builder.function_id();
-                        let mut builder = WasmFunctionBuilder::new(self.output, func_id);
-
-                        let args = {
-                            let mut vec = Vec::with_cap_in(self.output, func.args.len());
-
-                            for (a, fa) in args.iter().zip(func.args.iter()) {
-                                let ty = self.replace_generics(a.0, &gens);
-                                let wasm_ty = ty.to_wasm_ty(&self.types);
-
-                                let local_id = builder.param(wasm_ty);
-                                let t = Scope::new(
-                                    ScopeKind::Variable(VariableScope::new(fa.0, fa.1, ty, local_id)),
-                                    scope.some(),
-                                );
-
-                                scope = self.scopes.push(t);
-                                vec.push((fa.0, fa.1, ty))
-                            }
-
-                            vec.leak()
-                        };
-
-                        let ret = self.replace_generics(func.ret, &gens);
-                        let (_, _) = self.block(&mut builder, scope, &*body);
-
-                        builder.return_value(ret.to_wasm_ty(&self.types));
-
-                        self.module_builder.register(builder);
-
-                        let inout_ty_id = if args.iter().any(|a| a.1) {
-                            let temp = ArenaPool::tls_get_temp();
-                            let tuple = Vec::from_in(&*temp,
-                                                       args.iter().map(|a| a.2));
-                            Some(self.make_tuple(tuple, source))
-                        } else { None };
-
-
-                        let func = Function::new(func_name, args, ret, func_id, FunctionKind::UserDefined {
-                            inout: inout_ty_id });
-
-                        let func_id = self.funcs.pending();
-                        self.funcs.put(func_id, func);
-
-                        func_id
-                    }
-                };
-
-                self.funcs.put_variant(func_id, gens.leak(), call_func_id);
-                self.call_func(call_func_id, args, None, source, func_scope, wasm)
-            },
         }
     }
 
@@ -2917,359 +2707,66 @@ impl<'out, 'ast> Analyzer<'_, 'out, '_, 'ast> {
         wasm: &mut WasmFunctionBuilder,
         scope: ScopeId,
         ty: TypeId,
-        fields: &'ast [(StringIndex, SourceRange, ExpressionNode)],
-        generics: Option<&[DataType]>,
+        fields: &[(StringIndex, SourceRange, ExpressionNode)],
         source: SourceRange,
     ) -> Type {
         let tyv = self.types.get(ty);
 
-        if generics.is_some() && !matches!(tyv.kind(), TypeSymbolKind::Template { .. }) {
-            wasm.error(self.error(Error::SymbolHasNoGenerics(source)));
-        }
-
-        match tyv.kind() {
-            | TypeSymbolKind::GenericPlaceholder
-            | TypeSymbolKind::Concrete(_) => {
-                let strct = tyv.as_concrete();
-                let ConcreteTypeKind::Struct(ConcreteTypeStruct { fields: sfields, .. }) = strct.kind 
-                else {
-                    wasm.error(self.error(Error::StructCreationOnNonStruct {
-                        source, typ: Type::Custom(ty) }));
-                    return Type::Custom(ty);
-                };
-
-
-                for f in fields.iter() {
-                    if !sfields.iter().any(|x| x.0.name == f.0) {
-                        wasm.error(self.error(Error::FieldDoesntExist {
-                            source: f.1,
-                            field: f.0,
-                            typ: Type::Custom(ty),
-                        }));
-
-                        return Type::Custom(ty);
-                    }
-                }
-                
-                let mut vec = Vec::new();
-                for sf in sfields.iter() {
-                    if !fields.iter().any(|x| x.0 == sf.0.name) {
-                        vec.push(sf.0.name);
-                    }
-                }
-
-
-                if !vec.is_empty() {
-                    wasm.error(self.error(Error::MissingFields { source, fields: vec }));
-                    return Type::Custom(ty);
-                }
-
-                
-                let alloc = wasm.alloc_stack(strct.size);
-                for sf in sfields.iter() {
-                    let val = fields.iter().find(|x| x.0 == sf.0.name).unwrap();
-                    let ptr = alloc.add(sf.1);
-
-                    let node = self.expr(val.2, scope, wasm);
-                    if !node.ty.eq_sem(sf.0.ty) {
-                        wasm.error(self.error(Error::InvalidType 
-                            { source: val.1, found: node.ty, expected: sf.0.ty }));
-                        return Type::Custom(ty);
-                    }
-
-                    let wty = sf.0.ty.to_wasm_ty(&self.types);
-                    wasm.sptr_const(ptr);
-                    wasm.write(wty);
-                }
-
-                wasm.sptr_const(alloc);
-                Type::Custom(ty)
-            }
-
-
-            TypeSymbolKind::Template(strct) => {
-                let TemplateTypeKind::Struct(TemplateTypeStruct { fields: sfields, .. }) = strct.kind
-                else {
-                    wasm.error(self.error(Error::StructCreationOnNonStruct {
-                        source, typ: Type::Custom(ty) }));
-                    return Type::Error;
-                };
-
-
-                for f in fields.iter() {
-                    if !sfields.iter().any(|x| x.name == f.0) {
-                        wasm.error(self.error(Error::FieldDoesntExist {
-                            source: f.1,
-                            field: f.0,
-                            typ: Type::Custom(ty),
-                        }));
-
-                        return Type::Error;
-                    }
-                }
-                
-                let mut vec = Vec::new();
-                for sf in sfields.iter() {
-                    if !fields.iter().any(|x| x.0 == sf.name) {
-                        vec.push(sf.name);
-                    }
-                }
-
-                if !vec.is_empty() {
-                    wasm.error(self.error(Error::MissingFields { source, fields: vec }));
-                    return Type::Error;
-                }
-
-                let pool = ArenaPool::tls_get_rec();
-                let field_tys = {
-                    let mut vec = Vec::with_cap_in(&*pool, fields.len());
-                    fields.iter().for_each(|x| vec.push(self.expr(x.2, scope, wasm).ty));
-                    vec
-                };
-
-                let gens = match generics {
-                    Some(v) => {
-                        if v.len() != strct.generics.len() {
-                            wasm.error(self.error(Error::SymbolGenericCountMissmatch {
-                                source, expected: strct.generics.len(), found: v.len() }));
-                        }
-
-                        let mut vec = Vec::with_cap_in(self.output, strct.generics.len());
-
-                        v.iter().map(|x| {
-                            match self.convert_ty(scope, *x) {
-                                Ok(v) => v,
-                                Err(v) => {
-                                    wasm.error(self.error(v));
-                                    Type::Error
-                                },
-                            }
-                        }).zip(strct.generics.iter())
-                        .for_each(|(x, s)| vec.push((s.name(), x)));
-
-                        for s in strct.generics.iter().skip(vec.len()) {
-                            vec.push((s.name(), Type::Error));
-                        }
-
-                        vec
-                    },
-
-                    None => {
-                        let mut names = Vec::with_cap_in(&*pool, strct.generics.len());
-                        strct.generics.iter().for_each(|x| names.push((x.name(), None)));
-                        for ((sarg, arg), arg_ty) in sfields.iter()
-                                                            .zip(fields.iter())
-                                                            .zip(field_tys.iter()) {
-
-                            let result = self.infer(sarg.ty, (*arg_ty, arg.1), &mut *names);
-
-                            if let Err(err) = result {
-                                wasm.error(self.error(err));
-                                return Type::Error;
-                            }
-                        }
-
-                        let mut vec = Vec::with_cap_in(self.output, names.len());
-                        for n in names.iter() {
-                            let Some(ty) = n.1
-                            else {
-                                wasm.error(self.error(Error::UnableToInferGeneric {
-                                    source,
-                                    name: n.0,
-                                }));
-
-                                return Type::Error;
-                            };
-
-                            vec.push((n.0, ty))
-                        }
-
-                        vec
-                    },
-
-                };
-
-
-                let ty_id = self.get_ty(ty, &*gens, source) ;
-
-                let strct = self.types.get(ty_id);
-                let TypeSymbolKind::Concrete(conc) = strct.kind() else { unreachable!() };
-                let ConcreteTypeKind::Struct(strct) = conc.kind else { unreachable!() };
-                
-                let alloc = wasm.alloc_stack(conc.size);
-                for (sf, ty) in strct.fields.iter().zip(field_tys.iter()).rev() {
-                    let val = fields.iter().find(|x| x.0 == sf.0.name).unwrap();
-                    let ptr = alloc.add(sf.1);
-
-                    if !ty.eq_sem(sf.0.ty) {
-                        wasm.error(self.error(Error::InvalidType 
-                            { source: val.1, found: *ty, expected: sf.0.ty }));
-                        return Type::Custom(ty_id);
-                    }
-
-                    let wty = sf.0.ty.to_wasm_ty(&self.types);
-                    wasm.sptr_const(ptr);
-                    wasm.write(wty);
-                }
-
-                wasm.sptr_const(alloc);
-                Type::Custom(ty_id)
-            },
-        }
-    }
-
-
-    fn get_ty(&mut self, ty_id: TypeId, gens: &[(StringIndex, Type)], source: SourceRange) -> TypeId {
-        let ty = self.types.get(ty_id);
-
-        let t = match ty.kind() {
-            | TypeSymbolKind::Concrete(_)
-            | TypeSymbolKind::GenericPlaceholder => return ty_id,
-
-            TypeSymbolKind::Template(v) => v,
+        let TypeKind::Struct(TypeStruct { fields: sfields, .. }) = tyv.kind()
+        else {
+            wasm.error(self.error(Error::StructCreationOnNonStruct {
+                source, typ: Type::Custom(ty) }));
+            return Type::Custom(ty);
         };
 
-        match t.kind {
-            TemplateTypeKind::Struct(v) => {
-                let pool = ArenaPool::tls_get_rec();
-                let ty_id = match self.types.get_ty_variant(ty_id, &gens) {
-                    Some(v) => v,
-                    None => {
-                        let ty_name = ty.display_name();
-                        let ty_id = self.types.pending();
 
-                        let mut ty_builder = TypeBuilder::new(&*pool);
-                        ty_builder.add_ty(ty_id, ty_name, source);
-                        ty_builder.set_struct_fields(
-                            ty_id, 
-                            v.fields.iter().map(|s| (s.name, self.replace_generics(s.ty, &gens))),
-                            &[],
-                            TypeStructStatus::User,
-                        );
+        for f in fields.iter() {
+            if !sfields.iter().any(|x| x.0.name == f.0) {
+                wasm.error(self.error(Error::FieldDoesntExist {
+                    source: f.1,
+                    field: f.0,
+                    typ: Type::Custom(ty),
+                }));
 
-                        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, 
-                                                        &mut self.funcs, &mut self.module_builder);
-                        ty_builder.finalise(data, &mut self.errors);
-
-                        ty_id
-                    },
-                };
-
-                ty_id
-            },
-
-            TemplateTypeKind::Enum(v) => {
-                let pool = ArenaPool::tls_get_rec();
-                let ty_id = match self.types.get_ty_variant(ty_id, &gens) {
-                    Some(v) => v,
-                    None => {
-                        let ty_name = ty.display_name();
-                        let ty_id = self.types.pending();
-
-                        let mut ty_builder = TypeBuilder::new(&*pool);
-                        ty_builder.add_ty(ty_id, ty_name, source);
-                        ty_builder.set_enum_fields(
-                            ty_id, 
-                            v.mappings.iter().map(|s| (s.name(), s.ty().map(|ty| self.replace_generics(ty, &gens)))),
-                            &[],
-                            TypeEnumStatus::User,
-                        );
-
-                        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, 
-                                                        &mut self.funcs, &mut self.module_builder);
-                        ty_builder.finalise(data, &mut self.errors);
-
-                        ty_id
-                    },
-                };
-
-                ty_id
-            },
-        }
-    }
-
-
-    fn generics_namespace(&mut self, builder: &mut WasmFunctionBuilder, generics: &[Generic]) -> Namespace<'out> {
-        let mut ns = Namespace::new(self.output);
-        for g in generics {
-            if ns.get_type(g.name()).is_some() {
-                builder.error(self.error(Error::GenericAlreadyDefined 
-                                         { source: g.range() }));
-                continue
+                return Type::Custom(ty);
             }
-
-            let ty = TypeSymbol::new(g.name(), TypeSymbolKind::GenericPlaceholder);
-            let ty_id = self.types.pending();
-            self.types.put(ty_id, ty);
-
-            ns.add_type(g.name(), ty_id);
         }
-
-        ns
-    }
-
-
-    fn infer<'a>(
-        &mut self, base: Type,
-        (given, source): (Type, SourceRange),
-        names: &mut [(StringIndex, Option<Type>)]
-    ) -> Result<(), Error> {
-        // If they're equal, nothing to infer
-        if base == given { return Ok(()) }
-
-        // Primitive types don't have generics
-        let Type::Custom(ty_id) = base
-        else { return Ok(()) };
-
-        let ty = self.types.get(ty_id);
-
-        // For any type to have a generic in them
-        // they'd need to be a generic placeholder
-        if !matches!(ty.kind(), TypeSymbolKind::GenericPlaceholder) { return Ok(()) }
-
-        for n in names.iter_mut() {
-            dbg!(&n);
-            if n.0 != ty.display_name() { continue }
-
-            match n.1 {
-                Some(v) => {
-                    if v != base {
-                        return Err(Error::InvalidType { source, found: given, expected: v })
-                    }
-                },
-
-                None => n.1 = Some(given),
+        
+        let mut vec = Vec::new();
+        for sf in sfields.iter() {
+            if !fields.iter().any(|x| x.0 == sf.0.name) {
+                vec.push(sf.0.name);
             }
         }
 
-        Ok(())
-    }
 
-
-    fn replace_generics(
-        &mut self, ty_id: Type,
-        gens: &[(StringIndex, Type)],
-    ) -> Type {
-
-        let Type::Custom(ty) = ty_id else { return ty_id };
-        let ty = self.types.get(ty);
-
-        match ty.kind() {
-            TypeSymbolKind::Concrete(_) => return ty_id,
-
-            TypeSymbolKind::Template(_) => panic!("nested generics arent supported yet"),
-
-            TypeSymbolKind::GenericPlaceholder => {
-                for (n, t) in gens {
-                    if ty.display_name() == *n {
-                        return *t
-                    }
-                }
-            },
+        if !vec.is_empty() {
+            wasm.error(self.error(Error::MissingFields { source, fields: vec }));
+            return Type::Custom(ty);
         }
 
-        todo!()
+        
+        let alloc = wasm.alloc_stack(tyv.size());
+        for sf in sfields.iter() {
+            let val = fields.iter().find(|x| x.0 == sf.0.name).unwrap();
+            let ptr = alloc.add(sf.1);
+
+            let node = self.expr(val.2, scope, wasm);
+            if !node.ty.eq_sem(sf.0.ty) {
+                wasm.error(self.error(Error::InvalidType 
+                    { source: val.1, found: node.ty, expected: sf.0.ty }));
+                return Type::Custom(ty);
+            }
+
+            let wty = sf.0.ty.to_wasm_ty(&self.types);
+            wasm.sptr_const(ptr);
+            wasm.write(wty);
+        }
+
+        wasm.sptr_const(alloc);
+        Type::Custom(ty)
     }
+
 }
 
 

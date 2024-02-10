@@ -38,14 +38,12 @@ pub enum Declaration<'a> {
         name: StringIndex,
         header: SourceRange,
         fields: &'a [(StringIndex, DataType<'a>, SourceRange)],
-        generics: &'a [Generic],
     },
 
     Enum {
         name: StringIndex,
         header: SourceRange,
         mappings: &'a [EnumMapping<'a>],
-        generics: &'a [Generic],
     },
 
     Function {
@@ -94,15 +92,14 @@ pub struct FunctionSignature<'a> {
     pub source: SourceRange,
     pub arguments: &'a [FunctionArgument<'a>],
     pub return_type: DataType<'a>,
-    pub generics: &'a [Generic],
 }
 
 impl<'a> FunctionSignature<'a> {
     pub fn new(
         is_system: bool, name: StringIndex, 
         source: SourceRange, arguments: &'a [FunctionArgument<'a>], 
-        generics: &'a [Generic], return_type: DataType<'a>) -> Self { 
-        Self { is_system, name, source, arguments, return_type, generics }
+        return_type: DataType<'a>) -> Self { 
+        Self { is_system, name, source, arguments, return_type }
     }
 }
 
@@ -221,17 +218,3 @@ pub enum UseItemKind<'a> {
     All,
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Generic {
-    name: StringIndex,
-    source: SourceRange,
-}
-
-impl Generic {
-    pub fn new(name: StringIndex, source: SourceRange) -> Self { Self { name, source } }
-    #[inline(always)]
-    pub fn name(self) -> StringIndex { self.name }
-    #[inline(always)]
-    pub fn range(self) -> SourceRange { self.source }
-}
