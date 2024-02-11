@@ -36,33 +36,21 @@ impl<'a> Function<'a> {
 
 #[derive(Debug)]
 pub struct FunctionMap<'a> {
-    map: KVec<
-        FuncId, 
-        Option<(
-            Function<'a>,
-            HashMap<&'a [(StringIndex, Type)], FuncId, DefaultSeed, &'a Arena>
-    )>>,
-    arena: &'a Arena,
+    map: KVec<FuncId, Option<Function<'a>>>,
 }
 
 
 impl<'a> FunctionMap<'a> {
-    pub fn new(arena: &'a Arena) -> Self {
+    pub fn new() -> Self {
         Self {
             map: KVec::new(),
-            arena,
         }
     }
 
 
     #[inline(always)]
     pub fn get(&self, id: FuncId) -> &Function<'a> {
-        &self.map.get(id).unwrap().as_ref().unwrap().0
-    }
-
-
-    pub fn get_func_variant(&self, func_id: FuncId, ty: &[(StringIndex, Type)]) -> Option<FuncId> {
-        self.map[func_id].as_ref().unwrap().1.get(ty).copied()
+        &self.map.get(id).unwrap().as_ref().unwrap()
     }
 
 
@@ -74,12 +62,6 @@ impl<'a> FunctionMap<'a> {
 
     #[inline(always)]
     pub fn put(&mut self, func_id: FuncId, ns: Function<'a>) {
-        assert!(self.map[func_id].swap(Some((ns, HashMap::new_in(self.arena)))).is_none());
-    }
-
-
-    #[inline(always)]
-    pub fn put_variant(&mut self, base: FuncId, gens: &'a [(StringIndex, Type)], variant: FuncId) {
-        assert!(self.map[base].as_mut().unwrap().1.insert(gens, variant).is_none());
+        assert!(self.map[func_id].swap(Some(ns)).is_none());
     }
 }

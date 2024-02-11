@@ -11,7 +11,7 @@ use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{DataType, DataTypeKind, nodes::{Node, decl::{Declaration, DeclarationNode, FunctionSignature}, stmt::{Statement, StatementNode}, expr::{Expression, ExpressionNode, BinaryOperator, UnaryOperator, MatchMapping}}};
+use parser::{nodes::{decl::{Declaration, DeclarationNode, FunctionSignature}, expr::{BinaryOperator, Expression, ExpressionNode, MatchMapping, UnaryOperator}, stmt::{Statement, StatementNode}, Node}, Block, DataType, DataTypeKind};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeKind, ConcreteTypeEnumKind, TypeEnumStatus, TypeStructStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
@@ -285,8 +285,8 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         let mut slf = Self {
             scopes: ScopeMap::new(),
             namespaces: NamespaceMap::new(output),
-            types: TypeMap::new(output),
-            funcs: FunctionMap::new(output),
+            types: TypeMap::new(),
+            funcs: FunctionMap::new(),
             module_builder: WasmModuleBuilder::new(output),
             errors: KVec::new(),
             output,
@@ -454,7 +454,24 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 },
 
 
-                Declaration::Function { sig, .. } => {
+                Declaration::Function { sig, is_in_impl, .. } => {
+                    if is_in_impl.is_some() && sig.name == StringMap::ITER_NEXT {
+                        let validate_sig = || {
+                            if sig.arguments.len() != 1 { return false }
+                            let ty = is_in_impl.unwrap();
+                            if sig.arguments[0].data_type().kind() == ty.kind() {
+                                return false 
+                            }
+                            if !sig.arguments[0].is_inout() { return false }
+                            if matches!(sig.return_type.kind(), DataTypeKind::Option(_)) { return false }
+
+                            true
+                        };
+
+                        if !validate_sig() {
+                            builder.error(self.error(Error::IteratorFunctionInvalidSig(sig.source)));
+                        }
+                    }
                     let namespace = self.namespaces.get_mut(namespace);
                     if namespace.get_func(sig.name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
@@ -499,6 +516,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     }
 
                 },
+
                 Declaration::Trait { name, sigs } => todo!(),
             }
         }
@@ -677,7 +695,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
     ) {
         for decl in decls {
             match decl.kind() {
-                Declaration::Function { sig, body } => {
+                Declaration::Function { sig, .. } => {
                     let args = {
                         let mut args = Vec::with_cap_in(self.output, sig.arguments.len());
 
@@ -777,7 +795,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         Ok(v) => v,
                         Err(e) => {
                             builder.error(self.error(e));
-                            return;
+                            continue;
                         },
                     };
                     
@@ -900,8 +918,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
             Declaration::Enum { .. } => (),
 
 
-            Declaration::Function { sig, body } => {
+            Declaration::Function { sig, body, .. } => {
                 let func = self.scopes.get(scope).get_func(sig.name, &self.scopes, &self.namespaces).unwrap();
+                dbg!(self.string_map.get(sig.name));
                 let func = self.funcs.get(func);
                 match func.kind {
                     FunctionKind::UserDefined { inout } => {
@@ -948,6 +967,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             let ty = self.types.get(inout);
                             wasm.param(WasmType::Ptr { size: ty.size() })
                         });
+
                         for i in ids.iter() {
                             wasm.write_to(&mut string, |wasm| {
                                 let f = fields.unwrap().fields[counter];
@@ -970,6 +990,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         }
 
                         wasm.set_finaliser(string.clone_in(self.module_builder.arena));
+                        wasm.export(sig.name);
 
                         let func_ret = func.ret;
 
@@ -992,6 +1013,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
             Declaration::Impl { data_type, body } => {
                 let Ok(ns) = self.convert_ty(scope, data_type)
                 else { return };
+
+                dbg!(ns);
 
                 let ns = self.namespaces.get_type(ns);
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
@@ -1165,18 +1188,69 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     return Err(());
                 }
 
-                if binding.is_inout() && !expr.0 {
+                if binding.0 && !expr.0 {
                     wasm.error(self.error(Error::InOutBindingWithoutInOutValue {
-                        value_range: expr.1.range(), binding_range: binding.range() }));
+                        value_range: expr.1.range() }));
                     return Err(());
                 }
 
-                if !binding.is_inout() && expr.0 {
+                if !binding.0 && expr.0 {
                     wasm.error(self.error(Error::InOutValueWithoutInOutBinding { value_range: expr.1.range() }));
                     return Err(());
                 }
 
-                todo!()
+                let func = self.namespaces.get_type(expr_anal.ty);
+                if self.namespaces.get(func).get_func(StringMap::ITER_NEXT).is_none() {
+                    wasm.error(self.error(Error::ValueIsntAnIterator {
+                        ty: expr_anal.ty, range: expr.1.range() }));
+                    return Err(());
+                };
+
+
+                let var_decl_func_call_args = [(expr.1, false)];
+                let var_decl = Node::Statement(StatementNode::new(Statement::Variable {
+                                name: StringMap::INVALID_IDENT, hint: None, is_mut: false,
+                                rhs: ExpressionNode::new(Expression::CallFunction {
+                                    name: StringMap::ITER_NEXT, is_accessor: true,
+                                    args: &var_decl_func_call_args }, source) },
+                                source));
+
+                let match_id = ExpressionNode::new(
+                    Expression::Identifier(StringMap::INVALID_IDENT), source);
+
+                let match_arms = [
+                    MatchMapping::new(
+                        StringMap::SOME, binding.1, source,
+                        source,
+                        ExpressionNode::new(Expression::Block { block: body }, source),
+                        false),
+
+                    MatchMapping::new(
+                        StringMap::NONE, StringMap::INVALID_IDENT, source,
+                        source,
+                        ExpressionNode::new(Expression::Break, source),
+                        false),
+                ];
+
+                let body_match = Node::Expression(ExpressionNode::new(Expression::Match { 
+                    value: &match_id,
+                    taken_as_inout: false,
+                    mappings: &match_arms
+                }, source));
+
+                let mut loop_body = [
+                    var_decl,
+                    body_match,
+                ];
+                
+                let tree = ExpressionNode::new(
+                    Expression::Loop { body: Block::new(
+                        &mut loop_body,
+                        source) },
+                    source
+                );
+
+                self.expr(tree, *scope, wasm);
             },
         };
         Ok(())
@@ -1250,7 +1324,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let func = self.namespaces.get_type(ty);
                         let func = self.namespaces.get(func).get_func(name).unwrap();
                         
-                        self.call_func(func, &[], source, scope, wasm).unwrap();
+                        self.call_func(func, &[], false, source, scope, wasm).unwrap();
                         AnalysisResult::new(Type::BOOL, true)
                     },
                 }
@@ -1603,11 +1677,15 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             wasm.block(|wasm, _| {
                                 wasm.local_get(tag);
                                 
-                                let mut string = format_in!(anal.output, "br_table {} ", mappings.len());
-
+                                let mut string = format_in!(anal.output, "br_table ");
+ 
+                                dbg!(mappings);
                                 for i in (0..mappings.len()).rev() {
+                                    println!("{i}");
                                     let _ = write!(string, "{} ", i);
                                 }
+
+                                let _ = write!(string, "{} ", 0);
 
                                 wasm.raw(&string);
                             });
@@ -1622,17 +1700,15 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                             if mapping.is_inout() && !taken_as_inout {
                                 wasm.error(anal.error(Error::InOutBindingWithoutInOutValue {
-                                    value_range, binding_range: mapping.binding_range() }))
+                                    value_range }))
                             }
 
                             let (ty, local) = match enum_sym.kind() {
                                 ConcreteTypeEnumKind::TaggedUnion(v) => {
-                                    dbg!(v, mapping.name(), &anal.string_map);
                                     let emapping = v.fields().iter().find(|x| x.name() == mapping.name()).unwrap();
                                     let ty = emapping.ty().unwrap_or(Type::Unit);
                                     let wty = ty.to_wasm_ty(&anal.types);
                                     let local = wasm.local(wty);
-
 
                                     wasm.local_get(sym_local);
                                     wasm.u32_const(v.union_offset());
@@ -1769,9 +1845,16 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let aargs = {
                     let mut vec = Vec::new_in(&*pool);
                     
-                    for a in args.iter() {
+                    for (i, a) in args.iter().enumerate() {
+                        let mut a = *a;
+                        if i == 0 && is_accessor { a.1 = true }
                         let scope = scope_id;
                         let anal = self.expr(a.0, scope, wasm);
+
+                        if a.1 && !anal.is_mut && i != 0 {
+                            wasm.error(self.error(Error::InOutValueIsntMut(a.0.range())))
+                        }
+
                         vec.push((anal.ty, a.0.range(), if a.1 { Some(a.0) } else { None }));
                     }
 
@@ -1795,6 +1878,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let ty = self.call_func(
                     func, 
                     aargs.leak(),
+                    is_accessor,
                     source,
                     scope_id,
                     wasm
@@ -2533,6 +2617,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
         &mut self,
         func_id: FuncId,
         args: &[(Type, SourceRange, Option<ExpressionNode>)],
+        is_accessor: bool,
         source: SourceRange,
         scope: ScopeId,
 
@@ -2567,20 +2652,20 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 };
 
                 let mut errored = false;
-                for (sig_arg, call_arg) in func.args.iter().zip(args.iter()) {
+                for (i, (sig_arg, call_arg)) in func.args.iter().zip(args.iter()).enumerate() {
                     if !sig_arg.2.eq_sem(call_arg.0) {
                         errored = true;
                         wasm.error(self.error(Error::InvalidType {
                             source: call_arg.1, found: call_arg.0, expected: sig_arg.2 }));
                     }
 
-                    if sig_arg.1 && call_arg.2.is_none() {
+                    if sig_arg.1 && call_arg.2.is_none() && !(i == 0 && is_accessor) {
                         errored = true;
-                        wasm.error(self.error(Error::InOutValueWithoutInOutBinding {
+                        wasm.error(self.error(Error::InOutBindingWithoutInOutValue {
                             value_range: call_arg.1 }))
                     }
 
-                    if !sig_arg.1 && call_arg.2.is_some() {
+                    if !sig_arg.1 && call_arg.2.is_some() && !(i == 0 && is_accessor) {
                         errored = true;
                         wasm.error(self.error(Error::InOutValueWithoutInOutBinding {
                             value_range: call_arg.1 }))
@@ -2602,6 +2687,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let mut c = 0;
                     for (i, sig_arg) in func.args.iter().enumerate() {
                         if !sig_arg.1 { continue }
+                        if i == 0 && is_accessor { continue }
 
                         let field = sym.fields[c];
                         wasm.sptr_const(sp);
@@ -2624,20 +2710,20 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
             FunctionKind::Extern { ty } => {
                 let mut errored = false;
-                for (sig_arg, call_arg) in func.args.iter().zip(args.iter()) {
+                for (i, (sig_arg, call_arg)) in func.args.iter().zip(args.iter()).enumerate() {
                     if !sig_arg.2.eq_sem(call_arg.0) {
                         errored = true;
                         wasm.error(self.error(Error::InvalidType {
                             source: call_arg.1, found: call_arg.0, expected: sig_arg.2 }));
                     }
 
-                    if sig_arg.1 && call_arg.2.is_none() {
+                    if sig_arg.1 && call_arg.2.is_none() && !(i == 0 && is_accessor) {
                         errored = true;
                         wasm.error(self.error(Error::InOutValueWithoutInOutBinding {
                             value_range: call_arg.1 }))
                     }
 
-                    if !sig_arg.1 && call_arg.2.is_some() {
+                    if !sig_arg.1 && call_arg.2.is_some() && !(i == 0 && is_accessor) {
                         errored = true;
                         wasm.error(self.error(Error::InOutValueWithoutInOutBinding {
                             value_range: call_arg.1 }))

@@ -9,18 +9,7 @@ use crate::types::{ty::Type, ty_map::TypeMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {
-    UnableToInferGeneric {
-        source: SourceRange,
-        name: StringIndex
-    },
-
-    SymbolGenericCountMissmatch {
-        source: SourceRange,
-        expected: usize,
-        found: usize,
-    },
-
-    SymbolHasNoGenerics(SourceRange),
+    IteratorFunctionInvalidSig(SourceRange),
 
     InvalidCast {
         range: SourceRange,
@@ -32,10 +21,6 @@ pub enum Error {
         attr: (SourceRange, StringIndex),
         value: SourceRange,
         expected: &'static str,
-    },
-
-    GenericAlreadyDefined {
-        source: SourceRange,
     },
 
     UnknownAttr(SourceRange, StringIndex),
@@ -148,7 +133,6 @@ pub enum Error {
 
     InOutBindingWithoutInOutValue {
         value_range: SourceRange,
-        binding_range: SourceRange,
     },
     
     StructCreationOnNonStruct {
@@ -555,9 +539,8 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             },
 
             
-            Error::InOutBindingWithoutInOutValue { value_range, binding_range } => {
+            Error::InOutBindingWithoutInOutValue { value_range } => {
                 let mut err = fmt.error("in-out binding without in-out value");
-                err.highlight_with_note(*binding_range, "..this takes the value as in-out");
                 err.highlight_with_note(*value_range, "consider adding a '&' at the start of this");
             },
              
@@ -729,26 +712,9 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
                     .highlight_with_note(*range, &msg);
             },
 
-            Error::GenericAlreadyDefined { source } => {
-                fmt.error("generic is already defined")
-                    .highlight(*source)
-            },
-
-
-            Error::SymbolHasNoGenerics(source) => {
-                fmt.error("symbol has no generics")
-                    .highlight(*source)
-            },
-
-            Error::SymbolGenericCountMissmatch { source, expected, found } => {
-                fmt.error("symbol generic count missmatch")
-                    .highlight_with_note(*source, &format!("expected {expected} generics found {found}"))
-            },
-
-            Error::UnableToInferGeneric { source, name } => {
-                let msg = format!("unable to infer '{}', please consider explicitly providing it", fmt.string(*name));
-                fmt.error("unable to infer generic")
-                    .highlight_with_note(*source, &msg)
+            Error::IteratorFunctionInvalidSig(v) => {
+                fmt.error("invalid iterator function signature")
+                    .highlight_with_note(*v, "signature must match 'fn __next__(&self): <type>?`");
             },
 
             Error::Bypass => (),

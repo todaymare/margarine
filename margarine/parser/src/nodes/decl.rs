@@ -49,6 +49,7 @@ pub enum Declaration<'a> {
     Function {
         sig: FunctionSignature<'a>,
         body: Block<'a>,
+        is_in_impl: Option<DataType<'a>>,
     },
     
     Impl {

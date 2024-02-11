@@ -69,9 +69,9 @@ unsafe impl<T> Send for Ptr<T> {}
 
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Ctx {
-    base: SendPtr,
+    base: SendPtr<u8>,
     size: u32,
 }
 
@@ -89,11 +89,10 @@ impl Ctx {
     }
 }
 
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct SendPtr(*const u8);
-unsafe impl Send for SendPtr {}
-unsafe impl Sync for SendPtr {}
+pub struct SendPtr<T: Send + Sync>(pub *const T);
+unsafe impl<T: Send + Sync> Send for SendPtr<T> {}
+unsafe impl<T: Send + Sync> Sync for SendPtr<T> {}
 
 
 #[margarine]

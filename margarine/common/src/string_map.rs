@@ -28,6 +28,10 @@ impl<'a> StringMap<'a> {
     pub const NONE : StringIndex = StringIndex(12);
     pub const SELF : StringIndex = StringIndex(13);
     pub const CAST : StringIndex = StringIndex(14);
+    pub const INVALID_IDENT : StringIndex = StringIndex(15);
+
+    pub const ITER_NEXT : StringIndex = StringIndex(16);
+
  
     #[inline(always)]
     pub fn new(arena: &'a Arena) -> Self {
@@ -59,6 +63,9 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("none"), Self::NONE);
         assert_eq!(s.insert("self"), Self::SELF);
         assert_eq!(s.insert("cast"), Self::CAST);
+        assert_eq!(s.insert("::"), Self::INVALID_IDENT);
+
+        assert_eq!(s.insert("__next__"), Self::ITER_NEXT);
         s
     }
 

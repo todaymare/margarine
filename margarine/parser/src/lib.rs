@@ -402,10 +402,53 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 }
             };
             
-            let result = DataType::new(
+            let mut result = DataType::new(
                 SourceRange::new(start, self.current_range().end()), 
                 result
             );
+
+
+            loop {
+                let mut has_updated = false;
+                if self.peek_is(TokenKind::QuestionMark) {
+                    self.advance();
+                    let end = self.current_range().end();
+                    let option_result = DataTypeKind::Option(self.arena.alloc_new(result));
+                    let option_result = DataType::new(
+                        SourceRange::new(start, end),
+                        option_result,
+                    );
+
+                    result = option_result;
+                    has_updated = true;
+                }
+
+                if self.peek_is(TokenKind::SquigglyDash) {
+                    self.advance();
+                    self.advance();
+
+                    let oth_typ = self.expect_type()?;
+
+                    let range = SourceRange::new(result.range().start(), oth_typ.range().end());
+
+                    let new_result = DataTypeKind::Result(
+                        self.arena.alloc_new(result), 
+                        self.arena.alloc_new(oth_typ)
+                    );
+
+                    let new_result = DataType::new(
+                        range,
+                        new_result,
+                    );
+
+                    result = new_result;
+                    has_updated = true;
+                }
+
+                if !has_updated {
+                    break
+                }
+            }
 
             result
 
@@ -892,6 +935,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                      return_type,
                 ),
                 body,
+                is_in_impl: settings.is_in_impl,
             },
 
             SourceRange::new(start, end)
@@ -1173,7 +1217,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::For))?;
         self.advance();
 
-        let binding = self.parse_pattern()?;
+        let binding_start = self.current_range().start();
+        let is_inout = self.is_inout();
+
+        let binding = self.expect_identifier()?;
+        let binding_range = SourceRange::new(binding_start, self.current_range().end());
         self.advance();
 
         self.expect(TokenKind::Keyword(Keyword::In))?;
@@ -1194,7 +1242,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(StatementNode::new(
             Statement::ForLoop {
-                binding,
+                binding: (is_inout, binding, binding_range),
                 expr: (is_expr_inout, expr),
                 body: block
             },

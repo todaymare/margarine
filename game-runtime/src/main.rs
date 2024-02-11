@@ -1,12 +1,14 @@
-use std::{env, fs};
+use std::{env, fs, ptr::null};
 
-use butter_runtime_api::ffi::{Ctx, WasmPtr};
+use butter_runtime_api::ffi::{Ctx, SendPtr, WasmPtr};
 use game_runtime::decode;
 use libloading::{Library, Symbol};
 use wasmtime::{Config, Engine, Module, Linker, Store, Val};
 
 type ExternFunction<'a> = Symbol<'a, ExternFunctionRaw>;
 type ExternFunctionRaw = unsafe extern "C" fn(*const Ctx, *mut u8);
+
+static mut CTX_PTR : SendPtr<Ctx> = SendPtr(null());
 
 fn main() {
     let file = env::current_exe().unwrap();
@@ -53,9 +55,9 @@ fn main() {
             linker.func_wrap(&*path_noext, i, move |param: i32| {
                 let ptr = u32::from_ne_bytes(param.to_ne_bytes());
                 let ptr = WasmPtr::from_u32(ptr);
-                let ptr = ptr.as_mut(&ctx);
+                let ptr = ptr.as_mut(unsafe { &*CTX_PTR.0 });
 
-                unsafe { sym(&ctx, ptr); };
+                unsafe { sym(CTX_PTR.0, ptr); };
             }).unwrap();
         }
 
@@ -75,6 +77,8 @@ fn main() {
     let size = memory.data_size(&store) - 1;
     ctx.set_size(size.try_into().unwrap());
 
+    unsafe { CTX_PTR = SendPtr(&ctx) };
+
     instance
         .get_global(&mut store, "host_memory_offset").unwrap()
         .set(&mut store, Val::I64((ptr as isize).try_into().unwrap()))
@@ -85,9 +89,8 @@ fn main() {
 
     for l in libs {
         if let Ok(f) = unsafe { l.get::<unsafe extern "C" fn(&Ctx)>(b"_finalise") } {
-            unsafe { f(&ctx) };
+            unsafe { f(&*CTX_PTR.0) };
         }
     }
 }
-
 
