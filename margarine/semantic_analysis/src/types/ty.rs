@@ -3,7 +3,7 @@ use wasm::WasmType;
 
 use crate::types::ty_map::TypeId;
 
-use super::{ty_map::TypeMap, ty_sym::{TypeKind, ConcreteTypeEnumKind}};
+use super::{ty_map::TypeMap, ty_sym::{TypeKind, TypeEnumKind}};
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,8 +138,8 @@ impl Type {
 
                     TypeKind::Enum(v) => {
                         match v.kind() {
-                            ConcreteTypeEnumKind::TaggedUnion(_) => WasmType::Ptr { size: ty.size() },
-                            ConcreteTypeEnumKind::Tag(_) => WasmType::I32,
+                            TypeEnumKind::TaggedUnion(_) => WasmType::Ptr { size: ty.size() },
+                            TypeEnumKind::Tag(_) => WasmType::I32,
                         }
                     },
                 }

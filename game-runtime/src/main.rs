@@ -68,21 +68,18 @@ fn main() {
         libs.push(library);
     }
 
-    let mut store = Store::new(&engine, 4);
+    let mut store = Store::new(&engine, ());
     let instance = linker.instantiate(&mut store, &module).unwrap();
     let memory = instance.get_memory(&mut store, "memory").unwrap();
 
-    let ptr = memory.data_ptr(&store);
-    ctx.set_base(ptr);
-    let size = memory.data_size(&store) - 1;
-    ctx.set_size(size.try_into().unwrap());
+    ctx.set_mem(&memory);
+    ctx.set_store(&mut store);
+
+    let heap_start = instance.get_global(&mut store, "heap_start").unwrap().get(&mut store);
+    let Val::I32(heap_start) = heap_start else { unreachable!() };
+    butter_runtime_api::alloc::set_heap_start(WasmPtr::from_u32(u32::from_ne_bytes(heap_start.to_ne_bytes())));
 
     unsafe { CTX_PTR = SendPtr(&ctx) };
-
-    instance
-        .get_global(&mut store, "host_memory_offset").unwrap()
-        .set(&mut store, Val::I64((ptr as isize).try_into().unwrap()))
-        .unwrap();
    
     let func = instance.get_func(&mut store, "_init").unwrap();
     func.call(&mut store, &[], &mut []).unwrap();

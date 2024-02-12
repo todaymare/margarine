@@ -208,6 +208,8 @@ impl WasmFunctionBuilder<'_> {
     /// () -> `ptr(i64)($t)`
     #[inline(always)]
     pub fn string_const(&mut self, ptr: StringAddress) {
+        todo!();
+        /*
         write!(self.body, "global.get $string_pointer ");
         self.u32_const(ptr.address.try_into().unwrap());
         self.i32_add();
@@ -215,6 +217,7 @@ impl WasmFunctionBuilder<'_> {
         self.i32_as_i64();
         write!(self.body, "global.get $host_memory_offset ");
         self.i64_add();
+        */
     }
 
 

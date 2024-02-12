@@ -30,7 +30,8 @@ impl<'a> StringMap<'a> {
     pub const CAST : StringIndex = StringIndex(14);
     pub const INVALID_IDENT : StringIndex = StringIndex(15);
 
-    pub const ITER_NEXT : StringIndex = StringIndex(16);
+    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(16);
+    pub const DROP_FUNC : StringIndex = StringIndex(17);
 
  
     #[inline(always)]
@@ -65,7 +66,8 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("cast"), Self::CAST);
         assert_eq!(s.insert("::"), Self::INVALID_IDENT);
 
-        assert_eq!(s.insert("__next__"), Self::ITER_NEXT);
+        assert_eq!(s.insert("__next__"), Self::ITER_NEXT_FUNC);
+        assert_eq!(s.insert("__drop__"), Self::DROP_FUNC);
         s
     }
 

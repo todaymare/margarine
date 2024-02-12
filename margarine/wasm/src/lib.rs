@@ -187,13 +187,14 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
             }
         }
 
-        write!(buffer, "(global $host_memory_offset (export \"host_memory_offset\") (mut i64) (i64.const 0))");
-
         let stack_pointer = self.stack_size;
         write!(buffer, "(global $stack_pointer (export \"stack_pointer\") (mut i32) (i32.const {}))", 
                stack_pointer);
         write!(buffer, "(global $bstack_pointer (export \"bstack_pointer\") i32 (i32.const {}))", 
                stack_pointer);
+
+        write!(buffer, "(global $heap_start (export \"stack_pointer\") (mut i32) (i32.const {}))", 
+               ((stack_pointer+1) + 8- 1) & !(8 - 1));
 
         let _ = writeln!(buffer);
         let _ = writeln!(buffer, ";;");

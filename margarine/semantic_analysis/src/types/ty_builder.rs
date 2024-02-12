@@ -3,7 +3,7 @@ use errors::SemaError;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
-use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, ConcreteTypeEnumKind}, scope::ScopeId};
+use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}, scope::ScopeId};
 
 use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeEnum, TypeEnumStatus, TypeStructStatus, TypeSymbol, TypeTag}};
 
@@ -354,7 +354,7 @@ impl<'out> TypeBuilder<'_> {
             size = sti::num::ceil_to_multiple_pow2(size, tag_align);
 
             let kind = TypeTag::new(Vec::from_in(data.arena, fields.iter().map(|x| x.name)).leak());
-            let kind = TypeEnum::new(TypeEnumStatus::User, ConcreteTypeEnumKind::Tag(kind));
+            let kind = TypeEnum::new(TypeEnumStatus::User, TypeEnumKind::Tag(kind));
             return Ok(TypeSymbol::new(name, tag_align, size, TypeKind::Enum(kind)))
         }
 
@@ -383,7 +383,7 @@ impl<'out> TypeBuilder<'_> {
         let fields = new_fields.leak();
         
         // Finalise
-        let kind = TypeEnum::new(status, ConcreteTypeEnumKind::TaggedUnion(TypeTaggedUnion::new(union_offset.try_into().unwrap(), fields)));
+        let kind = TypeEnum::new(status, TypeEnumKind::TaggedUnion(TypeTaggedUnion::new(union_offset.try_into().unwrap(), fields)));
         let kind = TypeKind::Enum(kind);
         Ok(TypeSymbol::new(name, align, size, kind))
     } 
@@ -398,7 +398,7 @@ impl<'out> TypeBuilder<'_> {
         let mut ns = Namespace::new(data.arena);
         
         match kind.kind() {
-            ConcreteTypeEnumKind::TaggedUnion(sym) => {
+            TypeEnumKind::TaggedUnion(sym) => {
                 let tysym = data.type_map.get(ty);
                 let wasm_ty = WasmType::Ptr { size: tysym.size() };
 
@@ -449,7 +449,7 @@ impl<'out> TypeBuilder<'_> {
             },
 
 
-            ConcreteTypeEnumKind::Tag(sym) => {
+            TypeEnumKind::Tag(sym) => {
                 for (i, f) in sym.fields().into_iter().enumerate() {
                     let wfid = data.module_builder.function_id();
                     let mut wf = WasmFunctionBuilder::new(data.arena, wfid);

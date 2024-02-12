@@ -57,7 +57,6 @@ pub enum TypeStructStatus {
     User,
     Tuple,
     Rc,
-    RcMut,
 }
 
 
@@ -81,7 +80,7 @@ impl StructField {
 #[derive(Debug, Clone, Copy)]
 pub struct TypeEnum<'a> {
     status: TypeEnumStatus,
-    kind: ConcreteTypeEnumKind<'a>,
+    kind: TypeEnumKind<'a>,
 }
 
 
@@ -94,7 +93,7 @@ pub enum TypeEnumStatus {
 
 
 #[derive(Debug, Clone, Copy)]
-pub enum ConcreteTypeEnumKind<'a> {
+pub enum TypeEnumKind<'a> {
     TaggedUnion(TypeTaggedUnion<'a>),
     Tag(TypeTag<'a>),
 }
@@ -121,22 +120,22 @@ pub struct TypeTag<'a> {
 
 
 impl<'a> TypeEnum<'a> {
-    pub fn new(status: TypeEnumStatus, kind: ConcreteTypeEnumKind<'a>) -> Self { Self { status, kind } }
+    pub fn new(status: TypeEnumStatus, kind: TypeEnumKind<'a>) -> Self { Self { status, kind } }
 
     pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
         match self.kind {
-            ConcreteTypeEnumKind::TaggedUnion(_) => {
+            TypeEnumKind::TaggedUnion(_) => {
                 wasm.i32_read();
             },
 
 
-            ConcreteTypeEnumKind::Tag(_) => (),
+            TypeEnumKind::Tag(_) => (),
         }
     }
 
 
     #[inline(always)]
-    pub fn kind(self) -> ConcreteTypeEnumKind<'a> {
+    pub fn kind(self) -> TypeEnumKind<'a> {
         self.kind
     }
 
@@ -148,11 +147,11 @@ impl<'a> TypeEnum<'a> {
 }
 
 
-impl<'a> ConcreteTypeEnumKind<'a> {
+impl<'a> TypeEnumKind<'a> {
     pub fn get_tag(self, wasm: &mut WasmFunctionBuilder) {
         match self {
-            ConcreteTypeEnumKind::TaggedUnion(_) => wasm.i32_read(),
-            ConcreteTypeEnumKind::Tag(_) => (), // value on the stack is already the tag
+            TypeEnumKind::TaggedUnion(_) => wasm.i32_read(),
+            TypeEnumKind::Tag(_) => (), // value on the stack is already the tag
         }
     }
 }

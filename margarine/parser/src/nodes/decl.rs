@@ -70,11 +70,6 @@ pub enum Declaration<'a> {
         file: StringIndex,
         functions: &'a [ExternFunction<'a>],
     },
-
-    Trait {
-        name: StringIndex,
-        sigs: &'a [FunctionSignature<'a>],
-    },
 }
 
 

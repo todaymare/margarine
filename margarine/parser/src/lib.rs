@@ -47,7 +47,6 @@ pub enum DataTypeKind<'a> {
     Tuple(&'a [DataType<'a>]),
     Within(StringIndex, &'a DataType<'a>),
     RcConst(&'a DataType<'a>),
-    RcMut(&'a DataType<'a>),
     CustomType(StringIndex),
 }
 
@@ -102,11 +101,6 @@ impl std::hash::Hash for DataTypeKind<'_> {
 
             DataTypeKind::RcConst(v) => {
                 12.hash(state);
-                v.kind().hash(state);
-            }
-
-            DataTypeKind::RcMut(v) => {
-                13.hash(state);
                 v.kind().hash(state);
             }
         }
@@ -371,20 +365,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
         } else if self.current_is(TokenKind::Star) {
             self.advance();
 
-            let is_mut = if self.current_is(TokenKind::Keyword(Keyword::Mut)) { 
-                self.advance(); 
-                true 
-            } else { false };
-
             let ty = self.expect_type()?;
             let alloc = self.arena.alloc_new(ty);
             DataType::new(
                 SourceRange::new(start, ty.range().end()),
-                if is_mut {
-                    DataTypeKind::RcMut(alloc)
-                } else {
-                    DataTypeKind::RcConst(alloc)
-                }
+                DataTypeKind::RcConst(alloc)
             )
         } else {
             let identifier = self.expect_identifier()?;

@@ -13,11 +13,11 @@ use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
 use parser::{nodes::{decl::{Declaration, DeclarationNode, FunctionSignature}, expr::{BinaryOperator, Expression, ExpressionNode, MatchMapping, UnaryOperator}, stmt::{Statement, StatementNode}, Node}, Block, DataType, DataTypeKind};
 use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
-use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeKind, ConcreteTypeEnumKind, TypeEnumStatus, TypeStructStatus}};
+use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
 use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
 
-use crate::types::{ty_map::TypeId, ty_builder::{TypeBuilder, TypeBuilderData}, ty_sym::TypeStruct};
+use crate::types::{ty_builder::{TypeBuilder, TypeBuilderData}, ty_map::TypeId, ty_sym::{TaggedUnionField, TypeStruct, TypeTaggedUnion}};
 
 #[derive(Debug)]
 pub struct Analyzer<'me, 'out, 'str> {
@@ -114,8 +114,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             }
 
 
-            | DataTypeKind::RcConst(ty)
-            | DataTypeKind::RcMut(ty) => {
+            DataTypeKind::RcConst(ty) => {
                 let ty = self.convert_ty(scope, *ty)?;
                 if let Some(ty) = self.rc_map.get(&ty) { return Ok(Type::Custom(*ty)) }
 
@@ -138,8 +137,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             (StringMap::INT, Type::I64),
                             (StringMap::VALUE, ty),
                         ].iter().copied(),
-                        if matches!(dt.kind(), DataTypeKind::RcConst(_)) { TypeStructStatus::Rc }
-                        else { TypeStructStatus::RcMut },
+                        TypeStructStatus::Rc
                     );
 
                     let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
@@ -373,6 +371,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         scope: ScopeId,
         nodes: &[Node<'ast>],
     ) -> (AnalysisResult, ScopeId) {
+        let old_scope = scope;
         let pool = ArenaPool::tls_get_rec();
         let mut ty_builder = TypeBuilder::new(&*pool); 
         let (scope, ns_id) = {
@@ -422,6 +421,23 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
 
         if nodes.is_empty() { builder.unit(); }
 
+        {
+            let mut current = self.scopes.get(scope);
+            loop {
+                if let ScopeKind::Variable(v) = current.kind() {
+                    builder.local_get(v.local_id);
+                    self.drop_value(v.ty, builder);
+                }
+
+                let Some(parent) = current.parent().to_option()
+                    else { break };
+
+                if parent == old_scope { break }
+
+                current = self.scopes.get(parent);
+            }
+        }
+
         (AnalysisResult { ty, is_mut: true }, scope)
     }
 }
@@ -455,7 +471,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
                 Declaration::Function { sig, is_in_impl, .. } => {
-                    if is_in_impl.is_some() && sig.name == StringMap::ITER_NEXT {
+                    if is_in_impl.is_some() && sig.name == StringMap::ITER_NEXT_FUNC {
                         let validate_sig = || {
                             if sig.arguments.len() != 1 { return false }
                             let ty = is_in_impl.unwrap();
@@ -482,6 +498,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     namespace.add_func(sig.name, self.funcs.pending())
                 },
+
+
                 Declaration::Impl { .. } => (),
 
                 Declaration::Using { .. } => (),
@@ -516,8 +534,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     }
 
                 },
-
-                Declaration::Trait { name, sigs } => todo!(),
             }
         }
     }
@@ -920,7 +936,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
             Declaration::Function { sig, body, .. } => {
                 let func = self.scopes.get(scope).get_func(sig.name, &self.scopes, &self.namespaces).unwrap();
-                dbg!(self.string_map.get(sig.name));
                 let func = self.funcs.get(func);
                 match func.kind {
                     FunctionKind::UserDefined { inout } => {
@@ -1038,7 +1053,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
             },
 
             Declaration::Extern { .. } => (),
-            Declaration::Trait { name, sigs } => todo!(),
         }
     }
 
@@ -1200,7 +1214,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
 
                 let func = self.namespaces.get_type(expr_anal.ty);
-                if self.namespaces.get(func).get_func(StringMap::ITER_NEXT).is_none() {
+                if self.namespaces.get(func).get_func(StringMap::ITER_NEXT_FUNC).is_none() {
                     wasm.error(self.error(Error::ValueIsntAnIterator {
                         ty: expr_anal.ty, range: expr.1.range() }));
                     return Err(());
@@ -1211,7 +1225,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let var_decl = Node::Statement(StatementNode::new(Statement::Variable {
                                 name: StringMap::INVALID_IDENT, hint: None, is_mut: false,
                                 rhs: ExpressionNode::new(Expression::CallFunction {
-                                    name: StringMap::ITER_NEXT, is_accessor: true,
+                                    name: StringMap::ITER_NEXT_FUNC, is_accessor: true,
                                     args: &var_decl_func_call_args }, source) },
                                 source));
 
@@ -1253,6 +1267,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 self.expr(tree, *scope, wasm);
             },
         };
+
         Ok(())
    }
 
@@ -1618,7 +1633,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
 
                 match sym.kind() {
-                    ConcreteTypeEnumKind::TaggedUnion(v) => {
+                    TypeEnumKind::TaggedUnion(v) => {
                         for m in mappings.iter() {
                             if !v.fields().iter().any(|x| x.name() == m.name()) {
                                 wasm.error(self.error(Error::InvalidMatch { 
@@ -1638,7 +1653,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     },
 
-                    ConcreteTypeEnumKind::Tag(v) => {
+                    TypeEnumKind::Tag(v) => {
                         for m in mappings.iter() {
                             if !v.fields().contains(&m.name()) {
                                 wasm.error(self.error(Error::InvalidMatch { 
@@ -1704,7 +1719,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             }
 
                             let (ty, local) = match enum_sym.kind() {
-                                ConcreteTypeEnumKind::TaggedUnion(v) => {
+                                TypeEnumKind::TaggedUnion(v) => {
                                     let emapping = v.fields().iter().find(|x| x.name() == mapping.name()).unwrap();
                                     let ty = emapping.ty().unwrap_or(Type::Unit);
                                     let wty = ty.to_wasm_ty(&anal.types);
@@ -1719,7 +1734,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                     (ty, local)
                                 },
 
-                                ConcreteTypeEnumKind::Tag(_) => {
+                                TypeEnumKind::Tag(_) => {
                                     let local = wasm.local(Type::Unit.to_wasm_ty(&anal.types));
                                     (Type::Unit, local)
                                 },
@@ -2283,8 +2298,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     // TODO: Error messages, add it once errors are properly made
                     wasm.unreachable();
                     let ty = match e.kind() {
-                        ConcreteTypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
-                        ConcreteTypeEnumKind::Tag(_) => Type::Unit,
+                        TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
+                        TypeEnumKind::Tag(_) => Type::Unit,
                     };
 
                     ret_ty = ty;
@@ -2293,7 +2308,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 },
                 |(_, local), wasm| {
                     match e.kind() {
-                        ConcreteTypeEnumKind::TaggedUnion(v) => {
+                        TypeEnumKind::TaggedUnion(v) => {
                             let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
                             if ty == Type::Unit {
                                 return
@@ -2306,7 +2321,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             wasm.local_set(local)
                         },
 
-                        ConcreteTypeEnumKind::Tag(_) => wasm.unit(),
+                        TypeEnumKind::Tag(_) => wasm.unit(),
                     }
 
                 });
@@ -2374,8 +2389,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     match func_sym.status() {
                         TypeEnumStatus::Option => {
                             let some_val = match enum_sym.kind() {
-                                ConcreteTypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
-                                ConcreteTypeEnumKind::Tag(_) => Type::Unit,
+                                TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
+                                TypeEnumKind::Tag(_) => Type::Unit,
                             };
 
                             ret_ty = some_val;
@@ -2422,11 +2437,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                         TypeEnumStatus::Result => {
                             let (ok, err) = match enum_sym.kind() {
-                                ConcreteTypeEnumKind::TaggedUnion(v) => (
+                                TypeEnumKind::TaggedUnion(v) => (
                                     v.fields()[0].ty().unwrap_or(Type::Unit),
                                     v.fields()[1].ty().unwrap_or(Type::Unit),
                                 ),
-                                ConcreteTypeEnumKind::Tag(_) => (Type::Unit, Type::Unit),
+                                TypeEnumKind::Tag(_) => (Type::Unit, Type::Unit),
                             };
 
                             ret_ty = ok;
@@ -2441,9 +2456,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                 }
 
                                 let ferr = match func_sym.kind() {
-                                    ConcreteTypeEnumKind::TaggedUnion(v) => 
+                                    TypeEnumKind::TaggedUnion(v) => 
                                         v.fields()[1].ty().unwrap_or(Type::Unit),
-                                    ConcreteTypeEnumKind::Tag(_) => Type::Unit,
+                                    TypeEnumKind::Tag(_) => Type::Unit,
                                 };
 
                                 if !ferr.eq_sem(err) {
@@ -2466,7 +2481,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                 // Get the error value
                                 {
                                     match enum_sym.kind() {
-                                        ConcreteTypeEnumKind::TaggedUnion(v) => {
+                                        TypeEnumKind::TaggedUnion(v) => {
                                             let ty = v.fields()[1].ty().unwrap_or(Type::Unit);
 
                                             wasm.local_get(dup);
@@ -2475,7 +2490,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                             wasm.read(ty.to_wasm_ty(&slf.types));
                                         },
 
-                                        ConcreteTypeEnumKind::Tag(_) => wasm.unit(),
+                                        TypeEnumKind::Tag(_) => wasm.unit(),
                                     }
                                 }
 
@@ -2505,7 +2520,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 |(slf, local), wasm| {
                     match enum_sym.kind() {
-                        ConcreteTypeEnumKind::TaggedUnion(v) => {
+                        TypeEnumKind::TaggedUnion(v) => {
                             let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
                             if ty == Type::Unit {
                                 return
@@ -2518,7 +2533,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             wasm.local_set(local)
                         },
 
-                        ConcreteTypeEnumKind::Tag(_) => wasm.unit(),
+                        TypeEnumKind::Tag(_) => wasm.unit(),
                     }
                 });
 
@@ -2851,6 +2866,124 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
         wasm.sptr_const(alloc);
         Type::Custom(ty)
+    }
+
+
+    ///
+    /// Calls the drop function on the value at the 
+    /// top of the stack
+    ///
+    /// Value on top of the stack must be of type `ty`
+    /// `ty` => ()
+    ///
+    fn drop_value(
+        &mut self,
+        ty: Type,
+        
+        wasm: &mut WasmFunctionBuilder,
+    ) {
+        let Type::Custom(ty_id) = ty 
+        // No drop function
+        else { wasm.pop(); return };
+
+        let ty = self.types.get(ty_id);
+
+        match ty.kind() {
+            TypeKind::Struct(strct) => {
+                let local = wasm.local(WasmType::Ptr { size: ty.size() });
+                wasm.local_set(local);
+                if strct.status == TypeStructStatus::Rc {
+                    wasm.local_get(local);
+                    wasm.i32_read();
+                    wasm.i32_const(1);
+                    wasm.i32_sub();
+
+                    let new_count = wasm.local(WasmType::I32);
+                    wasm.local_tee(new_count);
+
+                    wasm.ite(
+                        &mut (),
+                        |_, wasm| {
+                            wasm.local_get(local);
+                            wasm.call_template("free");
+                            (local, ())
+                        },
+                        |_, _| {}
+                    );
+
+                    wasm.local_get(new_count);
+                    wasm.i32_write();
+                    return
+                }
+
+                for i in strct.fields {
+                    wasm.local_get(local);
+                    wasm.u32_const(i.1.try_into().unwrap());
+                    wasm.i32_add();
+
+                    self.drop_value(i.0.ty, wasm)
+                }
+            },
+
+
+            TypeKind::Enum(e) => {
+                fn do_mapping<'ast>(
+                    anal: &mut Analyzer<'_, '_, '_>,
+                    wasm: &mut WasmFunctionBuilder,
+                    variants: &[TaggedUnionField],
+                    local: LocalId,
+                    tag: LocalId,
+
+                    index: usize,
+                ) {
+                    let Some(mapping) = variants.get(index)
+                    else {
+                        wasm.block(|wasm, _| {
+                            wasm.local_get(tag);
+                            
+                            let mut string = format_in!(anal.output, "br_table ");
+
+                            for i in (0..variants.len()).rev() {
+                                let _ = write!(string, "{} ", i);
+                            }
+
+                            let _ = write!(string, "{} ", 0);
+
+                            wasm.raw(&string);
+                        });
+
+                        return;
+                    };
+
+                    wasm.block(|wasm, _| {
+                        do_mapping(anal, wasm, variants, local, tag, index + 1);
+                        
+                        wasm.local_get(local);
+                        anal.drop_value(mapping.ty().unwrap_or(Type::Unit), wasm)
+                    });
+                }
+
+
+                let TypeEnumKind::TaggedUnion(e) = e.kind()
+                // nothing to drop
+                else { wasm.pop(); return };
+
+                let base_ptr = wasm.local(WasmType::Ptr { size: ty.size() });
+                wasm.local_set(base_ptr);
+
+                let tag = wasm.local(WasmType::I32);
+                wasm.local_get(base_ptr);
+                wasm.u32_read();
+
+                let union = wasm.local(WasmType::Ptr { size: ty.size() - e.union_offset() as usize } );
+                wasm.local_get(base_ptr);
+                wasm.u32_const(e.union_offset());
+                wasm.i32_add();
+                wasm.local_set(union);
+
+                do_mapping(self, wasm, e.fields(), union, tag, 0);
+            },
+        }
     }
 
 }
