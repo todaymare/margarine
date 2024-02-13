@@ -145,6 +145,29 @@ impl WasmFunctionBuilder<'_> {
 
 
     ///
+    /// Allocates space on the heap with
+    /// the given size and puts a ptr to it
+    /// () -> ptr($size)
+    ///
+    #[inline(always)]
+    pub fn malloc(&mut self, size: usize) {
+        self.u32_const(size as u32);
+        self.call_template("alloc");
+    } 
+
+
+    ///
+    /// Frees space on the heap which
+    /// was allocated via malloc
+    /// ptr -> ()
+    ///
+    #[inline(always)]
+    pub fn free(&mut self) {
+        self.call_template("alloc");
+    } 
+
+
+    ///
     /// Puts a stack pointer on the stack as a raw memory address
     /// () -> `ptr`
     ///

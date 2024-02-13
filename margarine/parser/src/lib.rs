@@ -46,7 +46,7 @@ pub enum DataTypeKind<'a> {
     Result(&'a DataType<'a>, &'a DataType<'a>),
     Tuple(&'a [DataType<'a>]),
     Within(StringIndex, &'a DataType<'a>),
-    RcConst(&'a DataType<'a>),
+    Rc(&'a DataType<'a>),
     CustomType(StringIndex),
 }
 
@@ -99,7 +99,7 @@ impl std::hash::Hash for DataTypeKind<'_> {
                 dt.kind().hash(state);
             },
 
-            DataTypeKind::RcConst(v) => {
+            DataTypeKind::Rc(v) => {
                 12.hash(state);
                 v.kind().hash(state);
             }
@@ -369,7 +369,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let alloc = self.arena.alloc_new(ty);
             DataType::new(
                 SourceRange::new(start, ty.range().end()),
-                DataTypeKind::RcConst(alloc)
+                DataTypeKind::Rc(alloc)
             )
         } else {
             let identifier = self.expect_identifier()?;

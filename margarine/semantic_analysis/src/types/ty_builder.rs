@@ -500,14 +500,8 @@ impl<'out> TypeBuilder<'_> {
         ty: Type
     ) -> Result<usize, Error> {
         Ok(match ty {
-            Type::I64   => 8,
-            Type::I32   => 4,
-            Type::F64   => 8,
-            Type::Any   => 16,
-            Type::Unit  => 1,
-            Type::Never => todo!(),
-            Type::Error => 0,
             Type::Custom(v) => self.resolve_type(data, v)?.size(),
+            _ => ty.size(&data.type_map),
         })
     }
 }

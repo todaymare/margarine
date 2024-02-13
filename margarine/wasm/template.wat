@@ -65,6 +65,23 @@
     )
 )
 
+;;
+;; Sets `length` bytes at `dest_offset` to `val`
+;;
+(func $memset
+    (export "memset")
+    (param $dest_offset i32)
+    (param $val i32)
+    (param $length i32)
+
+    ;; Copy memory from source to destination
+    (memory.fill
+        (local.get $dest_offset)   ;; destination offset
+        (local.get $val)           ;; byte value
+        (local.get $length)        ;; length
+    )
+)
+
 
 ;;
 ;; Checks if the following `length` bytes of `v1` are

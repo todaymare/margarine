@@ -167,6 +167,8 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         
         assert!(self.memory >= self.stack_size);
 
+        write!(buffer, r#"(func $alloc (import "::host" "alloc") (param i32) (result i32))"#);
+        write!(buffer, r#"(func $free (import "::host" "free") (param i32))"#);
         for (path, funcs) in &self.externs {
             let path = string_map.get(*path);
             for (name, id) in funcs {
@@ -193,7 +195,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         write!(buffer, "(global $bstack_pointer (export \"bstack_pointer\") i32 (i32.const {}))", 
                stack_pointer);
 
-        write!(buffer, "(global $heap_start (export \"stack_pointer\") (mut i32) (i32.const {}))", 
+        write!(buffer, "(global $heap_start (export \"heap_start\") (mut i32) (i32.const {}))", 
                ((stack_pointer+1) + 8- 1) & !(8 - 1));
 
         let _ = writeln!(buffer);
@@ -284,7 +286,7 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn local(&mut self, ty: WasmType) -> LocalId {
         self.locals.push(ty);
-        LocalId(self.params.len() as u32 + self.locals.len() as u32)
+        LocalId(self.params.len() as u32 + self.locals.len() as u32 - 1)
     }
 
 

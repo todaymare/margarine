@@ -114,7 +114,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             }
 
 
-            DataTypeKind::RcConst(ty) => {
+            DataTypeKind::Rc(ty) => {
                 let ty = self.convert_ty(scope, *ty)?;
                 if let Some(ty) = self.rc_map.get(&ty) { return Ok(Type::Custom(*ty)) }
 
@@ -134,8 +134,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     tyb.add_ty(tyid, name, SourceRange::new(0, 0));
                     tyb.set_struct_fields(tyid, 
                         [
-                            (StringMap::INT, Type::I64),
                             (StringMap::VALUE, ty),
+                            (StringMap::INT, Type::I64),
                         ].iter().copied(),
                         TypeStructStatus::Rc
                     );
@@ -145,6 +145,54 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     tyid
                 };
+
+                let ns = self.namespaces.get_type_mut(Type::Custom(tyid));
+                let wid = self.module_builder.function_id();
+                let func = Function::new(
+                    StringMap::NEW,
+                    self.output.alloc_new([
+                        (StringMap::VALUE, false, ty),
+                    ]), 
+                    Type::Custom(tyid),
+                    wid,
+                    FunctionKind::UserDefined { inout: None });
+                let func_id = self.funcs.pending();
+                self.funcs.put(func_id, func);
+
+                ns.add_func(StringMap::NEW, func_id);
+
+                {
+                    let rc_ty = self.types.get(tyid);
+                    let TypeKind::Struct(rc_sym) = rc_ty.kind() else { unreachable!() };
+
+                    let mut builder = WasmFunctionBuilder::new(self.output, wid);
+                    let param = builder.param(ty.to_wasm_ty(&self.types));
+                    let ret = builder.param(WasmType::Ptr { size: rc_ty.size() });
+
+                    // Allocate enough memory
+                    builder.malloc(rc_ty.size());
+                    builder.local_set(ret);
+
+                    // Initialise the data
+                    builder.local_get(param);
+                    builder.local_get(ret);
+                    builder.write(ty.to_wasm_ty(&self.types));
+
+                    // Zero the num
+                    builder.local_get(ret);
+                    builder.u32_const(rc_sym.fields[1].1 as u32);
+                    builder.i32_add();
+
+                    builder.i32_const(0);
+
+                    builder.u32_const(rc_sym.fields[1].0.ty.size(&self.types) as u32);
+
+                    builder.call_template("memset");
+
+                    builder.local_get(ret);
+
+                    self.module_builder.register(builder);
+                }
 
                 self.rc_map.insert(ty, tyid);
                 Type::Custom(tyid)
@@ -2155,8 +2203,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
             Expression::AsCast { lhs, data_type } => {
                 let lhs_anal = self.expr(*lhs, scope, wasm);
-                let ty = self.convert_ty(scope, data_type);
-                let ty = match ty {
+                let dty = self.convert_ty(scope, data_type);
+                let dty = match dty {
                     Ok(v) => v,
                     Err(e) => {
                         wasm.error(self.error(e));
@@ -2165,7 +2213,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 };
 
 
-                match (lhs_anal.ty, ty) {
+                match (lhs_anal.ty, dty) {
                     | (Type::Error, _)
                     | (_, Type::Error) => return AnalysisResult::error(),
 
@@ -2252,13 +2300,34 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         wasm.sptr_const(alloc);
                     }
 
+                    (Type::Custom(t), _) => {
+                        let mut v = || {
+                            let ty = self.types.get(t);
+                            let TypeKind::Struct(strct) = ty.kind()
+                            else { return false };
+
+                            if strct.status != TypeStructStatus::Rc { return false };
+
+                            if strct.fields[0].0.ty != dty { return false };
+
+                            wasm.read(dty.to_wasm_ty(&self.types));
+
+                            true
+                        };
+
+                        if !v() {
+                            wasm.error(self.error(Error::InvalidCast {
+                                range: source, from_ty: lhs_anal.ty, to_ty: dty }))
+                        }
+                    }
+
                     _ => {
                         wasm.error(self.error(Error::InvalidCast {
-                            range: source, from_ty: lhs_anal.ty, to_ty: ty }))
+                            range: source, from_ty: lhs_anal.ty, to_ty: dty }))
                     }
                 }
 
-                AnalysisResult::new(ty, true)
+                AnalysisResult::new(dty, true)
             },
 
 
@@ -2893,14 +2962,21 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let local = wasm.local(WasmType::Ptr { size: ty.size() });
                 wasm.local_set(local);
                 if strct.status == TypeStructStatus::Rc {
+                    // Read the counter
                     wasm.local_get(local);
+                    wasm.u32_const(strct.fields[1].1 as u32);
+                    wasm.i32_add();
                     wasm.i32_read();
+
+                    // Subtract one
                     wasm.i32_const(1);
                     wasm.i32_sub();
 
                     let new_count = wasm.local(WasmType::I32);
                     wasm.local_tee(new_count);
 
+                    // If the counter is now 0, free it
+                    // Elsewise, write it 
                     wasm.ite(
                         &mut (),
                         |_, wasm| {
@@ -2908,11 +2984,16 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             wasm.call_template("free");
                             (local, ())
                         },
-                        |_, _| {}
-                    );
+                        |_, wasm| {
+                            wasm.local_get(local);
+                            wasm.u32_const(strct.fields[1].1 as u32);
+                            wasm.i32_add();
 
-                    wasm.local_get(new_count);
-                    wasm.i32_write();
+                            wasm.local_get(new_count);
+                            wasm.i32_write();
+                        }
+                        );
+
                     return
                 }
 

@@ -120,6 +120,23 @@ impl Type {
     }
 
 
+    pub fn size(self, ty_map: &TypeMap) -> usize {
+        match self {
+            Type::I64 => 8, 
+            Type::I32 => 8,
+            Type::F64 => 8,
+            Type::Any => 16,
+            Type::Unit => 0,
+            Type::Never => 0,
+            Type::Error => 0,
+
+            Type::Custom(v) => {
+                let ty = ty_map.get(v);
+                ty.size()
+            },
+        }
+    }
+
     pub fn to_wasm_ty(self, ty_map: &TypeMap) -> WasmType {
         match self {
             Type::I64 => WasmType::I64, 
