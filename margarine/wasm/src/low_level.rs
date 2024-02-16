@@ -378,7 +378,7 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn i32_write(&mut self) {
-        self.call_template("write_i32_to_stack")
+        self.call_template("write_i32_to_mem")
     }
 
 }
@@ -569,7 +569,7 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn i64_write(&mut self) {
-        self.call_template("write_i64_to_stack")
+        self.call_template("write_i64_to_mem")
     }
 
 }
@@ -722,7 +722,7 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn f32_write(&mut self) {
-        self.call_template("write_f32_to_stack")
+        self.call_template("write_f32_to_mem")
     }
 }
 
@@ -828,7 +828,7 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn f64_write(&mut self) {
-        self.call_template("write_f64_to_stack")
+        self.call_template("write_f64_to_mem")
     }
 
 }

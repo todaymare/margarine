@@ -3,6 +3,8 @@ use std::{marker::PhantomData, ptr::{null, null_mut}};
 use proc_macros::margarine;
 use wasmtime::{Memory, Store};
 
+use crate::alloc::Allocable;
+
 ///
 /// A pointer to wasm memory
 ///
@@ -25,8 +27,8 @@ impl<T> WasmPtr<T> {
 
 
     #[inline(always)]
-    pub extern "C" fn as_ptr_ex(self, mem: &Memory, store: &Store<()>) -> *const T {
-        unsafe { mem.data_ptr(store).add(self.0 as usize).cast() }
+    pub extern "C" fn as_ptr_ex(self, mem: &impl Allocable) -> *const T {
+        unsafe { mem.data_ptr().add(self.0 as usize).cast() }
     }
 
 
@@ -44,8 +46,8 @@ impl<T> WasmPtr<T> {
 
 
     #[inline(always)]
-    pub extern "C" fn as_mut_ex(self, mem: &Memory, store: &Store<()>) -> *mut T {
-        unsafe { mem.data_ptr(store).add(self.0 as usize).cast() }
+    pub extern "C" fn as_mut_ex(self, mem: &impl Allocable) -> *mut T {
+        unsafe { mem.data_ptr().add(self.0 as usize).cast() }
     }
 
 
@@ -112,7 +114,15 @@ impl Ctx {
     }
 
     pub fn size(&self) -> u32 {
-        unsafe { (*self.memory.0).data_size(&*self.store.0) }.try_into().unwrap()
+        unsafe { (*self.memory.0).data_size(&*self.store.0) }.try_into().unwrap_or(u32::MAX)
+    }
+
+    pub fn mem(&'_ self) -> &'_ Memory {
+        unsafe { &*self.memory.0 }
+    }
+
+    pub fn store(&'_ self) -> &'_ mut Store<()> {
+        unsafe { &mut *self.store.0 }
     }
 }
 

@@ -1,6 +1,6 @@
 use std::{env, fs, ptr::null};
 
-use butter_runtime_api::ffi::{Ctx, SendPtr, WasmPtr};
+use butter_runtime_api::{alloc::{free, walloc}, ffi::{Ctx, SendPtr, WasmPtr}};
 use game_runtime::decode;
 use libloading::{Library, Symbol};
 use wasmtime::{Config, Engine, Module, Linker, Store, Val};
@@ -10,9 +10,16 @@ type ExternFunctionRaw = unsafe extern "C" fn(*const Ctx, *mut u8);
 
 static mut CTX_PTR : SendPtr<Ctx> = SendPtr(null());
 
+#[cfg(feature="miri")]
+const DATA : &[u8] = include_bytes!("../../out");
+
 fn main() {
+    #[cfg(not(feature="miri"))]
     let file = env::current_exe().unwrap();
+    #[cfg(feature="miri")]
+    let file = "out";
     let file = fs::read(file).unwrap();
+
     let (imports_data, data) = {
         decode(&file)
     };
@@ -68,9 +75,22 @@ fn main() {
         libs.push(library);
     }
 
+    {
+        linker.func_wrap("::host", "alloc", |size: u32| {
+            let ctx = unsafe { &*CTX_PTR.0 };
+            walloc(&mut (ctx.mem(), ctx.store()), size as usize).as_u32()
+        }).unwrap();
+
+        linker.func_wrap("::host", "free", |ptr: u32| {
+            let ctx = unsafe { &*CTX_PTR.0 };
+            free(&(ctx.mem(), ctx.store()), WasmPtr::from_u32(ptr))
+        }).unwrap();
+    }
+
     let mut store = Store::new(&engine, ());
     let instance = linker.instantiate(&mut store, &module).unwrap();
     let memory = instance.get_memory(&mut store, "memory").unwrap();
+
 
     ctx.set_mem(&memory);
     ctx.set_store(&mut store);

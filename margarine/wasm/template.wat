@@ -29,22 +29,22 @@
 )
 
 
-(func $write_i32_to_stack (export "write_i32_to_stack") (param $data i32) (param $ptr i32)
+(func $write_i32_to_mem (export "write_i32_to_mem") (param $data i32) (param $ptr i32)
     (i32.store (local.get $ptr) (local.get $data))
 )
 
 
-(func $write_i64_to_stack (export "write_i64_to_stack") (param $data i64) (param $ptr i32)
+(func $write_i64_to_mem (export "write_i64_to_mem") (param $data i64) (param $ptr i32)
     (i64.store (local.get $ptr) (local.get $data))
 )
 
 
-(func $write_f32_to_stack (export "write_f32_to_stack") (param $data f32) (param $ptr i32)
+(func $write_f32_to_mem (export "write_f32_to_mem") (param $data f32) (param $ptr i32)
     (f32.store (local.get $ptr) (local.get $data))
 )
 
 
-(func $write_f64_to_stack (export "write_f64_to_stack") (param $data f64) (param $ptr i32)
+(func $write_f64_to_mem (export "write_f64_to_mem") (param $data f64) (param $ptr i32)
     (f64.store (local.get $ptr) (local.get $data))
 )
 

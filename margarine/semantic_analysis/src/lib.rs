@@ -134,8 +134,10 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     tyb.add_ty(tyid, name, SourceRange::new(0, 0));
                     tyb.set_struct_fields(tyid, 
                         [
-                            (StringMap::VALUE, ty),
+                            // Counter
                             (StringMap::INT, Type::I64),
+                            // Data
+                            (StringMap::VALUE, ty),
                         ].iter().copied(),
                         TypeStructStatus::Rc
                     );
@@ -170,26 +172,30 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let ret = builder.param(WasmType::Ptr { size: rc_ty.size() });
 
                     // Allocate enough memory
-                    builder.malloc(rc_ty.size());
-                    builder.local_set(ret);
-
-                    // Initialise the data
-                    builder.local_get(param);
                     builder.local_get(ret);
-                    builder.write(ty.to_wasm_ty(&self.types));
+                    builder.malloc(rc_ty.size());
+                    builder.write(WasmType::I32);
 
                     // Zero the num
+                    builder.i64_const(1);
                     builder.local_get(ret);
-                    builder.u32_const(rc_sym.fields[1].1 as u32);
-                    builder.i32_add();
+                    builder.i64_write();
 
-                    builder.i32_const(0);
+                    // Copy the data
+                    {
+                        let ty = rc_sym.fields[1];
 
-                    builder.u32_const(rc_sym.fields[1].0.ty.size(&self.types) as u32);
+                        // src
+                        builder.local_get(param);
 
-                    builder.call_template("memset");
+                        // dst
+                        builder.local_get(ret);
+                        builder.u32_const(ty.1 as u32);
+                        builder.i32_add();
 
-                    builder.local_get(ret);
+                        builder.write(ty.0.ty.to_wasm_ty(&self.types));
+                    }
+
 
                     self.module_builder.register(builder);
                 }
@@ -2308,7 +2314,12 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                             if strct.status != TypeStructStatus::Rc { return false };
 
-                            if strct.fields[0].0.ty != dty { return false };
+                            let field = strct.fields[1];
+                            if field.0.ty != dty { return false };
+
+                            // the ptr is on the stack
+                            wasm.u32_const(field.1 as u32);
+                            wasm.i32_add();
 
                             wasm.read(dty.to_wasm_ty(&self.types));
 
@@ -2964,8 +2975,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 if strct.status == TypeStructStatus::Rc {
                     // Read the counter
                     wasm.local_get(local);
-                    wasm.u32_const(strct.fields[1].1 as u32);
-                    wasm.i32_add();
                     wasm.i32_read();
 
                     // Subtract one
@@ -2974,6 +2983,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     let new_count = wasm.local(WasmType::I32);
                     wasm.local_tee(new_count);
+                    wasm.i32_eqz();
 
                     // If the counter is now 0, free it
                     // Elsewise, write it 
@@ -2986,9 +2996,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         },
                         |_, wasm| {
                             wasm.local_get(local);
-                            wasm.u32_const(strct.fields[1].1 as u32);
-                            wasm.i32_add();
-
                             wasm.local_get(new_count);
                             wasm.i32_write();
                         }
