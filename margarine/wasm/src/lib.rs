@@ -169,6 +169,8 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
 
         write!(buffer, r#"(func $alloc (import "::host" "alloc") (param i32) (result i32))"#);
         write!(buffer, r#"(func $free (import "::host" "free") (param i32))"#);
+        write!(buffer, r#"(func $printi32 (import "::host" "printi32") (param i32))"#);
+
         for (path, funcs) in &self.externs {
             let path = string_map.get(*path);
             for (name, id) in funcs {
@@ -337,8 +339,8 @@ impl WasmFunctionBuilder<'_> {
             write!(buffer, "(export \"{}\") ", string_map.get(export));
         } else { write!(buffer, "(export \"{}\")", self.function_id.0) };
 
-        for p in &self.params {
-            write!(buffer, "(param {}) ", p.name());
+        for (i, p) in self.params.iter().enumerate() {
+            write!(buffer, "(param $_{i} {}) ", p.name());
         }
 
 
@@ -351,8 +353,8 @@ impl WasmFunctionBuilder<'_> {
 
         }
 
-        for l in &self.locals {
-            write!(buffer, "(local {}) ", l.name());
+        for (i, l) in self.locals.iter().enumerate() {
+            write!(buffer, "(local $_{} {}) ", self.params.len() + i, l.name());
         }
 
         if let Some(WasmType::Ptr { .. }) = self.ret {

@@ -4,7 +4,7 @@ pub mod namespace;
 pub mod types;
 pub mod funcs;
 
-use std::fmt::Write; 
+use std::{any::Any, fmt::Write}; 
 
 use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use ::errors::{ErrorId, SemaError};
@@ -468,7 +468,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             ty = self.node(&mut scope, builder, n).ty;
 
             if id + 1 != nodes.len() {
-                builder.pop();
+                self.drop_value(ty, builder);
             } 
 
         }
@@ -1143,7 +1143,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         }
                     }
 
-                    dbg!(rhs_anal.ty, &self.types);
                     let local = wasm.local(rhs_anal.ty.to_wasm_ty(&self.types));
                     wasm.local_set(local);
 
@@ -2645,7 +2644,23 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
 
                 if depth == 0 {
+                    let val_wasm = val_ty.to_wasm_ty(&self.types);
+                    let value_local = wasm.local(val_wasm);
+                    wasm.local_set(value_local);
+
+                    // get it to drop it later.
+                    wasm.local_get(val.local_id);
+                    wasm.read(val_wasm);
+
+                    // set the new
+                    wasm.local_get(value_local);
+                    self.acquire(val_ty, wasm);
+
+                    wasm.local_get(value_local);
                     wasm.local_set(val.local_id);
+
+                    // drop it
+                    self.drop_value(val.ty, wasm);
 
                     if !val.ty.eq_sem(val_ty) {
                         return Err(Error::ValueUpdateTypeMismatch 
@@ -2692,7 +2707,22 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                 return Err(Error::ValueUpdateTypeMismatch 
                                            { lhs: sf.0.ty, rhs: val_ty, source: node.range() })
                             }
-                            wasm.write(val_ty.to_wasm_ty(&self.types));
+
+                            let val_ty_wasm = val_ty.to_wasm_ty(&self.types);
+                            let local = wasm.local(val_ty_wasm);
+                            wasm.local_tee(local);
+                            // so the local is now set to the pointe 
+                            
+                            // get it to drop it later!
+                            wasm.local_get(local);
+                            wasm.read(val_ty_wasm);
+
+                            // set the new
+                            wasm.local_get(local);
+                            wasm.write(val_ty_wasm);
+
+                            // drop it
+                            self.drop_value(val_ty, wasm);
                         }
 
                         return Ok(sf.0.ty);
@@ -2949,6 +2979,110 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
 
 
+    fn acquire(
+        &mut self,
+        ty: Type,
+        
+        wasm: &mut WasmFunctionBuilder,
+    ) {
+        let Type::Custom(ty_id) = ty 
+        // No acquire function
+        else { return };
+
+        let ty = self.types.get(ty_id);
+
+        match ty.kind() {
+            TypeKind::Struct(strct) => {
+                let local = wasm.local(WasmType::Ptr { size: ty.size() });
+                wasm.local_set(local);
+                if strct.status == TypeStructStatus::Rc {
+                    // Read the counter
+                    wasm.local_get(local);
+                    wasm.i32_read();
+
+                    // Increment one
+                    wasm.i32_const(1);
+                    wasm.i32_add();
+
+                    // dbg
+                    wasm.i32_const(420);
+                    wasm.call_template("printi32");
+                    
+                    // write it
+                    wasm.local_get(local);
+                    wasm.i32_write();
+
+                    wasm.local_get(local);
+                    return
+                }
+            },
+
+
+            TypeKind::Enum(e) => {
+                fn do_mapping<'ast>(
+                    anal: &mut Analyzer<'_, '_, '_>,
+                    wasm: &mut WasmFunctionBuilder,
+                    variants: &[TaggedUnionField],
+                    local: LocalId,
+                    tag: LocalId,
+
+                    index: usize,
+                ) {
+                    let Some(mapping) = variants.get(index)
+                    else {
+                        wasm.block(|wasm, _| {
+                            wasm.local_get(tag);
+                            
+                            let mut string = format_in!(anal.output, "br_table ");
+
+                            for i in (0..variants.len()).rev() {
+                                let _ = write!(string, "{} ", i);
+                            }
+
+                            let _ = write!(string, "{} ", 0);
+
+                            wasm.raw(&string);
+                        });
+
+                        return;
+                    };
+
+                    wasm.block(|wasm, _| {
+                        do_mapping(anal, wasm, variants, local, tag, index + 1);
+                        
+                        wasm.local_get(local);
+                        anal.acquire(mapping.ty().unwrap_or(Type::Unit), wasm);
+                        wasm.pop();
+                    });
+                }
+
+
+                let TypeEnumKind::TaggedUnion(e) = e.kind()
+                // nothing to drop
+                else { wasm.pop(); return };
+
+                let base_ptr = wasm.local(WasmType::Ptr { size: ty.size() });
+                wasm.local_set(base_ptr);
+
+                let tag = wasm.local(WasmType::I32);
+                wasm.local_get(base_ptr);
+                wasm.u32_read();
+
+                let union = wasm.local(WasmType::Ptr { size: ty.size() - e.union_offset() as usize } );
+                wasm.local_get(base_ptr);
+                wasm.u32_const(e.union_offset());
+                wasm.i32_add();
+                wasm.local_set(union);
+
+                do_mapping(self, wasm, e.fields(), union, tag, 0);
+
+                wasm.local_get(base_ptr);
+            },
+        }
+    }
+
+
+
     ///
     /// Calls the drop function on the value at the 
     /// top of the stack
@@ -2982,7 +3116,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     wasm.i32_sub();
 
                     let new_count = wasm.local(WasmType::I32);
+
                     wasm.local_tee(new_count);
+                    wasm.call_template("printi32");
+
+                    wasm.local_get(new_count);
                     wasm.i32_eqz();
 
                     // If the counter is now 0, free it
@@ -2990,27 +3128,35 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     wasm.ite(
                         &mut (),
                         |_, wasm| {
+                            for i in strct.fields {
+                                wasm.local_get(local);
+                                wasm.u32_const(i.1.try_into().unwrap());
+                                wasm.i32_add();
+
+                                self.drop_value(i.0.ty, wasm)
+                            }
+
+                            wasm.i32_const(69);
+                            wasm.call_template("printi32");
+
                             wasm.local_get(local);
                             wasm.call_template("free");
                             (local, ())
                         },
                         |_, wasm| {
+                            wasm.i32_const(420);
+                            wasm.call_template("printi32");
+                            
                             wasm.local_get(local);
                             wasm.local_get(new_count);
                             wasm.i32_write();
                         }
-                        );
+                    );
+                    wasm.pop();
 
                     return
                 }
 
-                for i in strct.fields {
-                    wasm.local_get(local);
-                    wasm.u32_const(i.1.try_into().unwrap());
-                    wasm.i32_add();
-
-                    self.drop_value(i.0.ty, wasm)
-                }
             },
 
 

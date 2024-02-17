@@ -9,7 +9,7 @@ impl WasmFunctionBuilder<'_> {
     /// Inserts a `local.set` at a specific offset
     ///
     pub fn insert_local_set(&mut self, offset: usize, local: LocalId) -> usize {
-        self.insert(format_in!(&*ArenaPool::tls_get_temp(), "local.set {} ", local.0).as_str(), offset)
+        self.insert(format_in!(&*ArenaPool::tls_get_temp(), "local.set $_{} ", local.0).as_str(), offset)
     }
 
     
@@ -64,7 +64,7 @@ impl WasmFunctionBuilder<'_> {
     /// () -> `$local`
     ///
     #[inline(always)]
-    pub fn local_get(&mut self, index: LocalId) { write!(self.body, "local.get {} ", index.0); }
+    pub fn local_get(&mut self, index: LocalId) { write!(self.body, "local.get $_{} ", index.0); }
     
 
     ///
@@ -72,14 +72,14 @@ impl WasmFunctionBuilder<'_> {
     /// `$local` -> ()
     ///
     #[inline(always)]
-    pub fn local_set(&mut self, index: LocalId) { write!(self.body, "local.set {} ", index.0); }
+    pub fn local_set(&mut self, index: LocalId) { write!(self.body, "local.set $_{} ", index.0); }
     
     /// 
     /// Sets & gets the value of the specified local
     /// `$local` -> `$local`
     ///
     #[inline(always)]
-    pub fn local_tee(&mut self, index: LocalId) { write!(self.body, "local.tee {} ", index.0); }
+    pub fn local_tee(&mut self, index: LocalId) { write!(self.body, "local.tee $_{} ", index.0); }
     
     ///
     /// Pushes the memory size to the stack

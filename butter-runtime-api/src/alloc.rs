@@ -66,6 +66,7 @@ fn ptr_to_wptr<T>(memory: &impl Allocable, wasm_ptr: *const T) -> WasmPtr<T> {
 /// actual size of the memory allocated
 ///
 pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
+    println!("allocating {size}");
     let size = align_to(size, size_of::<Word>());
     
     // Search for a block

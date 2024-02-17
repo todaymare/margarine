@@ -85,6 +85,10 @@ fn main() {
             let ctx = unsafe { &*CTX_PTR.0 };
             free(&(ctx.mem(), ctx.store()), WasmPtr::from_u32(ptr))
         }).unwrap();
+
+        linker.func_wrap("::host", "printi32", |ptr: i32| {
+            println!("printi32: {ptr}");
+        }).unwrap();
     }
 
     let mut store = Store::new(&engine, ());
