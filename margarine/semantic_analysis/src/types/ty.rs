@@ -3,7 +3,7 @@ use wasm::WasmType;
 
 use crate::types::ty_map::TypeId;
 
-use super::{ty_map::TypeMap, ty_sym::{TypeKind, TypeEnumKind}};
+use super::{ty_map::TypeMap, ty_sym::{TypeEnumKind, TypeKind, TypeStructStatus}};
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,8 +150,11 @@ impl Type {
             Type::Custom(v) => {
                 let ty = ty_map.get(v);
                 match ty.kind() {
-                    TypeKind::Struct(_)
-                        => WasmType::Ptr { size: ty.size() },
+                    TypeKind::Struct(s)
+                        => {
+                            if s.status == TypeStructStatus::Rc { return WasmType::I32 }
+                            WasmType::Ptr { size: ty.size() }
+                        },
 
                     TypeKind::Enum(v) => {
                         match v.kind() {

@@ -169,15 +169,15 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     let mut builder = WasmFunctionBuilder::new(self.output, wid);
                     let param = builder.param(ty.to_wasm_ty(&self.types));
-                    let ret = builder.param(WasmType::Ptr { size: rc_ty.size() });
+                    let ret = builder.local(WasmType::I32);
+                    builder.return_value(WasmType::I32);
 
                     // Allocate enough memory
-                    builder.local_get(ret);
                     builder.malloc(rc_ty.size());
-                    builder.write(WasmType::I32);
+                    builder.local_set(ret);
 
                     // Zero the num
-                    builder.i64_const(1);
+                    builder.i64_const(0);
                     builder.local_get(ret);
                     builder.i64_write();
 
@@ -196,6 +196,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         builder.write(ty.0.ty.to_wasm_ty(&self.types));
                     }
 
+                    builder.local_get(ret);
 
                     self.module_builder.register(builder);
                 }
@@ -393,23 +394,26 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             type_builder.finalise(data, &mut slf.errors);
         }
 
-        let mut func = WasmFunctionBuilder::new(output, slf.module_builder.function_id());
+        let id = slf.module_builder.function_id();
+        let mut func = WasmFunctionBuilder::new(output, id);
         let scope = Scope::new(ScopeKind::Root, PackedOption::NONE);
         let scope = slf.scopes.push(scope);
 
         func.export(StringMap::INIT_FUNC);
 
-        slf.block(&mut func, scope, nodes);
-        func.pop();
+        let anal = slf.block(&mut func, scope, nodes);
+        slf.drop_value(anal.0.ty, &mut func);
 
         for s in slf.startup_functions.iter() {
             let f = slf.funcs.get(*s);
             assert!(f.args.is_empty(), "resources are not ready yet");
+
             let ret_ty = f.ret.to_wasm_ty(&slf.types).stack_size();
             if ret_ty != 0 {
                 let alloc = func.alloc_stack(ret_ty);
                 func.sptr_const(alloc);
             }
+
             func.call(f.wasm_id);
         }
 
@@ -468,7 +472,9 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             ty = self.node(&mut scope, builder, n).ty;
 
             if id + 1 != nodes.len() {
-                self.drop_value(ty, builder);
+                // self.acquire(ty, builder);
+                // self.drop_value(ty, builder);
+                builder.pop();
             } 
 
         }
@@ -529,11 +535,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let validate_sig = || {
                             if sig.arguments.len() != 1 { return false }
                             let ty = is_in_impl.unwrap();
-                            if sig.arguments[0].data_type().kind() == ty.kind() {
+                            if sig.arguments[0].data_type().kind() != ty.kind() {
                                 return false 
                             }
                             if !sig.arguments[0].is_inout() { return false }
-                            if matches!(sig.return_type.kind(), DataTypeKind::Option(_)) { return false }
+                            if !matches!(sig.return_type.kind(), DataTypeKind::Option(_)) { return false }
 
                             true
                         };
@@ -542,6 +548,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             builder.error(self.error(Error::IteratorFunctionInvalidSig(sig.source)));
                         }
                     }
+
                     let namespace = self.namespaces.get_mut(namespace);
                     if namespace.get_func(sig.name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
@@ -1144,6 +1151,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     }
 
                     let local = wasm.local(rhs_anal.ty.to_wasm_ty(&self.types));
+                    self.acquire(rhs_anal.ty, wasm);
                     wasm.local_set(local);
 
                     let variable_scope = VariableScope::new(name, is_mut, rhs_anal.ty, local);
@@ -1274,8 +1282,20 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 };
 
 
-                let var_decl_func_call_args = [(expr.1, false)];
-                let var_decl = Node::Statement(StatementNode::new(Statement::Variable {
+                let iterator = Node::Statement(StatementNode::new(
+                        Statement::Variable {
+                            name: StringMap::INVALID_IDENT,
+                            hint: None,
+                            is_mut: true,
+                            rhs: expr.1
+                        }, source));
+
+                let get_iterator = ExpressionNode::new(
+                        Expression::Identifier(StringMap::INVALID_IDENT),
+                        source);
+
+                let var_decl_func_call_args = [(get_iterator, false)];
+                let loop_var_decl = Node::Statement(StatementNode::new(Statement::Variable {
                                 name: StringMap::INVALID_IDENT, hint: None, is_mut: false,
                                 rhs: ExpressionNode::new(Expression::CallFunction {
                                     name: StringMap::ITER_NEXT_FUNC, is_accessor: true,
@@ -1306,15 +1326,28 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }, source));
 
                 let mut loop_body = [
-                    var_decl,
+                    loop_var_decl,
                     body_match,
                 ];
-                
-                let tree = ExpressionNode::new(
+
+                let loop_node = ExpressionNode::new(
                     Expression::Loop { body: Block::new(
-                        &mut loop_body,
-                        source) },
+                    &mut loop_body,
+                    source) },
                     source
+                );
+
+                let mut block_body = [
+                    iterator,
+                    Node::Expression(loop_node)
+                ];
+
+                let tree = ExpressionNode::new(
+                    Expression::Block { block: Block::new(
+                            &mut block_body,
+                            source,
+                    )},
+                    source,
                 );
 
                 self.expr(tree, *scope, wasm);
@@ -1574,6 +1607,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let cond = self.expr(*condition, scope, wasm);
 
                 if !cond.ty.eq_sem(Type::BOOL) {
+                    wasm.pop();
                     wasm.error(self.error(Error::InvalidType {
                         source: condition.range(),
                         found: cond.ty, expected: Type::BOOL
@@ -1599,6 +1633,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let local = wasm.local(wty);
                         (local, Some((body, wasm.offset())))
                     },
+
                     |((slf, scope), _), wasm| {
                         if let Some(else_block) = else_block {
                             return Some((slf.expr(*else_block, *scope, wasm), wasm.offset()))
@@ -1620,7 +1655,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     wasm.insert_drop(l.1);
 
                 } else if r.is_some() && !l.0.ty.eq_sem(r.as_ref().unwrap().0.ty) {
-
                     wasm.error(slf.error(Error::IfBodyAndElseMismatch {
                         body: (body.range(), l.0.ty),
                         else_block: (else_block.unwrap().range(), r.as_ref().unwrap().0.ty)
@@ -1629,12 +1663,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let i = wasm.insert_drop(l.1);
                     wasm.insert_drop(r.unwrap().1 + i);
                     return AnalysisResult::error()
-                } else {
 
+                } else {
                     let i = wasm.insert_local_set(l.1, local);
                     if let Some(r) = r {
                         wasm.insert_local_set(r.1 + i, local);
                     }
+
                 }
 
                 l.0
@@ -1807,10 +1842,10 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                 if analysis.ty.eq_sem(ty) {
                                     wasm.local_set(local);
                                 } else {
+                                    wasm.pop();
                                     wasm.error(anal.error(Error::MatchBranchesDifferInReturnType {
                                         initial_source: src, initial_typ: ty,
                                         branch_source: mapping.range(), branch_typ: analysis.ty }));
-                                    wasm.pop();
                                 }
                                 
                                 let ty = if ty.eq_lit(Type::Error) { analysis.ty } else { ty };
@@ -1903,6 +1938,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 wasm.error(self.error(Error::FieldDoesntExist {
                     source, field: field_name, typ: value.ty }));
+
                 AnalysisResult::error()
             },
 
@@ -1923,6 +1959,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             wasm.error(self.error(Error::InOutValueIsntMut(a.0.range())))
                         }
 
+                        self.acquire(anal.ty, wasm);
                         vec.push((anal.ty, a.0.range(), if a.1 { Some(a.0) } else { None }));
                     }
 
@@ -1998,7 +2035,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let nscope = Scope::new(ScopeKind::Loop(nscope), scope.some());
                     let nscope = self.scopes.push(nscope);
 
-                    self.block(wasm, nscope, &*body);
+                    wasm.raw("global.get $stack_pointer ");
+                    wasm.call_template("printi32");
+                    let (anal, _) = self.block(wasm, nscope, &*body);
+                    if !anal.ty.eq_sem(Type::Unit) {
+                        self.acquire(anal.ty, wasm);
+                        self.drop_value(anal.ty, wasm);
+                    }
                 });
 
                 wasm.unit();
@@ -2072,6 +2115,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let mut vec = Vec::with_cap_in(&*pool, v.len());
                 for n in v.iter() {
                     let anal = self.expr(*n, scope, wasm);
+                    self.acquire(anal.ty, wasm);
                     vec.push(anal.ty);
                 }
 
@@ -2439,9 +2483,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     if enum_sym.status() == TypeEnumStatus::Result {
                         wasm.error(anal.error(Error::FunctionDoesntReturnAResult {
                             source, func_typ: func.return_type }));
+
                     } else if enum_sym.status() == TypeEnumStatus::Option {
                         wasm.error(anal.error(Error::FunctionDoesntReturnAnOption {
                             source, func_typ: func.return_type }));
+
                     } else { unreachable!() }
                     return AnalysisResult::error();
                 };
@@ -2654,7 +2700,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     // set the new
                     wasm.local_get(value_local);
-                    self.acquire(val_ty, wasm);
 
                     wasm.local_get(value_local);
                     wasm.local_set(val.local_id);
@@ -2709,19 +2754,23 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             }
 
                             let val_ty_wasm = val_ty.to_wasm_ty(&self.types);
-                            let local = wasm.local(val_ty_wasm);
-                            wasm.local_tee(local);
-                            // so the local is now set to the pointe 
+                            let local = wasm.local(WasmType::I32);
+                            wasm.local_set(local);
+                            // so the local is now set to the pointer
                             
                             // get it to drop it later!
                             wasm.local_get(local);
                             wasm.read(val_ty_wasm);
+
+                            let old_data_local = wasm.local(val_ty_wasm);
+                            wasm.local_set(old_data_local);
 
                             // set the new
                             wasm.local_get(local);
                             wasm.write(val_ty_wasm);
 
                             // drop it
+                            wasm.local_get(old_data_local);
                             self.drop_value(val_ty, wasm);
                         }
 
@@ -2798,6 +2847,10 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
 
                 if errored {
+                    for f in args.iter().rev() {
+                        self.drop_value(f.0, wasm);
+                    }
+
                     return Err(());
                 }
 
@@ -2856,6 +2909,10 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
 
                 if errored {
+                    for f in args.iter().rev() {
+                        self.drop_value(f.0, wasm);
+                    }
+
                     return Err(());
                 }
 
@@ -2886,6 +2943,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     wasm.sptr_const(ptr);
                     wasm.u32_const(field.1.try_into().unwrap());
                     wasm.i32_add();
+
                     wasm.read(sig_arg.2.to_wasm_ty(&self.types));
 
                     if let Err(e) = self.assign(
@@ -2963,6 +3021,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             let ptr = alloc.add(sf.1);
 
             let node = self.expr(val.2, scope, wasm);
+
             if !node.ty.eq_sem(sf.0.ty) {
                 wasm.error(self.error(Error::InvalidType 
                     { source: val.1, found: node.ty, expected: sf.0.ty }));
@@ -2995,26 +3054,36 @@ impl<'out> Analyzer<'_, 'out, '_> {
             TypeKind::Struct(strct) => {
                 let local = wasm.local(WasmType::Ptr { size: ty.size() });
                 wasm.local_set(local);
+
                 if strct.status == TypeStructStatus::Rc {
+                    
                     // Read the counter
                     wasm.local_get(local);
-                    wasm.i32_read();
+                    wasm.i64_read();
 
                     // Increment one
-                    wasm.i32_const(1);
-                    wasm.i32_add();
+                    wasm.i64_const(1);
+                    wasm.i64_add();
 
-                    // dbg
-                    wasm.i32_const(420);
-                    wasm.call_template("printi32");
-                    
                     // write it
                     wasm.local_get(local);
-                    wasm.i32_write();
+                    wasm.i64_write();
 
-                    wasm.local_get(local);
-                    return
+                } else {
+                    for i in strct.fields {
+                        wasm.local_get(local);
+                        wasm.u32_const(i.1.try_into().unwrap());
+                        wasm.i32_add();
+
+                        wasm.read(i.0.ty.to_wasm_ty(&self.types));
+                        self.acquire(i.0.ty, wasm);
+                        wasm.pop();
+                    }
+
                 }
+
+                wasm.local_get(local);
+                return
             },
 
 
@@ -3109,19 +3178,15 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 if strct.status == TypeStructStatus::Rc {
                     // Read the counter
                     wasm.local_get(local);
-                    wasm.i32_read();
+                    wasm.i64_read();
 
                     // Subtract one
-                    wasm.i32_const(1);
-                    wasm.i32_sub();
+                    wasm.i64_const(1);
+                    wasm.i64_sub();
 
-                    let new_count = wasm.local(WasmType::I32);
-
+                    let new_count = wasm.local(WasmType::I64);
                     wasm.local_tee(new_count);
-                    wasm.call_template("printi32");
-
-                    wasm.local_get(new_count);
-                    wasm.i32_eqz();
+                    wasm.i64_eqz();
 
                     // If the counter is now 0, free it
                     // Elsewise, write it 
@@ -3136,27 +3201,34 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                 self.drop_value(i.0.ty, wasm)
                             }
 
-                            wasm.i32_const(69);
-                            wasm.call_template("printi32");
-
                             wasm.local_get(local);
                             wasm.call_template("free");
                             (local, ())
                         },
+
                         |_, wasm| {
-                            wasm.i32_const(420);
-                            wasm.call_template("printi32");
-                            
-                            wasm.local_get(local);
+                            wasm.i64_const(420);
+                            wasm.call_template("printi64");
+
                             wasm.local_get(new_count);
-                            wasm.i32_write();
+                            wasm.local_get(local);
+                            wasm.i64_write();
                         }
                     );
                     wasm.pop();
 
                     return
-                }
+                } else {
+                    for i in strct.fields {
+                        wasm.local_get(local);
+                        wasm.u32_const(i.1.try_into().unwrap());
+                        wasm.i32_add();
 
+                        wasm.read(i.0.ty.to_wasm_ty(&self.types));
+
+                        self.drop_value(i.0.ty, wasm);
+                    }
+                }
             },
 
 

@@ -170,6 +170,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         write!(buffer, r#"(func $alloc (import "::host" "alloc") (param i32) (result i32))"#);
         write!(buffer, r#"(func $free (import "::host" "free") (param i32))"#);
         write!(buffer, r#"(func $printi32 (import "::host" "printi32") (param i32))"#);
+        write!(buffer, r#"(func $printi64 (import "::host" "printi64") (param i64))"#);
 
         for (path, funcs) in &self.externs {
             let path = string_map.get(*path);
@@ -198,7 +199,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
                stack_pointer);
 
         write!(buffer, "(global $heap_start (export \"heap_start\") (mut i32) (i32.const {}))", 
-               ((stack_pointer+1) + 8- 1) & !(8 - 1));
+               stack_pointer);
 
         let _ = writeln!(buffer);
         let _ = writeln!(buffer, ";;");
@@ -218,11 +219,6 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
                 WasmConstant::F32(v) => write!(buffer, "f32 (f32.const {v}))"),
                 WasmConstant::F64(v) => write!(buffer, "f64 (f64.const {v}))"),
             }
-        }
-
-        for f in self.functions.iter() {
-            write!(buffer, "(global $s_{} i32 (i32.const {}))",
-                f.function_id.0, f.stack_size);
         }
 
         for f in self.functions.iter_mut() {
@@ -361,6 +357,8 @@ impl WasmFunctionBuilder<'_> {
             write!(buffer, "(global.get $stack_pointer)"); 
         }
 
+        write!(buffer, "i32.const {} ", self.stack_size);
+        write!(buffer, "(call $push) ");
         write!(buffer, "(block $_ret ");
         buffer.reserve_exact(self.body.len() + 1);
         for i in self.body.trim_end().chars() {
@@ -379,6 +377,9 @@ impl WasmFunctionBuilder<'_> {
                 write!(buffer, "call $memcpy ");
             }
         }
+
+        write!(buffer, "i32.const {} ", self.stack_size);
+        write!(buffer, "(call $pop) ");
         write!(buffer, "return");
 
 
