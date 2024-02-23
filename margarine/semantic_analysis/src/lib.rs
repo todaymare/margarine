@@ -150,6 +150,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     tyid
                 };
 
+                let path = self.concat_path(name, StringMap::NEW);
                 let ns = self.namespaces.get_type_mut(Type::Custom(tyid), &self.types);
                 let wid = self.module_builder.function_id();
                 let func = Function::new(
@@ -171,6 +172,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let TypeKind::Struct(rc_sym) = rc_ty.kind() else { unreachable!() };
 
                     let mut builder = WasmFunctionBuilder::new(self.output, wid);
+                    builder.export(path);
+
                     let param = builder.param(ty.to_wasm_ty(&self.types));
                     let ret = builder.local(WasmType::I32);
                     builder.return_value(WasmType::I32);
@@ -361,7 +364,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             startup_functions: Vec::new(),
         };
 
-        slf.module_builder.memory(64 * 1024);
+        slf.module_builder.memory(1);
         slf.module_builder.stack_size(32 * 1024);
 
         {
@@ -425,6 +428,15 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         }
 
         slf.module_builder.register(func);
+
+        let f = slf.funcs.pending();
+        slf.funcs.put(f, Function::new(
+                StringMap::INIT_FUNC,
+                StringMap::INIT_FUNC,
+                &[],
+                Type::Unit,
+                id,
+                FunctionKind::UserDefined { inout: None }));
 
         slf
     }
@@ -830,6 +842,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             inout: inout_ty_id,
                         }
                     };
+
+                    let path = self.concat_path(path, sig.name);
                     let func = Function::new(sig.name, path, args.leak(), ret, self.module_builder.function_id(), func);
                     self.funcs.put(func_id, func);
                 },
@@ -877,6 +891,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let ns = self.namespaces.get_mut(ns_id);
                         let func_id = ns.get_func(f.name()).unwrap();
                         let func = FunctionKind::Extern { ty };
+                        let path = self.concat_path(path, f.name());
                         let func = Function::new(f.name(), path, args.leak(), ret, wfid, func);
                         self.funcs.put(func_id, func);
                     }
@@ -1020,6 +1035,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 match func.kind {
                     FunctionKind::UserDefined { inout } => {
                         let mut wasm = WasmFunctionBuilder::new(self.output, func.wasm_id);
+                        wasm.export(func.path);
 
                         let ret = func.ret.to_wasm_ty(&self.types);
                         wasm.return_value(ret);
@@ -1085,7 +1101,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         }
 
                         wasm.set_finaliser(string.clone_in(self.module_builder.arena));
-                        wasm.export(sig.name);
+                        wasm.export(func.path);
 
                         let func_ret = func.ret;
 
@@ -2059,8 +2075,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let nscope = Scope::new(ScopeKind::Loop(nscope), scope.some());
                     let nscope = self.scopes.push(nscope);
 
-                    wasm.raw("global.get $stack_pointer ");
-                    wasm.call_template("printi32");
                     let (anal, _) = self.block(wasm, path, nscope, &*body);
                     if !anal.ty.eq_sem(Type::Unit) {
                         self.acquire(anal.ty, wasm);
@@ -3319,9 +3333,14 @@ impl<'out> Analyzer<'_, 'out, '_> {
     
     
     fn concat_path(&mut self, p1: StringIndex, p2: StringIndex) -> StringIndex {
-        let str = format_in!(self.output, "{}::{}", self.string_map.get(p1), self.string_map.get(p2));
-        self.string_map.insert(&str)
+        concat_path(self.output, self.string_map, p1, p2)
     }
+}
+
+
+fn concat_path(arena: &Arena, string_map: &mut StringMap, p1: StringIndex, p2: StringIndex) -> StringIndex {
+    let str = format_in!(arena, "{}::{}", string_map.get(p1), string_map.get(p2));
+    string_map.insert(&str)
 }
 
 

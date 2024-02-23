@@ -68,4 +68,12 @@ impl<'a> FunctionMap<'a> {
     pub fn put(&mut self, func_id: FuncId, ns: Function<'a>) {
         assert!(self.map[func_id].swap(Some(ns)).is_none());
     }
+
+
+    pub fn iter<'b>(&'b self) -> impl Iterator<Item=&'b Function<'a>> {
+        self.map.iter().filter_map(|x| x.1.as_ref().map(|x| x))
+    }
+
+
+    pub fn len(&self) -> usize { self.map.len() }
 }

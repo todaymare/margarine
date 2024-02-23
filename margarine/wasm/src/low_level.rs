@@ -167,7 +167,6 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn sptr_const(&mut self, ptr: StackPointer) {
-        if ptr.0 == 0 { write!(self.body, "(global.get $stack_pointer) "); return };
         write!(self.body, "(i32.add (global.get $stack_pointer) (i32.const {})) ", ptr.0);
     } 
 

@@ -98,10 +98,11 @@ pub struct Ctx {
     memory: SendPtr<Memory>,
     store: SendMutPtr<Store<()>>,
     instance: SendMutPtr<Instance>,
+    funcs: Vec<&'static str>
 }
 
 impl Ctx {
-    pub const fn new() -> Self { Self { memory: SendPtr(null()), store: SendMutPtr(null_mut()), instance: SendMutPtr(null_mut()) } }
+    pub const fn new(funcs: Vec<&str>) -> Self { Self { memory: SendPtr(null()), store: SendMutPtr(null_mut()), instance: SendMutPtr(null_mut()), funcs: unsafe { core::mem::transmute(funcs) } } }
 
     pub fn set_mem(&mut self, ptr: &Memory) {
         assert!(self.memory.0.is_null());
@@ -129,6 +130,10 @@ impl Ctx {
 
     pub fn instance(&'_ self) -> &'_ mut Instance {
         unsafe { &mut *self.instance.0 }
+    }
+
+    pub fn funcs(&'_ self) -> &'_ [&'_ str] {
+        &self.funcs
     }
 }
 

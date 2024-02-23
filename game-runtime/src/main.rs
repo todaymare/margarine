@@ -20,7 +20,7 @@ fn main() {
     let file = "out";
     let file = fs::read(file).unwrap();
 
-    let (imports_data, data) = {
+    let (imports_data, data, funcs) = {
         decode(&file)
     };
 
@@ -33,7 +33,7 @@ fn main() {
     let mut linker = Linker::new(&engine);
     let mut libs = Vec::with_capacity(imports_data.len());
 
-    let mut ctx = Ctx::new();
+    let mut ctx = Ctx::new(funcs);
 
     for (path, items) in imports_data {
         let path_noext = path;
@@ -104,7 +104,7 @@ fn main() {
 
     let mut store = Store::new(&engine, ());
     let mut instance = linker.instantiate(&mut store, &module).unwrap();
-    let memory = instance.get_memory(&mut store, "memory").unwrap();
+    let memory = instance.get_memory(&mut store, "program_memory").unwrap();
 
 
     ctx.set_mem(&memory);
@@ -117,7 +117,7 @@ fn main() {
 
     unsafe { CTX_PTR = SendPtr(&ctx) };
    
-    let func = instance.get_func(&mut store, "_init").unwrap();
+    let func = instance.get_func(&mut store, "::init").unwrap();
     func.call(&mut store, &[], &mut []).unwrap();
 
     for l in libs {

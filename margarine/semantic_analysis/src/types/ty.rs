@@ -159,7 +159,7 @@ impl Type {
             Type::I64 => WasmType::I64, 
             Type::I32 => WasmType::I32,
             Type::F64 => WasmType::F64,
-            Type::Any => WasmType::Ptr { size: 8 + 8 },
+            Type::Any => todo!(),
             Type::Unit => WasmType::I64,
             Type::Never => WasmType::I64,
             Type::Error => WasmType::I64,

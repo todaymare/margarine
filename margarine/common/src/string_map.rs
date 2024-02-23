@@ -50,7 +50,7 @@ impl<'a> StringMap<'a> {
             arena,
         };
 
-        assert_eq!(s.insert("_init"), Self::INIT_FUNC);
+        assert_eq!(s.insert("::init"), Self::INIT_FUNC);
         assert_eq!(s.insert("true"), Self::TRUE);
         assert_eq!(s.insert("false"), Self::FALSE);
         assert_eq!(s.insert("value"), Self::VALUE);

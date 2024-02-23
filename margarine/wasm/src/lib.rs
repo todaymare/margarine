@@ -47,7 +47,7 @@ impl WasmType {
 }
 
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub struct FunctionId(u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +181,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
             }
         }
 
-        write!(buffer, "(memory (export \"memory\") {})", self.memory);
+        write!(buffer, "(memory (export \"program_memory\") {})", self.memory);
 
         let string_pointer = self.stack_size;
         write!(buffer, "(global $string_pointer i32 (i32.const {}))", string_pointer);

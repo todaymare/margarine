@@ -12,16 +12,22 @@
  *   - for _ in 0..Item Count
  *      - Item Name
  *        - Len
- *        - Name
+ *        - Name: u8 * len
  * - Imports Len
+ * - Funcs
+ *   - Item Count: u64
+ *   - for _ in 0..Item count
+ *      - Len: u64
+ *      - Name: u8 * len
  * - Crc32 of the data
  * - Crc32 of the imports 
+ * - Crc32 of the funcs
  * - Magic Value for making sure nothing has been appended
 */
 
 const MAGIC : &[u8] = b"NICETITS";
 
-pub fn encode(binary: &mut Vec<u8>, data: &[u8], imports: &[(&str, Vec<&str>)], ) {
+pub fn encode(binary: &mut Vec<u8>, data: &[u8], imports: &[(&str, Vec<&str>)], funcs: &[&str]) {
     let hash_data = crc32fast::hash(data);
     let imports = {
         let mut vec = Vec::new();
@@ -42,27 +48,73 @@ pub fn encode(binary: &mut Vec<u8>, data: &[u8], imports: &[(&str, Vec<&str>)], 
 
     let hash_imports = crc32fast::hash(&imports);
 
+    let funcs = {
+        let mut vec = Vec::new();
+        vec.extend_from_slice(&(funcs.len() as u64).to_le_bytes());
+        for f in funcs {
+            vec.extend_from_slice(&(f.len() as u64).to_le_bytes());
+            vec.extend_from_slice(f.as_bytes());
+        }
+
+        vec
+    };
+
+    let hash_funcs = crc32fast::hash(&funcs);
+
     binary.extend_from_slice(data);
     binary.extend_from_slice(&(data.len() as u64).to_le_bytes());
 
     binary.extend_from_slice(&*imports);
     binary.extend_from_slice(&(imports.len() as u64).to_le_bytes());
+
+    binary.extend_from_slice(&*funcs);
+    binary.extend_from_slice(&(funcs.len() as u64).to_le_bytes());
     
     binary.extend_from_slice(&hash_data.to_le_bytes());
     binary.extend_from_slice(&hash_imports.to_le_bytes());
+    binary.extend_from_slice(&hash_funcs.to_le_bytes());
     binary.extend_from_slice(MAGIC);
 }
 
 
-pub fn decode(binary: &'_ [u8]) -> (Vec<(&'_ str, Vec<&'_ str>)>, &'_ [u8]) {
+pub fn decode(binary: &'_ [u8]) -> (Vec<(&'_ str, Vec<&'_ str>)>, &'_ [u8], Vec<&'_ str>) {
     assert_eq!(&binary[binary.len() - MAGIC.len()..], MAGIC, "magic not valid");
     let binary = &binary[..binary.len() - MAGIC.len()];
+
+    let hash_funcs = u32::from_le_bytes(binary[binary.len() - 4..].try_into().unwrap());
+    let binary = &binary[..binary.len() - 4];
 
     let hash_imports = u32::from_le_bytes(binary[binary.len() - 4..].try_into().unwrap());
     let binary = &binary[..binary.len() - 4];
 
     let hash_data = u32::from_le_bytes(binary[binary.len() - 4..].try_into().unwrap());
     let binary = &binary[..binary.len() - 4];
+
+    // funcs
+    let len = u64::from_le_bytes(binary[binary.len() - 8..].try_into().unwrap());
+    let binary = &binary[..binary.len() - 8];
+
+    let funcs = &binary[binary.len() - len as usize..];
+    let funcs_hash = crc32fast::hash(funcs);
+    assert_eq!(hash_funcs, funcs_hash, "The CRC32 hash of the imports is not valid");
+
+    let binary = &binary[..binary.len() - len as usize];
+    let funcs = {
+        let func_count = u64::from_le_bytes(funcs[..8].try_into().unwrap());
+        let mut funcs = &funcs[8..];
+
+        let mut vec = Vec::with_capacity(func_count as usize);
+        for _ in 0..func_count {
+            let name_len = u64::from_le_bytes(funcs[..8].try_into().unwrap());
+            funcs = &funcs[8..];
+            
+            let name = std::str::from_utf8(&funcs[..name_len as usize]).unwrap();
+            funcs = &funcs[name_len as usize..];
+            vec.push(name);
+        }
+        vec
+    };
+
 
     // imports 
     let len = u64::from_le_bytes(binary[binary.len() - 8..].try_into().unwrap());
@@ -105,6 +157,7 @@ pub fn decode(binary: &'_ [u8]) -> (Vec<(&'_ str, Vec<&'_ str>)>, &'_ [u8]) {
     };
 
 
+    // Data
     let data = {
         let len = u64::from_le_bytes(binary[binary.len() - 8..].try_into().unwrap());
         let binary = &binary[..binary.len() - 8];
@@ -116,7 +169,7 @@ pub fn decode(binary: &'_ [u8]) -> (Vec<(&'_ str, Vec<&'_ str>)>, &'_ [u8]) {
         data
     };
 
-    (imports, data)
+    (imports, data, funcs)
 }
 
 

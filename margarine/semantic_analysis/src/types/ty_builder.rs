@@ -3,7 +3,7 @@ use errors::SemaError;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
-use crate::{errors::Error, funcs::{Function, FunctionKind, FunctionMap}, namespace::{Namespace, NamespaceMap}, scope::ScopeId, types::ty_sym::{StructField, TaggedUnionField, TypeEnumKind, TypeKind, TypeStruct, TypeTaggedUnion}};
+use crate::{concat_path, errors::Error, funcs::{Function, FunctionKind, FunctionMap}, namespace::{Namespace, NamespaceMap}, scope::ScopeId, types::ty_sym::{StructField, TaggedUnionField, TypeEnumKind, TypeKind, TypeStruct, TypeTaggedUnion}};
 
 use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeEnum, TypeEnumStatus, TypeStructStatus, TypeSymbol, TypeTag}};
 
@@ -418,6 +418,9 @@ impl<'out> TypeBuilder<'_> {
                     wf.i32_write();
 
                     let func;
+                    let path = concat_path(data.arena, data.string_map, path, f.name());
+                    wf.export(path);
+
                     if let Some(fty) = f.ty() {
                         let wfty = fty.to_wasm_ty(data.type_map);
                         let param = wf.param(wfty);
@@ -458,8 +461,11 @@ impl<'out> TypeBuilder<'_> {
 
             TypeEnumKind::Tag(sym) => {
                 for (i, f) in sym.fields().into_iter().enumerate() {
+                    let path = concat_path(data.arena, data.string_map, path, *f);
                     let wfid = data.module_builder.function_id();
                     let mut wf = WasmFunctionBuilder::new(data.arena, wfid);
+                    wf.export(path);
+
                     wf.return_value(wasm::WasmType::I32);
 
                     wf.u32_const(i as u32);

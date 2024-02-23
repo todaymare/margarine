@@ -87,7 +87,20 @@ fn main() -> Result<(), &'static str> {
                 vec
             };
 
-            encode(&mut game, &*data, &*imports);
+            let funcs = {
+                let mut vec = Vec::with_capacity(sema.funcs.len() + 1);
+
+                let mut funcs = sema.funcs.iter().collect::<Vec<_>>();
+                funcs.sort_unstable_by_key(|x| x.wasm_id);
+                for f in funcs.iter() {
+                    vec.push(sema.string_map.get(f.path));
+                }
+
+                vec
+            };
+            dbg!(&funcs);
+
+            encode(&mut game, &*data, &*imports, &*funcs);
             fs::write("out", &*game).unwrap();
              
          }
