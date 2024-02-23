@@ -133,8 +133,9 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn alloc_stack(&mut self, size: usize) -> StackPointer {
+        let result = self.stack_size;
         self.stack_size += size; 
-        StackPointer(self.stack_size)
+        StackPointer(result)
     } 
 
 
