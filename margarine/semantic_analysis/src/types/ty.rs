@@ -23,6 +23,7 @@ pub enum Type {
 
 impl Type {
     pub const BOOL : Type = Type::Custom(TypeId::BOOL);
+    pub const RANGE: Type = Type::Custom(TypeId::RANGE);
     pub const STR  : Type = Type::Custom(TypeId::STR);
 }
 
@@ -79,7 +80,7 @@ impl Type {
             Type::Any => StringMap::ANY,
             Type::Unit => StringMap::UNIT,
             Type::Never => unimplemented!(),
-            Type::Error => unimplemented!(),
+            Type::Error => StringMap::ERR,
             Type::Custom(v) => types.path(v),
         }
     }

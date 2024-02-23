@@ -20,7 +20,7 @@ fn main() -> Result<(), &'static str> {
              tokens
          });
 
-         // println!("{tokens:#?}");
+         println!("{tokens:#?}");
 
          let mut arena = Arena::new();
          let (ast, parse_errors) = DropTimer::with_timer("parsing", || {
@@ -28,7 +28,6 @@ fn main() -> Result<(), &'static str> {
              ast
          });
 
-         println!("{ast:#?}");
 
          let ns_arena = Arena::new();
          let _scopes = Arena::new();
@@ -39,7 +38,6 @@ fn main() -> Result<(), &'static str> {
 
          // println!("{sema:#?}");
 
-         dbg!(&sema);
 
          if !lex_errors.is_empty() {
              let report = margarine::display(lex_errors.as_slice().inner(), &sema.string_map, &file, &());
@@ -80,8 +78,12 @@ fn main() -> Result<(), &'static str> {
             let imports = {
                 let mut vec = Vec::with_capacity(sema.module_builder.externs.len());
                 for (path, value) in sema.module_builder.externs.iter() {
-                    let mut values = Vec::with_capacity(value.len());
-                    for i in value { values.push(sema.string_map.get(i.0)) }
+                    let mut values : Vec<&str> = Vec::with_capacity(value.len());
+                    for i in value {
+                        let str = sema.string_map.get(i.0);
+                        if values.contains(&str) { continue }
+                        values.push(str)
+                    }
                     vec.push((sema.string_map.get(*path), values));
                 }
                 vec
@@ -98,7 +100,6 @@ fn main() -> Result<(), &'static str> {
 
                 vec
             };
-            dbg!(&funcs);
 
             encode(&mut game, &*data, &*imports, &*funcs);
             fs::write("out", &*game).unwrap();

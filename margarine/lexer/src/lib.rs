@@ -109,6 +109,8 @@ pub enum TokenKind {
     Comma,
     /// '.'
     Dot,
+    /// '..'
+    DoubleDot,
     /// '!'
     Bang,
     /// '='
@@ -271,6 +273,7 @@ impl Lexer<'_, '_> {
 
         let start = self.reader.offset() as u32;
         let Some(val) = self.reader.next() else { return self.eof() };
+        dbg!(val as char);
 
         let kind = match val {
             b'(' => TokenKind::LeftParenthesis,
@@ -284,7 +287,6 @@ impl Lexer<'_, '_> {
 
 
             b',' => TokenKind::Comma,
-            b'.' => TokenKind::Dot,
             b'@' => TokenKind::At,
             b'?' => TokenKind::QuestionMark,
             b'~' => TokenKind::SquigglyDash,
@@ -354,6 +356,10 @@ impl Lexer<'_, '_> {
                 else { TokenKind::Colon }
             }
 
+            b'.' => {
+                if self.reader.consume_if_eq(&b'.') { TokenKind::DoubleDot }
+                else { TokenKind::Dot }
+            }
 
             b'"' => self.string(start as usize),
 
@@ -438,15 +444,32 @@ impl Lexer<'_, '_> {
 
     fn number(&mut self, begin: usize) -> TokenKind {
         let mut dot_count = 0;
-        let (value, _) = self.reader.consume_while_slice_from(begin, |x| {
-            if *x == b'.' {
-                dot_count += 1;
-                return true
+        let value = {
+            loop {
+                let Some(x) = self.reader.peek()
+                else { break };
+
+                if x == b'.' {
+                    let Some(next_next) = self.reader.peek_at(1)
+                    else { break };
+
+                    if !next_next.is_ascii_digit() {
+                        break
+                    }
+
+                    dot_count += 1;
+                    self.reader.consume(1);
+                    continue
+                }
+
+                if !x.is_ascii_digit() { break }
+
+                self.reader.consume(1);
             }
 
-            x.is_ascii_digit()
-        });
-        
+            &self.reader.original_slice()[begin..self.reader.offset()]
+        };
+       
         let value = unsafe { core::str::from_utf8_unchecked(value) };
 
         let source = SourceRange::new(begin as u32, self.reader.offset() as u32 - 1);

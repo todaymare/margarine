@@ -382,6 +382,23 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
                     TypeEnumStatus::User,
                 );
             }
+
+            {
+                let id = slf.types.pending(StringMap::RANGE);
+                assert_eq!(TypeId::RANGE, id);
+
+                type_builder.add_ty(TypeId::RANGE, StringMap::RANGE, SourceRange::new(0, 0));
+                type_builder.set_struct_fields(
+                    TypeId::RANGE,
+                    [
+                        (StringMap::LOW, Type::I64),
+                        (StringMap::HIGH, Type::I64),
+                    ].into_iter(),
+                    TypeStructStatus::User
+                );
+            }
+
+
             {
                 let id = slf.types.pending(StringMap::STR);
                 assert_eq!(TypeId::STR, id);
@@ -404,9 +421,18 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             type_builder.finalise(data, &mut slf.errors);
         }
 
+        // prelude namespace
+        let global_ns = {
+            let mut ns = Namespace::new(slf.output, StringMap::INVALID_IDENT);
+
+            ns.add_type(StringMap::RANGE, TypeId::RANGE);
+
+            slf.namespaces.put(ns)
+        };
+
         let id = slf.module_builder.function_id();
         let mut func = WasmFunctionBuilder::new(output, id);
-        let scope = Scope::new(ScopeKind::Root, PackedOption::NONE);
+        let scope = Scope::new(ScopeKind::ImplicitNamespace(global_ns), PackedOption::NONE);
         let scope = slf.scopes.push(scope);
 
         func.export(StringMap::INIT_FUNC);
@@ -496,8 +522,6 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
                 self.acquire(ty, builder);
                 self.drop_value(ty, builder);
             } 
-
-            builder.call_template("dump_stack_trace");
         }
 
         if nodes.is_empty() { builder.unit(); }
@@ -2457,6 +2481,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let mut ret_ty = Type::Unit;
                 wasm.ite(&mut (), |_, wasm| {
                     // TODO: Error messages, add it once errors are properly made
+                    wasm.call_template("dump_stack_trace");
                     wasm.unreachable();
                     let ty = match e.kind() {
                         TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
@@ -2701,6 +2726,19 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 });
 
                 AnalysisResult::new(ret_ty, true)
+            },
+
+
+            Expression::Range { lhs, rhs } => {
+                let fields = [
+                    (StringMap::LOW, lhs.range(), *lhs),
+                    (StringMap::HIGH, rhs.range(), *rhs),
+                ];
+
+                self.create_struct(wasm, scope, TypeId::RANGE, &fields, path, source);
+
+                AnalysisResult::new(Type::RANGE, true)
+
             },
         }
     }

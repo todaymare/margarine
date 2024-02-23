@@ -8,7 +8,8 @@ define_key!(u32, pub TypeId);
 
 impl TypeId {
     pub const BOOL : TypeId = TypeId(0);
-    pub const STR  : TypeId = TypeId(1);
+    pub const RANGE: TypeId = TypeId(1);
+    pub const STR  : TypeId = TypeId(2);
 
     pub const I32  : TypeId = TypeId(u32::MAX);
     pub const I64  : TypeId = TypeId(u32::MAX - 1);

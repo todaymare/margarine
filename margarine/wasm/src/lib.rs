@@ -306,7 +306,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     #[inline(always)]
     pub fn error(&mut self, err: ErrorId) {
-        self.body.push(&format!("unreachable (; {err:?} ;)"));
+        self.body.push(&format!("(call $dump_stack_trace) unreachable (; {err:?} ;)"));
     }
 
 

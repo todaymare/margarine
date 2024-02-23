@@ -31,9 +31,6 @@ pub fn dump_stack_trace(ctx: &Ctx) {
 
         sp = new_sp;
 
-        fs::write("hexdump", unsafe { slice::from_raw_parts(mem.data_ptr(ctx.store()), 64 * 1024) }).unwrap();
-        let _ = stdin().lock().read_line(&mut String::new());
-
         i += 1;
     }
 

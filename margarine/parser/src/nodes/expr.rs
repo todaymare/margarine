@@ -42,6 +42,11 @@ pub enum Expression<'a> {
 
     Identifier(StringIndex),
 
+    Range {
+        lhs: &'a ExpressionNode<'a>,
+        rhs: &'a ExpressionNode<'a>,
+    },
+
     BinaryOp {
         operator: BinaryOperator,
         lhs: &'a ExpressionNode<'a>,

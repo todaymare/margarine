@@ -1501,11 +1501,31 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn product(&mut self, settings: &ParserSettings<'ta>) -> ExpressionResult<'ta> {
         self.binary_operation(
-            Self::unary_neg, 
-            Self::unary_neg, 
+            Self::range_expr, 
+            Self::range_expr, 
             &[TokenKind::Star, TokenKind::Slash, TokenKind::Percent], 
             settings,
         )
+    }
+
+    fn range_expr(&mut self, settings: &ParserSettings<'ta>) -> ExpressionResult<'ta> {
+        let lhs = self.unary_neg(settings)?;
+
+        if !self.peek_is(TokenKind::DoubleDot) {
+            return Ok(lhs);
+        }
+        self.advance();
+        self.advance();
+
+        let rhs = self.unary_neg(settings)?;
+
+        Ok(ExpressionNode::new(
+            Expression::Range {
+                lhs: self.arena.alloc_new(lhs),
+                rhs: self.arena.alloc_new(rhs),
+            },
+            SourceRange::new(lhs.range().start(), rhs.range().end()),
+        ))
     }
     
 

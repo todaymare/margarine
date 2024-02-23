@@ -96,6 +96,7 @@ pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
 /// Frees a previously allocated block
 ///
 pub fn free(memory: &impl Allocable, ptr: WasmPtr<()>) {
+    println!("free");
     let ptrb = get_header(ptr);
 
     let mut curr = ptrb;

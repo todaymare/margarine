@@ -88,7 +88,6 @@ fn main() {
         }).unwrap();
 
         linker.func_wrap("::host", "dump_stack_trace", || {
-            println!("hiii");
             let ctx = unsafe { &*CTX_PTR.0 };
             dump_stack_trace(ctx);
         }).unwrap();
