@@ -2728,17 +2728,18 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
 
                 if depth == 0 {
+                    assert_eq!(val_ty, val.ty);
                     let val_wasm = val_ty.to_wasm_ty(&self.types);
                     let value_local = wasm.local(val_wasm);
                     wasm.local_set(value_local);
 
                     // get it to drop it later.
                     wasm.local_get(val.local_id);
-                    wasm.read(val_wasm);
+                    if let Type::Custom(_) = val.ty {
+                        wasm.read(val_wasm);
+                    }
 
                     // set the new
-                    wasm.local_get(value_local);
-
                     wasm.local_get(value_local);
                     wasm.local_set(val.local_id);
 
