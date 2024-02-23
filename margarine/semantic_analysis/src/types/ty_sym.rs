@@ -6,6 +6,7 @@ use super::ty::Type;
 #[derive(Debug, Clone, Copy)] 
 pub struct TypeSymbol<'a> {
     display_name: StringIndex,
+    path: StringIndex,
     align: usize,
     size: usize,
     kind: TypeKind<'a>,
@@ -14,14 +15,17 @@ pub struct TypeSymbol<'a> {
 
 impl<'a> TypeSymbol<'a> {
     pub fn new(display_name: StringIndex,
+               path: StringIndex,
                align: usize,
                size: usize,
                kind: TypeKind<'a>) -> Self {
-        Self { display_name, kind, align, size }
+        Self { display_name, kind, align, size, path }
     }
 
     #[inline(always)]
     pub fn display_name(self) -> StringIndex { self.display_name }
+    #[inline(always)]
+    pub fn path(self) -> StringIndex { self.path }
     #[inline(always)]
     pub fn kind(self) -> TypeKind<'a> { self.kind }
     #[inline(always)]

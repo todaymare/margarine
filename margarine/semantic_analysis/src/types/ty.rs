@@ -1,4 +1,4 @@
-use common::string_map::StringMap;
+use common::string_map::{StringIndex, StringMap};
 use wasm::WasmType;
 
 use crate::types::ty_map::TypeId;
@@ -64,6 +64,23 @@ impl Type {
                 let display_name = ty.display_name();
                 string_map.get(display_name)
             },
+        }
+    }
+
+
+    pub fn path (
+        self,
+        types: &TypeMap,
+    ) -> StringIndex {
+        match self {
+            Type::I64 => StringMap::INT,
+            Type::I32 => unimplemented!(),
+            Type::F64 => StringMap::FLOAT,
+            Type::Any => StringMap::ANY,
+            Type::Unit => StringMap::UNIT,
+            Type::Never => unimplemented!(),
+            Type::Error => unimplemented!(),
+            Type::Custom(v) => types.path(v),
         }
     }
 

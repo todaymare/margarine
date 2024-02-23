@@ -4,7 +4,7 @@ use common::{string_map::{StringIndex, StringMap}, source::SourceRange, Swap};
 use sti::{packed_option::PackedOption, define_key, keyed::KVec};
 use wasm::{LocalId, LoopId};
 
-use crate::{namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::TypeId}, funcs::FuncId};
+use crate::{funcs::FuncId, namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::{TypeId, TypeMap}}};
 
 define_key!(u32, pub ScopeId);
 
@@ -103,6 +103,7 @@ impl Scope {
         name: StringIndex,
         scopes: &ScopeMap,
         namespaces: &mut NamespaceMap,
+        types: &TypeMap,
     ) -> Option<NamespaceId> {
         self.over(scopes, |current| {
             if let ScopeKind::ExplicitNamespace(var) = current.kind() {
@@ -114,7 +115,7 @@ impl Scope {
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
                 let ns = namespaces.get(ns);
                 if let Some(val) = ns.get_type(name) {
-                    return Some(namespaces.get_type(Type::Custom(val)))
+                    return Some(namespaces.get_type(Type::Custom(val), types))
                 }
 
                 if let Some(val) = ns.get_mod(name) {
@@ -125,10 +126,10 @@ impl Scope {
             
             if let ScopeKind::Root = current.kind() {
                 let ty = match name {
-                    StringMap::INT => namespaces.get_type(Type::I64),
-                    StringMap::FLOAT => namespaces.get_type(Type::F64),
-                    StringMap::BOOL => namespaces.get_type(Type::BOOL),
-                    StringMap::ANY => namespaces.get_type(Type::Any),
+                    StringMap::INT => namespaces.get_type(Type::I64, types),
+                    StringMap::FLOAT => namespaces.get_type(Type::F64, types),
+                    StringMap::BOOL => namespaces.get_type(Type::BOOL, types),
+                    StringMap::ANY => namespaces.get_type(Type::Any, types),
                     _ => return None,
                 };
 

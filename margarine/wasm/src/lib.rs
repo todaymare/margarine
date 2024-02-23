@@ -169,6 +169,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
 
         write!(buffer, r#"(func $alloc (import "::host" "alloc") (param i32) (result i32))"#);
         write!(buffer, r#"(func $free (import "::host" "free") (param i32))"#);
+        write!(buffer, r#"(func $dump_stack_trace (import "::host" "dump_stack_trace"))"#);
         write!(buffer, r#"(func $printi32 (import "::host" "printi32") (param i32))"#);
         write!(buffer, r#"(func $printi64 (import "::host" "printi64") (param i64))"#);
 
@@ -260,7 +261,7 @@ impl<'a> WasmFunctionBuilder<'a> {
             function_id: id,
             loop_nest: 0,
             block_nest: 0,
-            stack_size: 0,
+            stack_size: 8, // prev_sp + func_id
             finaliser: String::new_in(arena),
         }
     }
@@ -353,12 +354,36 @@ impl WasmFunctionBuilder<'_> {
             write!(buffer, "(local $_{} {}) ", self.params.len() + i, l.name());
         }
 
-        if let Some(WasmType::Ptr { .. }) = self.ret {
-            write!(buffer, "(global.get $stack_pointer)"); 
+
+        // push & set the val at current sp to the prev sp
+        {
+            // load the sp
+            write!(buffer, "global.get $stack_pointer ");
+
+            // push
+            write!(buffer, "i32.const {} ", self.stack_size);
+            write!(buffer, "(call $push) ");
+
+            // write the prev sp at the new sp
+            write!(buffer, "global.get $stack_pointer ");
+            write!(buffer, "call $write_i32_to_mem ");
+
+        }
+        
+        // write the func_id
+        {
+            // func_id
+            write!(buffer, "i32.const {} ", self.function_id.0);
+
+            // load the sp
+            write!(buffer, "global.get $stack_pointer ");
+            write!(buffer, "i32.const 4 ");
+            write!(buffer, "i32.add ");
+
+            // write
+            write!(buffer, "call $write_i32_to_mem ");
         }
 
-        write!(buffer, "i32.const {} ", self.stack_size);
-        write!(buffer, "(call $push) ");
         write!(buffer, "(block $_ret ");
         buffer.reserve_exact(self.body.len() + 1);
         for i in self.body.trim_end().chars() {

@@ -22,16 +22,17 @@ impl<'a> StringMap<'a> {
     pub const INT : StringIndex = StringIndex(6);
     pub const FLOAT : StringIndex = StringIndex(7);
     pub const ANY : StringIndex = StringIndex(8);
-    pub const OK : StringIndex = StringIndex(9);
-    pub const ERR : StringIndex = StringIndex(10);
-    pub const SOME : StringIndex = StringIndex(11);
-    pub const NONE : StringIndex = StringIndex(12);
-    pub const SELF : StringIndex = StringIndex(13);
-    pub const CAST : StringIndex = StringIndex(14);
-    pub const NEW : StringIndex = StringIndex(15);
-    pub const INVALID_IDENT : StringIndex = StringIndex(16);
+    pub const UNIT : StringIndex = StringIndex(9);
+    pub const OK : StringIndex = StringIndex(10);
+    pub const ERR : StringIndex = StringIndex(11);
+    pub const SOME : StringIndex = StringIndex(12);
+    pub const NONE : StringIndex = StringIndex(13);
+    pub const SELF : StringIndex = StringIndex(14);
+    pub const CAST : StringIndex = StringIndex(15);
+    pub const NEW : StringIndex = StringIndex(16);
+    pub const INVALID_IDENT : StringIndex = StringIndex(17);
 
-    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(17);
+    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(18);
 
  
     #[inline(always)]
@@ -58,6 +59,7 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("int"), Self::INT);
         assert_eq!(s.insert("float"), Self::FLOAT);
         assert_eq!(s.insert("any"), Self::ANY);
+        assert_eq!(s.insert("unit"), Self::UNIT);
         assert_eq!(s.insert("ok"), Self::OK);
         assert_eq!(s.insert("err"), Self::ERR);
         assert_eq!(s.insert("some"), Self::SOME);

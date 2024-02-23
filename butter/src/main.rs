@@ -5,7 +5,7 @@ use margarine::{FileData, StringMap, DropTimer};
 use sti::prelude::Arena;
 use wasmtime::{Config, Engine};
 
-const GAME_RUNTIME : &[u8] = include_bytes!("../../target/release/game-runtime");
+const GAME_RUNTIME : &[u8] = include_bytes!("../../target/debug/game-runtime");
 
 fn main() -> Result<(), &'static str> {
      DropTimer::with_timer("compilation", || {
@@ -34,7 +34,7 @@ fn main() -> Result<(), &'static str> {
          let _scopes = Arena::new();
          let mut sema = {
              let _1 = DropTimer::new("semantic analysis");
-             margarine::Analyzer::run(&ns_arena, &mut string_map, &ast)
+             margarine::Analyzer::run(&ns_arena, &mut string_map, &ast, file[0].name())
          };
 
          // println!("{sema:#?}");

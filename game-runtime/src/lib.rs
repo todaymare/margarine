@@ -21,7 +21,7 @@
 
 const MAGIC : &[u8] = b"NICETITS";
 
-pub fn encode(binary: &mut Vec<u8>, data: &[u8], imports: &[(&str, Vec<&str>)]) {
+pub fn encode(binary: &mut Vec<u8>, data: &[u8], imports: &[(&str, Vec<&str>)], ) {
     let hash_data = crc32fast::hash(data);
     let imports = {
         let mut vec = Vec::new();
@@ -44,8 +44,10 @@ pub fn encode(binary: &mut Vec<u8>, data: &[u8], imports: &[(&str, Vec<&str>)]) 
 
     binary.extend_from_slice(data);
     binary.extend_from_slice(&(data.len() as u64).to_le_bytes());
+
     binary.extend_from_slice(&*imports);
     binary.extend_from_slice(&(imports.len() as u64).to_le_bytes());
+    
     binary.extend_from_slice(&hash_data.to_le_bytes());
     binary.extend_from_slice(&hash_imports.to_le_bytes());
     binary.extend_from_slice(MAGIC);

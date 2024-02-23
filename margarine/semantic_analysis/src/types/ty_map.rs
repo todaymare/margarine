@@ -27,7 +27,14 @@ impl TypeId {
 
 #[derive(Debug)]
 pub struct TypeMap<'out> {
-    map: KVec<TypeId, Option<TypeSymbol<'out>>>, 
+    map: KVec<TypeId, TypeValue<'out>>, 
+}
+
+
+#[derive(Debug)]
+enum TypeValue<'out> {
+    Some(TypeSymbol<'out>),
+    None(StringIndex),
 }
 
 
@@ -37,12 +44,12 @@ impl<'out> TypeMap<'out> {
     }
 
     #[inline(always)]
-    pub fn pending(&mut self) -> TypeId { self.map.push(None) }
+    pub fn pending(&mut self, path: StringIndex) -> TypeId { self.map.push(TypeValue::None(path)) }
 
     #[inline(always)]
     pub fn put(&mut self, ty_id: TypeId, sym: TypeSymbol<'out>) { 
-        let old = self.map[ty_id].replace(sym);
-        assert!(old.is_none(), "replaced an already initialised value");
+        assert!(!matches!(self.map[ty_id], TypeValue::Some(_)), "tried to replace an already initialised value");
+        self.map[ty_id] = TypeValue::Some(sym);
     }
 
     #[inline(always)]
@@ -51,7 +58,18 @@ impl<'out> TypeMap<'out> {
     }
 
     #[inline(always)]
+    pub fn path(&self, ty_id: TypeId) -> StringIndex {
+        match self.map[ty_id] {
+            TypeValue::Some(v) => v.path(),
+            TypeValue::None(v) => v,
+        }
+    }
+
+    #[inline(always)]
     pub fn get_opt(&self, ty_id: TypeId) -> Option<TypeSymbol<'out>> {
-        self.map.get(ty_id).as_ref().unwrap().as_ref().map(|x| *x)
+        match self.map.get(ty_id).as_ref().unwrap() {
+            TypeValue::Some(v) => Some(*v),
+            TypeValue::None(_) => None,
+        }
     }
 }

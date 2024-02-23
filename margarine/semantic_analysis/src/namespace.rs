@@ -1,7 +1,7 @@
 use common::string_map::StringIndex;
 use sti::{define_key, hash::{HashMap, DefaultSeed}, keyed::KVec, arena::Arena};
 
-use crate::{types::{ty_map::TypeId, ty::Type}, funcs::FuncId};
+use crate::{funcs::FuncId, types::{ty::Type, ty_map::{TypeId, TypeMap}}};
 
 define_key!(u32, pub NamespaceId);
 
@@ -11,30 +11,32 @@ pub struct Namespace<'out> {
     types: HashMap<StringIndex, TypeId, DefaultSeed, &'out Arena>,
     funcs: HashMap<StringIndex, FuncId, DefaultSeed, &'out Arena>,
     modules: HashMap<StringIndex, NamespaceId, DefaultSeed, &'out Arena>,
+    path: StringIndex,
 }
 
 
 impl<'out> Namespace<'out> {
-    pub fn new(arena: &'out Arena) -> Self {
-        Namespace::with_ty_and_fn_cap(arena, 0, 0)
+    pub fn new(arena: &'out Arena, path: StringIndex) -> Self {
+        Namespace::with_ty_and_fn_cap(arena, path, 0, 0)
     }
 
 
-    pub fn with_fn_cap(arena: &'out Arena, fn_cap: usize) -> Self {
-        Self::with_ty_and_fn_cap(arena, 0, fn_cap)
+    pub fn with_fn_cap(arena: &'out Arena, path: StringIndex, fn_cap: usize) -> Self {
+        Self::with_ty_and_fn_cap(arena, path, 0, fn_cap)
     }
 
 
-    pub fn with_ty_cap(arena: &'out Arena, ty_cap: usize) -> Self {
-        Self::with_ty_and_fn_cap(arena, ty_cap, 0)
+    pub fn with_ty_cap(arena: &'out Arena, path: StringIndex, ty_cap: usize) -> Self {
+        Self::with_ty_and_fn_cap(arena, path, ty_cap, 0)
     }
 
 
-    pub fn with_ty_and_fn_cap(arena: &'out Arena, ty_cap: usize, fn_cap: usize) -> Self {
+    pub fn with_ty_and_fn_cap(arena: &'out Arena, path: StringIndex, ty_cap: usize, fn_cap: usize) -> Self {
         Namespace {
             types: HashMap::with_cap_in(arena, ty_cap),
             funcs: HashMap::with_cap_in(arena, fn_cap),
             modules: HashMap::with_cap_in(arena, 0),
+            path,
         }
     }
     
@@ -70,6 +72,8 @@ impl<'out> Namespace<'out> {
     pub fn get_mod(&self, id: StringIndex) -> Option<NamespaceId> {
         self.modules.get(&id).copied()
     }
+
+    pub fn path(&self) -> StringIndex { self.path }
 }
 
 
@@ -92,9 +96,9 @@ impl<'out> NamespaceMap<'out> {
 
 
     #[inline(always)]
-    pub fn get_type(&mut self, id: Type) -> NamespaceId {
+    pub fn get_type(&mut self, id: Type, types: &TypeMap) -> NamespaceId {
         let id = self.type_to_ns.kget_or_insert_with(id, || {
-            self.map.push(Namespace::new(self.arena))
+            self.map.push(Namespace::new(self.arena, id.path(types)))
         });
 
         *id
@@ -102,9 +106,9 @@ impl<'out> NamespaceMap<'out> {
 
 
     #[inline(always)]
-    pub fn get_type_mut(&mut self, id: Type) -> &mut Namespace<'out> {
+    pub fn get_type_mut(&mut self, id: Type, types: &TypeMap) -> &mut Namespace<'out> {
         let id = self.type_to_ns.kget_or_insert_with(id, || {
-            self.map.push(Namespace::new(self.arena))
+            self.map.push(Namespace::new(self.arena, id.path(types)))
         });
 
         &mut self.map[*id]

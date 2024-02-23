@@ -1,6 +1,6 @@
 use std::{env, fs, ptr::null};
 
-use butter_runtime_api::{alloc::{free, walloc}, ffi::{Ctx, SendPtr, WasmPtr}};
+use butter_runtime_api::{alloc::{free, walloc}, dump_stack_trace, ffi::{Ctx, SendPtr, WasmPtr}};
 use game_runtime::decode;
 use libloading::{Library, Symbol};
 use wasmtime::{Config, Engine, Module, Linker, Store, Val};
@@ -78,7 +78,8 @@ fn main() {
     {
         linker.func_wrap("::host", "alloc", |size: u32| {
             let ctx = unsafe { &*CTX_PTR.0 };
-            walloc(&mut (ctx.mem(), ctx.store()), size as usize).as_u32()
+            let ptr = walloc(&mut (ctx.mem(), ctx.store()), size as usize).as_u32();
+            ptr
         }).unwrap();
 
         linker.func_wrap("::host", "free", |ptr: u32| {
@@ -86,18 +87,29 @@ fn main() {
             free(&(ctx.mem(), ctx.store()), WasmPtr::from_u32(ptr))
         }).unwrap();
 
+        linker.func_wrap("::host", "dump_stack_trace", || {
+            println!("hiii");
+            let ctx = unsafe { &*CTX_PTR.0 };
+            dump_stack_trace(ctx);
+        }).unwrap();
+
         linker.func_wrap("::host", "printi32", |ptr: i32| {
             println!("printi32: {ptr}");
+        }).unwrap();
+
+        linker.func_wrap("::host", "printi64", |ptr: i64| {
+            println!("printi64: {ptr}");
         }).unwrap();
     }
 
     let mut store = Store::new(&engine, ());
-    let instance = linker.instantiate(&mut store, &module).unwrap();
+    let mut instance = linker.instantiate(&mut store, &module).unwrap();
     let memory = instance.get_memory(&mut store, "memory").unwrap();
 
 
     ctx.set_mem(&memory);
     ctx.set_store(&mut store);
+    ctx.set_instance(&mut instance);
 
     let heap_start = instance.get_global(&mut store, "heap_start").unwrap().get(&mut store);
     let Val::I32(heap_start) = heap_start else { unreachable!() };

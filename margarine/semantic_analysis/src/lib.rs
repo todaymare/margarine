@@ -103,7 +103,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             DataTypeKind::Within(ns, dt) => {
-                let Some(ns) = self.scopes.get(scope).get_ns(ns, &self.scopes, &mut self.namespaces)
+                let Some(ns) = self.scopes.get(scope).get_ns(ns, &self.scopes, &mut self.namespaces, &self.types)
                 else {
                     return Err(Error::NamespaceNotFound { source: dt.range(), namespace: ns });
                 };
@@ -118,19 +118,19 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let ty = self.convert_ty(scope, *ty)?;
                 if let Some(ty) = self.rc_map.get(&ty) { return Ok(Type::Custom(*ty)) }
 
+                let temp = ArenaPool::tls_get_temp();
+                let name = {
+                    let mut str = sti::string::String::new_in(&*temp);
+                    str.push_char('*');
+                    str.push(ty.display(self.string_map, &self.types));
+
+                    self.string_map.insert(str.as_str())
+                };
+
                 let tyid = {
-                    let temp = ArenaPool::tls_get_temp();
-                    let name = {
-                        let mut str = sti::string::String::new_in(&*temp);
-                        str.push_char('*');
-                        str.push(ty.display(self.string_map, &self.types));
-
-                        self.string_map.insert(str.as_str())
-                    };
-
                     let mut tyb = TypeBuilder::new(&temp);
 
-                    let tyid = self.types.pending();
+                    let tyid = self.types.pending(name);
                     tyb.add_ty(tyid, name, SourceRange::new(0, 0));
                     tyb.set_struct_fields(tyid, 
                         [
@@ -142,16 +142,19 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         TypeStructStatus::Rc
                     );
 
-                    let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+                    let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
+                                                    &mut self.funcs, &mut self.module_builder,
+                                                    self.string_map);
                     tyb.finalise(data, &mut self.errors);
 
                     tyid
                 };
 
-                let ns = self.namespaces.get_type_mut(Type::Custom(tyid));
+                let ns = self.namespaces.get_type_mut(Type::Custom(tyid), &self.types);
                 let wid = self.module_builder.function_id();
                 let func = Function::new(
                     StringMap::NEW,
+                    name,
                     self.output.alloc_new([
                         (StringMap::VALUE, false, ty),
                     ]), 
@@ -230,7 +233,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
         let mut tyb = TypeBuilder::new(&temp);
 
-        let tyid = self.types.pending();
+        let tyid = self.types.pending(name);
         tyb.add_ty(tyid, name, source);
         tyb.set_struct_fields(tyid, vec.iter().enumerate().map(|(i, x)| {
             let mut str = sti::string::String::new_in(&*temp);
@@ -239,7 +242,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
             (id, *x)
         }), TypeStructStatus::Tuple);
 
-        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
+                                        &mut self.funcs, &mut self.module_builder,
+                                        self.string_map);
         tyb.finalise(data, &mut self.errors);
 
         self.tuple_map.insert(vec.move_into(self.output).leak(), tyid);
@@ -265,7 +270,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
             let mut tyb = TypeBuilder::new(&temp);
 
-            let tyid = self.types.pending();
+            let tyid = self.types.pending(name);
             tyb.add_ty(tyid, name, SourceRange::new(0, 0));
             tyb.set_enum_fields(tyid, 
                 [
@@ -275,7 +280,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 TypeEnumStatus::Result,
             );
 
-            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
+                                            &mut self.funcs, &mut self.module_builder,
+                                            self.string_map);
             tyb.finalise(data, &mut self.errors);
 
             tyid
@@ -302,7 +309,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
             let mut tyb = TypeBuilder::new(&temp);
 
-            let tyid = self.types.pending();
+            let tyid = self.types.pending(name);
             tyb.add_ty(tyid, name, SourceRange::new(0, 0));
             tyb.set_enum_fields(tyid, 
                 [
@@ -312,7 +319,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 TypeEnumStatus::Option,
             );
 
-            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces, &mut self.funcs, &mut self.module_builder);
+            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
+                                            &mut self.funcs, &mut self.module_builder,
+                                            self.string_map);
             tyb.finalise(data, &mut self.errors);
 
             tyid
@@ -334,6 +343,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         output: &'out Arena,
         string_map: &'me mut StringMap<'str>,
         nodes: &[Node<'ast>],
+        file_name: StringIndex,
     ) -> Self {
         let mut slf = Self {
             scopes: ScopeMap::new(),
@@ -359,7 +369,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             let mut type_builder = TypeBuilder::new(&pool);
 
             {
-                let id = slf.types.pending();
+                let id = slf.types.pending(StringMap::BOOL);
                 assert_eq!(TypeId::BOOL, id);
 
                 type_builder.add_ty(TypeId::BOOL, StringMap::BOOL, SourceRange::new(0, 0));
@@ -370,7 +380,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
                 );
             }
             {
-                let id = slf.types.pending();
+                let id = slf.types.pending(StringMap::STR);
                 assert_eq!(TypeId::STR, id);
 
                 type_builder.add_ty(TypeId::STR, StringMap::STR, SourceRange::new(0, 0));
@@ -384,12 +394,9 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
                 );
             }
 
-            let data = TypeBuilderData::new(
-                &mut slf.types,
-                &mut slf.namespaces,
-                &mut slf.funcs,
-                &mut slf.module_builder,
-            );
+            let data = TypeBuilderData::new(&mut slf.types, &mut slf.namespaces,
+                                            &mut slf.funcs, &mut slf.module_builder,
+                                            slf.string_map);
 
             type_builder.finalise(data, &mut slf.errors);
         }
@@ -401,7 +408,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
 
         func.export(StringMap::INIT_FUNC);
 
-        let anal = slf.block(&mut func, scope, nodes);
+        let anal = slf.block(&mut func, file_name, scope, nodes);
         slf.drop_value(anal.0.ty, &mut func);
 
         for s in slf.startup_functions.iter() {
@@ -426,6 +433,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
     pub fn block(
         &mut self,
         builder: &mut WasmFunctionBuilder,
+        path: StringIndex,
         scope: ScopeId,
         nodes: &[Node<'ast>],
     ) -> (AnalysisResult, ScopeId) {
@@ -433,10 +441,11 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         let pool = ArenaPool::tls_get_rec();
         let mut ty_builder = TypeBuilder::new(&*pool); 
         let (scope, ns_id) = {
-            let namespace = Namespace::new(self.output);
+            let namespace = Namespace::new(self.output, path);
             let namespace = self.namespaces.put(namespace);
 
             self.collect_type_names(
+                path,
                 as_decl_iterator(nodes.iter().copied()),
                 builder, &mut ty_builder, namespace
             );
@@ -455,8 +464,8 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
 
             let data = TypeBuilderData::new(
                 &mut self.types, &mut self.namespaces,
-                &mut self.funcs, &mut self.module_builder
-            );
+                &mut self.funcs, &mut self.module_builder,
+                self.string_map);
 
             ty_builder.finalise(data, &mut self.errors);
 
@@ -465,18 +474,18 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             }
         }
         
-        self.resolve_functions(as_decl_iterator(nodes.iter().copied()), builder, scope, ns_id);
+        self.resolve_functions(path, as_decl_iterator(nodes.iter().copied()), builder, scope, ns_id);
 
         let mut ty = Type::Unit;
         for (id, n) in nodes.iter().enumerate() {
-            ty = self.node(&mut scope, builder, n).ty;
+            ty = self.node(path, &mut scope, builder, n).ty;
 
             if id + 1 != nodes.len() {
-                // self.acquire(ty, builder);
-                // self.drop_value(ty, builder);
-                builder.pop();
+                self.acquire(ty, builder);
+                self.drop_value(ty, builder);
             } 
 
+            builder.call_template("dump_stack_trace");
         }
 
         if nodes.is_empty() { builder.unit(); }
@@ -506,6 +515,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
 impl<'out> Analyzer<'_, 'out, '_> {
     pub fn collect_type_names<'a>(
         &mut self,
+        path: StringIndex,
         decls: impl Iterator<Item=DeclarationNode<'a>>,
         
         builder: &mut WasmFunctionBuilder,
@@ -516,6 +526,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             match decl.kind() {
                 | Declaration::Enum { name, header, .. }
                 | Declaration::Struct { name, header, .. } => {
+                    let path = self.concat_path(path, name);
                     let namespace = self.namespaces.get_mut(namespace);
                     if namespace.get_type(name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
@@ -524,7 +535,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         continue
                     }
 
-                    let ty = self.types.pending();
+                    let ty = self.types.pending(path);
                     namespace.add_type(name, ty);
                     type_builder.add_ty(ty, name, header);
                 },
@@ -574,7 +585,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         continue
                     }
 
-                    let ns = Namespace::new(self.output);
+                    let path = format_in!(self.output, "{}::{}", self.string_map.get(name), self.string_map.get(name));
+                    let path = self.string_map.insert(&path);
+                    let ns = Namespace::new(self.output, path);
                     let ns = self.namespaces.put(ns);
 
                     let namespace = self.namespaces.get_mut(namespace);
@@ -620,12 +633,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         },
                     };
                     
-                    let ns_id = self.namespaces.get_type(ty);
+                    let ns_id = self.namespaces.get_type(ty, &self.types);
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns_id), scope.some());
                     let scope = self.scopes.push(scope);
 
-                    self.collect_type_names(body.iter().copied(), builder, type_builder, ns_id);
+                    let path = ty.path(&self.types);
+                    self.collect_type_names(path, body.iter().copied(), builder, type_builder, ns_id);
                     self.collect_impls(builder, type_builder, body.iter().copied(), scope, ns_id);
                 }
 
@@ -637,7 +651,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
 
-                    self.collect_type_names(body.iter().copied(), builder, type_builder, ns);
+                    let path = self.namespaces.get(ns).path();
+                    self.collect_type_names(path, body.iter().copied(), builder, type_builder, ns);
                     self.collect_impls(builder, type_builder, body.iter().copied(), scope, ns);
                 }
 
@@ -735,7 +750,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let Ok(ty) = self.convert_ty(scope, data_type)
                         else { continue };
 
-                        self.namespaces.get_type(ty)
+                        self.namespaces.get_type(ty, &self.types)
                     };
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
@@ -764,6 +779,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
     pub fn resolve_functions<'a>(
         &mut self,
+        path: StringIndex,
         decls: impl Iterator<Item=DeclarationNode<'a>>,
 
         builder: &mut WasmFunctionBuilder,
@@ -814,7 +830,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             inout: inout_ty_id,
                         }
                     };
-                    let func = Function::new(sig.name, args.leak(), ret, self.module_builder.function_id(), func);
+                    let func = Function::new(sig.name, path, args.leak(), ret, self.module_builder.function_id(), func);
                     self.funcs.put(func_id, func);
                 },
 
@@ -861,7 +877,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let ns = self.namespaces.get_mut(ns_id);
                         let func_id = ns.get_func(f.name()).unwrap();
                         let func = FunctionKind::Extern { ty };
-                        let func = Function::new(f.name(), args.leak(), ret, wfid, func);
+                        let func = Function::new(f.name(), path, args.leak(), ret, wfid, func);
                         self.funcs.put(func_id, func);
                     }
                 },
@@ -876,13 +892,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         },
                     };
                     
-                    let ns_id = self.namespaces.get_type(ty);
+                    let ns_id = self.namespaces.get_type(ty, &self.types);
 
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns_id), scope.some());
                     let scope = self.scopes.push(scope);
 
-
-                    self.resolve_functions(body.iter().copied(), builder, scope, ns_id);
+                    let path = ty.path(&self.types);
+                    self.resolve_functions(path, body.iter().copied(), builder, scope, ns_id);
                 }
 
 
@@ -893,7 +909,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
 
-                    self.resolve_functions(body.iter().copied(), builder, scope, ns)
+                    let path = self.namespaces.get(ns).path();
+                    self.resolve_functions(path, body.iter().copied(), builder, scope, ns)
                 }
 
                 _ => continue,
@@ -905,6 +922,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
     fn node(
         &mut self,
+        path: StringIndex,
         scope: &mut ScopeId,
         wasm: &mut WasmFunctionBuilder,
 
@@ -912,13 +930,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
     ) -> AnalysisResult {
         match node {
             Node::Declaration(decl) => {
-                self.decl(*decl, *scope);
+                self.decl(*decl, *scope, path);
                 wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
             },
 
             Node::Statement(stmt) => {
-                if self.stmt(*stmt, scope, wasm).is_err() {
+                if self.stmt(*stmt, scope, wasm, path).is_err() {
                     wasm.unit();
                     return AnalysisResult::error()
                 }
@@ -927,7 +945,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
             },
 
-            Node::Expression(expr) => self.expr(*expr, *scope, wasm),
+            Node::Expression(expr) => self.expr(*expr, *scope, wasm, path),
 
             Node::Error(err) => {
                 wasm.error(err.id());
@@ -962,7 +980,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             }
                         };
 
-                        self.decl(decl, *scope);
+                        self.decl(decl, *scope, path);
 
                         let Declaration::Function { sig, .. } = decl.kind()
                         else { unreachable!() };
@@ -989,6 +1007,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
         &mut self,
         decl: DeclarationNode,
         scope: ScopeId,
+        path: StringIndex,
     ) {
         match decl.kind() {
             Declaration::Struct { .. } => (),
@@ -1070,7 +1089,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                         let func_ret = func.ret;
 
-                        let (anal, _) = self.block(&mut wasm, scope, &body);
+                        let (anal, _) = self.block(&mut wasm, func.path, scope, &body);
                         if !anal.ty.eq_sem(func_ret) {
                             wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
                                 header: sig.source, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
@@ -1087,17 +1106,18 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Declaration::Impl { data_type, body } => {
-                let Ok(ns) = self.convert_ty(scope, data_type)
+                let Ok(ty) = self.convert_ty(scope, data_type)
                 else { return };
 
-                dbg!(ns);
+                dbg!(ty);
 
-                let ns = self.namespaces.get_type(ns);
+                let ns = self.namespaces.get_type(ty, &self.types);
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                 let scope = self.scopes.push(scope);
 
+                let path = ty.path(&self.types);
                 for decl in body.iter() {
-                    self.decl(*decl, scope);
+                    self.decl(*decl, scope, path);
                 }
             },
 
@@ -1108,8 +1128,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                 let scope = self.scopes.push(scope);
 
+                let path = self.namespaces.get(ns).path();
                 for decl in body.iter() {
-                    self.decl(*decl, scope);
+                    self.decl(*decl, scope, path);
                 }
             },
 
@@ -1124,12 +1145,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
         scope: &mut ScopeId,
         wasm: &mut WasmFunctionBuilder,
+        path: StringIndex,
     ) -> Result<(), ()> {
         let source = stmt.range();
         match stmt.kind() {
             Statement::Variable { name, hint, is_mut, rhs } => {
                 let mut func = || -> Result<(), ()> {
-                    let rhs_anal = self.expr(rhs, *scope, wasm);
+                    let rhs_anal = self.expr(rhs, *scope, wasm, path);
                     if rhs_anal.ty.eq_lit(Type::Error) {
                         return Err(());
                     }
@@ -1172,7 +1194,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
             Statement::VariableTuple { names, hint, rhs } => {
                 let mut func = || -> Result<(), ()> {
-                    let rhs_anal = self.expr(rhs, *scope, wasm);
+                    let rhs_anal = self.expr(rhs, *scope, wasm, path);
                     if rhs_anal.ty.eq_lit(Type::Error) {
                         return Err(());
                     }
@@ -1247,7 +1269,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Statement::UpdateValue { lhs, rhs } => {
-                let rhs_anal = self.expr(rhs, *scope, wasm);
+                let rhs_anal = self.expr(rhs, *scope, wasm, path);
                 if let Err(e) = self.assign(wasm, *scope, lhs, rhs_anal.ty, 0) {
                     wasm.error(self.error(e));
                     return Err(());
@@ -1256,7 +1278,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Statement::ForLoop { binding, expr, body } => {
-                let expr_anal = self.expr(expr.1, *scope, wasm);
+                let expr_anal = self.expr(expr.1, *scope, wasm, path);
 
                 if !expr_anal.is_mut && expr.0 {
                     wasm.error(self.error(Error::InOutValueIsntMut(expr.1.range())));
@@ -1274,7 +1296,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     return Err(());
                 }
 
-                let func = self.namespaces.get_type(expr_anal.ty);
+                let func = self.namespaces.get_type(expr_anal.ty, &self.types);
                 if self.namespaces.get(func).get_func(StringMap::ITER_NEXT_FUNC).is_none() {
                     wasm.error(self.error(Error::ValueIsntAnIterator {
                         ty: expr_anal.ty, range: expr.1.range() }));
@@ -1350,7 +1372,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     source,
                 );
 
-                self.expr(tree, *scope, wasm);
+                self.expr(tree, *scope, wasm, path);
             },
         };
 
@@ -1364,6 +1386,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
         scope: ScopeId,
         wasm: &mut WasmFunctionBuilder,
+        path: StringIndex,
     ) -> AnalysisResult {
         let source = expr.range();
         match expr.kind() {
@@ -1422,7 +1445,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let ty = Type::BOOL;
                         let name = if v { StringMap::TRUE } else { StringMap::FALSE };
 
-                        let func = self.namespaces.get_type(ty);
+                        let func = self.namespaces.get_type(ty, &self.types);
                         let func = self.namespaces.get(func).get_func(name).unwrap();
                         
                         self.call_func(func, &[], false, source, scope, wasm).unwrap();
@@ -1445,8 +1468,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::BinaryOp { operator, lhs, rhs } => {
-                let lhs_anal = self.expr(*lhs, scope, wasm);
-                let rhs_anal = self.expr(*rhs, scope, wasm);
+                let lhs_anal = self.expr(*lhs, scope, wasm, path);
+                let rhs_anal = self.expr(*rhs, scope, wasm, path);
 
                 let mut type_check = || {
                     if lhs_anal.ty.eq_lit(Type::Error)
@@ -1548,7 +1571,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::UnaryOp { operator, rhs } => {
-                let rhs_anal = self.expr(*rhs, scope, wasm);
+                let rhs_anal = self.expr(*rhs, scope, wasm, path);
                 
                 let mut type_check = || {
                     if rhs_anal.ty.eq_lit(Type::Error) {
@@ -1604,7 +1627,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::If { condition, body, else_block } => {
-                let cond = self.expr(*condition, scope, wasm);
+                let cond = self.expr(*condition, scope, wasm, path);
 
                 if !cond.ty.eq_sem(Type::BOOL) {
                     wasm.pop();
@@ -1628,7 +1651,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let (local, l, r) = wasm.ite(
                     &mut (&mut slf, scope),
                     |(slf, scope), wasm| {
-                        let body = slf.expr(*body, *scope, wasm);
+                        let body = slf.expr(*body, *scope, wasm, path);
                         let wty = body.ty.to_wasm_ty(&slf.types);
                         let local = wasm.local(wty);
                         (local, Some((body, wasm.offset())))
@@ -1636,7 +1659,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     |((slf, scope), _), wasm| {
                         if let Some(else_block) = else_block {
-                            return Some((slf.expr(*else_block, *scope, wasm), wasm.offset()))
+                            return Some((slf.expr(*else_block, *scope, wasm, path), wasm.offset()))
                         }
 
                         None
@@ -1677,7 +1700,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::Match { value, taken_as_inout, mappings } => {
-                let anal = self.expr(*value, scope, wasm);
+                let anal = self.expr(*value, scope, wasm, path);
                 if taken_as_inout && !anal.is_mut {
                     wasm.error(self.error(Error::InOutValueIsntMut(value.range())));
                     return AnalysisResult::error();
@@ -1772,6 +1795,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         taken_as_inout: bool,
                         value_range: SourceRange,
                         scope: ScopeId,
+                        path: StringIndex,
 
                         index: usize,
                     ) -> Option<(Type, LocalId, SourceRange)> {
@@ -1799,7 +1823,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let mut final_result = None;
                         wasm.block(|wasm, _| {
                             let result = do_mapping(anal, wasm, mappings, enum_sym, sym_local, tag,
-                                                    taken_as_inout, value_range, scope, index + 1);
+                                                    taken_as_inout, value_range, scope, path, index + 1);
 
                             if mapping.is_inout() && !taken_as_inout {
                                 wasm.error(anal.error(Error::InOutBindingWithoutInOutValue {
@@ -1836,7 +1860,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             let scope = Scope::new(ScopeKind::Variable(var_scope), scope.some());
                             let scope = anal.scopes.push(scope);
 
-                            let analysis = anal.expr(mapping.node(), scope, wasm);
+                            let analysis = anal.expr(mapping.node(), scope, wasm, path);
 
                             final_result = Some(if let Some((ty, local, src)) = result {
                                 if analysis.ty.eq_sem(ty) {
@@ -1862,7 +1886,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     }
 
                     let result = do_mapping(self, wasm, mappings, sym, sym_local, tag, taken_as_inout,
-                               value.range(), scope, 0);
+                                            value.range(), scope, path, 0);
 
                     if let Some(result) = result {
                         wasm.local_get(result.1);
@@ -1874,7 +1898,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
             },
 
-            Expression::Block { block } => self.block(wasm, scope, &*block).0,
+            Expression::Block { block } => self.block(wasm, path, scope, &*block).0,
 
             Expression::CreateStruct { data_type, fields } => {
                 let ty = match self.convert_ty(scope, data_type) {
@@ -1898,13 +1922,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     }
                 };
 
-                let ty = self.create_struct(wasm, scope, tyid, fields, source);
+                let ty = self.create_struct(wasm, scope, tyid, fields, path, source);
                 AnalysisResult::new(ty, true)
             },
             
             
             Expression::AccessField { val, field_name } => {
-                let value = self.expr(*val, scope, wasm);
+                let value = self.expr(*val, scope, wasm, path);
 
                 let tyid = match value.ty {
                     Type::Custom(v) => v,
@@ -1953,7 +1977,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let mut a = *a;
                         if i == 0 && is_accessor { a.1 = true }
                         let scope = scope_id;
-                        let anal = self.expr(a.0, scope, wasm);
+                        let anal = self.expr(a.0, scope, wasm, path);
 
                         if a.1 && !anal.is_mut && i != 0 {
                             wasm.error(self.error(Error::InOutValueIsntMut(a.0.range())))
@@ -1968,7 +1992,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 if is_accessor {
                     let ty = aargs[0].0;
-                    let ns = self.namespaces.get_type(ty);
+                    let ns = self.namespaces.get_type(ty, &self.types);
                     scope_id = self.scopes.push(
                         Scope::new(ScopeKind::ImplicitNamespace(ns), scope_id.some()));
                 }
@@ -1999,7 +2023,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::WithinNamespace { namespace, namespace_source, action } => {
-                let Some(ns) = self.scopes.get(scope).get_ns(namespace, &self.scopes, &mut self.namespaces)
+                let Some(ns) = self.scopes.get(scope).get_ns(namespace, &self.scopes, &mut self.namespaces, &self.types)
                 else {
                     wasm.error(self.error(Error::NamespaceNotFound 
                                           { source: namespace_source, namespace }));
@@ -2008,7 +2032,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                 let scope = self.scopes.push(scope);
-                self.expr(*action, scope, wasm)
+                self.expr(*action, scope, wasm, path)
             },
 
 
@@ -2022,10 +2046,10 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     },
                 };
 
-                let namespace = self.namespaces.get_type(namespace);
+                let namespace = self.namespaces.get_type(namespace, &self.types);
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(namespace), scope.some());
                 let scope = self.scopes.push(scope);
-                self.expr(*action, scope, wasm)
+                self.expr(*action, scope, wasm, path)
             },
 
             
@@ -2037,7 +2061,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     wasm.raw("global.get $stack_pointer ");
                     wasm.call_template("printi32");
-                    let (anal, _) = self.block(wasm, nscope, &*body);
+                    let (anal, _) = self.block(wasm, path, nscope, &*body);
                     if !anal.ty.eq_sem(Type::Unit) {
                         self.acquire(anal.ty, wasm);
                         self.drop_value(anal.ty, wasm);
@@ -2050,7 +2074,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::Return(v) => {
-                let value = self.expr(*v, scope, wasm);
+                let value = self.expr(*v, scope, wasm, path);
 
                 let func_return = {
                     let scope = self.scopes.get(scope);
@@ -2114,7 +2138,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let pool = ArenaPool::tls_get_rec();
                 let mut vec = Vec::with_cap_in(&*pool, v.len());
                 for n in v.iter() {
-                    let anal = self.expr(*n, scope, wasm);
+                    let anal = self.expr(*n, scope, wasm, path);
                     self.acquire(anal.ty, wasm);
                     vec.push(anal.ty);
                 }
@@ -2153,7 +2177,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::CastAny { lhs, data_type  } => {
-                let lhs_anal = self.expr(*lhs, scope, wasm);
+                let lhs_anal = self.expr(*lhs, scope, wasm, path);
                 let ty = self.convert_ty(scope, data_type);
                 let ty = match ty {
                     Ok(v) => v,
@@ -2201,7 +2225,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                         wasm.read(ty.to_wasm_ty(&slf.types));
 
-                        let func = slf.namespaces.get_type(Type::Custom(option_ty));
+                        let func = slf.namespaces.get_type(Type::Custom(option_ty), &slf.types);
                         let func = slf.namespaces.get(func).get_func(StringMap::SOME);
                         let func = slf.funcs.get(func.unwrap());
 
@@ -2225,7 +2249,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
                     |(slf, local), wasm| {
-                        let func = slf.namespaces.get_type(Type::Custom(option_ty));
+                        let func = slf.namespaces.get_type(Type::Custom(option_ty), &slf.types);
                         let func = slf.namespaces.get(func).get_func(StringMap::NONE);
                         let func = slf.funcs.get(func.unwrap());
 
@@ -2251,7 +2275,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::AsCast { lhs, data_type } => {
-                let lhs_anal = self.expr(*lhs, scope, wasm);
+                let lhs_anal = self.expr(*lhs, scope, wasm, path);
                 let dty = self.convert_ty(scope, data_type);
                 let dty = match dty {
                     Ok(v) => v,
@@ -2386,7 +2410,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::Unwrap(v) => {
-                let anal = self.expr(*v, scope, wasm);
+                let anal = self.expr(*v, scope, wasm, path);
                 let ty = match anal.ty {
                     Type::Custom(v) => self.types.get(v),
 
@@ -2454,7 +2478,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
             Expression::OrReturn(v) => {
-                let anal = self.expr(*v, scope, wasm);
+                let anal = self.expr(*v, scope, wasm, path);
                 let ty = match anal.ty {
                     Type::Custom(v) => self.types.get(v),
 
@@ -2532,7 +2556,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                             // Codegen
                             {
-                                let ns = slf.namespaces.get_type(func.return_type);
+                                let ns = slf.namespaces.get_type(func.return_type, &slf.types);
                                 let ns = slf.namespaces.get(ns);
                                 let call_func = ns.get_func(StringMap::NONE).unwrap();
                                 let call_func = slf.funcs.get(call_func);
@@ -2596,7 +2620,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                             // Codegen
                             {
-                                let ns = slf.namespaces.get_type(func.return_type);
+                                let ns = slf.namespaces.get_type(func.return_type, &slf.types);
                                 let ns = slf.namespaces.get(ns);
                                 let call_func = ns.get_func(StringMap::ERR).unwrap();
                                 let call_func = slf.funcs.get(call_func);
@@ -2977,6 +3001,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
         scope: ScopeId,
         ty: TypeId,
         fields: &[(StringIndex, SourceRange, ExpressionNode)],
+        path: StringIndex,
         source: SourceRange,
     ) -> Type {
         let tyv = self.types.get(ty);
@@ -3020,7 +3045,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             let val = fields.iter().find(|x| x.0 == sf.0.name).unwrap();
             let ptr = alloc.add(sf.1);
 
-            let node = self.expr(val.2, scope, wasm);
+            let node = self.expr(val.2, scope, wasm, path);
 
             if !node.ty.eq_sem(sf.0.ty) {
                 wasm.error(self.error(Error::InvalidType 
@@ -3291,7 +3316,12 @@ impl<'out> Analyzer<'_, 'out, '_> {
             },
         }
     }
-
+    
+    
+    fn concat_path(&mut self, p1: StringIndex, p2: StringIndex) -> StringIndex {
+        let str = format_in!(self.output, "{}::{}", self.string_map.get(p1), self.string_map.get(p2));
+        self.string_map.insert(&str)
+    }
 }
 
 

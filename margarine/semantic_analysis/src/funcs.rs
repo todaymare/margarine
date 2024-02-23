@@ -10,6 +10,7 @@ define_key!(u32, pub FuncId);
 #[derive(Debug, Clone)]
 pub struct Function<'a> {
     pub name: StringIndex,
+    pub path: StringIndex,
     pub args: &'a [(StringIndex, bool, Type)],
     pub ret : Type,
     pub kind: FunctionKind,
@@ -30,7 +31,10 @@ pub enum FunctionKind {
 
 
 impl<'a> Function<'a> {
-    pub fn new(name: StringIndex, args: &'a [(StringIndex, bool, Type)], ret: Type, wasm_id: FunctionId, kind: FunctionKind) -> Self { Self { name, args, ret, kind, wasm_id } }
+    pub fn new(name: StringIndex, path: StringIndex, args: &'a [(StringIndex, bool, Type)],
+               ret: Type, wasm_id: FunctionId, kind: FunctionKind) -> Self {
+        Self { name, args, ret, kind, wasm_id, path }
+    }
 }
 
 

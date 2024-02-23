@@ -3,7 +3,7 @@ use errors::SemaError;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
-use crate::{errors::Error, namespace::{NamespaceMap, Namespace}, funcs::{FunctionMap, Function, FunctionKind}, types::ty_sym::{StructField, TypeKind, TypeStruct, TypeTaggedUnion, TaggedUnionField, TypeEnumKind}, scope::ScopeId};
+use crate::{errors::Error, funcs::{Function, FunctionKind, FunctionMap}, namespace::{Namespace, NamespaceMap}, scope::ScopeId, types::ty_sym::{StructField, TaggedUnionField, TypeEnumKind, TypeKind, TypeStruct, TypeTaggedUnion}};
 
 use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeEnum, TypeEnumStatus, TypeStructStatus, TypeSymbol, TypeTag}};
 
@@ -153,6 +153,7 @@ pub struct TypeBuilderData<'me, 'out, 'str> {
     namespace_map: &'me mut NamespaceMap<'out>,
     function_map: &'me mut FunctionMap<'out>,
     module_builder: &'me mut WasmModuleBuilder<'out, 'str>,
+    string_map: &'me mut StringMap<'str>,
 }
 
 
@@ -214,14 +215,15 @@ impl<'out> TypeBuilder<'_> {
             let name = *name;
             let kind = kind.take().unwrap();
 
+            let path = data.type_map.path(ty);
             match kind {
                 PartialTypeKind::Struct { fields, status } => {
-                    self.process_struct(data, fields, name, status)
+                    self.process_struct(data, fields, name, status, path)
                 }
 
 
                 PartialTypeKind::Enum { mappings, status } => { 
-                    self.process_enum(data, mappings, status, name)
+                    self.process_enum(data, mappings, status, name, path)
                 },
             }
         };
@@ -243,7 +245,7 @@ impl<'out> TypeBuilder<'_> {
 
         
         if let TypeKind::Enum(val) = sym.kind() {
-            self.register_enum_methods(data, ty, val);
+            self.register_enum_methods(data, ty, sym.path(), val);
         }
 
         Ok(sym)
@@ -266,6 +268,7 @@ impl<'out> TypeBuilder<'_> {
         fields: &[PartialStructField],
         name: StringIndex,
         status: TypeStructStatus,
+        path: StringIndex,
     ) -> Result<TypeSymbol<'out>, Error> {
         let mut align = 1;
         let mut cursor = 0;
@@ -295,7 +298,7 @@ impl<'out> TypeBuilder<'_> {
         // Finalise
         let kind = TypeStruct::new(fields, status);
         let kind = TypeKind::Struct(kind);
-        let symbol = TypeSymbol::new(name, align, size, kind);
+        let symbol = TypeSymbol::new(name, path, align, size, kind);
 
         Ok(symbol)
     }
@@ -317,6 +320,7 @@ impl<'out> TypeBuilder<'_> {
         fields: &[PartialEnumField],
         status: TypeEnumStatus,
         name: StringIndex,
+        path: StringIndex,
     ) -> Result<TypeSymbol<'out>, Error> {
         // Tag
 
@@ -355,7 +359,8 @@ impl<'out> TypeBuilder<'_> {
 
             let kind = TypeTag::new(Vec::from_in(data.arena, fields.iter().map(|x| x.name)).leak());
             let kind = TypeEnum::new(TypeEnumStatus::User, TypeEnumKind::Tag(kind));
-            return Ok(TypeSymbol::new(name, tag_align, size, TypeKind::Enum(kind)))
+
+            return Ok(TypeSymbol::new(name, path, tag_align, size, TypeKind::Enum(kind)))
         }
 
         // Smush 'Em Together
@@ -385,7 +390,7 @@ impl<'out> TypeBuilder<'_> {
         // Finalise
         let kind = TypeEnum::new(status, TypeEnumKind::TaggedUnion(TypeTaggedUnion::new(union_offset.try_into().unwrap(), fields)));
         let kind = TypeKind::Enum(kind);
-        Ok(TypeSymbol::new(name, align, size, kind))
+        Ok(TypeSymbol::new(name, path, align, size, kind))
     } 
 
     
@@ -393,9 +398,10 @@ impl<'out> TypeBuilder<'_> {
         &mut self,
         data: &mut TypeBuilderData<'_, 'out, '_>,
         ty: TypeId,
+        path: StringIndex,
         kind: TypeEnum,
     ) {
-        let mut ns = Namespace::new(data.arena);
+        let mut ns = Namespace::new(data.arena, path);
         
         match kind.kind() {
             TypeEnumKind::TaggedUnion(sym) => {
@@ -424,13 +430,14 @@ impl<'out> TypeBuilder<'_> {
 
                         func = Function::new(
                             f.name(),
+                            path,
                             data.arena.alloc_new([(StringMap::VALUE, false, fty)]),
                             Type::Custom(ty), wfid,
                             FunctionKind::UserDefined { inout: None },
                         );
 
                     } else {
-                        func = Function::new(f.name(), &[], Type::Custom(ty), wfid,
+                        func = Function::new(f.name(), path, &[], Type::Custom(ty), wfid,
                                 FunctionKind::UserDefined { inout: None });
                     }
 
@@ -459,7 +466,7 @@ impl<'out> TypeBuilder<'_> {
 
                     data.module_builder.register(wf);
                     
-                    let func = Function::new(*f, &[], Type::Custom(ty), wfid,
+                    let func = Function::new(*f, path, &[], Type::Custom(ty), wfid,
                         FunctionKind::UserDefined { inout: None });
 
                     let func_id = data.function_map.pending();
@@ -512,9 +519,10 @@ impl<'me, 'out, 'str> TypeBuilderData<'me, 'out, 'str> {
         type_map: &'me mut TypeMap<'out>, 
         namespace_map: &'me mut NamespaceMap<'out>, 
         function_map: &'me mut FunctionMap<'out>, 
-        module_builder: &'me mut WasmModuleBuilder<'out, 'str>
+        module_builder: &'me mut WasmModuleBuilder<'out, 'str>,
+        string_map: &'me mut StringMap<'str>,
     ) -> Self {
-        Self { arena: module_builder.arena, type_map, namespace_map, function_map, module_builder }
+        Self { arena: module_builder.arena, type_map, namespace_map, function_map, module_builder, string_map }
     }
 }
 

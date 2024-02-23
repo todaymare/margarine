@@ -66,7 +66,6 @@ fn ptr_to_wptr<T>(memory: &impl Allocable, wasm_ptr: *const T) -> WasmPtr<T> {
 /// actual size of the memory allocated
 ///
 pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
-    println!("allocating {size}");
     let size = align_to(size, size_of::<Word>());
     
     // Search for a block
@@ -97,7 +96,6 @@ pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
 /// Frees a previously allocated block
 ///
 pub fn free(memory: &impl Allocable, ptr: WasmPtr<()>) {
-    println!("freeing {ptr:?}");
     let ptrb = get_header(ptr);
 
     let mut curr = ptrb;
@@ -127,6 +125,7 @@ fn find_block(memory: &impl Allocable, size: usize) -> Option<WasmPtr<Block>> {
     let mut left = len;
     while left != 0 {
         let mut curr = unsafe { ALLOC.free_lists[bucket] };
+        left -= 1;
 
         while curr.as_u32() != 0 {
             let currp = curr.as_ptr_ex(memory);
@@ -137,13 +136,13 @@ fn find_block(memory: &impl Allocable, size: usize) -> Option<WasmPtr<Block>> {
                     continue;
                 }
 
+
                 ALLOC.free_lists[get_bucket(size)] = (*currp).next;
                 return Some(curr);
             }
         }
 
         bucket = (bucket + 1) % len;
-        left -= 1;
     }
 
     None
@@ -204,18 +203,14 @@ fn try_split(memory: &impl Allocable, ptr: WasmPtr<Block>, size: usize) -> WasmP
     ptr
 }
 
-static mut PTR : u32 = 0;
+static mut PTR : usize = 0;
 
 pub fn set_heap_start(ptr: WasmPtr<u8>) {
-    unsafe { PTR = ptr.as_u32() }
+    unsafe { PTR = ptr.as_u32() as usize }
 }
 
 fn request_memory(memory: &mut impl Allocable, size: usize) -> Option<WasmPtr<Block>> {
     unsafe {
-    if PTR as usize % size_of::<Word>() != 0 {
-        PTR = align_to(PTR as usize, size_of::<Word>()) as u32;
-    }
-
     if PTR as usize + size >= memory.data_size() {
         match memory.grow(1) {
             true => {
@@ -225,8 +220,8 @@ fn request_memory(memory: &mut impl Allocable, size: usize) -> Option<WasmPtr<Bl
         }
     }
 
-    let ptr = WasmPtr::from_u32(PTR);
-    PTR += size as u32;
+    let ptr = WasmPtr::from_u32(PTR as u32);
+    PTR += size;
     Some(ptr)
     }
 }

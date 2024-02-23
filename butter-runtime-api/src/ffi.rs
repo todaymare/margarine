@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, ptr::{null, null_mut}};
 
 use proc_macros::margarine;
-use wasmtime::{Memory, Store};
+use wasmtime::{Instance, Memory, Store};
 
 use crate::alloc::Allocable;
 
@@ -97,10 +97,11 @@ unsafe impl<T> Send for Ptr<T> {}
 pub struct Ctx {
     memory: SendPtr<Memory>,
     store: SendMutPtr<Store<()>>,
+    instance: SendMutPtr<Instance>,
 }
 
 impl Ctx {
-    pub const fn new() -> Self { Self { memory: SendPtr(null()), store: SendMutPtr(null_mut()) } }
+    pub const fn new() -> Self { Self { memory: SendPtr(null()), store: SendMutPtr(null_mut()), instance: SendMutPtr(null_mut()) } }
 
     pub fn set_mem(&mut self, ptr: &Memory) {
         assert!(self.memory.0.is_null());
@@ -108,6 +109,7 @@ impl Ctx {
     }
 
     pub fn set_store(&mut self, store: &mut Store<()>) { self.store.0 = store; }
+    pub fn set_instance(&mut self, store: &mut Instance) { self.instance.0 = store; }
 
     pub fn base(&self) -> *const u8 {
         unsafe { (*self.memory.0).data_ptr(&*self.store.0) }
@@ -123,6 +125,10 @@ impl Ctx {
 
     pub fn store(&'_ self) -> &'_ mut Store<()> {
         unsafe { &mut *self.store.0 }
+    }
+
+    pub fn instance(&'_ self) -> &'_ mut Instance {
+        unsafe { &mut *self.instance.0 }
     }
 }
 
