@@ -74,7 +74,8 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
 
 
     fn inner_highlight(&mut self, source: SourceRange, note: Option<&str>) {
-        let file = source.file(self.fmt.files);
+        let (file, offset) = source.file(self.fmt.files);
+        let source = SourceRange::new(source.start() - offset, source.end() - offset);
 
         let start_line = line_at(
             source.start() as usize, 

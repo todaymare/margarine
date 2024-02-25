@@ -1,7 +1,7 @@
-use std::{env, fs::{self}};
+use std::{env, fs, ops::Deref};
 
 use game_runtime::encode;
-use margarine::{FileData, StringMap, DropTimer};
+use margarine::{nodes::{decl::{Declaration, DeclarationNode}, Node}, DropTimer, FileData, SourceRange, StringMap};
 use sti::prelude::Arena;
 use wasmtime::{Config, Engine};
 
@@ -9,48 +9,88 @@ const GAME_RUNTIME : &[u8] = include_bytes!("../../target/debug/game-runtime");
 
 fn main() -> Result<(), &'static str> {
      DropTimer::with_timer("compilation", || {
-         let string_map_arena = Arena::new();
-         let mut string_map = StringMap::new(&string_map_arena);
-         let file = [
-             FileData::open(env::args().nth(1).expect("expected a file"), &mut string_map).unwrap()
-         ];
+        let string_map_arena = Arena::new();
+        let mut string_map = StringMap::new(&string_map_arena);
+        let files = {
+            let mut files = Vec::new();
+            for i in env::args().skip(1) {
+                files.push(FileData::open(i, &mut string_map).unwrap());
+            }
 
-         let (tokens, lex_errors) = DropTimer::with_timer("tokenisation", || {
-             let tokens = margarine::lex(&file[0], &mut string_map);
-             tokens
-         });
+            files
+        };
 
-         println!("{tokens:#?}");
+        let mut global = vec![];
+        let mut lex_errors = vec![];
+        let mut parse_errors = vec![];
 
-         let mut arena = Arena::new();
-         let (ast, parse_errors) = DropTimer::with_timer("parsing", || {
-             let ast = margarine::parse(tokens, &mut arena, &mut string_map);
-             ast
-         });
+        let arena = Arena::new();
+        let mut source_offset = 0;
+        for f in &files {
+            let (tokens, le) = DropTimer::with_timer("tokenisation", || {
+                let tokens = margarine::lex(&f, &mut string_map, source_offset);
+                tokens
+            });
+
+            let (ast, pe) = DropTimer::with_timer("parsing", || {
+                let ast = margarine::parse(tokens, &arena, &mut string_map);
+                ast
+            });
+
+            {
+                for n in ast.iter() {
+                    if matches!(n, Node::Declaration(_)) { continue }
+                    if let Node::Attribute(attr) = n {
+                        if matches!(attr.node(), Node::Declaration(_)) { continue }
+                    }
+
+                    unreachable!();
+                }
+            }
+
+            lex_errors.push(le);
+            parse_errors.push(pe);
+
+            dbg!(string_map.get(f.name()));
+            global.push(DeclarationNode::new(
+                Declaration::Module {
+                    name: f.name(),
+                    body: ast.inner(),
+                },
+
+                SourceRange::new(source_offset, source_offset + f.read().len() as u32),
+             ).into());
+
+            source_offset += f.read().len() as u32;
+         }
 
 
          let ns_arena = Arena::new();
          let _scopes = Arena::new();
          let mut sema = {
              let _1 = DropTimer::new("semantic analysis");
-             margarine::Analyzer::run(&ns_arena, &mut string_map, &ast, file[0].name())
+             margarine::Analyzer::run(&ns_arena, &mut string_map, &*global)
          };
 
-         // println!("{sema:#?}");
+         println!("{sema:#?}");
 
 
-         if !lex_errors.is_empty() {
-             let report = margarine::display(lex_errors.as_slice().inner(), &sema.string_map, &file, &());
-             println!("{report}");
+         for l in lex_errors {
+             if !l.is_empty() {
+                 let report = margarine::display(l.as_slice().inner(), &sema.string_map, &files, &());
+                 println!("{report}");
+             }
          }
 
-         if !parse_errors.is_empty() {
-             let report = margarine::display(parse_errors.as_slice().inner(), &sema.string_map, &file, &());
-             println!("{report}");
+         for l in parse_errors {
+             if !l.is_empty() {
+                 let report = margarine::display(l.as_slice().inner(), &sema.string_map, &files, &());
+                 println!("{report}");
+             }
          }
 
          if !sema.errors.is_empty() {
-             let report = margarine::display(sema.errors.as_slice().inner(), &sema.string_map, &file, &sema.types);
+             let report = margarine::display(sema.errors.as_slice().inner(), &sema.string_map, &files, &sema.types);
              println!("{report}");
          }
          

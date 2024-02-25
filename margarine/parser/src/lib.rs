@@ -133,13 +133,16 @@ impl<'a> Block<'a> {
     pub fn range(&self) -> SourceRange {
         self.source_range
     }
+
+
+    pub fn inner(&self) -> &'a [Node<'a>] { self.nodes }
 }
 
 
 impl<'a> Deref for Block<'a> {
     type Target = [Node<'a>];
 
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &'a Self::Target {
         &self.nodes
     }
 }
@@ -147,7 +150,7 @@ impl<'a> Deref for Block<'a> {
 
 pub fn parse<'a>(
     tokens: TokenList, 
-    arena: &'a mut Arena, 
+    arena: &'a Arena, 
     string_map: &mut StringMap
 ) -> (Block<'a>, KVec<ParserError, Error>) {
 
@@ -711,17 +714,21 @@ impl<'ta> Parser<'_, 'ta, '_> {
         terminator: TokenKind, 
         start: u32,
         settings: &ParserSettings<'ta>
-    ) -> Result<&'ta [DeclarationNode<'ta>], ErrorId> {
+    ) -> Result<&'ta [Node<'ta>], ErrorId> {
         let parse_till = self.parse_till(terminator, start, settings)?;
         let mut vec = Vec::with_cap_in(self.arena, parse_till.len());
         for n in parse_till.into_iter() {
-            let Node::Declaration(decl) = *n
-            else {
+            let mut kind = *n;
+            if let Node::Attribute(a) = n {
+                kind = a.node();
+            }
+
+            if !matches!(kind, Node::Declaration(_)) {
                 return Err(ErrorId::Parser(self.errors.push(
                             Error::DeclarationOnlyBlock { source: n.range() })));
             };
 
-            vec.push(decl);
+            vec.push(*n);
         }
 
         Ok(vec.leak())
@@ -1515,9 +1522,23 @@ impl<'ta> Parser<'_, 'ta, '_> {
             return Ok(lhs);
         }
         self.advance();
+
+        let is_inc = if self.peek_is(TokenKind::Equals) { self.advance(); true }
+                     else { false };
         self.advance();
 
-        let rhs = self.unary_neg(settings)?;
+        let mut rhs = self.unary_neg(settings)?;
+        if is_inc {
+            rhs = ExpressionNode::new(Expression::BinaryOp {
+                operator: BinaryOperator::Add,
+                lhs: self.arena.alloc_new(rhs),
+                rhs: self.arena.alloc_new(ExpressionNode::new(
+                        Expression::Literal(Literal::Integer(1)),
+                        rhs.range(),
+                ))},
+                rhs.range(),
+            );
+        }
 
         Ok(ExpressionNode::new(
             Expression::Range {

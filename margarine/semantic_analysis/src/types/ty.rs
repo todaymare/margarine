@@ -62,7 +62,7 @@ impl Type {
 
             Type::Custom(id) => {
                 let ty = types.get(id);
-                let display_name = ty.display_name();
+                let display_name = ty.path();
                 string_map.get(display_name)
             },
         }

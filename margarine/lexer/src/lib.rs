@@ -210,7 +210,8 @@ pub enum Keyword {
 
 pub fn lex<'a, 'arena>(
     file: &'a FileData,
-    string_map: &'a mut StringMap<'arena>
+    string_map: &'a mut StringMap<'arena>,
+    source_offset: u32,
 ) -> (TokenList, KVec<LexerError, Error>) {
     {
         //
@@ -227,6 +228,7 @@ pub fn lex<'a, 'arena>(
         reader: Reader::new(file.read().as_bytes()),
         string_map,
         errors: KVec::new(),
+        source_offset,
     };
 
 
@@ -252,6 +254,7 @@ struct Lexer<'a, 's> {
     reader: Reader<'a, u8>,
     string_map: &'a mut StringMap<'s>,
     errors: KVec<LexerError, Error>,
+    source_offset: u32,
 }
 
 
@@ -376,8 +379,8 @@ impl Lexer<'_, '_> {
                 }))
         };
 
-        let end = self.reader.offset() as u32 - 1;
-        let source_range = SourceRange::new(start, end);
+        let end = self.source_offset + self.reader.offset() as u32 - 1;
+        let source_range = SourceRange::new(self.source_offset + start, end);
 
         Token {
             token_kind: kind,
@@ -391,8 +394,8 @@ impl Lexer<'_, '_> {
             token_kind: 
             TokenKind::EndOfFile, 
             source_range: SourceRange::new(
-                self.reader.offset() as u32 - 1,
-                self.reader.offset() as u32 - 1,
+                self.source_offset + self.reader.offset() as u32 - 1,
+                self.source_offset + self.reader.offset() as u32 - 1,
             ) 
         }
     }
@@ -565,7 +568,7 @@ impl Lexer<'_, '_> {
 
     fn unicode_escape_character(&mut self) -> Result<char, Error> {
         if self.reader.peek() != Some(b'{') {
-            let offset = self.reader.offset() as u32;
+            let offset = self.source_offset + self.reader.offset() as u32;
             return Err(Error::CorruptUnicodeEscape(SourceRange::new(
                 offset as u32, offset as u32
             )));
@@ -579,12 +582,13 @@ impl Lexer<'_, '_> {
 
         if self.reader.peek() != Some(b'}') {
             return Err(Error::CorruptUnicodeEscape(SourceRange::new(
-                start as u32, self.reader.offset() as u32
+                self.source_offset + start as u32, self.reader.offset() as u32
             )));
         }
+
         let _ = self.reader.next();
 
-        let source = SourceRange::new(start as u32, self.reader.offset() as u32);
+        let source = SourceRange::new(self.source_offset + start as u32, self.reader.offset() as u32);
         
         let val = match u32::from_str_radix(unicode, 16) {
             Ok(v) => v,

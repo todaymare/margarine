@@ -6,16 +6,16 @@ pub mod funcs;
 
 use std::{any::Any, fmt::Write}; 
 
-use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
+use common::{source::SourceRange, string_map::{StringIndex, StringMap}, Swap};
 use ::errors::{ErrorId, SemaError};
 use errors::Error;
 use funcs::{FunctionMap, Function, FunctionKind, FuncId};
 use namespace::{Namespace, NamespaceMap, NamespaceId};
-use parser::{nodes::{decl::{Declaration, DeclarationNode, FunctionSignature}, expr::{BinaryOperator, Expression, ExpressionNode, MatchMapping, UnaryOperator}, stmt::{Statement, StatementNode}, Node}, Block, DataType, DataTypeKind};
-use scope::{ScopeId, ScopeMap, Scope, ScopeKind, FunctionDefinitionScope, VariableScope, LoopScope};
+use parser::{nodes::{decl::{Declaration, DeclarationNode, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expression, ExpressionNode, MatchMapping, UnaryOperator}, stmt::{Statement, StatementNode}, Node}, Block, DataType, DataTypeKind};
+use scope::{ExplicitNamespace, FunctionDefinitionScope, LoopScope, Scope, ScopeId, ScopeKind, ScopeMap, VariableScope};
 use types::{ty::Type, ty_map::TypeMap, ty_sym::{TypeEnum, TypeKind, TypeEnumKind, TypeEnumStatus, TypeStructStatus}};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType, LocalId};
-use sti::{vec::Vec, keyed::KVec, prelude::Arena, packed_option::PackedOption, arena_pool::ArenaPool, hash::HashMap, traits::FromIn, string::String, format_in};
+use sti::{arena_pool::ArenaPool, format_in, hash::HashMap, keyed::KVec, packed_option::PackedOption, prelude::Arena, string::{format_in, String}, traits::FromIn, vec::Vec};
 
 use crate::types::{ty_builder::{TypeBuilder, TypeBuilderData}, ty_map::TypeId, ty_sym::{TaggedUnionField, TypeStruct, TypeTaggedUnion}};
 
@@ -153,6 +153,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let path = self.concat_path(name, StringMap::NEW);
                 let ns = self.namespaces.get_type_mut(Type::Custom(tyid), &self.types);
                 let wid = self.module_builder.function_id();
+
                 let func = Function::new(
                     StringMap::NEW,
                     name,
@@ -162,6 +163,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     Type::Custom(tyid),
                     wid,
                     FunctionKind::UserDefined { inout: None });
+
                 let func_id = self.funcs.pending();
                 self.funcs.put(func_id, func);
 
@@ -346,7 +348,6 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         output: &'out Arena,
         string_map: &'me mut StringMap<'str>,
         nodes: &[Node<'ast>],
-        file_name: StringIndex,
     ) -> Self {
         let mut slf = Self {
             scopes: ScopeMap::new(),
@@ -437,8 +438,10 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
 
         func.export(StringMap::INIT_FUNC);
 
-        let anal = slf.block(&mut func, file_name, scope, nodes);
+
+        let anal = slf.block(&mut func, StringMap::INVALID_IDENT, scope, nodes);
         slf.drop_value(anal.0.ty, &mut func);
+
 
         for s in slf.startup_functions.iter() {
             let f = slf.funcs.get(*s);
@@ -478,7 +481,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         let old_scope = scope;
         let pool = ArenaPool::tls_get_rec();
         let mut ty_builder = TypeBuilder::new(&*pool); 
-        let (scope, ns_id) = {
+        let (mut scope, ns_id) = {
             let namespace = Namespace::new(self.output, path);
             let namespace = self.namespaces.put(namespace);
 
@@ -491,10 +494,11 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             (Scope::new(ScopeKind::ImplicitNamespace(namespace), scope.some()), namespace)
         };
         
+        self.collect_uses(as_decl_iterator(nodes.iter().copied()), builder, &mut scope, ns_id);
+
         let mut scope = self.scopes.push(scope);
 
         self.collect_impls(builder, &mut ty_builder, as_decl_iterator(nodes.iter().copied()), scope, ns_id);
-        self.collect_uses(as_decl_iterator(nodes.iter().copied()), builder, scope, ns_id);
         self.resolve_names(as_decl_iterator(nodes.iter().copied()), builder, &mut ty_builder, scope, ns_id);
         
         {
@@ -621,8 +625,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         continue
                     }
 
-                    let path = format_in!(self.output, "{}::{}", self.string_map.get(name), self.string_map.get(name));
-                    let path = self.string_map.insert(&path);
+                    let path = self.concat_path(path, name);
                     let ns = Namespace::new(self.output, path);
                     let ns = self.namespaces.put(ns);
 
@@ -644,6 +647,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     }
 
                 },
+
             }
         }
     }
@@ -675,8 +679,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = self.scopes.push(scope);
 
                     let path = ty.path(&self.types);
-                    self.collect_type_names(path, body.iter().copied(), builder, type_builder, ns_id);
-                    self.collect_impls(builder, type_builder, body.iter().copied(), scope, ns_id);
+                    self.collect_type_names(path, as_decl_iterator(body.iter().copied()), builder, type_builder, ns_id);
+                    self.collect_impls(builder, type_builder, as_decl_iterator(body.iter().copied()), scope, ns_id);
                 }
 
 
@@ -688,8 +692,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = self.scopes.push(scope);
 
                     let path = self.namespaces.get(ns).path();
-                    self.collect_type_names(path, body.iter().copied(), builder, type_builder, ns);
-                    self.collect_impls(builder, type_builder, body.iter().copied(), scope, ns);
+                    self.collect_type_names(path, as_decl_iterator(body.iter().copied()), builder, type_builder, ns);
+                    self.collect_impls(builder, type_builder, as_decl_iterator(body.iter().copied()), scope, ns);
                 }
 
 
@@ -706,15 +710,64 @@ impl<'out> Analyzer<'_, 'out, '_> {
         &mut self,
         decls: impl Iterator<Item=DeclarationNode<'a>>,
 
-        _builder: &mut WasmFunctionBuilder,
-        _scope: ScopeId,
+        builder: &mut WasmFunctionBuilder,
+        scope: &mut Scope,
         _ns_id: NamespaceId,
     ) {
+        let initial_scope = *scope;
         for decl in decls {
-            let Declaration::Using { item: _ } = decl.kind()
+            match decl.kind() {
+                Declaration::Module { body, .. } =>
+                    self.collect_uses(as_decl_iterator(body.iter().copied()), builder, scope, _ns_id),
+                _ => ()
+            };
+
+            let Declaration::Using { item } = decl.kind()
             else { continue };
 
-            todo!()
+            match self.use_item(item, initial_scope) {
+                Ok(v) => {
+                    *scope = Scope::new(v.kind(), self.scopes.push(*scope).some());
+                },
+
+                Err(v) => {
+                    builder.error(v);
+                },
+            }
+        }
+    }
+
+
+    fn use_item(
+        &mut self,
+        use_item: UseItem,
+        scope: Scope,
+    ) -> Result<Scope, ErrorId> {
+        let Some(ns) = scope.get_ns(use_item.name(), &self.scopes, &mut self.namespaces, &self.types)
+        else {
+            return Err(self.error(Error::NamespaceNotFound {
+                source: use_item.range(), namespace: use_item.name() }));
+        };
+
+
+        match use_item.kind() {
+            UseItemKind::List { list } => {
+                todo!();
+            },
+
+            UseItemKind::BringName => {
+                let es = ExplicitNamespace {
+                    name: use_item.name(),
+                    namespace: ns,
+                };
+
+                return Ok(Scope::new(ScopeKind::ExplicitNamespace(es), None.into()))
+            },
+
+            UseItemKind::All => {
+                dbg!("{ns:?}");
+                return Ok(Scope::new(ScopeKind::ImplicitNamespace(ns), None.into()))
+            },
         }
     }
 
@@ -792,7 +845,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
                     
-                    self.resolve_names(body.iter().copied(), builder, type_builder, scope, ns);
+                    self.resolve_names(as_decl_iterator(body.iter().copied()), builder, type_builder, scope, ns);
                 },
 
                 Declaration::Module { name, body } => {
@@ -802,7 +855,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
 
-                    self.resolve_names(body.iter().copied(), builder, type_builder, scope, ns)
+                    self.resolve_names(as_decl_iterator(body.iter().copied()), builder, type_builder, scope, ns)
                 },
 
                 Declaration::Using { .. } => (),
@@ -915,6 +968,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let ns = self.namespaces.get_mut(ns_id);
                         let func_id = ns.get_func(f.name()).unwrap();
                         let func = FunctionKind::Extern { ty };
+
                         let path = self.concat_path(path, f.name());
                         let func = Function::new(f.name(), path, args.leak(), ret, wfid, func);
                         self.funcs.put(func_id, func);
@@ -937,7 +991,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = self.scopes.push(scope);
 
                     let path = ty.path(&self.types);
-                    self.resolve_functions(path, body.iter().copied(), builder, scope, ns_id);
+                    self.resolve_functions(path, as_decl_iterator(body.iter().copied()), builder, scope, ns_id);
                 }
 
 
@@ -949,7 +1003,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = self.scopes.push(scope);
 
                     let path = self.namespaces.get(ns).path();
-                    self.resolve_functions(path, body.iter().copied(), builder, scope, ns)
+                    self.resolve_functions(path, as_decl_iterator(body.iter().copied()), builder, scope, ns)
                 }
 
                 _ => continue,
@@ -969,7 +1023,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
     ) -> AnalysisResult {
         match node {
             Node::Declaration(decl) => {
-                self.decl(*decl, *scope, path);
+                self.decl(*decl, *scope, wasm, path);
                 wasm.unit();
                 AnalysisResult::new(Type::Unit, true)
             },
@@ -1019,7 +1073,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             }
                         };
 
-                        self.decl(decl, *scope, path);
+                        self.decl(decl, *scope, wasm, path);
 
                         let Declaration::Function { sig, .. } = decl.kind()
                         else { unreachable!() };
@@ -1046,6 +1100,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
         &mut self,
         decl: DeclarationNode,
         scope: ScopeId,
+        builder: &mut WasmFunctionBuilder,
         path: StringIndex,
     ) {
         match decl.kind() {
@@ -1153,11 +1208,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 let ns = self.namespaces.get_type(ty, &self.types);
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                let scope = self.scopes.push(scope);
+                let mut scope = self.scopes.push(scope);
 
                 let path = ty.path(&self.types);
                 for decl in body.iter() {
-                    self.decl(*decl, scope, path);
+                    self.node(path, &mut scope, builder, decl);
                 }
             },
 
@@ -1165,12 +1220,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
             Declaration::Module { name, body } => {
                 let ns = self.scopes.get(scope);
                 let ns = ns.get_mod(name, &self.scopes, &self.namespaces).unwrap();
+
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
-                let scope = self.scopes.push(scope);
+                let mut scope = self.scopes.push(scope);
 
                 let path = self.namespaces.get(ns).path();
                 for decl in body.iter() {
-                    self.decl(*decl, scope, path);
+                    self.node(path, &mut scope, builder, decl);
                 }
             },
 
@@ -3371,6 +3427,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
     
     
+    #[inline(never)]
     fn concat_path(&mut self, p1: StringIndex, p2: StringIndex) -> StringIndex {
         concat_path(self.output, self.string_map, p1, p2)
     }
@@ -3378,8 +3435,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
 fn concat_path(arena: &Arena, string_map: &mut StringMap, p1: StringIndex, p2: StringIndex) -> StringIndex {
-    let str = format_in!(arena, "{}::{}", string_map.get(p1), string_map.get(p2));
-    string_map.insert(&str)
+    if p1 == StringMap::INVALID_IDENT { p2 }
+    else {
+        let str = format_in!(arena, "{}::{}", string_map.get(p1), string_map.get(p2));
+        string_map.insert(&str)
+    }
 }
 
 

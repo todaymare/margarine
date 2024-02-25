@@ -1,7 +1,7 @@
 use std::thread::current;
 
 use common::{string_map::{StringIndex, StringMap}, source::SourceRange, Swap};
-use sti::{packed_option::PackedOption, define_key, keyed::KVec};
+use sti::{define_key, keyed::KVec, packed_option::{PackedOption, Reserved}};
 use wasm::{LocalId, LoopId};
 
 use crate::{funcs::FuncId, namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::{TypeId, TypeMap}}};
@@ -105,7 +105,7 @@ impl Scope {
         namespaces: &mut NamespaceMap,
         types: &TypeMap,
     ) -> Option<NamespaceId> {
-        self.over(scopes, |current| {
+        let s = self.over(scopes, |current| {
             if let ScopeKind::ExplicitNamespace(var) = current.kind() {
                 if var.name == name {
                     return Some(var.namespace)
@@ -137,7 +137,19 @@ impl Scope {
             }
 
             None
-        })
+        });
+
+        if let Some(s) = s { return Some(s) }
+
+        let ty = match name {
+            StringMap::INT => namespaces.get_type(Type::I64, types),
+            StringMap::FLOAT => namespaces.get_type(Type::F64, types),
+            StringMap::BOOL => namespaces.get_type(Type::BOOL, types),
+            StringMap::ANY => namespaces.get_type(Type::Any, types),
+            _ => return None,
+        };
+
+        Some(ty)
     }
 
 

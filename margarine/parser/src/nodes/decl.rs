@@ -2,6 +2,8 @@ use common::{string_map::StringIndex, source::SourceRange};
 
 use crate::{DataType, Block};
 
+use super::{attr::Attribute, Node};
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct DeclarationNode<'a> {
     kind: Declaration<'a>,
@@ -54,7 +56,7 @@ pub enum Declaration<'a> {
     
     Impl {
         data_type: DataType<'a>,
-        body: &'a [DeclarationNode<'a>],
+        body: &'a [Node<'a>],
     },
 
     Using {
@@ -63,7 +65,7 @@ pub enum Declaration<'a> {
 
     Module {
         name: StringIndex,
-        body: &'a [DeclarationNode<'a>],
+        body: &'a [Node<'a>],
     },
 
     Extern {

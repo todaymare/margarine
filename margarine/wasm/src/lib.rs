@@ -396,7 +396,6 @@ impl WasmFunctionBuilder<'_> {
         if let Some(ret) = self.ret {
             write!(buffer, "local.get $_ret ");
             if ret.stack_size() != 0 {
-                dbg!(&self);
                 write!(buffer, "local.get {} ", self.params.len() - 1);
                 write!(buffer, "i32.const {} ", ret.stack_size());
                 write!(buffer, "call $memcpy ");

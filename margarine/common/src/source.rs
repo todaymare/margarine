@@ -113,7 +113,7 @@ impl SourceRange {
 
 
     #[inline(always)]
-    pub fn file(self, files: &[FileData]) -> &FileData {
+    pub fn file(self, files: &[FileData]) -> (&FileData, u32) {
         let mut start = 0;
         let mut end;
 
@@ -122,7 +122,7 @@ impl SourceRange {
 
             if self.start <= end {
                 assert!(self.end <= end);
-                return f;
+                return (f, start);
             }
 
             start = end;
