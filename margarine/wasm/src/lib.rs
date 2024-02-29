@@ -144,7 +144,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
 
     pub fn stack_size(&mut self, size: usize) {
         self.stack_size = size;
-        self.memory = self.memory.max(self.stack_size);
+        self.memory = self.memory.max((self.stack_size / (64 * 1024)) + 1);
     }
 
 
@@ -165,13 +165,14 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         let mut buffer = String::new();
         write!(buffer, "(module ");
         
-        assert!(self.memory >= self.stack_size);
+        assert!(self.memory * 64 * 1024 >= self.stack_size);
 
         write!(buffer, r#"(func $alloc (import "::host" "alloc") (param i32) (result i32))"#);
         write!(buffer, r#"(func $free (import "::host" "free") (param i32))"#);
         write!(buffer, r#"(func $dump_stack_trace (import "::host" "dump_stack_trace"))"#);
         write!(buffer, r#"(func $printi32 (import "::host" "printi32") (param i32))"#);
         write!(buffer, r#"(func $printi64 (import "::host" "printi64") (param i64))"#);
+        write!(buffer, r#"(func $printvar (import "::host" "printvar") (param i32) (param i32))"#);
 
         for (path, funcs) in &self.externs {
             let path = string_map.get(*path);

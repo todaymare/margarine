@@ -170,7 +170,7 @@ impl Type {
                 match ty.kind() {
                     TypeKind::Struct(s)
                         => {
-                            if s.status == TypeStructStatus::Rc { return WasmType::I32 }
+                            if s.status == TypeStructStatus::Ptr { return WasmType::I32 }
                             WasmType::Ptr { size: ty.size() }
                         },
 

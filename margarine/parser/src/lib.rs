@@ -1171,7 +1171,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let ident = self.expect_identifier()?;
 
         let mut func = || {
-            if self.peek_is(TokenKind::Slash) {
+            if self.peek_is(TokenKind::DoubleColon) {
                 self.advance();
                 self.advance();
                 if self.current_is(TokenKind::Star) {
@@ -1612,6 +1612,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
             
             self.advance();
+
+            if self.current_is(TokenKind::Star) {
+                result = ExpressionNode::new(
+                    Expression::Deref(self.arena.alloc_new(result)),
+                    SourceRange::new(result.range().start(), self.current_range().end()));
+                continue
+            }
             
             let start = self.current_range().start();
             let ident = match self.current_kind() {

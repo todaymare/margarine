@@ -270,7 +270,13 @@ pub struct ScopeMap {
 
 
 impl ScopeMap {
-    pub fn new() -> Self { Self { map: KVec::new() } }
+    pub const ROOT : ScopeId = ScopeId(0);
+
+    pub fn new() -> Self { 
+        let mut slf = Self { map: KVec::new() };
+        slf.push(Scope::new(ScopeKind::Root, None.into()));
+        slf
+    }
 
     #[inline(always)]
     pub fn push(&mut self, scope: Scope) -> ScopeId {

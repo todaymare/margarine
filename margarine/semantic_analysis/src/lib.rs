@@ -139,7 +139,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             // Data
                             (StringMap::VALUE, ty),
                         ].iter().copied(),
-                        TypeStructStatus::Rc
+                        TypeStructStatus::Ptr
                     );
 
                     let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
@@ -522,6 +522,48 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         for (id, n) in nodes.iter().enumerate() {
             ty = self.node(path, &mut scope, builder, n).ty;
 
+            /*
+            {
+                builder.call_template("dump_stack_trace");
+                let local = builder.local(WasmType::I32);
+                self.scopes.get(scope).over(&self.scopes, |s| {
+                    if let ScopeKind::Variable(v) = s.kind() {
+                        let name = self.string_map.get(v.name);
+                        builder.u32_const(name.len() as u32);
+                        builder.call_template("alloc");
+                        builder.local_set(local);
+                        
+                        for (i, c) in name.as_bytes().iter().enumerate() {
+                            builder.local_get(local);
+                            builder.u32_const(i as u32);
+                            builder.i32_add();
+
+                            builder.u32_const(*c as u32);
+                            builder.raw("i32.store8 ");
+                        }
+
+                        builder.local_get(local);
+                        builder.u32_const(name.len() as u32);
+                        builder.call_template("printvar");
+
+                        builder.local_get(v.local_id);
+                        match v.ty.to_wasm_ty(&self.types) {
+                            WasmType::I32 => builder.call_template("printi32"),
+                            WasmType::I64 => builder.call_template("printi64"),
+                            WasmType::F32 => todo!(),
+                            WasmType::F64 => todo!(),
+                            WasmType::Ptr { size } => builder.call_template("printi32"),
+                        }
+
+                        builder.local_get(local);
+                        builder.call_template("free");
+                    }
+
+                    None::<()>
+                });
+            }
+            */
+
             if id + 1 != nodes.len() {
                 self.acquire(ty, builder);
                 self.drop_value(ty, builder);
@@ -765,7 +807,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
             },
 
             UseItemKind::All => {
-                dbg!("{ns:?}");
                 return Ok(Scope::new(ScopeKind::ImplicitNamespace(ns), None.into()))
             },
         }
@@ -2467,32 +2508,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         wasm.sptr_const(alloc);
                     }
 
-                    (Type::Custom(t), _) => {
-                        let mut v = || {
-                            let ty = self.types.get(t);
-                            let TypeKind::Struct(strct) = ty.kind()
-                            else { return false };
-
-                            if strct.status != TypeStructStatus::Rc { return false };
-
-                            let field = strct.fields[1];
-                            if field.0.ty != dty { return false };
-
-                            // the ptr is on the stack
-                            wasm.u32_const(field.1 as u32);
-                            wasm.i32_add();
-
-                            wasm.read(dty.to_wasm_ty(&self.types));
-
-                            true
-                        };
-
-                        if !v() {
-                            wasm.error(self.error(Error::InvalidCast {
-                                range: source, from_ty: lhs_anal.ty, to_ty: dty }))
-                        }
-                    }
-
                     _ => {
                         wasm.error(self.error(Error::InvalidCast {
                             range: source, from_ty: lhs_anal.ty, to_ty: dty }))
@@ -2796,6 +2811,41 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 AnalysisResult::new(Type::RANGE, true)
 
             },
+
+
+            Expression::Deref(val) => {
+                let val_anal = self.expr(*val, scope, wasm, path);
+
+                let mut is_ptr = || {
+                    let Type::Custom(ty_id) = val_anal.ty 
+                    else { return None };
+
+                    let ty = self.types.get(ty_id);
+                    let TypeKind::Struct(sym) = ty.kind()
+                    else { return None };
+
+                    if sym.status != TypeStructStatus::Ptr { return None };
+
+                    let field = sym.fields[1];
+                    // the ptr is on the stack
+                    wasm.u32_const(field.1 as u32);
+                    wasm.i32_add();
+
+                    wasm.read(field.0.ty.to_wasm_ty(&self.types));
+
+                    Some(field.0.ty)
+                };
+
+                match is_ptr() {
+                    Some(v) => {
+                        AnalysisResult::new(v, true)
+                    },
+                    None => {
+                        wasm.error(self.error(Error::DerefOnNonPtr(source)));
+                        AnalysisResult::error()
+                    },
+                }
+            },
         }
     }
 
@@ -2812,44 +2862,87 @@ impl<'out> Analyzer<'_, 'out, '_> {
     ) -> Result<Type, Error> {
         match node.kind() {
             Expression::Identifier(ident) => {
-                let Some(val) = self.scopes.get(scope).get_var(ident, &self.scopes)
+                let Some(variable) = self.scopes.get(scope).get_var(ident, &self.scopes)
                 else {
                     return Err(Error::VariableNotFound { name: ident, source: node.range() });
                 };
 
-                if !val.is_mutable {
+                if !variable.is_mutable {
                     return Err(Error::ValueUpdateNotMut { source: node.range() });
                 }
 
-                if depth == 0 {
-                    assert_eq!(val_ty, val.ty);
+                /*
+                // Rc special case
+                'rc: {
+                    let Type::Custom(ty_id) = variable.ty 
+                    // No drop function
+                    else { break 'rc };
+
+                    let ty = self.types.get(ty_id);
+                    let TypeKind::Struct(sym) = ty.kind()
+                    else { break 'rc };
+
+                    if sym.status != TypeStructStatus::Rc { break 'rc };
+                    if !val_ty.eq_sem(sym.fields[1].0.ty) { break 'rc };
+
                     let val_wasm = val_ty.to_wasm_ty(&self.types);
-                    let value_local = wasm.local(val_wasm);
-                    wasm.local_set(value_local);
 
-                    // get it to drop it later.
-                    wasm.local_get(val.local_id);
-                    if let Type::Custom(_) = val.ty {
-                        wasm.read(val_wasm);
-                    }
+                    wasm.local_get(variable.local_id);
+                    self.make_mut(variable.ty, wasm);
 
-                    // set the new
-                    wasm.local_get(value_local);
-                    wasm.local_set(val.local_id);
+                    let rc = wasm.local(variable.ty.to_wasm_ty(&self.types));
+                    wasm.local_set(rc);
 
-                    // drop it
-                    self.drop_value(val.ty, wasm);
+                    // read the value to drop later.
+                    wasm.local_get(rc);
+                    wasm.u32_const(sym.fields[1].1 as u32);
+                    wasm.i32_add();
 
-                    if !val.ty.eq_sem(val_ty) {
-                        return Err(Error::ValueUpdateTypeMismatch 
-                                   { lhs: val.ty, rhs: val_ty, source: node.range() })
-                    }
+                    wasm.read(val_wasm);
 
-                    return Ok(val.ty);
+                    // set the new value
+                    wasm.local_get(rc);
+                    wasm.u32_const(sym.fields[1].1 as u32);
+                    wasm.i32_add();
+                    
+                    wasm.write(val_wasm);
+
+                    // drop the previously read value
+                    self.drop_value(val_ty, wasm);
+
+                    return Ok(variable.ty);
+                }
+                */
+
+                if depth != 0 {
+                    wasm.local_get(variable.local_id);
+                    return Ok(variable.ty)
                 }
 
-                wasm.local_get(val.local_id);
-                Ok(val.ty)
+                if !variable.ty.eq_sem(val_ty) {
+                    return Err(Error::ValueUpdateTypeMismatch 
+                               { lhs: variable.ty, rhs: val_ty, source: node.range() })
+                }
+                
+                let val_wasm = val_ty.to_wasm_ty(&self.types);
+                let value_local = wasm.local(val_wasm);
+                wasm.local_set(value_local);
+
+                // get it to drop it later.
+                wasm.local_get(variable.local_id);
+                if let Type::Custom(_) = variable.ty {
+                    wasm.read(val_wasm);
+                }
+
+                // set the new
+                wasm.local_get(value_local);
+                wasm.local_set(variable.local_id);
+
+                // drop it
+                self.drop_value(variable.ty, wasm);
+
+
+                Ok(variable.ty)
             }
 
             
@@ -2880,32 +2973,34 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         wasm.u32_const(sf.1.try_into().unwrap());
                         wasm.i32_add();
 
-                        if depth == 0 {
-                            if !sf.0.ty.eq_sem(val_ty) {
-                                return Err(Error::ValueUpdateTypeMismatch 
-                                           { lhs: sf.0.ty, rhs: val_ty, source: node.range() })
-                            }
-
-                            let val_ty_wasm = val_ty.to_wasm_ty(&self.types);
-                            let local = wasm.local(WasmType::I32);
-                            wasm.local_set(local);
-                            // so the local is now set to the pointer
-                            
-                            // get it to drop it later!
-                            wasm.local_get(local);
-                            wasm.read(val_ty_wasm);
-
-                            let old_data_local = wasm.local(val_ty_wasm);
-                            wasm.local_set(old_data_local);
-
-                            // set the new
-                            wasm.local_get(local);
-                            wasm.write(val_ty_wasm);
-
-                            // drop it
-                            wasm.local_get(old_data_local);
-                            self.drop_value(val_ty, wasm);
+                        if depth != 0 {
+                            return Ok(sf.0.ty);
                         }
+
+                        if !sf.0.ty.eq_sem(val_ty) {
+                            return Err(Error::ValueUpdateTypeMismatch 
+                                       { lhs: sf.0.ty, rhs: val_ty, source: node.range() })
+                        }
+
+                        let val_ty_wasm = val_ty.to_wasm_ty(&self.types);
+                        let local = wasm.local(WasmType::I32);
+                        wasm.local_set(local);
+                        // so the local is now set to the pointer
+                        
+                        // get it to drop it later!
+                        wasm.local_get(local);
+                        wasm.read(val_ty_wasm);
+
+                        let old_data_local = wasm.local(val_ty_wasm);
+                        wasm.local_set(old_data_local);
+
+                        // set the new
+                        wasm.local_get(local);
+                        wasm.write(val_ty_wasm);
+
+                        // drop it
+                        wasm.local_get(old_data_local);
+                        self.drop_value(val_ty, wasm);
 
                         return Ok(sf.0.ty);
                     }
@@ -2913,6 +3008,68 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 Err(Error::FieldDoesntExist {
                     source: node.range(), field: field_name, typ: ty })
+            }
+
+
+            Expression::Deref(node) => {
+                let ty = self.assign(wasm, scope, *node, val_ty, depth + 1)?;
+
+                let mut is_ptr = || {
+                    let Type::Custom(ty_id) = ty
+                    else { return None };
+
+                    let ty = self.types.get(ty_id);
+                    let TypeKind::Struct(sym) = ty.kind()
+                    else { return None };
+
+                    if sym.status != TypeStructStatus::Ptr { return None };
+
+                    let field = sym.fields[1];
+
+                    self.make_mut(Type::Custom(ty_id), wasm);
+
+                    // get the ptr to the value
+                    wasm.u32_const(field.1 as u32);
+                    wasm.i32_add();
+
+                    if depth != 0 {
+                        return Some(Ok(field.0.ty))
+                    }
+
+                    if !field.0.ty.eq_sem(val_ty) {
+                        return Some(Err(Error::ValueUpdateTypeMismatch 
+                                   { lhs: field.0.ty, rhs: val_ty,
+                                   source: node.range() }))
+                    }
+
+                    let val_ty_wasm = val_ty.to_wasm_ty(&self.types);
+                    let local = wasm.local(WasmType::I32);
+                    wasm.local_set(local);
+
+                    // get it to drop later
+                    wasm.local_get(local);
+                    wasm.read(val_ty_wasm);
+
+                    let old_data_local = wasm.local(val_ty_wasm);
+                    wasm.local_set(old_data_local);
+
+                    // set new
+                    wasm.local_get(local);
+                    wasm.write(val_ty_wasm);
+
+                    // drop it
+                    wasm.local_get(local);
+                    self.drop_value(val_ty, wasm);
+
+                    Some(Ok(field.0.ty))
+                };
+
+                match is_ptr() {
+                    Some(v) => v,
+                    None => {
+                        Err(Error::DerefOnNonPtr(node.range()))
+                    },
+                }
             }
 
             _ => return Err(Error::AssignIsNotLHSValue { source: node.range() }),
@@ -3189,7 +3346,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let local = wasm.local(WasmType::Ptr { size: ty.size() });
                 wasm.local_set(local);
 
-                if strct.status == TypeStructStatus::Rc {
+                if strct.status == TypeStructStatus::Ptr {
                     
                     // Read the counter
                     wasm.local_get(local);
@@ -3285,6 +3442,74 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
 
 
+    ///
+    /// If the value is a **NOT** Rc: Do nothing
+    /// Else if the counter of the Rc is **NOT** 1: Clone the value
+    /// Else: do nothing
+    fn make_mut(
+        &mut self,
+        ty: Type,
+        wasm: &mut WasmFunctionBuilder,
+    ) {
+        let Type::Custom(ty_id) = ty 
+        // No drop function
+        else { return };
+
+        let ty = self.types.get(ty_id);
+        let TypeKind::Struct(sym) = ty.kind()
+        else { return };
+
+        if sym.status != TypeStructStatus::Ptr { return };
+
+        let local = wasm.local(WasmType::I32);
+        wasm.local_set(local);
+        
+        // Read the counter
+        wasm.local_get(local);
+        wasm.i64_read();
+
+        // Eq 1
+        wasm.i64_const(1);
+        wasm.i64_ne();
+
+        wasm.ite(&mut (),
+            |_, wasm| {
+                wasm.local_get(local);
+                wasm.call_template("printi32");
+
+                wasm.raw("global.get $heap_start ");
+                wasm.call_template("printi32");
+
+                let ns = self.namespaces.get_type(Type::Custom(ty_id), &self.types);
+                let ns = self.namespaces.get(ns);
+                let func = ns.get_func(StringMap::NEW).unwrap();
+                
+                let field = sym.fields[1];
+
+                // read the value
+                wasm.local_get(local);
+                wasm.u32_const(field.1 as u32);
+                wasm.i32_add();
+
+                wasm.read(field.0.ty.to_wasm_ty(&self.types));
+
+                self.call_func(func,
+                               &[(field.0.ty, SourceRange::ZERO, None)],
+                               false, 
+                               SourceRange::ZERO,
+                               ScopeMap::ROOT,
+                               wasm).unwrap();
+                wasm.local_set(local);
+
+                wasm.local_get(local);
+                wasm.call_template("printi32");
+
+                (local, ())
+            },
+            |_, _| { () }
+        );
+    }
+
 
     ///
     /// Calls the drop function on the value at the 
@@ -3309,7 +3534,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             TypeKind::Struct(strct) => {
                 let local = wasm.local(WasmType::Ptr { size: ty.size() });
                 wasm.local_set(local);
-                if strct.status == TypeStructStatus::Rc {
+                if strct.status == TypeStructStatus::Ptr {
                     // Read the counter
                     wasm.local_get(local);
                     wasm.i64_read();
@@ -3341,9 +3566,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         },
 
                         |_, wasm| {
-                            wasm.i64_const(420);
-                            wasm.call_template("printi64");
-
                             wasm.local_get(new_count);
                             wasm.local_get(local);
                             wasm.i64_write();

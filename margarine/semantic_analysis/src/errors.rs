@@ -17,6 +17,8 @@ pub enum Error {
         to_ty: Type,
     },
 
+    DerefOnNonPtr(SourceRange),
+
     InvalidValueForAttr {
         attr: (SourceRange, StringIndex),
         value: SourceRange,
@@ -715,6 +717,11 @@ impl<'a> ErrorType<TypeMap<'_>> for Error {
             Error::IteratorFunctionInvalidSig(v) => {
                 fmt.error("invalid iterator function signature")
                     .highlight_with_note(*v, "signature must match 'fn __next__(&self): <type>?`");
+            },
+
+            Error::DerefOnNonPtr(v) => {
+                fmt.error("deref on non pointer")
+                    .highlight(*v);
             },
 
             Error::Bypass => (),

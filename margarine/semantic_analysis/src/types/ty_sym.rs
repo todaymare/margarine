@@ -60,7 +60,7 @@ impl<'a> TypeStruct<'a> {
 pub enum TypeStructStatus {
     User,
     Tuple,
-    Rc,
+    Ptr,
 }
 
 

@@ -42,6 +42,8 @@ pub enum Expression<'a> {
 
     Identifier(StringIndex),
 
+    Deref(&'a ExpressionNode<'a>),
+
     Range {
         lhs: &'a ExpressionNode<'a>,
         rhs: &'a ExpressionNode<'a>,
