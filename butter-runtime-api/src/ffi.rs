@@ -1,135 +1,71 @@
-use std::{marker::PhantomData, ptr::{null, null_mut}};
-
 use proc_macros::margarine;
-use wasmtime::{Instance, Memory, Store};
+use wasmtime::{Global, Instance, Memory, Store, Val};
 
-use crate::alloc::Allocable;
-
-///
-/// A pointer to wasm memory
-///
-#[margarine]
-pub struct WasmPtr<T>(u32, PhantomData<T>);
-
-impl<T> WasmPtr<T> {
-    ///
-    /// Returns a const reference to the wasm memory
-    ///
-    /// # Panics
-    /// If the pointer value is not within the range of
-    /// the `ctx` memory
-    ///
-    #[inline(always)]
-    pub extern "C" fn as_ptr(self, ctx: &Ctx) -> *const T {
-        assert!(ctx.size() >= self.0);
-        unsafe { ctx.base().add(self.0 as usize).cast() }
-    }
-
-
-    #[inline(always)]
-    pub extern "C" fn as_ptr_ex(self, mem: &impl Allocable) -> *const T {
-        unsafe { mem.data_ptr().add(self.0 as usize).cast() }
-    }
-
-
-    ///
-    /// Returns a mutable pointer to the wasm memory
-    ///
-    /// # Panics
-    /// If the pointer value is not within the range of
-    /// the `ctx` memory
-    ///
-    #[inline(always)]
-    pub extern "C" fn as_mut(self, ctx: &Ctx) -> *mut T {
-        self.as_ptr(ctx).cast_mut().cast()
-    }
-
-
-    #[inline(always)]
-    pub extern "C" fn as_mut_ex(self, mem: &impl Allocable) -> *mut T {
-        unsafe { mem.data_ptr().add(self.0 as usize).cast() }
-    }
-
-
-    ///
-    /// Returns a u32 to the wasm memory
-    ///
-    #[inline(always)]
-    pub const extern "C" fn as_u32(self) -> u32 {
-        self.0
-    }
-
-
-    ///
-    /// Constructs a new `WasmPtr` out of a `u32`
-    ///
-    /// This function is safe as other subsequent safe calls
-    /// will check for the bounds and panic if out of bounds
-    ///
-    pub const extern "C" fn from_u32(i: u32) -> Self { Self(i, PhantomData) }
-}
-
-
-#[margarine]
-pub struct Ptr<T>(i64, PhantomData<T>);
-
-
-impl<T> Ptr<T> {
-    pub extern "C" fn new(data: *mut T) -> Self  { Ptr (data as i64, PhantomData) }
-
-
-    pub extern "C" fn as_ref<'a>(self) -> &'a T {
-        unsafe { &*(self.0 as *const i64).cast() }
-    }
-
-
-    pub extern "C" fn as_mut<'a>(self) -> &'a mut T {
-        unsafe { &mut *(self.0 as *mut i64).cast() }
-    }
-}
-
-unsafe impl<T> Sync for Ptr<T> {}
-unsafe impl<T> Send for Ptr<T> {}
-
+use crate::{alloc::Allocable, ptr::{WasmPtr, SendPtr}};
 
 #[repr(C)]
-#[derive(Debug)]
 pub struct Ctx {
     memory: SendPtr<Memory>,
-    store: SendMutPtr<Store<()>>,
-    instance: SendMutPtr<Instance>,
+    store: SendPtr<Store<()>>,
+    instance: SendPtr<Instance>,
     funcs: Vec<&'static str>
 }
 
 impl Ctx {
-    pub const fn new(funcs: Vec<&str>) -> Self { Self { memory: SendPtr(null()), store: SendMutPtr(null_mut()), instance: SendMutPtr(null_mut()), funcs: unsafe { core::mem::transmute(funcs) } } }
+    pub const fn new(funcs: Vec<&str>) -> Self {
+        Self {
+            memory: SendPtr::null(),
+            store: SendPtr::null(),
+            instance: SendPtr::null(),
+            funcs: unsafe { core::mem::transmute(funcs) }
+        }
+    }
 
     pub fn set_mem(&mut self, ptr: &Memory) {
-        assert!(self.memory.0.is_null());
-        self.memory.0 = ptr;
+        assert!(self.memory.is_null());
+        self.memory = SendPtr::new(ptr);
     }
 
-    pub fn set_store(&mut self, store: &mut Store<()>) { self.store.0 = store; }
-    pub fn set_instance(&mut self, store: &mut Instance) { self.instance.0 = store; }
+    pub fn set_store(&mut self, store: &mut Store<()>) { self.store = SendPtr::new(store); }
+    pub fn set_instance(&mut self, store: &mut Instance) { self.instance = SendPtr::new(store); }
 
-    pub fn base(&self) -> *const u8 {
-        unsafe { (*self.memory.0).data_ptr(&*self.store.0) }
+    fn mem(&'_ self) -> &'_ Memory {
+        self.memory.as_ref()
     }
 
-    pub fn size(&self) -> u32 {
-        unsafe { (*self.memory.0).data_size(&*self.store.0) }.try_into().unwrap_or(u32::MAX)
+    fn store(&'_ self) -> &'_ mut Store<()> {
+        unsafe { self.store.as_mut() }
     }
 
-    pub fn mem(&'_ self) -> &'_ Memory {
-        unsafe { &*self.memory.0 }
+    fn instance(&'_ self) -> &'_ mut Instance {
+        unsafe { self.instance.as_mut() }
     }
 
-    pub fn store(&'_ self) -> &'_ mut Store<()> {
-        unsafe { &mut *self.store.0 }
+}
+
+
+#[cfg(feature = "wenjin")]
+impl Ctx {
+    pub fn read_global(&self, str: &str) -> Value {
+        let v = self.store().read_global(*self.instance(), str).unwrap();
+        match v.value() {
+            wenjin::Value::I32(v) => Value::I32(v),
+            wenjin::Value::I64(v) => Value::I64(v),
+            wenjin::Value::F32(v) => Value::F32(v),
+            wenjin::Value::F64(v) => Value::F64(v),
+        }
     }
 
-    pub fn instance(&'_ self) -> &'_ mut Instance {
-        unsafe { &mut *self.instance.0 }
+
+    pub fn copy_mem<T: Copy>(&self, wasm_ptr: WasmPtr<T>) -> T {
+        let ptr = self.store().memory_view(*self.mem()).data_ptr();
+        unsafe { ptr.byte_add(wasm_ptr.as_u32() as usize).cast::<T>().read() }
+    }
+
+
+    pub fn read_mem<T>(&'_ self, wasm_ptr: WasmPtr<T>) -> &'_ T {
+        let ptr = self.store().memory_view(*self.mem()).data_ptr();
+        unsafe { &*ptr.byte_add(wasm_ptr.as_u32() as usize).cast::<T>() }
     }
 
     pub fn funcs(&'_ self) -> &'_ [&'_ str] {
@@ -137,15 +73,129 @@ impl Ctx {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct SendPtr<T: Send + Sync>(pub *const T);
-unsafe impl<T: Send + Sync> Send for SendPtr<T> {}
-unsafe impl<T: Send + Sync> Sync for SendPtr<T> {}
 
-#[derive(Clone, Copy, Debug)]
-pub struct SendMutPtr<T: Send + Sync>(pub *mut T);
-unsafe impl<T: Send + Sync> Send for SendMutPtr<T> {}
-unsafe impl<T: Send + Sync> Sync for SendMutPtr<T> {}
+#[cfg(not(feature = "wenjin"))]
+impl Ctx {
+    pub fn read_global(&self, str: &str) -> Value {
+        let v = self.instance().get_global(self.store(), str).unwrap();
+
+        match v.get(self.store()) {
+            wasmtime::Val::I32(v) => Value::I32(v),
+            wasmtime::Val::I64(v) => Value::I64(v),
+            wasmtime::Val::F32(v) => Value::F32(f32::from_bits(v)),
+            wasmtime::Val::F64(v) => Value::F64(f64::from_bits(v)),
+            _ => unimplemented!(),
+        }
+    }
+
+
+    pub fn copy_mem<T: Copy>(&self, wasm_ptr: WasmPtr<T>) -> T {
+        let ptr = self.data_ptr();
+        unsafe { ptr.byte_add(wasm_ptr.as_u32() as usize).cast::<T>().read() }
+    }
+
+
+    pub fn read_mem<T>(&'_ self, wasm_ptr: WasmPtr<T>) -> &'_ T {
+        let ptr = self.data_ptr();
+        unsafe { &*ptr.byte_add(wasm_ptr.as_u32() as usize).cast::<T>() }
+    }
+
+    pub fn funcs(&'_ self) -> &'_ [&'_ str] {
+        &self.funcs
+    }
+}
+
+
+#[cfg(feature = "wenjin")]
+impl Allocable for Ctx {
+    fn data_ptr(&mut self) -> *mut u8 {
+        self.store().memory_view(*self.mem()).data_ptr()
+    }
+
+    fn data_size(&mut self) -> usize {
+        self.store().memory_view(*self.mem()).size()
+    }
+
+    fn size(&mut self) -> usize {
+        self.data_size() / (64 * 1024)
+    }
+
+    fn grow(&mut self, delta: usize) -> bool {
+        self.store().grow_memory(*self.mem(), delta);
+        true
+    }
+}
+
+
+#[cfg(not(feature = "wenjin"))]
+impl Allocable for Ctx {
+    fn data_ptr(&self) -> *mut u8 {
+        self.mem().data_ptr(self.store())
+    }
+
+    fn data_size(&self) -> usize {
+        self.mem().data_size(self.store())
+    }
+
+    fn size(&self) -> usize {
+        self.mem().size(self.store()).try_into().unwrap()
+    }
+
+    fn grow(&mut self, delta: usize) -> bool {
+        self.mem().grow(self.store(), delta.try_into().unwrap()).is_ok()
+    }
+}
+
+unsafe impl Send for Ctx {}
+unsafe impl Sync for Ctx {}
+
+
+pub enum Value {
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+}
+
+
+impl Value {
+    #[inline(always)]
+    pub fn u32(self) -> u32 { self.i32() as u32 }
+    #[inline(always)]
+    pub fn i32(self) -> i32 {
+        match self {
+            Value::I32(v) => v,
+            _ => unreachable!(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn u64(self) -> u64 { self.i64() as u64 }
+    #[inline(always)]
+    pub fn i64(self) -> i64 {
+        match self {
+            Value::I64(v) => v,
+            _ => unreachable!(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn f32(self) -> f32 {
+        match self {
+            Value::F32(v) => v,
+            _ => unreachable!(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn f64(self) -> f64 {
+        match self {
+            Value::F64(v) => v,
+            _ => unreachable!(),
+        }
+    }
+    
+}
 
 
 #[margarine]

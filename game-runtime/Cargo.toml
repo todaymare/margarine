@@ -9,7 +9,7 @@ miri = []
 
 [dependencies]
 crc32fast = "1.3.2"
-wasmtime = "*"
 libloading = "*"
 
 butter-runtime-api = { path = "../butter-runtime-api" } 
+wasmtime = { git = "https://github.com/bytecodealliance/wasmtime/" }

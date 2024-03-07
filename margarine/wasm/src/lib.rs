@@ -186,6 +186,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
 
         let string_pointer = self.stack_size;
         write!(buffer, "(global $string_pointer i32 (i32.const {}))", string_pointer);
+
         {
             let mut c = string_pointer;
             for f in &self.strs {

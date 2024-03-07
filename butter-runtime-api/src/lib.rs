@@ -1,38 +1,31 @@
-use core::slice;
-use std::{fmt::write, fs, io::{stdin, BufRead, Read}};
-
 use ffi::Ctx;
 pub use proc_macros::*;
+
+use crate::ptr::WasmPtr;
 pub mod ffi;
 pub mod alloc;
+pub mod ptr;
 
 
 pub fn dump_stack_trace(ctx: &Ctx) {
-    let bsp = ctx.instance().get_global(ctx.store(), "bstack_pointer").unwrap();
-    let sp = ctx.instance().get_global(ctx.store(), "stack_pointer").unwrap();
-    let bsp = bsp.get(ctx.store()).unwrap_i32() as u32;
-    let mut sp = sp.get(ctx.store()).unwrap_i32() as u32;
-
-    let mem = ctx.mem();
-    let mut buffer = [0; 4];
+    let bsp = ctx.read_global("bstack_pointer");
+    let sp = ctx.read_global("stack_pointer");
+    let bsp = bsp.u32();
+    let mut sp = sp.u32();
 
     println!("--------- PRINTING STACK ---------");
     let mut i = 0;
     while sp != bsp {
-        mem.read(ctx.store(), sp as usize + 4, &mut buffer).unwrap();
-        let func_id = u32::from_ne_bytes(buffer);
-
+        let ptr = WasmPtr::from_u32(sp + 4);
+        let func_id = ctx.copy_mem::<u32>(ptr);
         let func_name = ctx.funcs()[func_id as usize];
 
         println!("{i} - {func_name} ({func_id})");
 
-        mem.read(ctx.store(), sp.try_into().unwrap(), &mut buffer).unwrap();
-        let new_sp = u32::from_ne_bytes(buffer);
+        let new_sp = ctx.copy_mem(WasmPtr::from_u32(sp));
 
         sp = new_sp;
 
         i += 1;
     }
-
-
 }

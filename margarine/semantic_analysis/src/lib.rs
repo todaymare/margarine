@@ -3222,6 +3222,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     wasm.write(sym_arg.0.ty.to_wasm_ty(&self.types));
                 }
 
+
                 wasm.sptr_const(ptr);
                 wasm.call(func.wasm_id);
 

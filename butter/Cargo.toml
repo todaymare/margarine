@@ -10,8 +10,10 @@ dhat-heap = []
 [dependencies]
 margarine = { path = "../margarine" }
 game-runtime = { path = "../game-runtime" }
+wenjin = { path = "../../wenjin/wenjin" }
 
 colourful = { git = "https://github.com/rookieCookies/colourful" }
 sti = { git = "https://github.com/leddoo/sti" }
 
-wasmtime = "*"
+# wasmtime = "*"
+libloading = "*"

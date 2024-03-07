@@ -1,11 +1,10 @@
-use std::{env, fs, ops::Deref};
+use std::{env, fs, os::unix::process::CommandExt, process::Command};
 
 use game_runtime::encode;
 use margarine::{nodes::{decl::{Declaration, DeclarationNode}, Node}, DropTimer, FileData, SourceRange, StringMap};
 use sti::prelude::Arena;
-use wasmtime::{Config, Engine};
 
-const GAME_RUNTIME : &[u8] = include_bytes!("../../target/debug/game-runtime");
+// const GAME_RUNTIME : &[u8] = include_bytes!("../../target/debug/game-runtime");
 
 fn main() -> Result<(), &'static str> {
      DropTimer::with_timer("compilation", || {
@@ -44,107 +43,104 @@ fn main() -> Result<(), &'static str> {
                         if matches!(attr.node(), Node::Declaration(_)) { continue }
                     }
 
-                    unreachable!();
+                    ()
                 }
             }
 
             lex_errors.push(le);
             parse_errors.push(pe);
 
-            dbg!(string_map.get(f.name()));
             global.push(DeclarationNode::new(
                 Declaration::Module {
-                    name: f.name(),
-                    body: ast.inner(),
-                },
+                   name: f.name(),
+                   body: ast.inner(),
+               },
 
-                SourceRange::new(source_offset, source_offset + f.read().len() as u32),
-             ).into());
+               SourceRange::new(source_offset, source_offset + f.read().len() as u32),
+            ).into());
 
-            source_offset += f.read().len() as u32;
-         }
-
-
-         let ns_arena = Arena::new();
-         let _scopes = Arena::new();
-         let mut sema = {
-             let _1 = DropTimer::new("semantic analysis");
-             margarine::Analyzer::run(&ns_arena, &mut string_map, &*global)
-         };
-
-         println!("{sema:#?}");
+           source_offset += f.read().len() as u32;
+        }
 
 
-         for l in lex_errors {
-             if !l.is_empty() {
-                 let report = margarine::display(l.as_slice().inner(), &sema.string_map, &files, &());
-                 println!("{report}");
-             }
-         }
+        let ns_arena = Arena::new();
+        let _scopes = Arena::new();
+        let mut sema = {
+            let _1 = DropTimer::new("semantic analysis");
+            margarine::Analyzer::run(&ns_arena, &mut string_map, &*global)
+        };
 
-         for l in parse_errors {
-             if !l.is_empty() {
-                 let report = margarine::display(l.as_slice().inner(), &sema.string_map, &files, &());
-                 println!("{report}");
-             }
-         }
+        println!("{sema:#?}");
 
-         if !sema.errors.is_empty() {
-             let report = margarine::display(sema.errors.as_slice().inner(), &sema.string_map, &files, &sema.types);
-             println!("{report}");
-         }
+
+        for l in lex_errors {
+            if !l.is_empty() {
+                let report = margarine::display(l.as_slice().inner(), &sema.string_map, &files, &());
+                println!("{report}");
+            }
+        }
+
+        for l in parse_errors {
+            if !l.is_empty() {
+                let report = margarine::display(l.as_slice().inner(), &sema.string_map, &files, &());
+                println!("{report}");
+            }
+        }
+
+        if !sema.errors.is_empty() {
+            let report = margarine::display(sema.errors.as_slice().inner(), &sema.string_map, &files, &sema.types);
+            println!("{report}");
+        }
          
 
-         let code = sema.module_builder.build(&mut sema.string_map);
+        let code = sema.module_builder.build(&mut sema.string_map);
 
-         /*
-         println!("symbol map arena {:?} ns_arena: {ns_arena:?}, arena: {arena:?}", string_map.arena_stats());
-         println!("{:?}", &*ArenaPool::tls_get_temp());
-         println!("{:?}", &*ArenaPool::tls_get_rec());
-         */
+        /*
+        println!("symbol map arena {:?} ns_arena: {ns_arena:?}, arena: {arena:?}", string_map.arena_stats());
+        println!("{:?}", &*ArenaPool::tls_get_temp());
+        println!("{:?}", &*ArenaPool::tls_get_rec());
+        */
+
+        // ------ Prepare data for transmission ------
+        let data_imports = {
+            let mut vec = Vec::with_capacity(sema.module_builder.externs.len());
+            for (path, value) in sema.module_builder.externs.iter() {
+                let mut values : Vec<&str> = Vec::with_capacity(value.len());
+                for i in value {
+                    let str = sema.string_map.get(i.0);
+                    if values.contains(&str) { continue }
+                    values.push(str)
+                }
+                vec.push((sema.string_map.get(*path), values));
+            }
+            vec
+        };
+
+        let data_funcs = {
+            let mut vec = Vec::with_capacity(sema.funcs.len() + 1);
+
+            let mut funcs = sema.funcs.iter().collect::<Vec<_>>();
+            funcs.sort_unstable_by_key(|x| x.wasm_id);
+            for f in funcs.iter() {
+                vec.push(sema.string_map.get(f.path));
+            }
+
+            vec
+        };
+
+        // ------------------------------------------
          
-         fs::write("out.wat", &*code).unwrap();
-         // Run
-         {
-            let data = &*code;
-            let mut game = GAME_RUNTIME.to_vec();
+        fs::write("out.wat", &*code).unwrap();
+        Command::new("wat2wasm")
+            .arg("out.wat")
+            .arg("-o")
+            .arg("out.wasm")
+            .output().unwrap();
 
-            let mut config = Config::new();
-            config.strategy(wasmtime::Strategy::Cranelift);
-            config.wasm_bulk_memory(true);
-            let engine = Engine::new(&config).unwrap();
-            let data = engine.precompile_module(&data).unwrap();
-                   
-            let imports = {
-                let mut vec = Vec::with_capacity(sema.module_builder.externs.len());
-                for (path, value) in sema.module_builder.externs.iter() {
-                    let mut values : Vec<&str> = Vec::with_capacity(value.len());
-                    for i in value {
-                        let str = sema.string_map.get(i.0);
-                        if values.contains(&str) { continue }
-                        values.push(str)
-                    }
-                    vec.push((sema.string_map.get(*path), values));
-                }
-                vec
-            };
+        let wasm = fs::read("out.wasm").unwrap();
 
-            let funcs = {
-                let mut vec = Vec::with_capacity(sema.funcs.len() + 1);
-
-                let mut funcs = sema.funcs.iter().collect::<Vec<_>>();
-                funcs.sort_unstable_by_key(|x| x.wasm_id);
-                for f in funcs.iter() {
-                    vec.push(sema.string_map.get(f.path));
-                }
-
-                vec
-            };
-
-            encode(&mut game, &*data, &*imports, &*funcs);
-            fs::write("out", &*game).unwrap();
-             
-         }
+        let result = encode(&wasm, &data_imports, &data_funcs);
+        fs::write("out", result).unwrap();
 
          Ok(())
      })?;

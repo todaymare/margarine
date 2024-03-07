@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicUsize;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemFn, Type, Ident, PatType, ItemStruct, ItemEnum, spanned::Spanned};
+use syn::{punctuated::Punctuated, spanned::Spanned, FnArg, Ident, ItemEnum, ItemFn, ItemStruct, Pat, PatIdent, PatType, Type};
 
 static COUNTER : AtomicUsize = AtomicUsize::new(0);
 
@@ -31,7 +31,7 @@ pub fn margarine(_: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 
-fn margarine_function(func: ItemFn) -> TokenStream {
+fn margarine_function(mut func: ItemFn) -> TokenStream {
     let name = &func.sig.ident;
     let inputs = &func.sig.inputs;
     let ret = &func.sig.output;
@@ -72,17 +72,60 @@ fn margarine_function(func: ItemFn) -> TokenStream {
                 __ret: #ret,
             }
         )
-     };
+    };
+
+    func.sig.inputs.push(FnArg::Typed(PatType {
+        attrs: vec![],
+        pat: Box::new(Pat::Ident(PatIdent {
+            attrs: vec![],
+            by_ref: None,
+            mutability: None,
+            ident: Ident::new("CTX", func.span()),
+            subpat: None
+        } )),
+        colon_token: syn::token::Colon { spans: [func.span()] },
+        ty: Box::new(Type::Reference(syn::TypeReference {
+            and_token: syn::token::And { spans: [func.span()] },
+            lifetime: None,
+            mutability: None,
+            elem: Box::new(Type::Path(syn::TypePath {
+                qself: None, 
+                path: syn::Path {
+                    leading_colon: Some(syn::token::PathSep { spans: [func.span(); 2] }),
+                    segments: {
+                        let mut p = Punctuated::new();
+                        p.push(syn::PathSegment {
+                            ident: Ident::new("butter_runtime_api", func.span()),
+                            arguments: syn::PathArguments::None
+                        });
+                        p.push(syn::PathSegment {
+                            ident: Ident::new("ffi", func.span()),
+                            arguments: syn::PathArguments::None
+                        });
+                        p.push(syn::PathSegment {
+                            ident: Ident::new("Ctx", func.span()),
+                            arguments: syn::PathArguments::None
+                        });
+
+                        p
+                    }
+                }
+            }))
+       }))
+    }));
 
     let quote = quote!(
         #quote
     
         #[no_mangle]
-        pub extern "C" fn #name(ctx: &Ctx, __argp: *mut #struct_name) {
-            #func
+        pub extern "C" fn #name(__ctx: &::butter_runtime_api::ffi::Ctx, __argp: *mut #struct_name) {
+            #[allow(unused)]
+            #[allow(non_snake_case)]
+            #func {
+            }
 
             let data = unsafe { &*__argp };
-            let ret = #name(#(data.#vec),*);
+            let ret = #name(#(data.#vec,)* __ctx);
             unsafe { &mut *__argp }.__ret = ret;
         }
     );

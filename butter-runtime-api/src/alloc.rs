@@ -1,7 +1,6 @@
 use std::mem::size_of;
 
-use crate::ffi::WasmPtr;
-use wasmtime::{Memory, Store};
+use crate::ptr::WasmPtr;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -50,10 +49,10 @@ impl Block {
 }
 
 
-fn ptr_to_wptr<T>(memory: &impl Allocable, wasm_ptr: *const T) -> WasmPtr<T> {
+fn ptr_to_wptr<T>(memory: &mut impl Allocable, wasm_ptr: *const T) -> WasmPtr<T> {
     let ptr = wasm_ptr as usize;
     let dptr = memory.data_ptr() as usize;
-    WasmPtr::from_u32((ptr - dptr) as u32)
+    WasmPtr::<T>::from_u32((ptr - dptr) as u32)
 }
 
 
@@ -71,9 +70,9 @@ pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
     // Search for a block
     if let Some(block) = find_block(memory, size) {
         let block = try_split(memory, block, size);
-        Block::set_used(block.as_mut_ex(memory), true);
+        Block::set_used(block.as_mut(memory), true);
 
-        let data = unsafe { &mut (*block.as_mut_ex(memory)).data } as *mut usize as *mut u8;
+        let data = unsafe { &mut (*block.as_mut(memory)).data } as *mut usize as *mut u8;
         return ptr_to_wptr(memory, data.cast())
     }
 
@@ -81,12 +80,12 @@ pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
     let block = request_memory(memory, size).expect("Out of memory");
 
     unsafe {
-        (*block.as_mut_ex(memory)).used_n_size = size;
-        Block::set_used(block.as_mut_ex(memory), true);
+        (*block.as_mut(memory)).used_n_size = size;
+        Block::set_used(block.as_mut(memory), true);
     }
 
 
-    let block = block.as_mut_ex(memory);
+    let block = block.as_mut(memory);
     let data = unsafe { &mut (*block).data } as *mut usize as *mut u8;
     ptr_to_wptr(memory, data.cast())
 }
@@ -95,17 +94,16 @@ pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
 ///
 /// Frees a previously allocated block
 ///
-pub fn free(memory: &impl Allocable, ptr: WasmPtr<()>) {
-    println!("free");
+pub fn free(memory: &mut impl Allocable, ptr: WasmPtr<()>) {
     let ptrb = get_header(ptr);
 
     let mut curr = ptrb;
     while curr.as_u32() != 0 {
-        let currp = curr.as_ptr_ex(memory);
+        let currp = curr.as_ptr(memory);
         unsafe {
             if !(*currp).is_used() {
                 let size = alloc_size((*currp).size());
-                (*ptrb.as_mut_ex(memory)).used_n_size += size;
+                (*ptrb.as_mut(memory)).used_n_size += size;
                 if curr.as_u32() as usize + size > memory.size() as usize { break };
                 curr = WasmPtr::from_u32(curr.as_u32() + size as u32);
                 continue
@@ -114,13 +112,13 @@ pub fn free(memory: &impl Allocable, ptr: WasmPtr<()>) {
         break
     }
 
-    Block::set_used(ptrb.as_mut_ex(memory), false);
-    let bucket = unsafe { get_bucket((*ptrb.as_ptr_ex(memory)).size()) };
+    Block::set_used(ptrb.as_mut(memory), false);
+    let bucket = unsafe { get_bucket((*ptrb.as_ptr(memory)).size()) };
     unsafe { ALLOC.free_lists[bucket] = ptrb };
 }
 
 
-fn find_block(memory: &impl Allocable, size: usize) -> Option<WasmPtr<Block>> {
+fn find_block(memory: &mut impl Allocable, size: usize) -> Option<WasmPtr<Block>> {
     let mut bucket = get_bucket(size);
     let len = unsafe { ALLOC.free_lists.len() };
     let mut left = len;
@@ -129,10 +127,11 @@ fn find_block(memory: &impl Allocable, size: usize) -> Option<WasmPtr<Block>> {
         left -= 1;
 
         while curr.as_u32() != 0 {
-            let currp = curr.as_ptr_ex(memory);
+            let currp = curr.as_ptr(memory);
 
             unsafe {
                 if (*currp).is_used() || (*currp).size() < size {
+                    if (*currp).next.as_u32() == 0 { continue }
                     curr = (*currp).next;
                     continue;
                 }
@@ -175,16 +174,15 @@ fn alloc_size(size: usize) -> usize {
 }
 
 
-fn try_split(memory: &impl Allocable, ptr: WasmPtr<Block>, size: usize) -> WasmPtr<Block> {
+fn try_split(memory: &mut impl Allocable, ptr: WasmPtr<Block>, size: usize) -> WasmPtr<Block> {
     unsafe {
-        let ptrp = ptr.as_mut_ex(memory);
+        let ptrp = ptr.as_mut(memory);
         debug_assert!(!(*ptrp).is_used());
 
         if (*ptrp).size() > size + size_of::<Block>() {
             let nptr = ptrp.cast::<u8>().add(alloc_size(size));
             let nptr = nptr.cast::<Block>();
             let nsize = (*ptrp).size() - alloc_size(size);
-
 
             {
                 let bucket = get_bucket(nsize);
@@ -233,25 +231,6 @@ pub trait Allocable {
     fn data_size(&self) -> usize;
     fn size(&self) -> usize;
     fn grow(&mut self, delta: usize) -> bool;
-}
-
-
-impl<T> Allocable for (&Memory, &mut Store<T>) {
-    fn data_ptr(&self) -> *mut u8 {
-        self.0.data_ptr(&*self.1)
-    }
-
-    fn data_size(&self) -> usize {
-        self.0.data_size(&*self.1)
-    }
-
-    fn size(&self) -> usize {
-        self.0.size(&*self.1).try_into().unwrap()
-    }
-
-    fn grow(&mut self, delta: usize) -> bool {
-        self.0.grow(&mut *self.1, delta.try_into().unwrap()).is_ok()
-    }
 }
 
 
@@ -310,7 +289,7 @@ mod tests {
         let ptr = walloc(&mut mem, 69); // 72
         let ptrb = get_header(ptr);
         {
-            let block = unsafe { ptrb.as_ptr_ex(&mem).read() };
+            let block = unsafe { ptrb.as_ptr(&mut mem).read() };
             assert_eq!(block.size(), 72);
             assert!(block.is_used());
         }
@@ -318,20 +297,20 @@ mod tests {
         let ptr1 = walloc(&mut mem, 32); // 32 
         let ptr1b = get_header(ptr1);
         {
-            let block = unsafe { ptr1b.as_ptr_ex(&mem).read() };
+            let block = unsafe { ptr1b.as_ptr(&mut mem).read() };
             assert_eq!(block.size(), 32);
             assert!(block.is_used());
             assert_eq!(ptr1.as_u32() - 72, ptr.as_u32());
         }
 
-        unsafe { *ptr.as_mut_ex(&mem).cast::<usize>() = 69 };
-        unsafe { *ptr1.as_mut_ex(&mem).cast::<usize>() = 420 };
+        unsafe { *ptr.as_mut(&mut mem).cast::<usize>() = 69 };
+        unsafe { *ptr1.as_mut(&mut mem).cast::<usize>() = 420 };
 
         let ptr2 = walloc(&mut mem, 12);
-        assert_eq!(unsafe { ptr.as_ptr_ex(&mem).cast::<usize>().read() }, 69);
-        free(&mem, ptr);
-        free(&mem, ptr2);
+        assert_eq!(unsafe { ptr.as_ptr(&mut mem).cast::<usize>().read() }, 69);
+        free(&mut mem, ptr);
+        free(&mut mem, ptr2);
 
-        assert_eq!(unsafe { ptr1.as_ptr_ex(&mem).cast::<usize>().read() }, 420);
+        assert_eq!(unsafe { ptr1.as_ptr(&mut mem).cast::<usize>().read() }, 420);
     }
 }

@@ -3,9 +3,9 @@ pub mod hashables;
 pub mod source;
 pub mod toggle_buffer;
 
-use std::{time::Instant, alloc::Layout, mem::{size_of, align_of}};
+use std::time::Instant;
 
-use sti::{prelude::Alloc, vec::Vec, arena::Arena};
+use sti::{prelude::Alloc, vec::Vec};
 use colourful::*;
 
 
