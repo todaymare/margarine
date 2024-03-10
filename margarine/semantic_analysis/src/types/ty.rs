@@ -12,7 +12,6 @@ pub enum Type {
     I32,
     F64,
 
-    Any,
     Unit,
     Never,
     Error,
@@ -34,7 +33,6 @@ impl Type {
             Type::I64 => TypeId::I64,
             Type::I32 => TypeId::I32,
             Type::F64 => TypeId::F64,
-            Type::Any => TypeId::ANY,
             Type::Unit => TypeId::UNIT,
             Type::Never => TypeId::NEVER,
             Type::Error => TypeId::ERROR,
@@ -55,8 +53,7 @@ impl Type {
             Type::I64    => "int",
             Type::I32    => "i32",
             Type::F64    => "float",
-            Type::Any    => "any",
-            Type::Unit   => "unit",
+            Type::Unit   => "()",
             Type::Never  => "never",
             Type::Error  => "error",
 
@@ -77,7 +74,6 @@ impl Type {
             Type::I64 => StringMap::INT,
             Type::I32 => unimplemented!(),
             Type::F64 => StringMap::FLOAT,
-            Type::Any => StringMap::ANY,
             Type::Unit => StringMap::UNIT,
             Type::Never => unimplemented!(),
             Type::Error => StringMap::ERR,
@@ -95,7 +91,6 @@ impl Type {
             | (Type::I64, Type::I64) 
             | (Type::I32, Type::I32) 
             | (Type::F64, Type::F64) 
-            | (Type::Any, Type::Any) 
             | (Type::Unit, Type::Unit) 
             | (Type::Never, Type::Never) 
             | (Type::Error, Type::Error) 
@@ -143,7 +138,6 @@ impl Type {
             Type::I64 => 8, 
             Type::I32 => 8,
             Type::F64 => 8,
-            Type::Any => 16,
             Type::Unit => 0,
             Type::Never => 0,
             Type::Error => 0,
@@ -160,7 +154,6 @@ impl Type {
             Type::I64 => WasmType::I64, 
             Type::I32 => WasmType::I32,
             Type::F64 => WasmType::F64,
-            Type::Any => todo!(),
             Type::Unit => WasmType::I64,
             Type::Never => WasmType::I64,
             Type::Error => WasmType::I64,
@@ -194,7 +187,6 @@ impl core::hash::Hash for Type {
             Type::I32 => state.write_u8(1),
             Type::F64 => state.write_u8(2),
 
-            Type::Any => state.write_u8(3),
             Type::Unit => state.write_u8(4),
             Type::Never => state.write_u8(5),
             Type::Error => state.write_u8(6),

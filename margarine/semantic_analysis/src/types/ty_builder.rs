@@ -3,7 +3,7 @@ use errors::SemaError;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
-use crate::{concat_path, errors::Error, funcs::{Function, FunctionKind, FunctionMap}, namespace::{Namespace, NamespaceMap}, scope::ScopeId, types::ty_sym::{StructField, TaggedUnionField, TypeEnumKind, TypeKind, TypeStruct, TypeTaggedUnion}};
+use crate::{concat_path, errors::Error, funcs::{Function, FunctionKind, FunctionMap}, namespace::{Namespace, NamespaceMap}, types::ty_sym::{StructField, TaggedUnionField, TypeEnumKind, TypeKind, TypeStruct, TypeTaggedUnion}};
 
 use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeEnum, TypeEnumStatus, TypeStructStatus, TypeSymbol, TypeTag}};
 
@@ -498,9 +498,8 @@ impl<'out> TypeBuilder<'_> {
             Type::I64 => 8,
             Type::I32 => 4,
             Type::F64 => 8,
-            Type::Any   => 16,
             Type::Unit  => 1,
-            Type::Never => todo!(),
+            Type::Never => 1,
             Type::Error => 1,
             Type::Custom(v) => self.resolve_type(data, v)?.align(),
         })

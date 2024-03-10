@@ -87,7 +87,7 @@ fn margarine_function(mut func: ItemFn) -> TokenStream {
         ty: Box::new(Type::Reference(syn::TypeReference {
             and_token: syn::token::And { spans: [func.span()] },
             lifetime: None,
-            mutability: None,
+            mutability: Some(syn::token::Mut { span: func.span() }),
             elem: Box::new(Type::Path(syn::TypePath {
                 qself: None, 
                 path: syn::Path {
@@ -118,7 +118,7 @@ fn margarine_function(mut func: ItemFn) -> TokenStream {
         #quote
     
         #[no_mangle]
-        pub extern "C" fn #name(__ctx: &::butter_runtime_api::ffi::Ctx, __argp: *mut #struct_name) {
+        pub extern "C" fn #name(__ctx: &mut ::butter_runtime_api::ffi::Ctx, __argp: *mut #struct_name) {
             #[allow(unused)]
             #[allow(non_snake_case)]
             #func {

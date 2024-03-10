@@ -190,7 +190,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         {
             let mut c = string_pointer;
             for f in &self.strs {
-                write!(buffer, "(data (i32.const {c}) \"{}\")", f);
+                write!(buffer, "(data (i32.const {c}) \"00000000{}\")", f);
                 c += f.len();
             }
         }
@@ -202,7 +202,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
                stack_pointer);
 
         write!(buffer, "(global $heap_start (export \"heap_start\") (mut i32) (i32.const {}))", 
-               stack_pointer);
+               stack_pointer + self.strs.iter().map(|x| x.len() + 8).sum::<usize>());
 
         let _ = writeln!(buffer);
         let _ = writeln!(buffer, ";;");

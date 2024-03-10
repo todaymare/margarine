@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use proc_macros::margarine;
 
-use crate::{alloc::Allocable, ffi::Ctx};
+use crate::alloc::Allocable;
 
 ///
 /// A pointer to wasm memory
@@ -54,6 +54,11 @@ impl<T> WasmPtr<T> {
     ///
     #[inline(always)]
     pub const extern "C" fn from_u32(i: u32) -> Self { Self(i, PhantomData) }
+
+
+    pub const fn cast<A>(self) -> WasmPtr<A> {
+        WasmPtr(self.0, PhantomData)
+    }
 }
 
 

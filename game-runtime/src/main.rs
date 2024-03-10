@@ -6,7 +6,7 @@ use libloading::{Library, Symbol};
 use wasmtime::{Config, Engine, Linker, Module, Store};
 
 type ExternFunction<'a> = Symbol<'a, ExternFunctionRaw>;
-type ExternFunctionRaw = unsafe extern "C" fn(*const Ctx, *mut u8);
+type ExternFunctionRaw = unsafe extern "C" fn(*mut Ctx, *mut u8);
 
 static mut CTX_PTR : SendPtr<Ctx> = SendPtr::null();
 
@@ -64,7 +64,7 @@ fn run(file: &[u8]) {
                 let ptr = WasmPtr::from_u32(ptr);
                 let ptr = ptr.as_mut(unsafe { CTX_PTR.as_ref() });
 
-                unsafe { sym(CTX_PTR.as_ref(), ptr); };
+                unsafe { sym(CTX_PTR.as_mut(), ptr); };
             }).unwrap();
         }
 

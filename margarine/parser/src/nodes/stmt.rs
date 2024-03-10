@@ -2,7 +2,7 @@ use common::{source::SourceRange, string_map::StringIndex};
 
 use crate::{DataType, Block};
 
-use super::{expr::ExpressionNode, Pattern};
+use super::expr::ExpressionNode;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct StatementNode<'a> {

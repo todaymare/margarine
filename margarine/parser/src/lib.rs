@@ -40,7 +40,6 @@ pub enum DataTypeKind<'a> {
     Bool,
     Float,
     Unit,
-    Any,
     Never,
     Option(&'a DataType<'a>),
     Result(&'a DataType<'a>, &'a DataType<'a>),
@@ -56,7 +55,6 @@ impl<'a> DataTypeKind<'a> {
     /// not the other way around
     pub fn is(&self, oth: &DataTypeKind<'a>) -> bool {
         self == &DataTypeKind::Never
-        || oth == &DataTypeKind::Any
         || self == oth
     }
 }
@@ -69,7 +67,6 @@ impl std::hash::Hash for DataTypeKind<'_> {
             DataTypeKind::Bool => 1.hash(state),
             DataTypeKind::Float => 2.hash(state),
             DataTypeKind::Unit => 3.hash(state),
-            DataTypeKind::Any => 4.hash(state),
             DataTypeKind::Never => 6.hash(state),
             DataTypeKind::Option(v) => {
                 7.hash(state);
@@ -385,7 +382,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     StringMap::INT   => DataTypeKind::Int,
                     StringMap::FLOAT => DataTypeKind::Float,
                     StringMap::BOOL  => DataTypeKind::Bool,
-                    StringMap::ANY   => DataTypeKind::Any,
                     _ => DataTypeKind::CustomType(identifier),
                 }
             };
@@ -1651,12 +1647,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 _ => self.expect_identifier()?,
             };
 
-            if ident == StringMap::CAST {
-                self.advance();
-                result = self.cast_expr(result)?;
-                continue
-            }
-
             if self.peek_is(TokenKind::LeftParenthesis) {
                 self.advance();
                 self.advance();
@@ -2140,25 +2130,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         ))
     }
 
-
-    fn cast_expr(&mut self, lhs: ExpressionNode<'ta>) -> ExpressionResult<'ta> {
-        self.expect(TokenKind::LeftParenthesis)?;
-        self.advance();
-
-        let typ = self.expect_type()?;
-        self.advance();
-
-        self.expect(TokenKind::RightParenthesis)?;
-
-        let source = SourceRange::new(lhs.range().start(), self.current_range().end());
-        Ok(ExpressionNode::new(
-            Expression::CastAny { 
-                lhs: self.arena.alloc_new(lhs), 
-                data_type: typ 
-            },
-            source,
-        ))
-    }
 }
 
 

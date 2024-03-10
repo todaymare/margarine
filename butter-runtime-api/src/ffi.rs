@@ -1,7 +1,9 @@
-use proc_macros::margarine;
-use wasmtime::{Global, Instance, Memory, Store, Val};
+use std::mem::size_of;
 
-use crate::{alloc::Allocable, ptr::{WasmPtr, SendPtr}};
+use proc_macros::margarine;
+use wasmtime::{Instance, Memory, Store};
+
+use crate::{alloc::{align_to, walloc, Allocable}, ptr::{SendPtr, WasmPtr}};
 
 #[repr(C)]
 pub struct Ctx {
@@ -199,21 +201,68 @@ impl Value {
 
 
 #[margarine]
+pub struct HeapPtr<T> {
+    ptr: WasmPtr<T>,
+}
+
+
+impl<T> HeapPtr<T> {
+    pub fn new(ctx: &mut impl Allocable, data: T) -> Self {
+        let size = 8              // counter
+                 + size_of::<T>() // value 
+                 ;
+
+        let alloc = walloc(ctx, size);
+        let ptr = alloc.as_mut(ctx);
+        unsafe { ptr.cast::<u64>().write(0) };
+        unsafe { ptr.byte_add(8).cast::<T>().write(data) };
+        Self { ptr: alloc.cast() }
+    }
+
+
+    pub fn new_raw(ctx: &mut impl Allocable, size: usize) -> Self {
+        let size = 8     // counter
+                 + size  // value 
+                 ;
+
+        let alloc = walloc(ctx, size);
+        let ptr = alloc.as_mut(ctx);
+        unsafe { ptr.cast::<u64>().write(0) };
+        Self { ptr: alloc.cast() }
+    }
+
+
+    pub fn data(self) -> WasmPtr<T> {
+        WasmPtr::from_u32(self.ptr.as_u32() + 8)
+    }
+}
+
+
+#[margarine]
 pub struct Str {
     len: u64,
-    ptr: *const u8,
+    ptr: HeapPtr<()>,
 }
 
 
 impl Str {
-    pub fn new(str: &'static str) -> Self {
+    pub fn new(str: &'static str, ctx: &mut impl Allocable) -> Self {
+        let ptr = HeapPtr::<()>::new_raw(ctx, str.len());
+        unsafe {
+            core::ptr::copy(str.as_ptr(), ptr.data().as_mut(ctx).cast(), str.len())
+        };
+
+
         Self {
             len: str.len() as u64,
-            ptr: str.as_ptr(),
+            ptr,
         }
     }
-    pub fn read<'a>(self) -> &'a str {
-        let slice = unsafe { std::slice::from_raw_parts(self.ptr, self.len.try_into().unwrap()) };
+
+
+    pub fn read<'a>(self, ctx: &'a impl Allocable) -> &'a str {
+        let ptr = self.ptr.data().as_ptr(ctx).cast::<u8>();
+        let slice = unsafe { std::slice::from_raw_parts(ptr, self.len.try_into().unwrap()) };
         let str = std::str::from_utf8(slice).expect("invalid pointer");
         str
     }

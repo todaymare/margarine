@@ -113,11 +113,6 @@ pub enum Expression<'a> {
 
     Tuple(&'a [ExpressionNode<'a>]),
 
-    CastAny {
-        lhs: &'a ExpressionNode<'a>,
-        data_type: DataType<'a>,
-    },
-
     AsCast {
         lhs: &'a ExpressionNode<'a>,
         data_type: DataType<'a>,

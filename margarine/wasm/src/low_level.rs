@@ -221,20 +221,13 @@ impl WasmFunctionBuilder<'_> {
 
 impl WasmFunctionBuilder<'_> {
     ///
-    /// Pushes a raw memory address to the stack
+    /// Pushes the memory address to the string constant
     /// () -> `ptr(i64)($t)`
     #[inline(always)]
     pub fn string_const(&mut self, ptr: StringAddress) {
-        todo!();
-        /*
         write!(self.body, "global.get $string_pointer ");
         self.u32_const(ptr.address.try_into().unwrap());
         self.i32_add();
-        
-        self.i32_as_i64();
-        write!(self.body, "global.get $host_memory_offset ");
-        self.i64_add();
-        */
     }
 
 

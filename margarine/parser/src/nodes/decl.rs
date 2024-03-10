@@ -2,7 +2,7 @@ use common::{string_map::StringIndex, source::SourceRange};
 
 use crate::{DataType, Block};
 
-use super::{attr::Attribute, Node};
+use super::Node;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct DeclarationNode<'a> {

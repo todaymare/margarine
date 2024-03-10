@@ -1,4 +1,4 @@
-use std::{env, fs, os::unix::process::CommandExt, process::Command};
+use std::{env, fs, process::Command};
 
 use game_runtime::encode;
 use margarine::{nodes::{decl::{Declaration, DeclarationNode}, Node}, DropTimer, FileData, SourceRange, StringMap};

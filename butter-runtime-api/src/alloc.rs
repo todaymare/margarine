@@ -65,6 +65,7 @@ fn ptr_to_wptr<T>(memory: &mut impl Allocable, wasm_ptr: *const T) -> WasmPtr<T>
 /// actual size of the memory allocated
 ///
 pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
+    println!("allocing {size}");
     let size = align_to(size, size_of::<Word>());
     
     // Search for a block
@@ -95,6 +96,7 @@ pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
 /// Frees a previously allocated block
 ///
 pub fn free(memory: &mut impl Allocable, ptr: WasmPtr<()>) {
+    println!("freeing");
     let ptrb = get_header(ptr);
 
     let mut curr = ptrb;
@@ -164,7 +166,7 @@ fn get_header(ptr: WasmPtr<()>) -> WasmPtr<Block> {
 }
 
 
-fn align_to(n: usize, alignment: usize) -> usize {
+pub fn align_to(n: usize, alignment: usize) -> usize {
   return (n + alignment - 1) & !(alignment - 1);
 }
 

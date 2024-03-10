@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, rc::Rc};
+use std::marker::PhantomData;
 
 use sti::{prelude::Arena, arena::ArenaStats, hash::{HashFn, fxhash::FxHasher32, HashMapF}, define_key};
 
@@ -7,7 +7,6 @@ define_key!(u32, pub StringIndex);
 pub struct StringMap<'a> {
     arena: &'a Arena,
     map: sti::hash::HashMapF<HashStr<'a>, StringIndex, HashStrHashFn>,
-    // map: FuckMap<&'static str, StringIndex>,
     vec: Vec<&'a str>,
 }
 
@@ -21,22 +20,20 @@ impl<'a> StringMap<'a> {
     pub const STR : StringIndex = StringIndex(5);
     pub const INT : StringIndex = StringIndex(6);
     pub const FLOAT : StringIndex = StringIndex(7);
-    pub const ANY : StringIndex = StringIndex(8);
-    pub const UNIT : StringIndex = StringIndex(9);
-    pub const OK : StringIndex = StringIndex(10);
-    pub const ERR : StringIndex = StringIndex(11);
-    pub const SOME : StringIndex = StringIndex(12);
-    pub const NONE : StringIndex = StringIndex(13);
-    pub const SELF : StringIndex = StringIndex(14);
-    pub const CAST : StringIndex = StringIndex(15);
-    pub const NEW : StringIndex = StringIndex(16);
-    pub const INVALID_IDENT : StringIndex = StringIndex(17);
-    pub const RANGE : StringIndex = StringIndex(18);
-    pub const LOW   : StringIndex = StringIndex(19);
-    pub const HIGH  : StringIndex = StringIndex(20);
-    pub const COUNT : StringIndex = StringIndex(21);
+    pub const UNIT : StringIndex = StringIndex(8);
+    pub const OK : StringIndex = StringIndex(9);
+    pub const ERR : StringIndex = StringIndex(10);
+    pub const SOME : StringIndex = StringIndex(11);
+    pub const NONE : StringIndex = StringIndex(12);
+    pub const SELF : StringIndex = StringIndex(13);
+    pub const NEW : StringIndex = StringIndex(14);
+    pub const INVALID_IDENT : StringIndex = StringIndex(15);
+    pub const RANGE : StringIndex = StringIndex(16);
+    pub const LOW   : StringIndex = StringIndex(17);
+    pub const HIGH  : StringIndex = StringIndex(18);
+    pub const COUNT : StringIndex = StringIndex(19);
 
-    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(22);
+    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(20);
 
  
     #[inline(always)]
@@ -62,14 +59,12 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("str"), Self::STR);
         assert_eq!(s.insert("int"), Self::INT);
         assert_eq!(s.insert("float"), Self::FLOAT);
-        assert_eq!(s.insert("any"), Self::ANY);
         assert_eq!(s.insert("unit"), Self::UNIT);
         assert_eq!(s.insert("ok"), Self::OK);
         assert_eq!(s.insert("err"), Self::ERR);
         assert_eq!(s.insert("some"), Self::SOME);
         assert_eq!(s.insert("none"), Self::NONE);
         assert_eq!(s.insert("self"), Self::SELF);
-        assert_eq!(s.insert("cast"), Self::CAST);
         assert_eq!(s.insert("new"), Self::NEW);
         assert_eq!(s.insert("::"), Self::INVALID_IDENT);
 

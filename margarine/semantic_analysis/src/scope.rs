@@ -1,10 +1,8 @@
-use std::thread::current;
-
 use common::{string_map::{StringIndex, StringMap}, source::SourceRange, Swap};
-use sti::{define_key, keyed::KVec, packed_option::{PackedOption, Reserved}};
+use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 use wasm::{LocalId, LoopId};
 
-use crate::{funcs::FuncId, namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::{TypeId, TypeMap}}};
+use crate::{funcs::FuncId, namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::TypeMap}};
 
 define_key!(u32, pub ScopeId);
 
@@ -129,7 +127,6 @@ impl Scope {
                     StringMap::INT => namespaces.get_type(Type::I64, types),
                     StringMap::FLOAT => namespaces.get_type(Type::F64, types),
                     StringMap::BOOL => namespaces.get_type(Type::BOOL, types),
-                    StringMap::ANY => namespaces.get_type(Type::Any, types),
                     _ => return None,
                 };
 
@@ -145,7 +142,6 @@ impl Scope {
             StringMap::INT => namespaces.get_type(Type::I64, types),
             StringMap::FLOAT => namespaces.get_type(Type::F64, types),
             StringMap::BOOL => namespaces.get_type(Type::BOOL, types),
-            StringMap::ANY => namespaces.get_type(Type::Any, types),
             _ => return None,
         };
 

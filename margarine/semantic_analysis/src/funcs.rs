@@ -1,6 +1,5 @@
 use common::{string_map::StringIndex, Swap};
-use parser::Block;
-use sti::{define_key, keyed::KVec, hash::{HashMap, DefaultSeed}, arena::Arena};
+use sti::{define_key, keyed::KVec};
 use wasm::FunctionId;
 
 use crate::types::{ty::Type, ty_map::TypeId};
