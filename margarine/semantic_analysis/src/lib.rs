@@ -788,14 +788,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
             let Declaration::Using { item } = decl.kind()
             else { continue };
 
-            match self.use_item(item, initial_scope) {
-                Ok(v) => {
-                    *scope = Scope::new(v.kind(), self.scopes.push(*scope).some());
-                },
-
-                Err(v) => {
-                    builder.error(v);
-                },
+            if let Err(e) = self.use_item(item, initial_scope, scope) {
+                builder.error(e);
             }
         }
     }
@@ -805,7 +799,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
         &mut self,
         use_item: UseItem,
         scope: Scope,
-    ) -> Result<Scope, ErrorId> {
+        modify: &mut Scope,
+    ) -> Result<(), ErrorId> {
         let Some(ns) = scope.get_ns(use_item.name(), &self.scopes, &mut self.namespaces, &self.types)
         else {
             return Err(self.error(Error::NamespaceNotFound {
@@ -814,9 +809,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
         match use_item.kind() {
-            UseItemKind::List { .. } => {
-                // TODO: Really struggling to find a way to make this work
-                todo!()
+            UseItemKind::List { list } => {
+                let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), None.into());
+                for l in list {
+                    self.use_item(*l, scope, modify)?;
+                }
             },
 
             UseItemKind::BringName => {
@@ -825,13 +822,15 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     namespace: ns,
                 };
 
-                return Ok(Scope::new(ScopeKind::ExplicitNamespace(es), None.into()))
+                *modify = Scope::new(ScopeKind::ExplicitNamespace(es), self.scopes.push(*modify).some());
             },
 
             UseItemKind::All => {
-                return Ok(Scope::new(ScopeKind::ImplicitNamespace(ns), None.into()))
+                *modify = Scope::new(ScopeKind::ImplicitNamespace(ns), self.scopes.push(*modify).some());
             },
-        }
+        };
+
+        Ok(())
     }
 
 

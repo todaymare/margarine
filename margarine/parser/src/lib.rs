@@ -1189,6 +1189,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let mut func = || {
             if self.peek_is(TokenKind::DoubleColon) {
                 self.advance();
+
+                if self.peek_is(TokenKind::LeftParenthesis) {
+                    self.advance();
+                    self.advance();
+
+                    let list = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma), 
+                                        |parser, _| parser.parse_use_item())?;
+
+                    return Ok(UseItemKind::List { list })
+                }
+
                 self.advance();
                 if self.current_is(TokenKind::Star) {
                     return Ok(UseItemKind::All)
@@ -1198,18 +1209,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 return Ok(UseItemKind::List { 
                         list: self.arena.alloc_new([inner]) })
             }
-
-
-            if self.peek_is(TokenKind::LeftParenthesis) {
-                self.advance();
-                self.advance();
-
-                let list = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma), 
-                                    |parser, _| parser.parse_use_item())?;
-
-                return Ok(UseItemKind::List { list })
-            }
-
             Ok(UseItemKind::BringName)
 
         };
