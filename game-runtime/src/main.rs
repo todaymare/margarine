@@ -1,4 +1,4 @@
-use std::{env, fs};
+use std::{env, fs, time::Instant};
 
 use butter_runtime_api::{alloc::{free, walloc}, dump_stack_trace, ffi::Ctx, ptr::{SendPtr, WasmPtr}};
 use game_runtime::decode;
@@ -25,6 +25,8 @@ fn run(file: &[u8]) {
     let mut config = Config::new();
     config.wasm_bulk_memory(true);
     config.strategy(wasmtime::Strategy::Cranelift);
+    config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+    config.profiler(wasmtime::ProfilingStrategy::PerfMap);
     let engine = Engine::new(&config).unwrap();
 
     let module = Module::new(&engine, data).unwrap();
@@ -151,7 +153,9 @@ fn run(file: &[u8]) {
     unsafe { CTX_PTR = SendPtr::new(&ctx) };
    
     let func = instance.get_func(&mut store, "::init").unwrap();
+    let time = Instant::now();
     func.call(&mut store, &[], &mut []).unwrap();
+    println!("took {}ms to complete startup systems", time.elapsed().as_millis());
 
     for l in libraries {
         if let Ok(f) = unsafe { l.get::<unsafe extern "C" fn(&Ctx)>(b"_finalise") } {

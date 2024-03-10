@@ -1,4 +1,5 @@
 use common::{string_map::StringIndex, Swap};
+use parser::Block;
 use sti::{define_key, keyed::KVec, hash::{HashMap, DefaultSeed}, arena::Arena};
 use wasm::FunctionId;
 
@@ -26,7 +27,7 @@ pub enum FunctionKind {
 
     Extern {
         ty: TypeId,
-    }, 
+    },
 }
 
 

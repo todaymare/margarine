@@ -85,10 +85,11 @@ pub enum StructKind {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FunctionSignature<'a> {
-    pub is_system: bool,
-    pub name: StringIndex,
-    pub source: SourceRange,
-    pub arguments: &'a [FunctionArgument<'a>],
+    pub is_system  : bool,
+    pub name       : StringIndex,
+    pub source     : SourceRange,
+    pub arguments  : &'a [FunctionArgument<'a>],
+    pub generics   : &'a [Generic],
     pub return_type: DataType<'a>,
 }
 
@@ -96,8 +97,8 @@ impl<'a> FunctionSignature<'a> {
     pub fn new(
         is_system: bool, name: StringIndex, 
         source: SourceRange, arguments: &'a [FunctionArgument<'a>], 
-        return_type: DataType<'a>) -> Self { 
-        Self { is_system, name, source, arguments, return_type }
+        generics: &'a [Generic], return_type: DataType<'a>) -> Self { 
+        Self { is_system, name, source, arguments, return_type, generics }
     }
 }
 
@@ -216,3 +217,18 @@ pub enum UseItemKind<'a> {
     All,
 }
 
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Generic {
+    name: StringIndex,
+    source: SourceRange,
+}
+
+
+impl Generic {
+    pub fn new(name: StringIndex, source: SourceRange) -> Self { Self { name, source } }
+    #[inline(always)]
+    pub fn name(self) -> StringIndex { self.name }
+    #[inline(always)]
+    pub fn range(self) -> SourceRange { self.source }
+}

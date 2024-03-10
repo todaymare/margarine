@@ -7,7 +7,7 @@ use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{Node, attr::{AttributeNode, Attribute}, err::ErrorNode, expr::{ExpressionNode, Expression, UnaryOperator, MatchMapping}, stmt::{StatementNode, Statement}, decl::{StructKind, Declaration, DeclarationNode, FunctionArgument, ExternFunction, EnumMapping, UseItem, UseItemKind, FunctionSignature}, Pattern, PatternKind};
+use nodes::{attr::{Attribute, AttributeNode}, decl::{Declaration, DeclarationNode, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, Generic, StructKind, UseItem, UseItemKind}, err::ErrorNode, expr::{Expression, ExpressionNode, MatchMapping, UnaryOperator}, stmt::{Statement, StatementNode}, Node, Pattern, PatternKind};
 use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
 
 use crate::nodes::expr::BinaryOperator;
@@ -191,12 +191,12 @@ impl Default for ParserSettings<'_> {
 }
 
 
-struct Parser<'a, 'ta, 'sa> {
-    tokens: &'a [Token],
+struct Parser<'me, 'ta, 'sa> {
+    tokens: &'me [Token],
     index: usize,
 
     arena: &'ta Arena,
-    string_map: &'a mut StringMap<'sa>,
+    string_map: &'me mut StringMap<'sa>,
 
     errors: KVec<ParserError, Error>,
     is_in_panic: bool,
@@ -733,6 +733,23 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(vec.leak())
     }
+
+
+    fn generic_decl(&mut self) -> Result<&'ta [Generic], ErrorId> {
+        if !self.current_is(TokenKind::LeftAngle) {
+            return Ok(&[]);
+        }
+
+        self.advance();
+        let list = self.list(TokenKind::RightAngle, Some(TokenKind::Comma),
+        |slf, _| {
+            let ident = slf.expect_identifier()?;
+            Ok(Generic::new(ident, slf.current_range()))
+        })?;
+        self.advance();
+
+        Ok(list)
+    }
 }
 
 
@@ -849,6 +866,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
 
+        let generics = self.generic_decl()?;
+
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();
 
@@ -924,6 +943,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                      name, 
                      header,
                      arguments,
+                     generics,
                      return_type,
                 ),
                 body,

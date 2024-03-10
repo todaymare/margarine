@@ -77,15 +77,15 @@ pub fn walloc(memory: &mut impl Allocable, size: usize) -> WasmPtr<()> {
     }
 
     // If not found, allocate
-    let block = request_memory(memory, size).expect("Out of memory");
+    let block = request_memory(memory, alloc_size(size)).expect("Out of memory");
 
+    let block = block.as_mut(memory);
     unsafe {
-        (*block.as_mut(memory)).used_n_size = size;
-        Block::set_used(block.as_mut(memory), true);
+        (*block).used_n_size = size;
+        Block::set_used(block, true);
     }
 
 
-    let block = block.as_mut(memory);
     let data = unsafe { &mut (*block).data } as *mut usize as *mut u8;
     ptr_to_wptr(memory, data.cast())
 }
@@ -300,7 +300,9 @@ mod tests {
             let block = unsafe { ptr1b.as_ptr(&mut mem).read() };
             assert_eq!(block.size(), 32);
             assert!(block.is_used());
-            assert_eq!(ptr1.as_u32() - 72, ptr.as_u32());
+            dbg!(ptr1.as_u32());
+            dbg!(ptr.as_u32());
+            assert_eq!(ptr1.as_u32() as usize, ptr.as_u32() as usize + 72 + 16);
         }
 
         unsafe { *ptr.as_mut(&mut mem).cast::<usize>() = 69 };

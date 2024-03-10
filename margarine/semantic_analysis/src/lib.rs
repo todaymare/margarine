@@ -150,69 +150,125 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     tyid
                 };
 
-                let path = self.concat_path(name, StringMap::NEW);
+                let path_new = self.concat_path(name, StringMap::NEW);
+                let path_count = self.concat_path(name, StringMap::COUNT);
                 let ns = self.namespaces.get_type_mut(Type::Custom(tyid), &self.types);
-                let wid = self.module_builder.function_id();
 
-                let func = Function::new(
-                    StringMap::NEW,
-                    name,
-                    self.output.alloc_new([
-                        (StringMap::VALUE, false, ty),
-                    ]), 
-                    Type::Custom(tyid),
-                    wid,
-                    FunctionKind::UserDefined { inout: None });
-
-                let func_id = self.funcs.pending();
-                self.funcs.put(func_id, func);
-
-                ns.add_func(StringMap::NEW, func_id);
-
+                // new function
+                // fn count(ty: T): *T
                 {
-                    let rc_ty = self.types.get(tyid);
-                    let TypeKind::Struct(rc_sym) = rc_ty.kind() else { unreachable!() };
+                    let wid = self.module_builder.function_id();
+                    let func = Function::new(
+                        StringMap::NEW,
+                        name,
+                        self.output.alloc_new([
+                            (StringMap::VALUE, false, ty),
+                        ]), 
+                        Type::Custom(tyid),
+                        wid,
+                        FunctionKind::UserDefined { inout: None });
 
-                    let mut builder = WasmFunctionBuilder::new(self.output, wid);
-                    builder.export(path);
+                    let func_id = self.funcs.pending();
+                    self.funcs.put(func_id, func);
 
-                    let param = builder.param(ty.to_wasm_ty(&self.types));
-                    let ret = builder.local(WasmType::I32);
-                    builder.return_value(WasmType::I32);
+                    ns.add_func(StringMap::NEW, func_id);
 
-                    // Allocate enough memory
-                    builder.malloc(rc_ty.size());
-                    builder.local_set(ret);
-
-                    // Zero the num
-                    builder.i64_const(0);
-                    builder.local_get(ret);
-                    builder.i64_write();
-
-                    // Copy the data
                     {
-                        let ty = rc_sym.fields[1];
+                        let rc_ty = self.types.get(tyid);
+                        let TypeKind::Struct(rc_sym) = rc_ty.kind() else { unreachable!() };
 
-                        // src
-                        builder.local_get(param);
+                        let mut builder = WasmFunctionBuilder::new(self.output, wid);
+                        builder.export(path_new);
 
-                        // dst
+                        let param = builder.param(ty.to_wasm_ty(&self.types));
+                        let ret = builder.local(WasmType::I32);
+                        builder.return_value(WasmType::I32);
+
+                        // Allocate enough memory
+                        builder.malloc(rc_ty.size());
+                        builder.local_set(ret);
+
+                        // Zero the num
+                        builder.i64_const(0);
                         builder.local_get(ret);
-                        builder.u32_const(ty.1 as u32);
-                        builder.i32_add();
+                        builder.i64_write();
 
-                        builder.write(ty.0.ty.to_wasm_ty(&self.types));
+                        // Copy the data
+                        {
+                            let ty = rc_sym.fields[1];
+
+                            // src
+                            builder.local_get(param);
+
+                            // dst
+                            builder.local_get(ret);
+                            builder.u32_const(ty.1 as u32);
+                            builder.i32_add();
+
+                            builder.write(ty.0.ty.to_wasm_ty(&self.types));
+                        }
+
+                        builder.local_get(ret);
+
+                        self.module_builder.register(builder);
                     }
 
-                    builder.local_get(ret);
+                }
 
-                    self.module_builder.register(builder);
+
+                // counter function
+                // fn count(self): int
+                {
+                    let wid = self.module_builder.function_id();
+                    let func = Function::new(
+                        StringMap::COUNT,
+                        name,
+                        self.output.alloc_new([
+                            (StringMap::VALUE, false, Type::Custom(tyid)),
+                        ]), 
+                        Type::I64,
+                        wid,
+                        FunctionKind::UserDefined { inout: None });
+
+                    let func_id = self.funcs.pending();
+                    self.funcs.put(func_id, func);
+
+                    ns.add_func(StringMap::COUNT, func_id);
+
+                    {
+                        let mut builder = WasmFunctionBuilder::new(self.output, wid);
+                        builder.export(path_count);
+
+                        let param = builder.param(WasmType::I32);
+                        let local = builder.local(WasmType::I64);
+                        builder.return_value(WasmType::I64);
+
+                        // Read the count 
+                        builder.local_get(param);
+                        builder.i64_read();
+
+                        builder.i64_const(1);
+                        builder.i64_sub();
+
+                        builder.local_set(local);
+
+                        builder.local_get(local);
+                        builder.local_get(param);
+                        builder.i64_write();
+
+                        builder.local_get(local);
+
+                        self.module_builder.register(builder);
+                    }
+
+
                 }
 
                 self.rc_map.insert(ty, tyid);
                 Type::Custom(tyid)
-            },
+            }
         };
+        
 
         Ok(ty)
     }
@@ -522,48 +578,6 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         for (id, n) in nodes.iter().enumerate() {
             ty = self.node(path, &mut scope, builder, n).ty;
 
-            /*
-            {
-                builder.call_template("dump_stack_trace");
-                let local = builder.local(WasmType::I32);
-                self.scopes.get(scope).over(&self.scopes, |s| {
-                    if let ScopeKind::Variable(v) = s.kind() {
-                        let name = self.string_map.get(v.name);
-                        builder.u32_const(name.len() as u32);
-                        builder.call_template("alloc");
-                        builder.local_set(local);
-                        
-                        for (i, c) in name.as_bytes().iter().enumerate() {
-                            builder.local_get(local);
-                            builder.u32_const(i as u32);
-                            builder.i32_add();
-
-                            builder.u32_const(*c as u32);
-                            builder.raw("i32.store8 ");
-                        }
-
-                        builder.local_get(local);
-                        builder.u32_const(name.len() as u32);
-                        builder.call_template("printvar");
-
-                        builder.local_get(v.local_id);
-                        match v.ty.to_wasm_ty(&self.types) {
-                            WasmType::I32 => builder.call_template("printi32"),
-                            WasmType::I64 => builder.call_template("printi64"),
-                            WasmType::F32 => todo!(),
-                            WasmType::F64 => todo!(),
-                            WasmType::Ptr { size } => builder.call_template("printi32"),
-                        }
-
-                        builder.local_get(local);
-                        builder.call_template("free");
-                    }
-
-                    None::<()>
-                });
-            }
-            */
-
             if id + 1 != nodes.len() {
                 self.acquire(ty, builder);
                 self.drop_value(ty, builder);
@@ -624,6 +638,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
                 Declaration::Function { sig, is_in_impl, .. } => {
+                    assert!(sig.generics.is_empty());
                     if is_in_impl.is_some() && sig.name == StringMap::ITER_NEXT_FUNC {
                         let validate_sig = || {
                             if sig.arguments.len() != 1 { return false }
@@ -1418,42 +1433,49 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let expr_anal = self.expr(expr.1, *scope, wasm, path);
 
                 if !expr_anal.is_mut && expr.0 {
+                    wasm.pop();
                     wasm.error(self.error(Error::InOutValueIsntMut(expr.1.range())));
                     return Err(());
                 }
 
                 if binding.0 && !expr.0 {
+                    wasm.pop();
                     wasm.error(self.error(Error::InOutBindingWithoutInOutValue {
                         value_range: expr.1.range() }));
                     return Err(());
                 }
 
                 if !binding.0 && expr.0 {
+                    wasm.pop();
                     wasm.error(self.error(Error::InOutValueWithoutInOutBinding { value_range: expr.1.range() }));
                     return Err(());
                 }
 
                 let func = self.namespaces.get_type(expr_anal.ty, &self.types);
                 if self.namespaces.get(func).get_func(StringMap::ITER_NEXT_FUNC).is_none() {
+                    wasm.pop();
                     wasm.error(self.error(Error::ValueIsntAnIterator {
                         ty: expr_anal.ty, range: expr.1.range() }));
                     return Err(());
                 };
 
+                let local = wasm.local(expr_anal.ty.to_wasm_ty(&self.types));
+                wasm.local_set(local);
 
-                let iterator = Node::Statement(StatementNode::new(
-                        Statement::Variable {
-                            name: StringMap::INVALID_IDENT,
-                            hint: None,
-                            is_mut: true,
-                            rhs: expr.1
-                        }, source));
+                let vscope = VariableScope::new(
+                    StringMap::INVALID_IDENT,
+                    true,
+                    expr_anal.ty,
+                    local);
+
+                let scope = Scope::new(ScopeKind::Variable(vscope), scope.some());
+                let scope = self.scopes.push(scope);
 
                 let get_iterator = ExpressionNode::new(
                         Expression::Identifier(StringMap::INVALID_IDENT),
                         source);
 
-                let var_decl_func_call_args = [(get_iterator, false)];
+                let var_decl_func_call_args = [(get_iterator, true)];
                 let loop_var_decl = Node::Statement(StatementNode::new(Statement::Variable {
                                 name: StringMap::INVALID_IDENT, hint: None, is_mut: false,
                                 rhs: ExpressionNode::new(Expression::CallFunction {
@@ -1497,7 +1519,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 );
 
                 let mut block_body = [
-                    iterator,
                     Node::Expression(loop_node)
                 ];
 
@@ -1509,7 +1530,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     source,
                 );
 
-                self.expr(tree, *scope, wasm, path);
+                self.expr(tree, scope, wasm, path);
+                wasm.pop();
             },
         };
 
@@ -1999,8 +2021,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                             let analysis = anal.expr(mapping.node(), scope, wasm, path);
 
-                            final_result = Some(if let Some((ty, local, src)) = result {
-                                if analysis.ty.eq_sem(ty) {
+                            final_result = Some(if let Some((mut ty, mut local, src)) = result {
+                                if ty.eq_lit(Type::Never) || ty.eq_lit(Type::Never) {
+                                    ty = analysis.ty;
+                                    local = wasm.local(ty.to_wasm_ty(&anal.types));
+                                }
+
+                                if analysis.ty.eq_lit(ty) {
                                     wasm.local_set(local);
                                 } else {
                                     wasm.pop();
@@ -2197,10 +2224,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let nscope = self.scopes.push(nscope);
 
                     let (anal, _) = self.block(wasm, path, nscope, &*body);
-                    if !anal.ty.eq_sem(Type::Unit) {
-                        self.acquire(anal.ty, wasm);
-                        self.drop_value(anal.ty, wasm);
-                    }
+                    self.acquire(anal.ty, wasm);
+                    self.drop_value(anal.ty, wasm);
                 });
 
                 wasm.unit();
@@ -2871,49 +2896,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     return Err(Error::ValueUpdateNotMut { source: node.range() });
                 }
 
-                /*
-                // Rc special case
-                'rc: {
-                    let Type::Custom(ty_id) = variable.ty 
-                    // No drop function
-                    else { break 'rc };
-
-                    let ty = self.types.get(ty_id);
-                    let TypeKind::Struct(sym) = ty.kind()
-                    else { break 'rc };
-
-                    if sym.status != TypeStructStatus::Rc { break 'rc };
-                    if !val_ty.eq_sem(sym.fields[1].0.ty) { break 'rc };
-
-                    let val_wasm = val_ty.to_wasm_ty(&self.types);
-
-                    wasm.local_get(variable.local_id);
-                    self.make_mut(variable.ty, wasm);
-
-                    let rc = wasm.local(variable.ty.to_wasm_ty(&self.types));
-                    wasm.local_set(rc);
-
-                    // read the value to drop later.
-                    wasm.local_get(rc);
-                    wasm.u32_const(sym.fields[1].1 as u32);
-                    wasm.i32_add();
-
-                    wasm.read(val_wasm);
-
-                    // set the new value
-                    wasm.local_get(rc);
-                    wasm.u32_const(sym.fields[1].1 as u32);
-                    wasm.i32_add();
-                    
-                    wasm.write(val_wasm);
-
-                    // drop the previously read value
-                    self.drop_value(val_ty, wasm);
-
-                    return Ok(variable.ty);
-                }
-                */
-
                 if depth != 0 {
                     wasm.local_get(variable.local_id);
                     return Ok(variable.ty)
@@ -3026,7 +3008,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     let field = sym.fields[1];
 
-                    self.make_mut(Type::Custom(ty_id), wasm);
+                    // let Some(local) = self.make_mut(Type::Custom(ty_id), wasm)
+                    // else { unreachable!() };
+
+                    // wasm.local_get(local);
+                    // self.assign(wasm, scope, *node, Type::Custom(ty_id), depth).unwrap();
 
                     // get the ptr to the value
                     wasm.u32_const(field.1 as u32);
@@ -3443,6 +3429,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
 
 
+    /*
     ///
     /// If the value is a **NOT** Rc: Do nothing
     /// Else if the counter of the Rc is **NOT** 1: Clone the value
@@ -3451,20 +3438,20 @@ impl<'out> Analyzer<'_, 'out, '_> {
         &mut self,
         ty: Type,
         wasm: &mut WasmFunctionBuilder,
-    ) {
+    ) -> Option<LocalId> {
         let Type::Custom(ty_id) = ty 
         // No drop function
-        else { return };
+        else { return None };
 
         let ty = self.types.get(ty_id);
         let TypeKind::Struct(sym) = ty.kind()
-        else { return };
+        else { return None };
 
-        if sym.status != TypeStructStatus::Ptr { return };
+        if sym.status != TypeStructStatus::Ptr { return None };
 
         let local = wasm.local(WasmType::I32);
         wasm.local_set(local);
-        
+
         // Read the counter
         wasm.local_get(local);
         wasm.i64_read();
@@ -3475,12 +3462,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
         wasm.ite(&mut (),
             |_, wasm| {
-                wasm.local_get(local);
-                wasm.call_template("printi32");
-
-                wasm.raw("global.get $heap_start ");
-                wasm.call_template("printi32");
-
                 let ns = self.namespaces.get_type(Type::Custom(ty_id), &self.types);
                 let ns = self.namespaces.get(ns);
                 let func = ns.get_func(StringMap::NEW).unwrap();
@@ -3494,22 +3475,26 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 wasm.read(field.0.ty.to_wasm_ty(&self.types));
 
+                // drop the ptr
+                wasm.local_get(local);
+                self.drop_value(Type::Custom(ty_id), wasm);
+
                 self.call_func(func,
                                &[(field.0.ty, SourceRange::ZERO, None)],
                                false, 
                                SourceRange::ZERO,
                                ScopeMap::ROOT,
                                wasm).unwrap();
+                self.acquire(Type::Custom(ty_id), wasm);
                 wasm.local_set(local);
-
-                wasm.local_get(local);
-                wasm.call_template("printi32");
 
                 (local, ())
             },
             |_, _| { () }
         );
+        Some(local)
     }
+    */
 
 
     ///

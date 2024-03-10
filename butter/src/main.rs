@@ -131,11 +131,11 @@ fn main() -> Result<(), &'static str> {
         // ------------------------------------------
          
         fs::write("out.wat", &*code).unwrap();
-        Command::new("wat2wasm")
+        assert!(Command::new("wat2wasm")
             .arg("out.wat")
             .arg("-o")
             .arg("out.wasm")
-            .output().unwrap();
+            .output().unwrap().status.success());
 
         let wasm = fs::read("out.wasm").unwrap();
 

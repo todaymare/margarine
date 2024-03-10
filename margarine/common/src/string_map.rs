@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, rc::Rc};
 
 use sti::{prelude::Arena, arena::ArenaStats, hash::{HashFn, fxhash::FxHasher32, HashMapF}, define_key};
 
@@ -34,8 +34,9 @@ impl<'a> StringMap<'a> {
     pub const RANGE : StringIndex = StringIndex(18);
     pub const LOW   : StringIndex = StringIndex(19);
     pub const HIGH  : StringIndex = StringIndex(20);
+    pub const COUNT : StringIndex = StringIndex(21);
 
-    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(21);
+    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(22);
 
  
     #[inline(always)]
@@ -75,6 +76,7 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("Range"), Self::RANGE);
         assert_eq!(s.insert("low"), Self::LOW);
         assert_eq!(s.insert("high"), Self::HIGH);
+        assert_eq!(s.insert("count"), Self::COUNT);
 
         assert_eq!(s.insert("__next__"), Self::ITER_NEXT_FUNC);
         s
