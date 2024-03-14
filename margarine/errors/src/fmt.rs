@@ -8,6 +8,7 @@ pub struct ErrorFormatter<'me> {
     writer: &'me mut String,
     string_map: &'me StringMap<'me>,
     files: &'me [FileData],
+    max_padding: usize,
 }
 
 
@@ -17,11 +18,15 @@ impl<'me> ErrorFormatter<'me> {
         string_map: &'me StringMap, 
         files: &'me [FileData]
     ) -> Self {
+        let padding : u32 = files.iter()
+            .map(|x| x.read().lines().map(|_| 1).sum())
+            .max().unwrap();
         
         Self {
             writer,
             string_map,
             files,
+            max_padding: num_size(padding + 1) as usize,
         }
     } 
 
@@ -51,6 +56,7 @@ impl Write for ErrorFormatter<'_> {
 
 pub struct CompilerError<'me, 'fmt> {
     fmt: &'me mut ErrorFormatter<'fmt>,
+    errored_before: bool,
 }
 
 
@@ -59,6 +65,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
         let _ = writeln!(f, "{}: {}", "error".red().bold(), msg.white().bold());
         Self {
             fmt: f,
+            errored_before: false,
         }
     }
 
@@ -89,11 +96,15 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
             start_line,
         ).unwrap();
 
-        let max_line_padding = num_size(end_line.line as u32 + 1) as usize;
+        let max_line_padding = self.fmt.max_padding;
         let ext = file.extension().read(self.fmt.string_map);
-        let _ = writeln!(self.fmt, "{}{} {}{}{}:{}:{}",
+        let _ = writeln!(self.fmt, "{} {} {}{}{}:{}:{}",
             " ".repeated(max_line_padding),
-            "-->".orange(),
+            if self.errored_before {
+                "┣─▶"
+            } else {
+                "┏─▶"
+            }.orange(),
             self.fmt.string_map.get(file.name()),
             if ext.is_empty() { "" } else { "." },
             ext,
@@ -104,7 +115,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
         let _ = writeln!(self.fmt, 
             "{} {} ",
             " ".repeated(max_line_padding), 
-            "|".orange(), 
+            "┃".orange(), 
         );
         
 
@@ -115,9 +126,10 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
                 }
                 
                 // The main line
+                let size = num_size(line.0 as u32 + 1) as usize;
                 let _ = writeln!(self.fmt, 
-                    "{:>max_line_padding$} {} {}", 
-                    (line.0+1).orange(), "|".orange(), line.1
+                    "{}{} {} {}", 
+                    (line.0+1).orange(), " ".repeated(max_line_padding - size), "┃".orange(), line.1,
                 );
 
                 
@@ -126,7 +138,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
                     let _ = write!(self.fmt, 
                         "{} {} ",
                         " ".repeated(max_line_padding),
-                        "|".orange(), 
+                        "┃".orange(), 
                     );
 
                     if line.0 == start_line.line && line.0 == end_line.line {                        
@@ -137,7 +149,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
                                 source.start() as usize - start_line.offset
                             ).len()),
                             
-                            "^".repeated(characters_between(
+                            "▔".repeated(characters_between(
                                 line.1, 
                                 source.start() as usize - start_line.offset, 
                                 source.end() as usize - end_line.offset + 1, 
@@ -151,23 +163,44 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
                                 source.start() as usize - start_line.offset
                             ).len()),
                             
-                            "^".repeated(characters_between(
+                            "▔".repeated(characters_between(
                                 line.1, source.start() as usize - start_line.offset, 
                                 line.1.len()
                             ).len().max(1)).red(),
                         );
                     } else if line.0 == end_line.line {
+                        let beginning_buffer = {
+                            let mut num = 0;
+                            for c in line.1.chars() {
+                                if !c.is_whitespace() { break }
+                                num += 1;
+                                continue
+                            }
+                            num
+                        };
+
                         let _ = write!(
-                            self.fmt, "{}",
-                            "^".repeated(characters_between(
+                            self.fmt, "{}{}",
+                            " ".repeated(beginning_buffer),
+                            "▔".repeated(characters_between(
                                 line.1, 0, 
                                 line.1.len() - (source.end() as usize - end_line.offset)
                             ).len().max(1)).red(),
                         );
                     } else {
+                        let beginning_buffer = {
+                            let mut num = 0;
+                            for c in line.1.chars() {
+                                if !c.is_whitespace() { break }
+                                num += 1;
+                                continue
+                            }
+                            num
+                        };
                         let _ = write!(
-                            self.fmt, "{}",
-                            "^".repeated(line.1.len()).red(),
+                            self.fmt, "{}{}",
+                            " ".repeated(beginning_buffer),
+                            "▔".repeated(line.1.len() - beginning_buffer).red(),
                         );
                     }
                 }
@@ -181,13 +214,28 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
         }
 
         
+        /*
         let _ = writeln!(self.fmt, 
             "{}{} ",
             " ".repeated(max_line_padding), 
-            "---".orange(), 
+            "━┻━".orange(), 
         );
+        */
+
+        self.errored_before = true;
     }
 
+}
+
+
+impl Drop for CompilerError<'_, '_> {
+    fn drop(&mut self) {
+        let _ = writeln!(self.fmt, 
+            "{}{} ",
+            " ".repeated(self.fmt.max_padding), 
+            "━┻━".orange(), 
+        );
+    }
 }
 
 

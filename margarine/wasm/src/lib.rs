@@ -144,6 +144,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
 
     pub fn stack_size(&mut self, size: usize) {
         self.stack_size = size;
+        self.stack_size += 1024; // For assuming the last KB is not used
         self.memory = self.memory.max((self.stack_size / (64 * 1024)) + 1);
     }
 
@@ -191,12 +192,11 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         {
             let mut c = string_pointer;
             for f in &self.strs {
-                write!(buffer, "(data (i32.const {c}) \"00000000{}\")", f);
-                c += f.len();
+                write!(buffer, "(data (i32.const {c}) \"\\01\\00\\00\\00{}\")", f);
+                c += f.len() + 8;
             }
         }
 
-        write!(buffer, "(global $panicing (export \"panicing\") (mut i32) (i32.const 0))");
         let stack_pointer = self.stack_size;
         write!(buffer, "(global $stack_pointer (export \"stack_pointer\") (mut i32) (i32.const {}))", 
                stack_pointer);
@@ -310,9 +310,6 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     #[inline(always)]
     pub fn error(&mut self, err: ErrorId) {
-        self.raw("(i32.const 1)
-                  (global.set $panicing)");
-
         let num = match err {
             ErrorId::Lexer(v)  => { self.u32_const(0); self.u32_const(v.0); v.1.inner() },
             ErrorId::Parser(v) => { self.u32_const(1); self.u32_const(v.0); v.1.inner() },
@@ -322,10 +319,7 @@ impl<'a> WasmFunctionBuilder<'a> {
         self.u32_const(num);
 
         self.call_template("panic");
-        if let Some(ret) = self.ret {
-            self.default(ret);
-        }
-        self.ret();
+        self.unreachable();
     }
 
 

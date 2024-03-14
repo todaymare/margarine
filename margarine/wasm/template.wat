@@ -4,8 +4,8 @@
 (func $push (export "push") (param $amount i32) (local $ptr i32)
     (i32.sub (global.get $stack_pointer) (local.get $amount))
     local.tee $ptr
-    i32.const 0
-    i32.le_s
+    i32.const 1024
+    i32.le_u
     (if (then 
         unreachable
     ))
@@ -20,7 +20,7 @@
     (i32.add (global.get $stack_pointer) (local.get $amount))
     local.tee $ptr
     global.get $bstack_pointer
-    i32.gt_s
+    i32.gt_u
     (if (then 
         unreachable
     ))

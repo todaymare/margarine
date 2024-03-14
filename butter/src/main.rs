@@ -1,4 +1,4 @@
-use std::{env, fs, process::Command};
+use std::{env, fs, io::{Read, Write}, process::{Command, ExitCode, Stdio}};
 
 use game_runtime::encode;
 use margarine::{nodes::{decl::{Declaration, DeclarationNode}, Node}, DropTimer, FileData, SourceRange, StringMap};
@@ -146,13 +146,36 @@ fn main() -> Result<(), &'static str> {
         // ------------------------------------------
          
         fs::write("out.wat", &*code).unwrap();
-        assert!(Command::new("wat2wasm")
-            .arg("out.wat")
-            .arg("-o")
-            .arg("out.wasm")
-            .output().unwrap().status.success());
+        let mut wat2wasm = Command::new("wat2wasm")
+            .arg("-")
+            .arg("--output=-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn().unwrap();
 
-        let wasm = fs::read("out.wasm").unwrap();
+        wat2wasm.stdin.as_mut().unwrap().write_all(&code).unwrap();
+        assert!(wat2wasm.wait().unwrap().success());
+
+        let mut wasmopt = Command::new("wasm-opt")
+            .arg("-O4")
+            .arg("--enable-bulk-memory")
+            // .arg("-iit")
+            .arg("-aimfs=128")
+            .arg("-fimfs=512")
+            .arg("-lmu")
+            .arg("-pii=64")
+            .arg("-ifwl")
+            .arg("-o=-")
+            .stdin(Stdio::from(wat2wasm.stdout.unwrap()))
+            .stdout(Stdio::piped())
+            .spawn().unwrap();
+
+        assert!(wasmopt.wait().unwrap().success());
+        let mut wasm = Vec::new();
+        wasmopt.stdout.unwrap().read_to_end(&mut wasm).unwrap();
+
+        let wasm = wasm;
+        fs::write("out.wasm", &*wasm).unwrap();
 
         let result = encode(&wasm, &data_imports, &data_funcs, [&lex_error_files, &parse_error_files, &[sema_errors]]);
         fs::write("out", result).unwrap();

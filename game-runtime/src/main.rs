@@ -3,7 +3,7 @@ use std::{env, fs, time::Instant};
 use butter_runtime_api::{alloc::{free, walloc}, dump_stack_trace, ffi::Ctx, ptr::{SendPtr, WasmPtr}};
 use game_runtime::decode;
 use libloading::{Library, Symbol};
-use wasmtime::{Config, Engine, Linker, Module, Store};
+use wasmtime::{Config, Engine, Linker, Module, Store, Trap};
 
 type ExternFunction<'a> = Symbol<'a, ExternFunctionRaw>;
 type ExternFunctionRaw = unsafe extern "C" fn(*mut Ctx, *mut u8);
@@ -111,10 +111,12 @@ fn run(file: &[u8]) {
 
     {
         let errs = unsafe { core::mem::transmute::<[Vec<Vec<&str>>; 3], [Vec<Vec<&'static str>>; 3]>(errs) };
-        let func = move |ty: u32, file: u32, index: u32| {
+        let func = move |ty: u32, file: u32, index: u32| -> wasmtime::Result<()> {
             let ctx = unsafe { CTX_PTR.as_mut() };
             println!("{}", errs[ty as usize][file as usize][index as usize]);
             dump_stack_trace(ctx);
+
+            Err(Trap::UnreachableCodeReached.into())
         };
 
         linker.func_wrap("::host", "panic", func).unwrap();
@@ -165,8 +167,15 @@ fn run(file: &[u8]) {
    
     let func = instance.get_func(&mut store, "::init").unwrap();
     let time = Instant::now();
-    func.call(&mut store, &[], &mut []).unwrap();
+    
+    let result = func.call(&mut store, &[], &mut []);
+
+    if result.is_err() {
+        println!("program aborted prematurely")
+    }
+
     println!("took {}ms to complete startup systems", time.elapsed().as_millis());
+
 
     for l in libraries {
         if let Ok(f) = unsafe { l.get::<unsafe extern "C" fn(&Ctx)>(b"_finalise") } {
