@@ -801,15 +801,14 @@ impl<'out> Analyzer<'_, 'out, '_> {
         scope: Scope,
         modify: &mut Scope,
     ) -> Result<(), ErrorId> {
-        let Some(ns) = scope.get_ns(use_item.name(), &self.scopes, &mut self.namespaces, &self.types)
-        else {
-            return Err(self.error(Error::NamespaceNotFound {
-                source: use_item.range(), namespace: use_item.name() }));
-        };
-
-
         match use_item.kind() {
             UseItemKind::List { list } => {
+                let Some(ns) = scope.get_ns(use_item.name(), &self.scopes, &mut self.namespaces, &self.types)
+                else {
+                    return Err(self.error(Error::NamespaceNotFound {
+                        source: use_item.range(), namespace: use_item.name() }));
+                };
+
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), None.into());
                 for l in list {
                     self.use_item(*l, scope, modify)?;
@@ -817,16 +816,34 @@ impl<'out> Analyzer<'_, 'out, '_> {
             },
 
             UseItemKind::BringName => {
-                let es = ExplicitNamespace {
-                    name: use_item.name(),
-                    namespace: ns,
-                };
+                if let Some(ty) = scope.get_type(use_item.name(), &self.scopes, &self.namespaces) {
+                    *modify = Scope::new(ScopeKind::ImportType((use_item.name(), ty)), self.scopes.push(*modify).some());
+                    return Ok(())
+                }
 
-                *modify = Scope::new(ScopeKind::ExplicitNamespace(es), self.scopes.push(*modify).some());
+                if let Some(f) = scope.get_func(use_item.name(), &self.scopes, &self.namespaces) {
+                    *modify = Scope::new(ScopeKind::ImportFunction((use_item.name(), f)), self.scopes.push(*modify).some());
+                    return Ok(())
+                }
+
+                if let Some(ns) = scope.get_ns(use_item.name(), &self.scopes, &mut self.namespaces, &self.types) {
+                    *modify = Scope::new(ScopeKind::ExplicitNamespace(ExplicitNamespace { name: use_item.name(), namespace: ns }), self.scopes.push(*modify).some());
+                    return Ok(())
+                }
+
+                return Err(self.error(Error::NamespaceNotFound {
+                    source: use_item.range(), namespace: use_item.name() }));
             },
 
             UseItemKind::All => {
-                *modify = Scope::new(ScopeKind::ImplicitNamespace(ns), self.scopes.push(*modify).some());
+                if let Some(ns) = scope.get_ns(use_item.name(), &self.scopes, &mut self.namespaces, &self.types) {
+                    *modify = Scope::new(ScopeKind::ImplicitNamespace(ns), self.scopes.push(*modify).some());
+                    return Ok(())
+                }
+
+                return Err(self.error(Error::NamespaceNotFound {
+                    source: use_item.range(), namespace: use_item.name() }));
+
             },
         };
 

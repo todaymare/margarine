@@ -170,6 +170,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         write!(buffer, r#"(func $alloc (import "::host" "alloc") (param i32) (result i32))"#);
         write!(buffer, r#"(func $free (import "::host" "free") (param i32))"#);
         write!(buffer, r#"(func $dump_stack_trace (import "::host" "dump_stack_trace"))"#);
+        write!(buffer, r#"(func $panic (import "::host" "panic") (param i32) (param i32) (param i32))"#);
         write!(buffer, r#"(func $printi32 (import "::host" "printi32") (param i32))"#);
         write!(buffer, r#"(func $printi64 (import "::host" "printi64") (param i64))"#);
         write!(buffer, r#"(func $printvar (import "::host" "printvar") (param i32) (param i32))"#);
@@ -195,6 +196,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
             }
         }
 
+        write!(buffer, "(global $panicing (export \"panicing\") (mut i32) (i32.const 0))");
         let stack_pointer = self.stack_size;
         write!(buffer, "(global $stack_pointer (export \"stack_pointer\") (mut i32) (i32.const {}))", 
                stack_pointer);
@@ -308,7 +310,33 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     #[inline(always)]
     pub fn error(&mut self, err: ErrorId) {
-        self.body.push(&format!("(call $dump_stack_trace) unreachable (; {err:?} ;)"));
+        self.raw("(i32.const 1)
+                  (global.set $panicing)");
+
+        let num = match err {
+            ErrorId::Lexer(v)  => { self.u32_const(0); self.u32_const(v.0); v.1.inner() },
+            ErrorId::Parser(v) => { self.u32_const(1); self.u32_const(v.0); v.1.inner() },
+            ErrorId::Sema(v)   => { self.u32_const(2); self.u32_const(0);   v.inner() },
+        };
+
+        self.u32_const(num);
+
+        self.call_template("panic");
+        if let Some(ret) = self.ret {
+            self.default(ret);
+        }
+        self.ret();
+    }
+
+
+    pub fn default(&mut self, ty: WasmType) {
+        match ty {
+            WasmType::I32 => self.i32_const(0),
+            WasmType::I64 => self.i64_const(0),
+            WasmType::F32 => self.f32_const(0.0),
+            WasmType::F64 => self.f64_const(0.0),
+            WasmType::Ptr { .. } => self.i32_const(0),
+        }
     }
 
 

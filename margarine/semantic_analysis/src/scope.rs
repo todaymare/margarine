@@ -1,6 +1,8 @@
+use std::thread::current;
+
 use common::{string_map::{StringIndex, StringMap}, source::SourceRange, Swap};
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
-use wasm::{LocalId, LoopId};
+use wasm::{FunctionId, LocalId, LoopId};
 
 use crate::{funcs::FuncId, namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::TypeMap}};
 
@@ -35,6 +37,10 @@ impl Scope {
         namespaces: &NamespaceMap,
     ) -> Option<Type> {
         self.over(scopes, |current| {
+            if let ScopeKind::ImportType((ty, id)) = current.kind() {
+                if ty == name { return Some(id) }
+            }
+
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
                 let ns = namespaces.get(ns);
                 if let Some(val) = ns.get_type(name) { return Some(Type::Custom(val)) }
@@ -52,6 +58,10 @@ impl Scope {
         namespaces: &NamespaceMap,
     ) -> Option<FuncId> {
         self.over(scopes, |current| {
+            if let ScopeKind::ImportFunction((func, id)) = current.kind() {
+                if func == name { return Some(id) }
+            }
+
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
                 let ns = namespaces.get(ns);
                 if let Some(val) = ns.get_func(name) { return Some(val) }
@@ -119,6 +129,10 @@ impl Scope {
                 if let Some(val) = ns.get_mod(name) {
                     return Some(val)
                 }
+            }
+
+            if let ScopeKind::ImportType(ty) = current.kind() {
+                if ty.0 == name { return Some(namespaces.get_type(ty.1, types)) }
             }
 
             
@@ -212,6 +226,8 @@ pub enum ScopeKind {
     ExplicitNamespace(ExplicitNamespace),
     ImplicitNamespace(NamespaceId),
     FunctionDefinition(FunctionDefinitionScope),
+    ImportType((StringIndex, Type)),
+    ImportFunction((StringIndex, FuncId)),
     Variable(VariableScope),
     Loop(LoopScope),
     Root,

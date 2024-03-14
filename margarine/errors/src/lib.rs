@@ -8,8 +8,8 @@ use sti::define_key;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ErrorId {
-    Lexer(LexerError),
-    Parser(ParserError),
+    Lexer((u32, LexerError)),
+    Parser((u32, ParserError)),
     Sema(SemaError),
 }
 
@@ -23,16 +23,14 @@ pub trait ErrorType<T> {
 }
 
 
-pub fn display<T>(errors: &[impl ErrorType<T>], string_map: &StringMap, file: &[FileData], data: &T) -> String {
+pub fn display<T>(e: &impl ErrorType<T>, string_map: &StringMap, file: &[FileData], data: &T) -> String {
     let mut string = String::new();
-    for e in errors.iter() {
-        if !string.is_empty() {
-            let _ = writeln!(string);
-        }
-
-        let mut fmt = ErrorFormatter::new(&mut string, string_map, file);
-        e.display(&mut fmt, data);
+    if !string.is_empty() {
+        let _ = writeln!(string);
     }
+
+    let mut fmt = ErrorFormatter::new(&mut string, string_map, file);
+    e.display(&mut fmt, data);
 
     string
 }

@@ -110,6 +110,19 @@ impl WasmFunctionBuilder<'_> {
     #[inline(always)]
     pub fn call(&mut self, func: FunctionId) {
         write!(self.body, "call $_{} ", func.0);
+        write!(self.body, "(global.get $panicing)");
+        self.ite(
+            &mut (),
+            |_, wasm| {
+                if let Some(ret) = wasm.ret {
+                    wasm.default(ret);
+                }
+                wasm.ret();
+                (wasm.local(crate::WasmType::I32), ())
+            },
+            |_, _| {}
+        );
+        self.pop();
     }
 
     ///

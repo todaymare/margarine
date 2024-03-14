@@ -18,7 +18,7 @@ fn main() {
 
 
 fn run(file: &[u8]) {
-    let (imports_data, data, funcs) = {
+    let (data, imports_data, funcs, errs) = {
         decode(&file)
     };
 
@@ -107,6 +107,17 @@ fn run(file: &[u8]) {
         };
 
         linker.func_wrap("::host", "dump_stack_trace", func).unwrap();
+    }
+
+    {
+        let errs = unsafe { core::mem::transmute::<[Vec<Vec<&str>>; 3], [Vec<Vec<&'static str>>; 3]>(errs) };
+        let func = move |ty: u32, file: u32, index: u32| {
+            let ctx = unsafe { CTX_PTR.as_mut() };
+            println!("{}", errs[ty as usize][file as usize][index as usize]);
+            dump_stack_trace(ctx);
+        };
+
+        linker.func_wrap("::host", "panic", func).unwrap();
     }
 
     {

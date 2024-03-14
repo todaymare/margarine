@@ -147,6 +147,7 @@ impl<'a> Deref for Block<'a> {
 
 pub fn parse<'a>(
     tokens: TokenList, 
+    file: u32,
     arena: &'a Arena, 
     string_map: &mut StringMap
 ) -> (Block<'a>, KVec<ParserError, Error>) {
@@ -158,6 +159,7 @@ pub fn parse<'a>(
         arena,
         errors: KVec::new(),
         is_in_panic: false,
+        file,
     };
 
 
@@ -191,6 +193,7 @@ impl Default for ParserSettings<'_> {
 struct Parser<'me, 'ta, 'sa> {
     tokens: &'me [Token],
     index: usize,
+    file: u32,
 
     arena: &'ta Arena,
     string_map: &'me mut StringMap<'sa>,
@@ -246,7 +249,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     #[inline(always)]
     fn is_error_token(&mut self) -> Result<(), ErrorId> {
         if let TokenKind::Error(e) = self.current_kind() {
-            return Err(ErrorId::Lexer(e))
+            return Err(ErrorId::Lexer((self.file, e)))
         }
 
         Ok(())
@@ -267,10 +270,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.is_error_token()?;
         match self.current_kind() {
             TokenKind::Literal(Literal::String(v)) => Ok(v),
-            _ => Err(ErrorId::Parser(self.errors.push(Error::ExpectedLiteralString { 
+            _ => Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedLiteralString { 
                     source: self.current_range(), 
                     token: self.current_kind()
-                })))
+                }))))
         }
     }
 
@@ -280,10 +283,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.is_error_token()?;
         match self.current_kind() {
             TokenKind::Identifier(v) => Ok(v),
-            _ => Err(ErrorId::Parser(self.errors.push(Error::ExpectedIdentifier {
+            _ => Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedIdentifier {
                 source: self.current_range(), 
                 token: self.current_kind()
-            })))
+            }))))
         }
     }
 
@@ -292,11 +295,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn expect(&mut self, token_kind: TokenKind) -> Result<&Token, ErrorId> {
         self.is_error_token()?;
         if self.current_kind() != token_kind {
-            return Err(ErrorId::Parser(self.errors.push(Error::ExpectedXFoundY {
+            return Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedXFoundY {
                 source: self.current_range(), 
                 found: self.current_kind(), 
                 expected: token_kind
-            })))
+            }))))
         }
 
         Ok(self.current())
@@ -307,11 +310,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn expect_multi(&mut self, token_kinds: &'static [TokenKind]) -> Result<&Token, ErrorId> {
         self.is_error_token()?;
         if !token_kinds.contains(&self.current_kind()) {
-            return Err(ErrorId::Parser(self.errors.push(Error::ExpectedXFoundYMulti { 
+            return Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedXFoundYMulti { 
                             source: self.current_range(), 
                             found: self.current_kind(),
                             expected: token_kinds,
-                        })));
+                        }))));
         }
 
         Ok(self.current())
@@ -720,8 +723,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
 
             if !matches!(kind, Node::Declaration(_)) {
-                return Err(ErrorId::Parser(self.errors.push(
-                            Error::DeclarationOnlyBlock { source: n.range() })));
+                return Err(ErrorId::Parser((self.file, self.errors.push(
+                            Error::DeclarationOnlyBlock { source: n.range() }))));
             };
 
             vec.push(*n);
@@ -1895,8 +1898,9 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
 
             
-            _ => Err(ErrorId::Parser(
-                self.errors.push(Error::UnexpectedToken(self.current_range()))
+            _ => Err(ErrorId::Parser((
+                self.file,
+                self.errors.push(Error::UnexpectedToken(self.current_range())))
             ))
         }
     }

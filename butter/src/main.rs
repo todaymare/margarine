@@ -25,14 +25,14 @@ fn main() -> Result<(), &'static str> {
 
         let arena = Arena::new();
         let mut source_offset = 0;
-        for f in &files {
+        for (i, f) in files.iter().enumerate() {
             let (tokens, le) = DropTimer::with_timer("tokenisation", || {
                 let tokens = margarine::lex(&f, &mut string_map, source_offset);
                 tokens
             });
 
             let (ast, pe) = DropTimer::with_timer("parsing", || {
-                let ast = margarine::parse(tokens, &arena, &mut string_map);
+                let ast = margarine::parse(tokens, i.try_into().unwrap(), &arena, &mut string_map);
                 ast
             });
 
@@ -62,6 +62,9 @@ fn main() -> Result<(), &'static str> {
            source_offset += f.read().len() as u32;
         }
 
+        assert_eq!(lex_errors.len(), files.len());
+        assert_eq!(parse_errors.len(), files.len());
+
 
         let ns_arena = Arena::new();
         let _scopes = Arena::new();
@@ -73,25 +76,37 @@ fn main() -> Result<(), &'static str> {
         println!("{sema:#?}");
 
 
+        // todo: find a way to comrpess these errors into vecs
+        let mut lex_error_files = Vec::with_capacity(lex_errors.len());
         for l in lex_errors {
-            if !l.is_empty() {
-                let report = margarine::display(l.as_slice().inner(), &sema.string_map, &files, &());
+            let mut file = Vec::with_capacity(l.len());
+            for e in l.iter() {
+                let report = margarine::display(e.1, &sema.string_map, &files, &());
                 println!("{report}");
+                file.push(report);
             }
+
+            lex_error_files.push(file);
         }
 
+        let mut parse_error_files = Vec::with_capacity(parse_errors.len());
         for l in parse_errors {
-            if !l.is_empty() {
-                let report = margarine::display(l.as_slice().inner(), &sema.string_map, &files, &());
+            let mut file = Vec::with_capacity(l.len());
+            for e in l.iter() {
+                let report = margarine::display(e.1, &sema.string_map, &files, &());
                 println!("{report}");
+                file.push(report);
             }
+
+            parse_error_files.push(file);
         }
 
-        if !sema.errors.is_empty() {
-            let report = margarine::display(sema.errors.as_slice().inner(), &sema.string_map, &files, &sema.types);
+        let mut sema_errors = Vec::with_capacity(sema.errors.len());
+        for s in sema.errors.iter() {
+            let report = margarine::display(s.1, &sema.string_map, &files, &sema.types);
             println!("{report}");
-        }
-         
+            sema_errors.push(report);
+         } 
 
         let code = sema.module_builder.build(&mut sema.string_map);
 
@@ -139,7 +154,7 @@ fn main() -> Result<(), &'static str> {
 
         let wasm = fs::read("out.wasm").unwrap();
 
-        let result = encode(&wasm, &data_imports, &data_funcs);
+        let result = encode(&wasm, &data_imports, &data_funcs, [&lex_error_files, &parse_error_files, &[sema_errors]]);
         fs::write("out", result).unwrap();
 
          Ok(())

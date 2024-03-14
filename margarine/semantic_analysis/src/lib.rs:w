@@ -1,0 +1,21 @@
+use std::*
+
+
+struct B { a: A }
+
+@startup
+system fn speedtest() {
+    "hello world!!!".println()
+}
+
+
+impl str {
+    fn append(self, oth: str): str {
+        if self.ptr.count() > 1 {
+        }
+    }
+
+    fn println(self) {
+        std::println(self)
+    }
+}
