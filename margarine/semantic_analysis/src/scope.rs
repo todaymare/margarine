@@ -8,7 +8,7 @@ use crate::{funcs::FuncId, namespace::{NamespaceId, NamespaceMap}, types::{ty::T
 
 define_key!(u32, pub ScopeId);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Scope {
     parent: PackedOption<ScopeId>,
     kind: ScopeKind,
@@ -134,7 +134,6 @@ impl Scope {
             if let ScopeKind::ImportType(ty) = current.kind() {
                 if ty.0 == name { return Some(namespaces.get_type(ty.1, types)) }
             }
-
             
             if let ScopeKind::Root = current.kind() {
                 let ty = match name {
@@ -221,7 +220,7 @@ impl Scope {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ScopeKind {
     ExplicitNamespace(ExplicitNamespace),
     ImplicitNamespace(NamespaceId),
@@ -234,7 +233,7 @@ pub enum ScopeKind {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VariableScope {
     pub name: StringIndex,
     pub is_mutable: bool,
@@ -247,14 +246,14 @@ impl VariableScope {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ExplicitNamespace {
     pub name: StringIndex,
     pub namespace: NamespaceId,
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FunctionDefinitionScope {
     pub return_type: Type,
     pub return_source: SourceRange,
@@ -265,7 +264,7 @@ impl FunctionDefinitionScope {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LoopScope {
     pub loop_id: LoopId,
 }

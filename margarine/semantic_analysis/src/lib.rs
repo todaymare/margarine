@@ -555,7 +555,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
 
             (Scope::new(ScopeKind::ImplicitNamespace(namespace), scope.some()), namespace)
         };
-        
+
         self.collect_uses(as_decl_iterator(nodes.iter().copied()), builder, &mut scope, ns_id);
 
         let mut scope = self.scopes.push(scope);
@@ -679,9 +679,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 Declaration::Using { .. } => (),
 
-                Declaration::Module { name, .. } => {
-                    let ns = self.namespaces.get_mut(namespace);
-                    if ns.get_mod(name).is_some() {
+                Declaration::Module { name, body } => {
+                    let root = self.namespaces.get_mut(namespace);
+                    if root.get_mod(name).is_some() {
                         builder.error(self.error(Error::NameIsAlreadyDefined { 
                            source: decl.range(), name }));
 
@@ -692,8 +692,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let ns = Namespace::new(self.output, path);
                     let ns = self.namespaces.put(ns);
 
-                    let namespace = self.namespaces.get_mut(namespace);
-                    namespace.add_mod(name, ns);
+                    self.collect_type_names(path, as_decl_iterator(body.iter().copied()),
+                                            builder, type_builder, ns);
+
+                    let root = self.namespaces.get_mut(namespace);
+                    root.add_mod(name, ns);
                 },
 
                 Declaration::Extern { functions, .. } => {
@@ -754,10 +757,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), scope.some());
                     let scope = self.scopes.push(scope);
 
-                    let path = self.namespaces.get(ns).path();
-                    self.collect_type_names(path, as_decl_iterator(body.iter().copied()), builder, type_builder, ns);
                     self.collect_impls(builder, type_builder, as_decl_iterator(body.iter().copied()), scope, ns);
-                }
+                },
 
 
                 Declaration::Using { .. } => (), 
@@ -809,6 +810,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         source: use_item.range(), namespace: use_item.name() }));
                 };
 
+                dbg!(self.namespaces.get(ns));
+
                 let scope = Scope::new(ScopeKind::ImplicitNamespace(ns), None.into());
                 for l in list {
                     self.use_item(*l, scope, modify)?;
@@ -816,6 +819,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             },
 
             UseItemKind::BringName => {
+                println!("BRING_NAME {}", self.string_map.get(use_item.name()));
                 if let Some(ty) = scope.get_type(use_item.name(), &self.scopes, &self.namespaces) {
                     *modify = Scope::new(ScopeKind::ImportType((use_item.name(), ty)), self.scopes.push(*modify).some());
                     return Ok(())
@@ -826,7 +830,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     return Ok(())
                 }
 
-                if let Some(ns) = scope.get_ns(use_item.name(), &self.scopes, &mut self.namespaces, &self.types) {
+                if let Some(ns) = scope.get_mod(use_item.name(), &self.scopes, &mut self.namespaces) {
                     *modify = Scope::new(ScopeKind::ExplicitNamespace(ExplicitNamespace { name: use_item.name(), namespace: ns }), self.scopes.push(*modify).some());
                     return Ok(())
                 }
@@ -1306,6 +1310,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 for decl in body.iter() {
                     self.node(path, &mut scope, builder, decl);
                 }
+
+                dbg!(self.string_map.get(name), self.namespaces.get(ns));
             },
 
             Declaration::Extern { .. } => (),

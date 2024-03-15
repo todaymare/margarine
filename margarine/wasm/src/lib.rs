@@ -192,7 +192,7 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         {
             let mut c = string_pointer;
             for f in &self.strs {
-                write!(buffer, "(data (i32.const {c}) \"\\01\\00\\00\\00{}\")", f);
+                write!(buffer, "(data (i32.const {c}) \"\\01\\00\\00\\00\\00\\00\\00\\00{}\")", f);
                 c += f.len() + 8;
             }
         }
