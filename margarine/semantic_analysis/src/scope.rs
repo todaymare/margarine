@@ -42,7 +42,8 @@ impl Scope {
             }
 
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
-                let ns = namespaces.get(ns);
+                let Some(ns) = namespaces.get(ns)
+                else { return Some(Type::Error) };
                 if let Some(val) = ns.get_type(name) { return Some(Type::Custom(val)) }
             }
 
@@ -63,7 +64,8 @@ impl Scope {
             }
 
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
-                let ns = namespaces.get(ns);
+                let Some(ns) = namespaces.get(ns)
+                else { return None };
                 if let Some(val) = ns.get_func(name) { return Some(val) }
             }
 
@@ -97,7 +99,7 @@ impl Scope {
     ) -> Option<NamespaceId> {
         self.over(scopes, |current| {
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
-                if let Some(ns) = namespaces.get(ns).get_mod(name) {
+                if let Some(ns) = namespaces.get(ns)?.get_mod(name) {
                     return Some(ns);
                 }
             }
@@ -122,11 +124,11 @@ impl Scope {
 
             if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
                 let ns = namespaces.get(ns);
-                if let Some(val) = ns.get_type(name) {
+                if let Some(val) = ns?.get_type(name) {
                     return Some(namespaces.get_type(Type::Custom(val), types))
                 }
 
-                if let Some(val) = ns.get_mod(name) {
+                if let Some(val) = ns?.get_mod(name) {
                     return Some(val)
                 }
             }

@@ -58,8 +58,7 @@ impl Type {
             Type::Error  => "error",
 
             Type::Custom(id) => {
-                let ty = types.get(id);
-                let display_name = ty.path();
+                let display_name = types.path(id);
                 string_map.get(display_name)
             },
         }
@@ -173,6 +172,8 @@ impl Type {
                             TypeEnumKind::Tag(_) => WasmType::I32,
                         }
                     },
+
+                    TypeKind::Error => WasmType::I64,
                 }
             },
         }

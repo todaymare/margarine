@@ -35,6 +35,7 @@ impl<'a> DropTimer<'a> {
 
 impl Drop for DropTimer<'_> {
     fn drop(&mut self) {
+        #[cfg(not(feature = "fuzzer"))]
         println!("droptimer: ran '{}' in {} seconds", self.message, self.time.elapsed().as_secs_f32());
     }
 }
@@ -71,6 +72,7 @@ pub fn find_duplicate<'a, T: PartialEq, A: Alloc>(
 
 
 pub fn warn(string: &str) {
+    #[cfg(not(feature = "fuzzer"))]
     println!("{}: {string}", "warn".colour(Colour::rgb(207, 188, 148)).bold())
 }
 

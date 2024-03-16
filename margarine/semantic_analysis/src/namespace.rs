@@ -55,7 +55,6 @@ impl<'out> Namespace<'out> {
 
     pub fn add_mod(&mut self, name: StringIndex, module: NamespaceId) {
         let prev_value = self.modules.insert(name, module);
-        dbg!(&prev_value);
         assert!(prev_value.is_none());
     }
 
@@ -79,7 +78,7 @@ impl<'out> Namespace<'out> {
 
 #[derive(Debug)]
 pub struct NamespaceMap<'out> {
-    map: KVec<NamespaceId, Namespace<'out>>,
+    map: KVec<NamespaceId, Option<Namespace<'out>>>,
     type_to_ns: HashMap<Type, NamespaceId>,
     arena: &'out Arena,
 }
@@ -98,7 +97,7 @@ impl<'out> NamespaceMap<'out> {
     #[inline(always)]
     pub fn get_type(&mut self, id: Type, types: &TypeMap) -> NamespaceId {
         let id = self.type_to_ns.kget_or_insert_with(id, || {
-            self.map.push(Namespace::new(self.arena, id.path(types)))
+            self.map.push(Some(Namespace::new(self.arena, id.path(types))))
         });
 
         *id
@@ -108,28 +107,33 @@ impl<'out> NamespaceMap<'out> {
     #[inline(always)]
     pub fn get_type_mut(&mut self, id: Type, types: &TypeMap) -> &mut Namespace<'out> {
         let id = self.type_to_ns.kget_or_insert_with(id, || {
-            self.map.push(Namespace::new(self.arena, id.path(types)))
+            self.map.push(Some(Namespace::new(self.arena, id.path(types))))
         });
 
-        &mut self.map[*id]
+        self.map[*id].as_mut().unwrap()
     }
 
 
     #[inline(always)]
-    pub fn get(&self, id: NamespaceId) -> &Namespace<'out> {
-        &self.map[id]
+    pub fn get(&self, id: NamespaceId) -> Option<&Namespace<'out>> {
+        self.map[id].as_ref()
     }
 
 
     #[inline(always)]
-    pub fn get_mut(&mut self, id: NamespaceId) -> &mut Namespace<'out> {
-        &mut self.map[id]
+    pub fn get_mut(&mut self, id: NamespaceId) -> Option<&mut Namespace<'out>> {
+        self.map[id].as_mut()
     }
 
 
     #[inline(always)]
     pub fn put(&mut self, ns: Namespace<'out>) -> NamespaceId {
-        self.map.push(ns)
+        self.map.push(Some(ns))
+    }
+
+
+    pub fn error(&mut self, ns: NamespaceId) {
+        self.map[ns] = None;
     }
 
 

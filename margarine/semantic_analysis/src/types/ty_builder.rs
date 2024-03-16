@@ -43,7 +43,9 @@ pub enum PartialTypeKind<'a> {
     Enum {
         mappings: &'a mut [PartialEnumField],
         status: TypeEnumStatus,
-    }
+    },
+
+    Errored,
 }
 
 
@@ -134,6 +136,17 @@ impl<'a> TypeBuilder<'a> {
 
         self.set_kind(ty, PartialTypeKind::Enum { mappings, status })
     }
+
+
+    pub fn errored(&mut self, name: StringIndex) {
+        for ty in self.types.iter_mut() {
+            if ty.1.name == name {
+                ty.1.kind = Some(PartialTypeKind::Errored);
+                return
+            }
+        }
+        panic!();
+    }
 }
 
 
@@ -141,7 +154,12 @@ impl<'a> TypeBuilder<'a> {
     #[inline(always)]
     fn set_kind(&mut self, ty: TypeId, kind: PartialTypeKind<'a>) {
         let ty = self.types.get_mut(&ty).unwrap();
-        assert!(ty.kind.is_none());
+        assert!(ty.kind.is_none() ||
+                matches!(ty.kind.as_ref().unwrap(), PartialTypeKind::Errored),
+                "{:?}\n{kind:?}", ty.kind);
+
+        if matches!(ty.kind.as_ref(), Some(PartialTypeKind::Errored)) { return }
+
         ty.kind.replace(kind);
     }
 }
@@ -225,6 +243,8 @@ impl<'out> TypeBuilder<'_> {
                 PartialTypeKind::Enum { mappings, status } => { 
                     self.process_enum(data, mappings, status, name, path)
                 },
+
+                PartialTypeKind::Errored => Ok(TypeSymbol::new(name, path, 1, 0, TypeKind::Error)),
             }
         };
 

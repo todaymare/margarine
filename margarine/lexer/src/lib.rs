@@ -276,7 +276,6 @@ impl Lexer<'_, '_> {
 
         let start = self.reader.offset() as u32;
         let Some(val) = self.reader.next() else { return self.eof() };
-        dbg!(val as char);
 
         let kind = match val {
             b'(' => TokenKind::LeftParenthesis,
@@ -372,11 +371,24 @@ impl Lexer<'_, '_> {
             _ if val.is_ascii_digit() => self.number(start as usize),
             
 
-            _ => TokenKind::Error(
+            _ => {
+                let slice = &self.reader.original_slice()[self.reader.offset()-1..];
+                let char = sti::utf8::check_1(slice);
+                let len = val.leading_ones().max(1);
+                let char = if let Ok(char) = char {
+                    let char = &slice[..(slice.len()-char.len())];
+                    let char = std::str::from_utf8(char).unwrap().chars().next().unwrap();
+                    char
+                } else { '�' };
+
+                self.reader.consume(len as usize - 1);
+
+                TokenKind::Error(
                 self.errors.push(Error::InvalidCharacter { 
-                    character: val as char, 
+                    character: char, 
                     position: SourceRange::new(start, start) 
                 }))
+            }
         };
 
         let end = self.source_offset + self.reader.offset() as u32 - 1;
@@ -394,8 +406,8 @@ impl Lexer<'_, '_> {
             token_kind: 
             TokenKind::EndOfFile, 
             source_range: SourceRange::new(
-                self.source_offset + self.reader.offset() as u32 - 1,
-                self.source_offset + self.reader.offset() as u32 - 1,
+                (self.source_offset + self.reader.offset() as u32).saturating_sub(1),
+                (self.source_offset + self.reader.offset() as u32).saturating_sub(1),
             ) 
         }
     }

@@ -170,10 +170,8 @@ fn run(file: &[u8]) {
     
     let result = func.call(&mut store, &[], &mut []);
 
-    if let Err(e) = result {
+    if let Err(_) = result {
         println!("program aborted prematurely");
-        println!("{e:?}");
-
     }
 
     println!("took {}ms to complete startup systems", time.elapsed().as_millis());
@@ -185,6 +183,7 @@ fn run(file: &[u8]) {
         }
     }
 }
+
 
 /*
 

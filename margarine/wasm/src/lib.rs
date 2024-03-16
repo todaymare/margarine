@@ -409,7 +409,7 @@ impl WasmFunctionBuilder<'_> {
         }
 
         write!(buffer, "(block $_ret ");
-        buffer.reserve_exact(self.body.len() + 1);
+        buffer.reserve(self.body.len() + 1);
         for i in self.body.trim_end().chars() {
             buffer.push_char(i)
         }

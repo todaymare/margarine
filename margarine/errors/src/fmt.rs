@@ -285,6 +285,7 @@ fn line_at(offset: usize, data: &str, from: LineAt) -> Option<LineAt> {
 
 
 fn characters_between(data: &str, start: usize, end: usize) -> &str {
+    if end == 0 { return "" }
     data.get(start..end).unwrap_or_else(|| characters_between(data, start, end-1))
 }
 

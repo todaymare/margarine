@@ -29,7 +29,7 @@ impl<'a> TypeSymbol<'a> {
     #[inline(always)]
     pub fn kind(self) -> TypeKind<'a> { self.kind }
     #[inline(always)]
-    pub fn align(self) -> usize  { self.align}
+    pub fn align(self) -> usize  { self.align }
     #[inline(always)]
     pub fn size(self) -> usize { self.size }
 }
@@ -39,6 +39,7 @@ impl<'a> TypeSymbol<'a> {
 pub enum TypeKind<'a> {
     Struct(TypeStruct<'a>),
     Enum(TypeEnum<'a>),
+    Error,
 }
 
 

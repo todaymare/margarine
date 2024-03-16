@@ -169,7 +169,7 @@ pub fn parse<'a>(
         &ParserSettings::default()
     ).unwrap();
 
-    (result, parser.errors)
+    (result.0, parser.errors)
 }
 
 
@@ -640,7 +640,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         terminator: TokenKind, 
         start: u32,
         settings: &ParserSettings<'ta>
-    ) -> Result<Block<'ta>, ErrorId> {
+    ) -> Result<(Block<'ta>, bool), ErrorId> {
 
         let mut storage : Vec<Node<'ta>, _> = Vec::with_cap_in(self.arena, 1);
 
@@ -702,9 +702,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 Expression::Unit,
                 SourceRange::new(start, end)
             ).into());
+
+            return Ok((Block::new(storage.leak(), SourceRange::new(start, end)), true))
         }
 
-        Ok(Block::new(storage.leak(), SourceRange::new(start, end)))
+        Ok((Block::new(storage.leak(), SourceRange::new(start, end)), false))
     }
 
 
@@ -715,8 +717,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
         settings: &ParserSettings<'ta>
     ) -> Result<&'ta [Node<'ta>], ErrorId> {
         let parse_till = self.parse_till(terminator, start, settings)?;
-        let mut vec = Vec::with_cap_in(self.arena, parse_till.len());
-        for n in parse_till.into_iter() {
+        if parse_till.1 {
+            return Ok(&[]);
+        }
+
+        let mut vec = Vec::with_cap_in(self.arena, parse_till.0.len());
+        for n in parse_till.0.into_iter() {
             let mut kind = *n;
             if let Node::Attribute(a) = n {
                 kind = a.node();
@@ -932,7 +938,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let body_start = self.current_range().start();
         self.advance();
 
-        let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
+        let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?.0;
         let end = self.current_range().end();
 
         Ok(DeclarationNode::new(
@@ -1248,7 +1254,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
-        let block = self.parse_till(TokenKind::RightBracket, block_start, &ParserSettings::default())?;
+        let block = self.parse_till(TokenKind::RightBracket, block_start, &ParserSettings::default())?.0;
 
         Ok(StatementNode::new(
             Statement::ForLoop {
@@ -1823,7 +1829,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 let body_start = self.current_range().start();
                 self.expect(TokenKind::LeftBracket)?;
                 self.advance();
-                let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
+                let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?.0;
 
                 Ok(ExpressionNode::new(
                     Expression::Loop { body },
@@ -1846,7 +1852,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 let body_start = self.current_range().start();
                 self.expect(TokenKind::LeftBracket)?;
                 self.advance();
-                let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
+                let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?.0;
 
                 let source = SourceRange::new(start, self.current_range().end());
 
@@ -1958,7 +1964,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
             parser.advance();
 
             let expr = parser.expression(&ParserSettings::default())?;
-            dbg!(expr);
 
             Ok(MatchMapping::new(name, bind_to, binding_range, source_range, expr, is_inout))
         })?;
@@ -1982,7 +1987,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
-        let block = self.parse_till(TokenKind::RightBracket, start, &ParserSettings::default())?;
+        let block = self.parse_till(TokenKind::RightBracket, start, &ParserSettings::default())?.0;
 
         Ok(ExpressionNode::new(
             Expression::Block { block },
@@ -2004,7 +2009,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
-        let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
+        let body = self.parse_till(TokenKind::RightBracket, body_start, &ParserSettings::default())?.0;
 
         let else_block = 
             if self.peek_kind() == Some(TokenKind::Keyword(Keyword::Else)) {

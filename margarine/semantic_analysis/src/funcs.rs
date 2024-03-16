@@ -39,8 +39,16 @@ impl<'a> Function<'a> {
 
 
 #[derive(Debug)]
+enum FunctionItem<'a> {
+    Some(Function<'a>),
+    Errored,
+    None,
+}
+
+
+#[derive(Debug)]
 pub struct FunctionMap<'a> {
-    map: KVec<FuncId, Option<Function<'a>>>,
+    map: KVec<FuncId, FunctionItem<'a>>,
 }
 
 
@@ -53,25 +61,36 @@ impl<'a> FunctionMap<'a> {
 
 
     #[inline(always)]
-    pub fn get(&self, id: FuncId) -> &Function<'a> {
-        &self.map.get(id).unwrap().as_ref().unwrap()
+    pub fn get(&self, id: FuncId) -> Option<&Function<'a>> {
+        match self.map.get(id).unwrap() {
+            FunctionItem::Some(v) => Some(v),
+            FunctionItem::Errored => None,
+            _ => unreachable!(),
+        }
     }
 
 
     #[inline(always)]
     pub fn pending(&mut self) -> FuncId {
-        self.map.push(None)
+        self.map.push(FunctionItem::None)
     }
 
 
     #[inline(always)]
     pub fn put(&mut self, func_id: FuncId, ns: Function<'a>) {
-        assert!(self.map[func_id].swap(Some(ns)).is_none());
+        match self.map[func_id] {
+            FunctionItem::Some(_) => panic!(),
+            FunctionItem::Errored => (),
+            FunctionItem::None => self.map[func_id] = FunctionItem::Some(ns),
+        }
     }
 
+    pub fn error(&mut self, id: FuncId) {
+        self.map[id] = FunctionItem::Errored;
+    }
 
     pub fn iter<'b>(&'b self) -> impl Iterator<Item=&'b Function<'a>> {
-        self.map.iter().filter_map(|x| x.1.as_ref().map(|x| x))
+        self.map.iter().filter_map(|x| if let FunctionItem::Some(v) = x.1 { Some(v) } else { None })
     }
 
 
