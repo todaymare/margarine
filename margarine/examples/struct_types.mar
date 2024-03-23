@@ -1,0 +1,14 @@
+component Position {
+    x: float,
+    y: float,
+}
+
+
+resource Time {
+    delta: float,
+}
+
+
+struct NormalStruct {
+    something: int,
+}

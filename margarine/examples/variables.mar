@@ -1,0 +1,9 @@
+@startup
+system fn main() {
+    let x = 5
+
+    let mut y = 69
+    y = 420
+
+    let x = x + y
+}

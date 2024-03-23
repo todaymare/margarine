@@ -56,6 +56,19 @@ impl AnalysisResult {
 
 impl<'out> Analyzer<'_, 'out, '_> {
      pub fn convert_ty(&mut self, scope: ScopeId, dt: DataType) -> Result<Type, Error> {
+         let pool = ArenaPool::tls_get_rec();
+         let mut tyb = TypeBuilder::new(&*pool);
+         let ty = self.convert_ty_ex(&mut tyb, scope, dt)?;
+
+        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
+                                        &mut self.funcs, &mut self.module_builder,
+                                        self.string_map);
+        tyb.finalise(data, &mut self.errors);
+        Ok(ty)
+     }
+
+     pub fn convert_ty_ex(&mut self, builder: &mut TypeBuilder,
+                          scope: ScopeId, dt: DataType) -> Result<Type, Error> {
         let ty = match dt.kind() {
             DataTypeKind::Int => Type::I64,
             DataTypeKind::Bool => Type::BOOL,
@@ -64,7 +77,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             DataTypeKind::Never => Type::Never,
             DataTypeKind::Option(v) => {
                 let inner_ty = self.convert_ty(scope, *v)?;
-                let tyid = self.make_option(inner_ty);
+                let tyid = self.make_option(inner_ty, builder);
                 Type::Custom(tyid)
             },
 
@@ -72,7 +85,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             DataTypeKind::Result(v1, v2) => {
                 let inner_ty1 = self.convert_ty(scope, *v1)?;
                 let inner_ty2 = self.convert_ty(scope, *v2)?;
-                Type::Custom(self.make_result(inner_ty1, inner_ty2))
+                Type::Custom(self.make_result(inner_ty1, inner_ty2, builder))
             },
 
 
@@ -116,7 +129,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             DataTypeKind::Rc(ty) => {
                 let ty = self.convert_ty(scope, *ty)?;
 
-                self.make_rc(ty)
+                self.make_rc(ty, builder)
             }
         };
         
@@ -124,8 +137,21 @@ impl<'out> Analyzer<'_, 'out, '_> {
         Ok(ty)
     }
 
-    
+
     pub fn make_tuple(&mut self, vec: Vec<Type, &Arena>, source: SourceRange) -> TypeId {
+        let pool = ArenaPool::tls_get_rec();
+        let mut tyb = TypeBuilder::new(&*pool);
+        let res = self.make_tuple_ex(vec, source, &mut tyb);
+
+        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
+                                        &mut self.funcs, &mut self.module_builder,
+                                        self.string_map);
+        tyb.finalise(data, &mut self.errors);
+        res
+    }
+    
+    
+    pub fn make_tuple_ex(&mut self, vec: Vec<Type, &Arena>, source: SourceRange, tyb: &mut TypeBuilder) -> TypeId {
         if let Some(val) = self.tuple_map.get(&*vec) { return *val };
         let temp = ArenaPool::tls_get_temp();
         let name = {
@@ -143,21 +169,17 @@ impl<'out> Analyzer<'_, 'out, '_> {
             self.string_map.insert(str.as_str())
         };
 
-        let mut tyb = TypeBuilder::new(&temp);
-
-        let tyid = self.types.pending(name);
-        tyb.add_ty(tyid, name, source);
-        tyb.set_struct_fields(tyid, vec.iter().enumerate().map(|(i, x)| {
+        let v = Vec::from_in(&*temp, vec.iter().enumerate().map(|(i, x)| {
             let mut str = sti::string::String::new_in(&*temp);
             let _ = write!(str, "{}", i);
             let id = self.string_map.insert(&str);
             (id, *x)
-        }), TypeStructStatus::Tuple);
+        }));
 
-        let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
-                                        &mut self.funcs, &mut self.module_builder,
-                                        self.string_map);
-        tyb.finalise(data, &mut self.errors);
+        let tyid = self.types.pending(name);
+        tyb.add_ty(tyid, name, source);
+        tyb.set_struct_fields(tyid, &v, TypeStructStatus::Tuple);
+
 
         self.tuple_map.insert(vec.move_into(self.output).leak(), tyid);
 
@@ -165,7 +187,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
 
 
-    pub fn make_result(&mut self, v1: Type, v2: Type) -> TypeId {
+    pub fn make_result(&mut self, v1: Type, v2: Type, tyb: &mut TypeBuilder) -> TypeId {
         if let Some(v) = self.results_map.get(&(v1, v2))
             { return *v; }
 
@@ -180,8 +202,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 self.string_map.insert(str.as_str())
             };
 
-            let mut tyb = TypeBuilder::new(&temp);
-
             let tyid = self.types.pending(name);
             tyb.add_ty(tyid, name, SourceRange::new(0, 0));
             tyb.set_enum_fields(tyid, 
@@ -192,11 +212,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 TypeEnumStatus::Result,
             );
 
-            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
-                                            &mut self.funcs, &mut self.module_builder,
-                                            self.string_map);
-            tyb.finalise(data, &mut self.errors);
-
             tyid
         };
 
@@ -206,7 +221,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
 
 
-    fn make_option(&mut self, ty: Type) -> TypeId {
+    fn make_option(&mut self, ty: Type, tyb: &mut TypeBuilder) -> TypeId {
         if let Some(v) = self.options_map.get(&ty) { return *v; }
 
         let tyid = {
@@ -219,8 +234,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 self.string_map.insert(str.as_str())
             };
 
-            let mut tyb = TypeBuilder::new(&temp);
-
             let tyid = self.types.pending(name);
             tyb.add_ty(tyid, name, SourceRange::new(0, 0));
             tyb.set_enum_fields(tyid, 
@@ -231,10 +244,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 TypeEnumStatus::Option,
             );
 
-            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
-                                            &mut self.funcs, &mut self.module_builder,
-                                            self.string_map);
-            tyb.finalise(data, &mut self.errors);
 
             tyid
         };
@@ -244,7 +253,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
 
 
-    fn make_rc(&mut self, ty: Type) -> Type {
+    fn make_rc(&mut self, ty: Type, tyb: &mut TypeBuilder) -> Type {
         if let Some(ty) = self.rc_map.get(&ty) { return Type::Custom(*ty) }
         let temp = ArenaPool::tls_get_temp();
         let name = {
@@ -256,141 +265,20 @@ impl<'out> Analyzer<'_, 'out, '_> {
         };
 
         let tyid = {
-            let mut tyb = TypeBuilder::new(&temp);
-
             let tyid = self.types.pending(name);
             tyb.add_ty(tyid, name, SourceRange::new(0, 0));
             tyb.set_struct_fields(tyid, 
-                [
+                &[
                     // Counter
                     (StringMap::INT, Type::I64),
                     // Data
                     (StringMap::VALUE, ty),
-                ].iter().copied(),
+                ],
                 TypeStructStatus::Ptr
             );
 
-            let data = TypeBuilderData::new(&mut self.types, &mut self.namespaces,
-                                            &mut self.funcs, &mut self.module_builder,
-                                            self.string_map);
-            tyb.finalise(data, &mut self.errors);
-
             tyid
         };
-
-        let path_new = self.concat_path(name, StringMap::NEW);
-        let path_count = self.concat_path(name, StringMap::COUNT);
-        let ns = self.namespaces.get_type_mut(Type::Custom(tyid), &self.types);
-
-        // new function
-        // fn count(ty: T): *T
-        {
-            let wid = self.module_builder.function_id();
-            let func = Function::new(
-                StringMap::NEW,
-                name,
-                self.output.alloc_new([
-                    (StringMap::VALUE, false, ty),
-                ]), 
-                Type::Custom(tyid),
-                wid,
-                FunctionKind::UserDefined { inout: None });
-
-            let func_id = self.funcs.pending();
-            self.funcs.put(func_id, func);
-
-            ns.add_func(StringMap::NEW, func_id);
-
-            {
-                let rc_ty = self.types.get(tyid);
-                let TypeKind::Struct(rc_sym) = rc_ty.kind() else { unreachable!() };
-
-                let mut builder = WasmFunctionBuilder::new(self.output, wid);
-                builder.export(path_new);
-
-                let param = builder.param(ty.to_wasm_ty(&self.types));
-                let ret = builder.local(WasmType::I32);
-                builder.return_value(WasmType::I32);
-
-                // Allocate enough memory
-                builder.malloc(rc_ty.size());
-                builder.local_set(ret);
-
-                // Zero the num
-                builder.i64_const(0);
-                builder.local_get(ret);
-                builder.i64_write();
-
-                // Copy the data
-                {
-                    let ty = rc_sym.fields[1];
-
-                    // src
-                    builder.local_get(param);
-
-                    // dst
-                    builder.local_get(ret);
-                    builder.u32_const(ty.1 as u32);
-                    builder.i32_add();
-
-                    builder.write(ty.0.ty.to_wasm_ty(&self.types));
-                }
-
-                builder.local_get(ret);
-
-                self.module_builder.register(builder);
-            }
-
-        }
-
-
-        // counter function
-        // fn count(self): int
-        {
-            let wid = self.module_builder.function_id();
-            let func = Function::new(
-                StringMap::COUNT,
-                name,
-                self.output.alloc_new([
-                    (StringMap::VALUE, false, Type::Custom(tyid)),
-                ]), 
-                Type::I64,
-                wid,
-                FunctionKind::UserDefined { inout: None });
-
-            let func_id = self.funcs.pending();
-            self.funcs.put(func_id, func);
-
-            ns.add_func(StringMap::COUNT, func_id);
-
-            {
-                let mut builder = WasmFunctionBuilder::new(self.output, wid);
-                builder.export(path_count);
-
-                let param = builder.param(WasmType::I32);
-                let local = builder.local(WasmType::I64);
-                builder.return_value(WasmType::I64);
-
-                // Read the count 
-                builder.local_get(param);
-                builder.i64_read();
-
-                builder.i64_const(1);
-                builder.i64_sub();
-
-                builder.local_set(local);
-
-                builder.local_get(local);
-                builder.local_get(param);
-                builder.i64_write();
-
-                builder.local_get(local);
-
-                self.module_builder.register(builder);
-            }
-
-
-        }
 
         self.rc_map.insert(ty, tyid);
         Type::Custom(tyid)
@@ -428,11 +316,12 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
         slf.module_builder.memory(1);
         slf.module_builder.stack_size(32 * 1024);
 
-        let rc = slf.make_rc(Type::I32);
         
         {
             let pool = ArenaPool::tls_get_temp();
             let mut type_builder = TypeBuilder::new(&pool);
+
+            let rc = slf.make_rc(Type::I32, &mut type_builder);
 
             {
                 let id = slf.types.pending(StringMap::BOOL);
@@ -453,10 +342,10 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
                 type_builder.add_ty(TypeId::RANGE, StringMap::RANGE, SourceRange::new(0, 0));
                 type_builder.set_struct_fields(
                     TypeId::RANGE,
-                    [
+                    &[
                         (StringMap::LOW, Type::I64),
                         (StringMap::HIGH, Type::I64),
-                    ].into_iter(),
+                    ],
                     TypeStructStatus::User
                 );
             }
@@ -469,10 +358,10 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
                 type_builder.add_ty(TypeId::STR, StringMap::STR, SourceRange::new(0, 0));
                 type_builder.set_struct_fields(
                     TypeId::STR,
-                    [
+                    &[
                         (slf.string_map.insert("len"), Type::I64),
                         (slf.string_map.insert("ptr"), rc),
-                    ].into_iter(),
+                    ],
                     TypeStructStatus::User
                 );
             }
@@ -548,7 +437,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             let namespace = Namespace::new(self.output, path);
             let namespace = self.namespaces.put(namespace);
 
-            self.collect_type_names(
+            self.collect_names(
                 path,
                 as_decl_iterator(nodes.iter().copied()),
                 builder, &mut ty_builder, namespace
@@ -616,7 +505,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
 
 
 impl<'out> Analyzer<'_, 'out, '_> {
-    pub fn collect_type_names<'a>(
+    pub fn collect_names<'a>(
         &mut self,
         path: StringIndex,
         decls: impl Iterator<Item=DeclarationNode<'a>>,
@@ -649,7 +538,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
                 Declaration::Function { sig, is_in_impl, .. } => {
-                    assert!(sig.generics.is_empty());
                     if is_in_impl.is_some() && sig.name == StringMap::ITER_NEXT_FUNC {
                         let validate_sig = || {
                             if sig.arguments.len() != 1 { return false }
@@ -657,6 +545,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             if sig.arguments[0].data_type().kind() != ty.kind() {
                                 return false 
                             }
+
                             if !sig.arguments[0].is_inout() { return false }
                             if !matches!(sig.return_type.kind(), DataTypeKind::Option(_)) { return false }
 
@@ -703,7 +592,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let ns = Namespace::new(self.output, path);
                     let ns = self.namespaces.put(ns);
 
-                    self.collect_type_names(path, as_decl_iterator(body.iter().copied()),
+                    self.collect_names(path, as_decl_iterator(body.iter().copied()),
                                             builder, type_builder, ns);
 
                     let root = self.namespaces.get_mut(namespace).unwrap();
@@ -744,11 +633,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
         for decl in decls {
             match decl.kind() {
                 Declaration::Impl { data_type, body } => {
-                    let ty = match self.convert_ty(scope, data_type) {
+                    let ty = match self.convert_ty_ex(type_builder, scope, data_type) {
                         Ok(v) => v,
                         Err(e) => {
                             builder.error(self.error(e));
-                            return;
+                            continue;
                         },
                     };
                     
@@ -758,7 +647,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     let scope = self.scopes.push(scope);
 
                     let path = ty.path(&self.types);
-                    self.collect_type_names(path, as_decl_iterator(body.iter().copied()), builder, type_builder, ns_id);
+                    self.collect_names(path, as_decl_iterator(body.iter().copied()), builder, type_builder, ns_id);
                     self.collect_impls(builder, type_builder, as_decl_iterator(body.iter().copied()), scope, ns_id);
                 }
 
@@ -884,7 +773,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     let fields = fields.iter()
                         .filter_map(|(name, ty, _)| {
-                            let ty = self.convert_ty(scope, *ty);
+                            let ty = self.convert_ty_ex(type_builder, scope, *ty);
                             match ty {
                                 Ok(v) => return Some((*name, v)),
                                 Err(e) => self.error(e),
@@ -894,7 +783,10 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         }
                     );
 
-                    type_builder.set_struct_fields(ty, fields, TypeStructStatus::User);
+                    let pool = ArenaPool::tls_get_temp();
+                    let fields = Vec::from_in(&*pool, fields);
+
+                    type_builder.set_struct_fields(ty, &fields, TypeStructStatus::User);
                 },
 
 
@@ -932,7 +824,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 Declaration::Impl { data_type, body } => {
                     let ns = {
-                        let Ok(ty) = self.convert_ty(scope, data_type)
+                        let Ok(ty) = self.convert_ty_ex(type_builder, scope, data_type)
                         else { continue };
 
                         self.namespaces.get_type(ty, &self.types)
@@ -1076,13 +968,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
 
                 Declaration::Impl { data_type, body } => {
-                    let ty = match self.convert_ty(scope, data_type) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            builder.error(self.error(e));
-                            continue;
-                        },
-                    };
+                    let Ok(ty) = self.convert_ty(scope, data_type)
+                    else { continue };
                     
                     let ns_id = self.namespaces.get_type(ty, &self.types);
 
@@ -2349,6 +2236,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     },
                 };
 
+                dbg!(ty_id, &self.types);
                 let ty = self.types.get(ty_id);
                 let TypeKind::Struct(sym) = ty.kind() else { unreachable!() };
                 let ptr = wasm.alloc_stack(ty.size());
@@ -2842,9 +2730,10 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let tyid = match ty {
                     Type::Custom(v) => v,
 
-                    Type::Error => return Err(Error::Bypass),
+                    Type::Error => { wasm.pop(); return Err(Error::Bypass) },
 
                     _ => {
+                        wasm.pop();
                         return Err(Error::FieldAccessOnNonEnumOrStruct {
                             source: node.range(), typ: ty });
                     }
@@ -2868,6 +2757,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         }
 
                         if !sf.0.ty.eq_sem(val_ty) {
+                            wasm.pop();
                             return Err(Error::ValueUpdateTypeMismatch 
                                        { lhs: sf.0.ty, rhs: val_ty, source: node.range() })
                         }

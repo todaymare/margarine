@@ -1,0 +1,9 @@
+@startup
+system fn main(): int {
+    let value = [int?]::new(69)
+
+    match value {
+        some: value => value + 5,
+        none => break,
+    }
+}

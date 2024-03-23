@@ -101,12 +101,12 @@ impl<'a> TypeBuilder<'a> {
     pub fn set_struct_fields(
         &mut self, 
         ty: TypeId, 
-        iter: impl Iterator<Item=(StringIndex, Type)>,
+        iter: &[(StringIndex, Type)],
         status: TypeStructStatus,
     ) {
         let fields = Vec::from_in(
             self.storage, 
-            iter.map(|(name, ty)| PartialStructField { name, ty })
+            iter.iter().map(|(name, ty)| PartialStructField { name: *name, ty: *ty })
         );
         
         let fields = fields.leak();
@@ -165,6 +165,7 @@ impl<'a> TypeBuilder<'a> {
 }
 
 
+#[derive(Debug)]
 pub struct TypeBuilderData<'me, 'out, 'str> {
     arena: &'out Arena,
     type_map: &'me mut TypeMap<'out>,
@@ -188,6 +189,16 @@ impl<'out> TypeBuilder<'_> {
         for ty in &vec {
             if let Err(err) = self.resolve_type(&mut data, *ty) {
                 errors.push(err);
+            }
+        }
+
+        for ty in &vec {
+            let sym = data.type_map.get(*ty);
+
+            if let TypeKind::Struct(val) = sym.kind() {
+                if val.status == TypeStructStatus::Ptr {
+                    self.register_ptr_methods(&mut data, *ty, sym.path(), sym, val);
+                }
             }
         }
     }
@@ -295,7 +306,8 @@ impl<'out> TypeBuilder<'_> {
         let mut new_fields = Vec::with_cap_in(data.arena, fields.len());
 
         for f in fields.iter() {
-            let f_align = self.align(data, f.ty)?;
+            let f_align = if status == TypeStructStatus::Ptr { 16 }
+                          else { self.align(data, f.ty)? };
 
             // Calculate the alignment of the type
             align = align.max(f_align);
@@ -304,7 +316,8 @@ impl<'out> TypeBuilder<'_> {
             cursor = sti::num::ceil_to_multiple_pow2(cursor, f_align);
 
             let offset = cursor;
-            cursor += self.size(data, f.ty).unwrap();
+            cursor += if status == TypeStructStatus::Ptr { 16 }
+                      else { self.size(data, f.ty).unwrap() };
 
             // New field
             let field = StructField::new(f.name, f.ty);
@@ -421,7 +434,7 @@ impl<'out> TypeBuilder<'_> {
         path: StringIndex,
         kind: TypeEnum,
     ) {
-        let mut ns = Namespace::new(data.arena, path);
+        let ns = data.namespace_map.get_type_mut(Type::Custom(ty), &mut data.type_map);
         
         match kind.kind() {
             TypeEnumKind::TaggedUnion(sym) => {
@@ -502,9 +515,132 @@ impl<'out> TypeBuilder<'_> {
             },
         }
 
+    }
 
-        let ns = data.namespace_map.put(ns);
-        data.namespace_map.map_type(Type::Custom(ty), ns);
+
+    fn register_ptr_methods(
+        &mut self,
+        data: &mut TypeBuilderData<'_, 'out, '_>,
+        rc_ty: TypeId,
+        path: StringIndex,
+        rc_sym: TypeSymbol,
+        rc_kind: TypeStruct,
+    ) {
+        let ns = data.namespace_map.get_type_mut(Type::Custom(rc_ty), &mut data.type_map);
+
+        assert_eq!(rc_kind.status, TypeStructStatus::Ptr);
+
+        let path_new = concat_path(data.arena, data.string_map, path, StringMap::NEW);
+        let path_count = concat_path(data.arena, data.string_map, path, StringMap::COUNT);
+
+        // new function
+        // fn count(ty: T): *T
+        {
+            let wid = data.module_builder.function_id();
+            let func = Function::new(
+                StringMap::NEW,
+                path_new,
+                data.arena.alloc_new([
+                    (StringMap::VALUE, false, rc_kind.fields[1].0.ty),
+                ]), 
+                Type::Custom(rc_ty),
+                wid,
+                FunctionKind::UserDefined { inout: None });
+
+            let func_id = data.function_map.pending();
+            data.function_map.put(func_id, func);
+
+            ns.add_func(StringMap::NEW, func_id);
+
+            {
+                let mut builder = WasmFunctionBuilder::new(data.arena, wid);
+                builder.export(path_new);
+
+                let param = builder.param(rc_kind.fields[1].0.ty.to_wasm_ty(&data.type_map));
+                let ret = builder.local(WasmType::I32);
+                builder.return_value(WasmType::I32);
+
+                // Allocate enough memory
+                builder.malloc(rc_sym.size());
+                builder.local_set(ret);
+
+                // Zero the num
+                builder.i64_const(0);
+                builder.local_get(ret);
+                builder.i64_write();
+
+                // Copy the data
+                {
+                    let ty = rc_kind.fields[1];
+
+                    // src
+                    builder.local_get(param);
+
+                    // dst
+                    builder.local_get(ret);
+                    builder.u32_const(ty.1 as u32);
+                    builder.i32_add();
+
+                    builder.write(ty.0.ty.to_wasm_ty(&data.type_map));
+                }
+
+                builder.local_get(ret);
+
+                data.module_builder.register(builder);
+            }
+
+        }
+
+
+        // counter function
+        // fn count(self): int
+        {
+            let wid = data.module_builder.function_id();
+            let func = Function::new(
+                StringMap::COUNT,
+                path_count,
+                data.arena.alloc_new([
+                    (StringMap::VALUE, false, Type::Custom(rc_ty)),
+                ]), 
+                Type::I64,
+                wid,
+                FunctionKind::UserDefined { inout: None });
+
+            let func_id = data.function_map.pending();
+            data.function_map.put(func_id, func);
+
+            ns.add_func(StringMap::COUNT, func_id);
+
+            {
+                let mut builder = WasmFunctionBuilder::new(data.arena, wid);
+                builder.export(path_count);
+
+                let param = builder.param(WasmType::I32);
+                let local = builder.local(WasmType::I64);
+                builder.return_value(WasmType::I64);
+
+                // Read the count 
+                builder.local_get(param);
+                builder.i64_read();
+
+                builder.i64_const(1);
+                builder.i64_sub();
+
+                builder.local_set(local);
+
+                builder.local_get(local);
+                builder.local_get(param);
+                builder.i64_write();
+
+                builder.local_get(local);
+
+                data.module_builder.register(builder);
+            }
+
+
+        }
+
+
     }
 
 

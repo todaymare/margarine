@@ -1,0 +1,4 @@
+extern "test" {
+    fn print_string(value: str)
+    fn random_number(): int
+}

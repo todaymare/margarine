@@ -1,0 +1,14 @@
+struct Number { value: int }
+
+impl Number {
+    fn new(number: int): Number {
+        Number {
+            value: number
+        }
+    }
+
+
+    fn add(self, oth: Number): Number {
+        Number::new(self.value + oth.value)
+    }
+}

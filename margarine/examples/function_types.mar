@@ -1,0 +1,9 @@
+@startup
+system fn main(): int {
+    69 - add(5, 4)
+}
+
+
+fn add(value_1: int, value_2: int): int {
+    value_1 + value_2 
+}

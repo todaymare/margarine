@@ -96,21 +96,19 @@ impl<'out> NamespaceMap<'out> {
 
     #[inline(always)]
     pub fn get_type(&mut self, id: Type, types: &TypeMap) -> NamespaceId {
-        let id = self.type_to_ns.kget_or_insert_with(id, || {
-            self.map.push(Some(Namespace::new(self.arena, id.path(types))))
-        });
+        if let Some(v) = self.type_to_ns.get(&id) { return *v }
 
-        *id
+        let nid = self.map.push(Some(Namespace::new(self.arena, id.path(types))));
+        assert!(self.type_to_ns.insert(id, nid).is_none());
+
+        nid
     }
 
 
     #[inline(always)]
     pub fn get_type_mut(&mut self, id: Type, types: &TypeMap) -> &mut Namespace<'out> {
-        let id = self.type_to_ns.kget_or_insert_with(id, || {
-            self.map.push(Some(Namespace::new(self.arena, id.path(types))))
-        });
-
-        self.map[*id].as_mut().unwrap()
+        let id = self.get_type(id, types);
+        self.get_mut(id).unwrap()
     }
 
 
@@ -134,11 +132,5 @@ impl<'out> NamespaceMap<'out> {
 
     pub fn error(&mut self, ns: NamespaceId) {
         self.map[ns] = None;
-    }
-
-
-    #[inline(always)]
-    pub fn map_type(&mut self, ty: Type, ns: NamespaceId) {
-        self.type_to_ns.insert(ty, ns);
     }
 }

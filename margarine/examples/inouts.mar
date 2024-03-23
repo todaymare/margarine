@@ -1,0 +1,12 @@
+@startup
+system fn main(): bool {
+    let mut x = 69
+    add(value, 10)
+
+    x == 79
+}
+
+
+fn add(&value: int, num: int) {
+    value += num
+}
