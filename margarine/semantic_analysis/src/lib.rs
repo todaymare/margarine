@@ -70,9 +70,17 @@ impl<'out> Analyzer<'_, 'out, '_> {
      pub fn convert_ty_ex(&mut self, builder: &mut TypeBuilder,
                           scope: ScopeId, dt: DataType) -> Result<Type, Error> {
         let ty = match dt.kind() {
-            DataTypeKind::Int => Type::I64,
+            DataTypeKind::I8  => Type::I8,
+            DataTypeKind::I16 => Type::I16,
+            DataTypeKind::I32 => Type::I32,
+            DataTypeKind::I64 => Type::I64,
+            DataTypeKind::U8  => Type::I8,
+            DataTypeKind::U16 => Type::I16,
+            DataTypeKind::U32 => Type::I32,
+            DataTypeKind::U64 => Type::I64,
+            DataTypeKind::F32 => Type::F32,
+            DataTypeKind::F64 => Type::F64,
             DataTypeKind::Bool => Type::BOOL,
-            DataTypeKind::Float => Type::F64,
             DataTypeKind::Unit => Type::Unit,
             DataTypeKind::Never => Type::Never,
             DataTypeKind::Option(v) => {
@@ -129,7 +137,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             DataTypeKind::Rc(ty) => {
                 let ty = self.convert_ty(scope, *ty)?;
 
-                self.make_rc(ty, builder)
+                self.make_ptr(ty, builder)
             }
         };
         
@@ -253,7 +261,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
     }
 
 
-    fn make_rc(&mut self, ty: Type, tyb: &mut TypeBuilder) -> Type {
+    fn make_ptr(&mut self, ty: Type, tyb: &mut TypeBuilder) -> Type {
         if let Some(ty) = self.rc_map.get(&ty) { return Type::Custom(*ty) }
         let temp = ArenaPool::tls_get_temp();
         let name = {
@@ -270,7 +278,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
             tyb.set_struct_fields(tyid, 
                 &[
                     // Counter
-                    (StringMap::INT, Type::I64),
+                    (StringMap::COUNT, Type::I64),
                     // Data
                     (StringMap::VALUE, ty),
                 ],
@@ -321,7 +329,7 @@ impl<'me, 'out, 'str, 'ast> Analyzer<'me, 'out, 'str> {
             let pool = ArenaPool::tls_get_temp();
             let mut type_builder = TypeBuilder::new(&pool);
 
-            let rc = slf.make_rc(Type::I32, &mut type_builder);
+            let rc = slf.make_ptr(Type::I32, &mut type_builder);
 
             {
                 let id = slf.types.pending(StringMap::BOOL);
@@ -1575,17 +1583,19 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 let is_valid = match operator {
                     _ if !lhs_anal.ty.eq_sem(rhs_anal.ty) => false,
-                    _ if !lhs_anal.ty.eq_lit(Type::Error)  
-                         || !rhs_anal.ty.eq_lit(Type::Error) => { 
+                    _ if lhs_anal.ty.eq_lit(Type::Error)  
+                         || rhs_anal.ty.eq_lit(Type::Error) => { 
                         wasm.pop();
                         wasm.pop();
                         wasm.unit();
                         return AnalysisResult::error();
                     },
-                    _ if !lhs_anal.ty.eq_lit(Type::Never) => false,
-                    _ if !lhs_anal.ty.eq_lit(Type::Error) => false,
+
+                    _ if lhs_anal.ty.eq_lit(Type::Never) => false,
+                    _ if lhs_anal.ty.eq_lit(Type::Error) => false,
+
                     v if v.is_arith() => lhs_anal.ty.is_number(),
-                    v if v.is_bw() => lhs_anal.ty.eq_sem(Type::I64),
+                    v if v.is_bw() => lhs_anal.ty.is_number(),
                     v if v.is_ocomp() => lhs_anal.ty.is_number(),
                     v if v.is_ecomp() => lhs_anal.ty.is_number(),
 
@@ -1613,30 +1623,119 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
 
                 let ty = match (operator, lhs_anal.ty) {
-                    (BinaryOperator::Add, Type::I64) => wfunc!(i64_add, Type::I64),
+                    | (BinaryOperator::Add, Type::I8 )
+                    | (BinaryOperator::Add, Type::I16)
+                    | (BinaryOperator::Add, Type::I32)
+                    | (BinaryOperator::Add, Type::U8 )
+                    | (BinaryOperator::Add, Type::U16)
+                    | (BinaryOperator::Add, Type::U32) => wfunc!(i32_add, lhs_anal.ty),
+
+                    | (BinaryOperator::Add, Type::I64)
+                    | (BinaryOperator::Add, Type::U64) => wfunc!(i64_add, Type::I64),
+
+                    (BinaryOperator::Add, Type::F32) => wfunc!(f32_add, Type::F32),
                     (BinaryOperator::Add, Type::F64) => wfunc!(f64_add, Type::F64),
 
-                    (BinaryOperator::Sub, Type::I64) => wfunc!(i64_sub, Type::I64),
+
+                    | (BinaryOperator::Sub, Type::I8 )
+                    | (BinaryOperator::Sub, Type::I16)
+                    | (BinaryOperator::Sub, Type::I32)
+                    | (BinaryOperator::Sub, Type::U8 )
+                    | (BinaryOperator::Sub, Type::U16)
+                    | (BinaryOperator::Sub, Type::U32) => wfunc!(i32_sub, lhs_anal.ty),
+
+                    | (BinaryOperator::Sub, Type::I64)
+                    | (BinaryOperator::Sub, Type::U64) => wfunc!(i64_sub, Type::I64),
+
+                    (BinaryOperator::Sub, Type::F32) => wfunc!(f32_sub, Type::F32),
                     (BinaryOperator::Sub, Type::F64) => wfunc!(f64_sub, Type::F64),
 
-                    (BinaryOperator::Mul, Type::I64) => wfunc!(i64_mul, Type::I64),
+
+                    | (BinaryOperator::Mul, Type::I8 )
+                    | (BinaryOperator::Mul, Type::I16)
+                    | (BinaryOperator::Mul, Type::I32)
+                    | (BinaryOperator::Mul, Type::U8 )
+                    | (BinaryOperator::Mul, Type::U16)
+                    | (BinaryOperator::Mul, Type::U32) => wfunc!(i32_mul, lhs_anal.ty),
+
+                    | (BinaryOperator::Mul, Type::I64)
+                    | (BinaryOperator::Mul, Type::U64) => wfunc!(i64_mul, Type::I64),
+
+                    (BinaryOperator::Mul, Type::F32) => wfunc!(f32_mul, Type::F32),
                     (BinaryOperator::Mul, Type::F64) => wfunc!(f64_mul, Type::F64),
 
+
+                    | (BinaryOperator::Div, Type::I8 )
+                    | (BinaryOperator::Div, Type::I16)
+                    | (BinaryOperator::Div, Type::U8 )
+                    | (BinaryOperator::Div, Type::U16)
+                    | (BinaryOperator::Div, Type::U32) => wfunc!(u32_div, lhs_anal.ty),
+
+                    (BinaryOperator::Div, Type::I32) => wfunc!(i32_div, Type::I32),
                     (BinaryOperator::Div, Type::I64) => wfunc!(i64_div, Type::I64),
+                    (BinaryOperator::Div, Type::U64) => wfunc!(u64_div, Type::U64),
+
+                    (BinaryOperator::Div, Type::F32) => wfunc!(f32_div, Type::F32),
                     (BinaryOperator::Div, Type::F64) => wfunc!(f64_div, Type::F64),
 
-                    (BinaryOperator::Rem, Type::I64) => wfunc!(i64_rem, Type::I64),
-                    (BinaryOperator::Rem, Type::F64) => wfunc!(f64_rem, Type::F64),
 
-                    (BinaryOperator::BitshiftLeft, Type::I64) => wfunc!(i64_bw_left_shift, Type::I64),
+                    | (BinaryOperator::Rem, Type::I8 )
+                    | (BinaryOperator::Rem, Type::I16)
+                    | (BinaryOperator::Rem, Type::U8 )
+                    | (BinaryOperator::Rem, Type::U16)
+                    | (BinaryOperator::Rem, Type::U32) => wfunc!(u32_rem, lhs_anal.ty),
 
+                    (BinaryOperator::Rem, Type::I32) => wfunc!(i32_div, Type::I32),
+                    (BinaryOperator::Rem, Type::I64) => wfunc!(i64_div, Type::I64),
+                    (BinaryOperator::Rem, Type::U64) => wfunc!(u64_div, Type::U64),
+
+                    (BinaryOperator::Rem, Type::F32) => wfunc!(f32_div, Type::F32),
+                    (BinaryOperator::Rem, Type::F64) => wfunc!(f64_div, Type::F64),
+
+
+                    (BinaryOperator::BitshiftLeft, Type::I8  | Type::U8 ) => wfunc!(i8_bw_left_shift , lhs_anal.ty),
+                    (BinaryOperator::BitshiftLeft, Type::I16 | Type::U16) => wfunc!(i16_bw_left_shift, lhs_anal.ty),
+                    (BinaryOperator::BitshiftLeft, Type::I32 | Type::U32) => wfunc!(i32_bw_left_shift, lhs_anal.ty),
+                    (BinaryOperator::BitshiftLeft, Type::I64 | Type::U64) => wfunc!(i64_bw_left_shift, lhs_anal.ty),
+
+                    (BinaryOperator::BitshiftRight, Type::I8  | Type::U8 ) => wfunc!(u32_bw_right_shift, lhs_anal.ty),
+                    (BinaryOperator::BitshiftRight, Type::I16 | Type::U16) => wfunc!(u32_bw_right_shift, lhs_anal.ty),
+                    (BinaryOperator::BitshiftRight, Type::U32) => wfunc!(u32_bw_right_shift, Type::I32),
+                    (BinaryOperator::BitshiftRight, Type::I32) => wfunc!(i32_bw_right_shift, Type::I32),
+                    (BinaryOperator::BitshiftRight, Type::U64) => wfunc!(u64_bw_right_shift, Type::I64),
                     (BinaryOperator::BitshiftRight, Type::I64) => wfunc!(i64_bw_right_shift, Type::I64),
 
-                    (BinaryOperator::BitwiseAnd, Type::I64) => wfunc!(i64_bw_and, Type::I64),
+                    | (BinaryOperator::BitwiseAnd, Type::I8 )
+                    | (BinaryOperator::BitwiseAnd, Type::I16)
+                    | (BinaryOperator::BitwiseAnd, Type::I32)
+                    | (BinaryOperator::BitwiseAnd, Type::U8 )
+                    | (BinaryOperator::BitwiseAnd, Type::U16)
+                    | (BinaryOperator::BitwiseAnd, Type::U32) => wfunc!(i32_bw_and, lhs_anal.ty),
 
-                    (BinaryOperator::BitwiseOr, Type::I64) => wfunc!(i64_bw_or, Type::I64),
+                    | (BinaryOperator::BitwiseAnd, Type::U64)
+                    | (BinaryOperator::BitwiseAnd, Type::I64) => wfunc!(i64_bw_and, lhs_anal.ty),
 
-                    (BinaryOperator::BitwiseXor, Type::I64) => wfunc!(i64_bw_xor, Type::I64),
+
+                    | (BinaryOperator::BitwiseOr, Type::I8 )
+                    | (BinaryOperator::BitwiseOr, Type::I16)
+                    | (BinaryOperator::BitwiseOr, Type::I32)
+                    | (BinaryOperator::BitwiseOr, Type::U8 )
+                    | (BinaryOperator::BitwiseOr, Type::U16)
+                    | (BinaryOperator::BitwiseOr, Type::U32) => wfunc!(i32_bw_and, lhs_anal.ty),
+
+                    | (BinaryOperator::BitwiseOr, Type::U64)
+                    | (BinaryOperator::BitwiseOr, Type::I64) => wfunc!(i64_bw_or, lhs_anal.ty),
+
+
+                    | (BinaryOperator::BitwiseXor, Type::I8 )
+                    | (BinaryOperator::BitwiseXor, Type::I16)
+                    | (BinaryOperator::BitwiseXor, Type::I32)
+                    | (BinaryOperator::BitwiseXor, Type::U8 )
+                    | (BinaryOperator::BitwiseXor, Type::U16)
+                    | (BinaryOperator::BitwiseXor, Type::U32) => wfunc!(i32_bw_xor, lhs_anal.ty),
+
+                    | (BinaryOperator::BitwiseXor, Type::U64)
+                    | (BinaryOperator::BitwiseXor, Type::I64) => wfunc!(i64_bw_xor, lhs_anal.ty),
 
                     (BinaryOperator::Eq, _) => {
                         wasm.eq(lhs_anal.ty.to_wasm_ty(&self.types));
@@ -1648,14 +1747,50 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         Type::BOOL
                     }
 
-                    (BinaryOperator::Gt, Type::I64)   => wfunc!(i64_gt, Type::BOOL),
-                    (BinaryOperator::Gt, Type::F64) => wfunc!(f64_gt, Type::BOOL),
-                    (BinaryOperator::Ge, Type::I64)   => wfunc!(i64_ge, Type::BOOL),
-                    (BinaryOperator::Ge, Type::F64) => wfunc!(f64_ge, Type::BOOL),
-                    (BinaryOperator::Lt, Type::I64)   => wfunc!(i64_lt, Type::BOOL),
-                    (BinaryOperator::Lt, Type::F64) => wfunc!(f64_lt, Type::BOOL),
-                    (BinaryOperator::Le, Type::I64)   => wfunc!(i64_le, Type::BOOL),
-                    (BinaryOperator::Le, Type::F64) => wfunc!(f64_le, Type::BOOL),
+                    | (BinaryOperator::Gt, Type::I8)    => wfunc!(i32_gt, Type::BOOL),
+                    | (BinaryOperator::Gt, Type::I16)   => wfunc!(i32_gt, Type::BOOL),
+                    | (BinaryOperator::Gt, Type::U8)    => wfunc!(i32_gt, Type::BOOL),
+                    | (BinaryOperator::Gt, Type::U16)   => wfunc!(i32_gt, Type::BOOL),
+                    | (BinaryOperator::Gt, Type::I32)   => wfunc!(i32_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::U32)     => wfunc!(u32_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::U64)     => wfunc!(u64_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::I64)     => wfunc!(i64_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::F32)     => wfunc!(f32_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::F64)     => wfunc!(f64_gt, Type::BOOL),
+
+                    | (BinaryOperator::Lt, Type::I8)    => wfunc!(i32_lt, Type::BOOL),
+                    | (BinaryOperator::Lt, Type::I16)   => wfunc!(i32_lt, Type::BOOL),
+                    | (BinaryOperator::Lt, Type::U8)    => wfunc!(i32_lt, Type::BOOL),
+                    | (BinaryOperator::Lt, Type::U16)   => wfunc!(i32_lt, Type::BOOL),
+                    | (BinaryOperator::Lt, Type::I32)   => wfunc!(i32_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::U32)     => wfunc!(u32_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::U64)     => wfunc!(u64_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::I64)     => wfunc!(i64_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::F32)     => wfunc!(f32_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::F64)     => wfunc!(f64_lt, Type::BOOL),
+
+                    | (BinaryOperator::Ge, Type::I8)    => wfunc!(i32_ge, Type::BOOL),
+                    | (BinaryOperator::Ge, Type::I16)   => wfunc!(i32_ge, Type::BOOL),
+                    | (BinaryOperator::Ge, Type::U8)    => wfunc!(i32_ge, Type::BOOL),
+                    | (BinaryOperator::Ge, Type::U16)   => wfunc!(i32_ge, Type::BOOL),
+                    | (BinaryOperator::Ge, Type::I32)   => wfunc!(i32_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::U32)     => wfunc!(u32_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::U64)     => wfunc!(u64_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::I64)     => wfunc!(i64_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::F32)     => wfunc!(f32_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::F64)     => wfunc!(f64_ge, Type::BOOL),
+
+
+                    | (BinaryOperator::Le, Type::I8)    => wfunc!(i32_le, Type::BOOL),
+                    | (BinaryOperator::Le, Type::I16)   => wfunc!(i32_le, Type::BOOL),
+                    | (BinaryOperator::Le, Type::U8)    => wfunc!(i32_le, Type::BOOL),
+                    | (BinaryOperator::Le, Type::U16)   => wfunc!(i32_le, Type::BOOL),
+                    | (BinaryOperator::Le, Type::I32)   => wfunc!(i32_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::U32)     => wfunc!(u32_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::U64)     => wfunc!(u64_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::I64)     => wfunc!(i64_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::F32)     => wfunc!(f32_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::F64)     => wfunc!(f64_le, Type::BOOL),
 
                     _ => panic!("op: {operator:?} lhs: {lhs_anal:?} rhs: {rhs_anal:?}"),
                 };
@@ -1735,7 +1870,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 e.get_tag(wasm);
 
                 let mut slf = self;
-                let (local, l, r) = wasm.ite(
+                let (local, l, r) = wasm.lite(
                     &mut (&mut slf, scope),
                     |(slf, scope), wasm| {
                         let body = slf.expr(*body, *scope, wasm, path);
@@ -1818,7 +1953,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                 wasm.local_get(sym_local);
 
-                let tag = wasm.local(WasmType::I32);
+                let tag = wasm.i32_temp();
                 sym.kind().get_tag(wasm);
 
                 wasm.local_set(tag);
@@ -2292,35 +2427,34 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     (Type::I64, Type::BOOL) => {
                         wasm.i64_as_i32();
+                        let local = wasm.i32_temp();
                         wasm.ite(
-                            &mut (), 
-                            |_, wasm| {
-                                let local = wasm.local(WasmType::I32);
+                            |wasm| {
                                 wasm.i32_const(1);
                                 wasm.local_set(local);
-                                (local, ())
                             }, 
-                            |(_, local), wasm| {
+                            |wasm| {
                                 wasm.i32_const(0);
                                 wasm.local_set(local);
                             }
                         );
+
+                        wasm.local_get(local);
                     },
 
                     (Type::BOOL, Type::I64) => {
+                        let local = wasm.i64_temp();
                         wasm.ite(
-                            &mut (), 
-                            |_, wasm| {
-                                let local = wasm.local(WasmType::I64);
+                            |wasm| {
                                 wasm.i64_const(1);
                                 wasm.local_set(local);
-                                (local, ())
                             }, 
-                            |(_, local), wasm| {
+                            |wasm| {
                                 wasm.i64_const(0);
                                 wasm.local_set(local);
                             }
                         );
+                        wasm.local_get(local);
                     }
 
                     _ => {
@@ -2365,38 +2499,38 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 e.kind().get_tag(wasm);
 
                 let mut ret_ty = Type::Unit;
-                wasm.ite(&mut (), |_, wasm| {
+                wasm.ite(
+                |wasm| {
                     // TODO: Error messages, add it once errors are properly made
-                    wasm.call_template("dump_stack_trace");
-                    wasm.unreachable();
+                    wasm.panic();
+
                     let ty = match e.kind() {
                         TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),
                         TypeEnumKind::Tag(_) => Type::Unit,
                     };
 
                     ret_ty = ty;
-
-                    (wasm.local(ty.to_wasm_ty(&self.types)), ())
                 },
-                |(_, local), wasm| {
-                    match e.kind() {
-                        TypeEnumKind::TaggedUnion(v) => {
-                            let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
-                            if ty == Type::Unit {
-                                return
-                            }
 
-                            wasm.local_get(dup);
-                            wasm.u32_const(v.union_offset().try_into().unwrap());
-                            wasm.i32_add();
-                            wasm.read(ty.to_wasm_ty(&self.types));
-                            wasm.local_set(local)
-                        },
+                |_| {}
+                );
 
-                        TypeEnumKind::Tag(_) => wasm.unit(),
-                    }
+                'b: { match e.kind() {
+                    TypeEnumKind::TaggedUnion(v) => {
+                        let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
+                        if ty == Type::Unit {
+                            wasm.unit(); 
+                            break 'b;
+                        }
 
-                });
+                        wasm.local_get(dup);
+                        wasm.u32_const(v.union_offset().try_into().unwrap());
+                        wasm.i32_add();
+                        wasm.read(ret_ty.to_wasm_ty(&self.types));
+                    },
+
+                    TypeEnumKind::Tag(_) => wasm.unit(),
+                }};
 
                 AnalysisResult::new(ret_ty, true)
             },
@@ -2458,8 +2592,8 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 enum_sym.kind().get_tag(wasm);
 
                 let mut ret_ty = Type::Unit;
-                wasm.ite(self, |slf, wasm| {
-
+                wasm.ite(
+                |wasm| {
                     match func_sym.status() {
                         TypeEnumStatus::Option => {
                             let some_val = match enum_sym.kind() {
@@ -2468,30 +2602,29 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             };
 
                             ret_ty = some_val;
-                            let local = wasm.local(some_val.to_wasm_ty(&slf.types));
 
                             // Check the functions return signature for failure
                             {
                                 if func_sym.status() != TypeEnumStatus::Option {
-                                    wasm.error(slf.error(Error::FunctionDoesntReturnAnOption {
+                                    wasm.error(self.error(Error::FunctionDoesntReturnAnOption {
                                         source, func_typ: func.return_type }));
-                                    return (local, ());
+                                    return;
                                 }
                             }
 
                             // Codegen
                             'l: {
-                                let ns = slf.namespaces.get_type(func.return_type, &slf.types);
-                                let Some(ns) = slf.namespaces.get(ns)
+                                let ns = self.namespaces.get_type(func.return_type, &self.types);
+                                let Some(ns) = self.namespaces.get(ns)
                                 else { break 'l };
 
                                 let Some(call_func) = ns.get_func(StringMap::NONE)
                                 else { break 'l };
-                                let call_func = slf.funcs.get(call_func).unwrap();
+                                let call_func = self.funcs.get(call_func).unwrap();
                                 let FunctionKind::UserDefined { .. } = call_func.kind
                                 else { unreachable!() };
 
-                                let func_ret_wasm_ty = func.return_type.to_wasm_ty(&slf.types);
+                                let func_ret_wasm_ty = func.return_type.to_wasm_ty(&self.types);
                                 if func_ret_wasm_ty.stack_size() != 0 {
                                     let alloc = wasm.alloc_stack(func_ret_wasm_ty.stack_size());
 
@@ -2504,11 +2637,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                     wasm.call(call_func.wasm_id);
                                     wasm.ret();
                                 }
-
                             }
-
-
-                            (local, ())
                         },
 
 
@@ -2522,14 +2651,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             };
 
                             ret_ty = ok;
-                            let local = wasm.local(ok.to_wasm_ty(&slf.types));
 
                             // Check the functions return signature for failure
                             {
                                 if func_sym.status() != TypeEnumStatus::Result {
-                                    wasm.error(slf.error(Error::FunctionDoesntReturnAResult {
+                                    wasm.error(self.error(Error::FunctionDoesntReturnAResult {
                                         source, func_typ: func.return_type }));
-                                    return (local, ());
+                                    return;
                                 }
 
                                 let ferr = match func_sym.kind() {
@@ -2539,21 +2667,21 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                 };
 
                                 if !ferr.eq_sem(err) {
-                                    wasm.error(slf.error(Error::FunctionReturnsAResultButTheErrIsntTheSame { 
+                                    wasm.error(self.error(Error::FunctionReturnsAResultButTheErrIsntTheSame { 
                                         source, func_source: func.return_source, 
                                         func_err_typ: ferr, err_typ: err }));
-                                    return (local, ());
+                                    return;
                                 }
                             }
 
                             // Codegen
                             'l: {
-                                let ns = slf.namespaces.get_type(func.return_type, &slf.types);
-                                let Some(ns) = slf.namespaces.get(ns)
+                                let ns = self.namespaces.get_type(func.return_type, &self.types);
+                                let Some(ns) = self.namespaces.get(ns)
                                 else { break 'l };
                                 let Some(call_func) = ns.get_func(StringMap::ERR)
                                 else { break 'l };
-                                let call_func = slf.funcs.get(call_func).unwrap();
+                                let call_func = self.funcs.get(call_func).unwrap();
                                 let FunctionKind::UserDefined { .. } = call_func.kind
                                 else { unreachable!() };
 
@@ -2566,14 +2694,14 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                             wasm.local_get(dup);
                                             wasm.u32_const(v.union_offset().try_into().unwrap());
                                             wasm.i32_add();
-                                            wasm.read(ty.to_wasm_ty(&slf.types));
+                                            wasm.read(ty.to_wasm_ty(&self.types));
                                         },
 
                                         TypeEnumKind::Tag(_) => wasm.unit(),
                                     }
                                 }
 
-                                let func_ret_wasm_ty = func.return_type.to_wasm_ty(&slf.types);
+                                let func_ret_wasm_ty = func.return_type.to_wasm_ty(&self.types);
                                 if func_ret_wasm_ty.stack_size() != 0 {
                                     let alloc = wasm.alloc_stack(func_ret_wasm_ty.stack_size());
 
@@ -2586,35 +2714,33 @@ impl<'out> Analyzer<'_, 'out, '_> {
                                     wasm.call(call_func.wasm_id);
                                     wasm.ret();
                                 }
-
                             }
 
-
-                            (local, ())
-                        },
-                        
+                            },
+                            
                         _ => unreachable!(),
                     }
-                },
+                    },
 
-                |(slf, local), wasm| {
-                    match enum_sym.kind() {
-                        TypeEnumKind::TaggedUnion(v) => {
-                            let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
-                            if ty == Type::Unit {
-                                return
-                            }
+                    |_| {}
+                );
 
-                            wasm.local_get(dup);
-                            wasm.u32_const(v.union_offset().try_into().unwrap());
-                            wasm.i32_add();
-                            wasm.read(ty.to_wasm_ty(&slf.types));
-                            wasm.local_set(local)
-                        },
+                'l: { match enum_sym.kind() {
+                    TypeEnumKind::TaggedUnion(v) => {
+                        let ty = v.fields()[0].ty().unwrap_or(Type::Unit);
+                        if ty == Type::Unit {
+                            wasm.unit();
+                            break 'l
+                        }
 
-                        TypeEnumKind::Tag(_) => wasm.unit(),
-                    }
-                });
+                        wasm.local_get(dup);
+                        wasm.u32_const(v.union_offset().try_into().unwrap());
+                        wasm.i32_add();
+                        wasm.read(ty.to_wasm_ty(&self.types));
+                    },
+
+                    TypeEnumKind::Tag(_) => wasm.unit(),
+                } };
 
                 AnalysisResult::new(ret_ty, true)
             },
@@ -2827,7 +2953,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     }
 
                     let val_ty_wasm = val_ty.to_wasm_ty(&self.types);
-                    let local = wasm.local(WasmType::I32);
+                    let local = wasm.i32_temp();
                     wasm.local_set(local);
 
                     // get it to drop later
@@ -3215,7 +3341,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let base_ptr = wasm.local(WasmType::Ptr { size: ty.size() });
                 wasm.local_set(base_ptr);
 
-                let tag = wasm.local(WasmType::I32);
+                let tag = wasm.i32_temp();
                 wasm.local_get(base_ptr);
                 wasm.u32_read();
 
@@ -3335,15 +3461,14 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     wasm.i64_const(1);
                     wasm.i64_sub();
 
-                    let new_count = wasm.local(WasmType::I64);
+                    let new_count = wasm.i64_temp();
                     wasm.local_tee(new_count);
                     wasm.i64_eqz();
 
                     // If the counter is now 0, free it
                     // Elsewise, write it 
                     wasm.ite(
-                        &mut (),
-                        |_, wasm| {
+                        |wasm| {
                             for i in strct.fields {
                                 wasm.local_get(local);
                                 wasm.u32_const(i.1.try_into().unwrap());
@@ -3354,10 +3479,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                             wasm.local_get(local);
                             wasm.call_template("free");
-                            (local, ())
                         },
 
-                        |_, wasm| {
+                        |wasm| {
                             wasm.local_get(new_count);
                             wasm.local_get(local);
                             wasm.i64_write();
@@ -3425,7 +3549,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let base_ptr = wasm.local(WasmType::Ptr { size: ty.size() });
                 wasm.local_set(base_ptr);
 
-                let tag = wasm.local(WasmType::I32);
+                let tag = wasm.i32_temp();
                 wasm.local_get(base_ptr);
                 wasm.u32_read();
 

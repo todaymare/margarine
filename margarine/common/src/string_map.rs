@@ -18,22 +18,31 @@ impl<'a> StringMap<'a> {
     pub const VALUE : StringIndex = StringIndex(3);
     pub const BOOL : StringIndex = StringIndex(4);
     pub const STR : StringIndex = StringIndex(5);
-    pub const INT : StringIndex = StringIndex(6);
-    pub const FLOAT : StringIndex = StringIndex(7);
-    pub const UNIT : StringIndex = StringIndex(8);
-    pub const OK : StringIndex = StringIndex(9);
-    pub const ERR : StringIndex = StringIndex(10);
-    pub const SOME : StringIndex = StringIndex(11);
-    pub const NONE : StringIndex = StringIndex(12);
-    pub const SELF : StringIndex = StringIndex(13);
-    pub const NEW : StringIndex = StringIndex(14);
-    pub const INVALID_IDENT : StringIndex = StringIndex(15);
-    pub const RANGE : StringIndex = StringIndex(16);
-    pub const LOW   : StringIndex = StringIndex(17);
-    pub const HIGH  : StringIndex = StringIndex(18);
-    pub const COUNT : StringIndex = StringIndex(19);
+    pub const I8  : StringIndex = StringIndex(6);
+    pub const I16 : StringIndex = StringIndex(7);
+    pub const I32 : StringIndex = StringIndex(8);
+    pub const I64 : StringIndex = StringIndex(9);
+    pub const U8  : StringIndex = StringIndex(10);
+    pub const U16 : StringIndex = StringIndex(11);
+    pub const U32 : StringIndex = StringIndex(12);
+    pub const U64 : StringIndex = StringIndex(13);
+    pub const F32 : StringIndex = StringIndex(14);
+    pub const F64 : StringIndex = StringIndex(15);
+    pub const UNIT : StringIndex = StringIndex(16);
+    pub const NEVER : StringIndex = StringIndex(17);
+    pub const OK : StringIndex = StringIndex(18);
+    pub const ERR : StringIndex = StringIndex(19);
+    pub const SOME : StringIndex = StringIndex(20);
+    pub const NONE : StringIndex = StringIndex(21);
+    pub const SELF : StringIndex = StringIndex(22);
+    pub const NEW : StringIndex = StringIndex(23);
+    pub const INVALID_IDENT : StringIndex = StringIndex(24);
+    pub const RANGE : StringIndex = StringIndex(25);
+    pub const LOW   : StringIndex = StringIndex(26);
+    pub const HIGH  : StringIndex = StringIndex(27);
+    pub const COUNT : StringIndex = StringIndex(28);
 
-    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(20);
+    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(29);
 
  
     #[inline(always)]
@@ -57,9 +66,18 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("value"), Self::VALUE);
         assert_eq!(s.insert("bool"), Self::BOOL);
         assert_eq!(s.insert("str"), Self::STR);
-        assert_eq!(s.insert("int"), Self::INT);
-        assert_eq!(s.insert("float"), Self::FLOAT);
+        assert_eq!(s.insert("i8") , Self::I8);
+        assert_eq!(s.insert("i16"), Self::I16);
+        assert_eq!(s.insert("i32"), Self::I32);
+        assert_eq!(s.insert("i64"), Self::I64);
+        assert_eq!(s.insert("u8") , Self::U8);
+        assert_eq!(s.insert("u16"), Self::U16);
+        assert_eq!(s.insert("u32"), Self::U32);
+        assert_eq!(s.insert("u64"), Self::U64);
+        assert_eq!(s.insert("f32"), Self::F32);
+        assert_eq!(s.insert("f64"), Self::F64);
         assert_eq!(s.insert("unit"), Self::UNIT);
+        assert_eq!(s.insert("never"), Self::NEVER);
         assert_eq!(s.insert("ok"), Self::OK);
         assert_eq!(s.insert("err"), Self::ERR);
         assert_eq!(s.insert("some"), Self::SOME);

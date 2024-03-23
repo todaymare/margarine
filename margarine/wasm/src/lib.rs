@@ -8,6 +8,10 @@ use sti::{write, vec::Vec, string::String, arena::Arena};
 
 #[derive(Debug, Clone, Copy)]
 pub enum WasmType {
+    I8,
+    I16,
+    U8,
+    U16,
     I32,
     I64,
     F32,
@@ -26,8 +30,12 @@ pub enum WasmConstant {
 
 
 impl WasmType {
-    pub const fn name(self) -> &'static str {
+    pub const fn param_ty_name(self) -> &'static str {
         match self {
+            WasmType::I8  => "i32",
+            WasmType::I16 => "i32",
+            WasmType::U8  => "i32",
+            WasmType::U16 => "i32",
             WasmType::I32 => "i32",
             WasmType::I64 => "i64",
             WasmType::F32 => "f32",
@@ -171,7 +179,8 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         write!(buffer, r#"(func $alloc (import "::host" "alloc") (param i32) (result i32))"#);
         write!(buffer, r#"(func $free (import "::host" "free") (param i32))"#);
         write!(buffer, r#"(func $dump_stack_trace (import "::host" "dump_stack_trace"))"#);
-        write!(buffer, r#"(func $panic (import "::host" "panic") (param i32) (param i32) (param i32))"#);
+        write!(buffer, r#"(func $compiler_error (import "::host" "compiler_error") (param i32) (param i32) (param i32))"#);
+        write!(buffer, r#"(func $panic (import "::host" "panic"))"#);
         write!(buffer, r#"(func $printi32 (import "::host" "printi32") (param i32))"#);
         write!(buffer, r#"(func $printi64 (import "::host" "printi64") (param i64))"#);
         write!(buffer, r#"(func $printvar (import "::host" "printvar") (param i32) (param i32))"#);
@@ -251,6 +260,13 @@ pub struct WasmFunctionBuilder<'a> {
     params: Vec<WasmType, &'a Arena>,
 
     finaliser: String<&'a Arena>,
+
+    temporary_i32: Option<LocalId>,
+    temporary_i32_2: Option<LocalId>,
+    temporary_i64: Option<LocalId>,
+    temporary_i64_2: Option<LocalId>,
+    temporary_f32: Option<LocalId>,
+    temporary_f64: Option<LocalId>,
 }
 
 
@@ -267,6 +283,13 @@ impl<'a> WasmFunctionBuilder<'a> {
             block_nest: 0,
             stack_size: 8, // prev_sp + func_id
             finaliser: String::new_in(arena),
+
+            temporary_i32: None,
+            temporary_i32_2: None,
+            temporary_i64: None,
+            temporary_i64_2: None,
+            temporary_f32: None,
+            temporary_f64: None,
         }
     }
 
@@ -318,6 +341,12 @@ impl<'a> WasmFunctionBuilder<'a> {
 
         self.u32_const(num);
 
+        self.call_template("compiler_error");
+        self.panic();
+    }
+
+
+    pub fn panic(&mut self) {
         self.call_template("panic");
         self.unreachable();
     }
@@ -325,6 +354,10 @@ impl<'a> WasmFunctionBuilder<'a> {
 
     pub fn default(&mut self, ty: WasmType) {
         match ty {
+            WasmType::I8  => self.i32_const(0),
+            WasmType::I16 => self.i32_const(0),
+            WasmType::U8  => self.i32_const(0),
+            WasmType::U16 => self.i32_const(0),
             WasmType::I32 => self.i32_const(0),
             WasmType::I64 => self.i64_const(0),
             WasmType::F32 => self.f32_const(0.0),
@@ -361,21 +394,21 @@ impl WasmFunctionBuilder<'_> {
         } else { write!(buffer, "(export \"{}\")", self.function_id.0) };
 
         for (i, p) in self.params.iter().enumerate() {
-            write!(buffer, "(param $_{i} {}) ", p.name());
+            write!(buffer, "(param $_{i} {}) ", p.param_ty_name());
         }
 
 
         if let Some(ret) = self.ret {
             if ret.stack_size() == 0 {
-                write!(buffer, "(result {})", ret.name());
+                write!(buffer, "(result {})", ret.param_ty_name());
             }
 
-            write!(buffer, "(local $_ret {})", ret.name());
+            write!(buffer, "(local $_ret {})", ret.param_ty_name());
 
         }
 
         for (i, l) in self.locals.iter().enumerate() {
-            write!(buffer, "(local $_{} {}) ", self.params.len() + i, l.name());
+            write!(buffer, "(local $_{} {}) ", self.params.len() + i, l.param_ty_name());
         }
 
 
@@ -445,6 +478,10 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn read(&mut self, ty: WasmType) {
         match ty {
+            WasmType::I8  => self.i8_read(),
+            WasmType::I16 => self.i16_read(),
+            WasmType::U8  => self.u8_read(),
+            WasmType::U16 => self.u16_read(),
             WasmType::I32 => self.i32_read(),
             WasmType::I64 => self.i64_read(),
             WasmType::F32 => self.f32_read(),
@@ -466,6 +503,10 @@ impl<'a> WasmFunctionBuilder<'a> {
     #[inline(always)]
     pub fn write(&mut self, ty: WasmType) {
         match ty {
+            WasmType::I8  => self.i8_write(),
+            WasmType::I16 => self.i16_write(),
+            WasmType::U8  => self.u8_write(),
+            WasmType::U16 => self.u16_write(),
             WasmType::I32 => self.i32_write(),
             WasmType::I64 => self.i64_write(),
             WasmType::F32 => self.f32_write(),
@@ -484,7 +525,11 @@ impl<'a> WasmFunctionBuilder<'a> {
     ///
     pub fn eq(&mut self, ty: WasmType) {
         match ty {
-            WasmType::I32 => self.i32_eq(),
+            | WasmType::I8 
+            | WasmType::I16 
+            | WasmType::U8
+            | WasmType::U16
+            | WasmType::I32 => self.i32_eq(),
             WasmType::I64 => self.i64_eq(),
             WasmType::F32 => self.f32_eq(),
             WasmType::F64 => self.f64_eq(),
@@ -498,17 +543,34 @@ impl<'a> WasmFunctionBuilder<'a> {
     ///
     pub fn ne(&mut self, ty: WasmType) {
         match ty {
-            WasmType::I32 => self.i32_ne(),
+            | WasmType::I8 
+            | WasmType::I16 
+            | WasmType::U8
+            | WasmType::U16
+            | WasmType::I32 => self.i32_ne(),
             WasmType::I64 => self.i64_ne(),
             WasmType::F32 => self.f32_ne(),
             WasmType::F64 => self.f64_ne(),
             WasmType::Ptr { size } => self.ptr_veq(size),
         }
     }
+
+
+    pub fn ite(
+        &mut self,
+        then_body: impl FnOnce(&mut Self),
+        else_body: impl FnOnce(&mut Self),
+    ) {
+        write!(self.body, "(if (then ");
+        let r1 = then_body(self);
+        write!(self.body, ")(else ");
+        else_body(self);
+        write!(self.body, "))");
+    }
    
 
     #[inline(always)]
-    pub fn ite<T, A>(
+    pub fn lite<T, A>(
         &mut self,
         value: &mut T,
         then_body: impl FnOnce(&mut T, &mut WasmFunctionBuilder) -> (LocalId, A),
@@ -560,6 +622,58 @@ impl<'a> WasmFunctionBuilder<'a> {
 
         self.block_nest -= 1;
         write!(self.body, ")");
+    }
+
+
+    pub fn assert_eq(
+        &mut self,
+        ty: WasmType,
+        message: &str,
+    ) {
+        match ty {
+            | WasmType::I8
+            | WasmType::I16
+            | WasmType::U8
+            | WasmType::U16
+            | WasmType::I32 => self.i32_ne(),
+            WasmType::I64 => self.i64_ne(),
+            WasmType::F32 => self.f32_ne(),
+            WasmType::F64 => self.f64_ne(),
+            WasmType::Ptr { .. } => self.i32_ne(),
+        }
+
+        self.ite(
+        |wasm| {
+            wasm.panic();
+        },
+        |_| {}
+        );
+    }
+
+
+    pub fn assert_ne(
+        &mut self,
+        ty: WasmType,
+        message: &str,
+    ) {
+        match ty {
+            | WasmType::I8
+            | WasmType::I16
+            | WasmType::U8
+            | WasmType::U16
+            | WasmType::I32 => self.i32_eq(),
+            WasmType::I64 => self.i64_eq(),
+            WasmType::F32 => self.f32_eq(),
+            WasmType::F64 => self.f64_eq(),
+            WasmType::Ptr { .. } => self.i32_eq(),
+        }
+
+        self.ite(
+        |wasm| {
+            wasm.panic();
+        },
+        |_| {}
+        );
     }
 }
 

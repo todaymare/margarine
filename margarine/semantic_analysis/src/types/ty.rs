@@ -8,8 +8,15 @@ use super::{ty_map::TypeMap, ty_sym::{TypeEnumKind, TypeKind, TypeStructStatus}}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
-    I64,
+    I8,
+    I16,
     I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
     F64,
 
     Unit,
@@ -28,18 +35,6 @@ impl Type {
 
 
 impl Type {
-    pub fn type_id(self) -> TypeId {
-        match self {
-            Type::I64 => TypeId::I64,
-            Type::I32 => TypeId::I32,
-            Type::F64 => TypeId::F64,
-            Type::Unit => TypeId::UNIT,
-            Type::Never => TypeId::NEVER,
-            Type::Error => TypeId::ERROR,
-            Type::Custom(v) => v,
-        }
-    }
-
     ///
     /// Returns the textual representation of
     /// the type. This does **NOT** have to be unique
@@ -50,9 +45,16 @@ impl Type {
         types: &TypeMap,
     ) -> &'a str {
         match self {
-            Type::I64    => "int",
+            Type::I8     => "i8",
+            Type::I16    => "i16",
             Type::I32    => "i32",
-            Type::F64    => "float",
+            Type::I64    => "i64",
+            Type::U8     => "i8",
+            Type::U16    => "u16",
+            Type::U32    => "u32",
+            Type::U64    => "u64",
+            Type::F32    => "f32",
+            Type::F64    => "f64",
             Type::Unit   => "()",
             Type::Never  => "never",
             Type::Error  => "error",
@@ -70,11 +72,19 @@ impl Type {
         types: &TypeMap,
     ) -> StringIndex {
         match self {
-            Type::I64 => StringMap::INT,
-            Type::I32 => unimplemented!(),
-            Type::F64 => StringMap::FLOAT,
+            Type::I8  => StringMap::I8,
+            Type::I16 => StringMap::I16,
+            Type::I32 => StringMap::I32,
+            Type::I64 => StringMap::I64,
+            Type::U8  => StringMap::U8,
+            Type::U16 => StringMap::U16,
+            Type::U32 => StringMap::U32,
+            Type::U64 => StringMap::U64,
+            Type::F32 => StringMap::F32,
+            Type::F64 => StringMap::F64,
+
             Type::Unit => StringMap::UNIT,
-            Type::Never => unimplemented!(),
+            Type::Never => StringMap::NEVER,
             Type::Error => StringMap::ERR,
             Type::Custom(v) => types.path(v),
         }
@@ -87,8 +97,15 @@ impl Type {
     ///
     pub fn eq_lit(self, oth: Type) -> bool {
         match (self, oth) {
-            | (Type::I64, Type::I64) 
+            | (Type::I8 , Type::I8 ) 
+            | (Type::I16, Type::I16) 
             | (Type::I32, Type::I32) 
+            | (Type::I64, Type::I64) 
+            | (Type::U8 , Type::U8 ) 
+            | (Type::U16, Type::U16) 
+            | (Type::U32, Type::U32) 
+            | (Type::U64, Type::U64) 
+            | (Type::F32, Type::F32) 
             | (Type::F64, Type::F64) 
             | (Type::Unit, Type::Unit) 
             | (Type::Never, Type::Never) 
@@ -127,15 +144,56 @@ impl Type {
     ///
     #[inline(always)]
     pub fn is_number(self) -> bool {
-        self.eq_sem(Type::I64)
-        || self.eq_sem(Type::F64)
+        self.is_integer()
+        || self.is_float()
+    }
+
+
+    #[inline(always)]
+    pub fn is_integer(self) -> bool {
+        match self {
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64 => true, 
+
+            Type::Never => true,
+            Type::Error => true,
+
+            _ => false
+        }
+    }
+
+
+    #[inline(always)]
+    pub fn is_float(self) -> bool {
+        match self {
+            | Type::F32
+            | Type::F64 => true, 
+
+            Type::Never => true,
+            Type::Error => true,
+
+            _ => false
+        }
     }
 
 
     pub fn size(self, ty_map: &TypeMap) -> usize {
         match self {
+            Type::I8  => 1, 
+            Type::I16 => 2, 
+            Type::I32 => 4, 
             Type::I64 => 8, 
-            Type::I32 => 8,
+            Type::U8  => 1, 
+            Type::U16 => 2, 
+            Type::U32 => 4, 
+            Type::U64 => 8, 
+            Type::F32 => 4,
             Type::F64 => 8,
             Type::Unit => 0,
             Type::Never => 0,
@@ -150,9 +208,17 @@ impl Type {
 
     pub fn to_wasm_ty(self, ty_map: &TypeMap) -> WasmType {
         match self {
-            Type::I64 => WasmType::I64, 
+            Type::I8  => WasmType::I32,
+            Type::I16 => WasmType::I32,
             Type::I32 => WasmType::I32,
+            Type::I64 => WasmType::I64, 
+            Type::U8  => WasmType::I32,
+            Type::U16 => WasmType::I32,
+            Type::U32 => WasmType::I32,
+            Type::U64 => WasmType::I64,
+            Type::F32 => WasmType::F32,
             Type::F64 => WasmType::F64,
+            
             Type::Unit => WasmType::I64,
             Type::Never => WasmType::I64,
             Type::Error => WasmType::I64,
@@ -184,16 +250,23 @@ impl Type {
 impl core::hash::Hash for Type {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         match self {
-            Type::I64 => state.write_u8(0),
-            Type::I32 => state.write_u8(1),
-            Type::F64 => state.write_u8(2),
+            Type::I8  => state.write_u8(0),
+            Type::I16 => state.write_u8(1),
+            Type::I32 => state.write_u8(2),
+            Type::I64 => state.write_u8(3),
+            Type::U8  => state.write_u8(4),
+            Type::U16 => state.write_u8(5),
+            Type::U32 => state.write_u8(7),
+            Type::U64 => state.write_u8(8),
+            Type::F32 => state.write_u8(9),
+            Type::F64 => state.write_u8(10),
 
-            Type::Unit => state.write_u8(4),
-            Type::Never => state.write_u8(5),
-            Type::Error => state.write_u8(6),
+            Type::Unit => state.write_u8(101),
+            Type::Never => state.write_u8(102),
+            Type::Error => state.write_u8(103),
 
             Type::Custom(v) => {
-                state.write_u8(7);
+                state.write_u8(200);
                 v.hash(state);
             },
         };

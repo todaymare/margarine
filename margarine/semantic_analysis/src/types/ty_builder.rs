@@ -651,13 +651,22 @@ impl<'out> TypeBuilder<'_> {
         ty: Type
     ) -> Result<usize, Error> {
         Ok(match ty {
-            Type::I64 => 8,
+            Type::I8  => 1,
+            Type::I16 => 2,
             Type::I32 => 4,
+            Type::I64 => 8,
+            Type::U8  => 1,
+            Type::U16 => 2,
+            Type::U32 => 4,
+            Type::U64 => 8,
+            Type::F32 => 4,
             Type::F64 => 8,
+
             Type::Unit  => 1,
             Type::Never => 1,
             Type::Error => 1,
             Type::Custom(v) => self.resolve_type(data, v)?.align(),
+
         })
     }
 

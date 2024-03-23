@@ -115,6 +115,25 @@ impl Scope {
         namespaces: &mut NamespaceMap,
         types: &TypeMap,
     ) -> Option<NamespaceId> {
+        let check_prims = |name, namespaces: &mut NamespaceMap<'_>| {
+            let val = match name {
+                StringMap::I8  => namespaces.get_type(Type::I8 , types),
+                StringMap::I16 => namespaces.get_type(Type::I16, types),
+                StringMap::I32 => namespaces.get_type(Type::I32, types),
+                StringMap::I64 => namespaces.get_type(Type::I64, types),
+                StringMap::U8  => namespaces.get_type(Type::I8 , types),
+                StringMap::U16 => namespaces.get_type(Type::I16, types),
+                StringMap::U32 => namespaces.get_type(Type::I32, types),
+                StringMap::U64 => namespaces.get_type(Type::I64, types),
+                StringMap::F32 => namespaces.get_type(Type::F32, types),
+                StringMap::F64 => namespaces.get_type(Type::F64, types),
+
+                StringMap::BOOL => namespaces.get_type(Type::BOOL, types),
+                _ => return None,
+            };
+
+            Some(val)
+        };
         let s = self.over(scopes, |current| {
             if let ScopeKind::ExplicitNamespace(var) = current.kind() {
                 if var.name == name {
@@ -138,14 +157,7 @@ impl Scope {
             }
             
             if let ScopeKind::Root = current.kind() {
-                let ty = match name {
-                    StringMap::INT => namespaces.get_type(Type::I64, types),
-                    StringMap::FLOAT => namespaces.get_type(Type::F64, types),
-                    StringMap::BOOL => namespaces.get_type(Type::BOOL, types),
-                    _ => return None,
-                };
-
-                return Some(ty);
+                return check_prims(name, namespaces); 
             }
 
             None
@@ -153,14 +165,7 @@ impl Scope {
 
         if let Some(s) = s { return Some(s) }
 
-        let ty = match name {
-            StringMap::INT => namespaces.get_type(Type::I64, types),
-            StringMap::FLOAT => namespaces.get_type(Type::F64, types),
-            StringMap::BOOL => namespaces.get_type(Type::BOOL, types),
-            _ => return None,
-        };
-
-        Some(ty)
+        check_prims(name, namespaces)
     }
 
 

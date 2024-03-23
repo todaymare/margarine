@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use sti::{write, format_in, arena_pool::ArenaPool};
 
-use crate::{WasmFunctionBuilder, StringAddress, LocalId, GlobalId, FunctionId, StackPointer, LoopId, BlockId};
+use crate::{BlockId, FunctionId, GlobalId, LocalId, LoopId, StackPointer, StringAddress, WasmFunctionBuilder, WasmType};
 
 impl WasmFunctionBuilder<'_> { 
     ///
@@ -254,6 +254,24 @@ impl WasmFunctionBuilder<'_> {
 
 
 impl WasmFunctionBuilder<'_> {
+    pub fn i32_temp(&mut self) -> LocalId {
+        if let Some(val) = self.temporary_i32 {
+            return val
+        }
+
+        self.temporary_i32 = Some(self.local(WasmType::I32));
+        self.i32_temp()
+    }
+
+    pub fn i32_temp2(&mut self) -> LocalId {
+        if let Some(val) = self.temporary_i32_2 {
+            return val
+        }
+
+        self.temporary_i32_2 = Some(self.local(WasmType::I32));
+        self.i32_temp2()
+    }
+
     ///
     /// Pushes an `i32` constant to the stack
     /// () -> `i32`
@@ -261,14 +279,6 @@ impl WasmFunctionBuilder<'_> {
     #[inline(always)]
     pub fn i32_const(&mut self, num: i32) { write!(self.body, "i32.const {num} "); }
     
-    ///
-    /// Pushes an `u32` constant to the stack
-    /// () -> `u32`
-    ///
-    #[inline(always)]
-    pub fn u32_const(&mut self, num: u32) { write!(self.body, "i32.const {} ", i32::from_ne_bytes(num.to_ne_bytes())); }
-
-
     #[inline(always)]
     pub fn i32_eq(&mut self) { write!(self.body, "i32.eq "); }
 
@@ -301,10 +311,48 @@ impl WasmFunctionBuilder<'_> {
     pub fn i32_mul(&mut self) { write!(self.body, "i32.mul "); }
 
     #[inline(always)]
-    pub fn i32_div(&mut self) { write!(self.body, "i32.div_s "); }
+    pub fn i32_div(&mut self) {
+        let d = self.i32_temp();
+        let n = self.i32_temp2();
+        self.local_set(d);
+        self.local_set(n);
+
+        // d != 0
+        self.local_get(d);
+        self.i32_const(0);
+        self.assert_ne(WasmType::I32, "division by zero");
+
+        // n != INTMIN || d != -1
+        self.local_get(n);
+        self.i32_const(i32::MIN);
+        self.i32_ne();
+
+        self.local_get(d);
+        self.i32_const(-1);
+        self.i32_ne();
+
+        self.i32_add();
+        self.i32_const(0);
+        self.assert_eq(WasmType::I32, "division underflow");
+        
+        // Divide
+        self.local_get(n);
+        self.local_get(d);
+        write!(self.body, "i32.div_s ");
+    }
 
     #[inline(always)]
-    pub fn i32_rem(&mut self) { write!(self.body, "i32.rem_s "); }
+    pub fn i32_rem(&mut self) {
+        // Assert not equal
+        let local = self.i32_temp();
+        self.local_tee(local);
+        self.i32_const(0);
+        self.assert_ne(WasmType::I32, "division by zero");
+
+        // Divide
+        self.local_get(local);
+        write!(self.body, "i32.rem_s ");
+    }
     
     #[inline(always)]
     pub fn i32_as_i64(&mut self) { write!(self.body, "i64.extend_i32_s "); }
@@ -372,6 +420,17 @@ impl WasmFunctionBuilder<'_> {
 
 
 impl WasmFunctionBuilder<'_> {
+    ///
+    /// Pushes an `u32` constant to the stack
+    /// () -> `u32`
+    ///
+    #[inline(always)]
+    pub fn u32_const(&mut self, num: u32) { write!(self.body, "i32.const {} ", i32::from_ne_bytes(num.to_ne_bytes())); }
+ 
+    /// Checks if the value at the top of the stack is 0
+    #[inline(always)]
+    pub fn u32_eqz(&mut self) { self.i32_eqz() }
+
     #[inline(always)]
     pub fn u32_gt(&mut self) { write!(self.body, "i32.gt_u "); }
 
@@ -385,10 +444,30 @@ impl WasmFunctionBuilder<'_> {
     pub fn u32_le(&mut self) { write!(self.body, "i32.le_u "); }
 
     #[inline(always)]
-    pub fn u32_div(&mut self) { write!(self.body, "i32.div_u "); }
+    pub fn u32_div(&mut self) {
+        // Assert not equal
+        let local = self.i32_temp();
+        self.local_tee(local);
+        self.i32_const(0);
+        self.assert_ne(WasmType::I32, "division by zero");
+
+        // Divide
+        self.local_get(local);
+        write!(self.body, "i32.div_u ");
+    }
 
     #[inline(always)]
-    pub fn u32_rem(&mut self) { write!(self.body, "i32.rem_u "); }
+    pub fn u32_rem(&mut self) {
+        // Assert not equal
+        let local = self.i32_temp();
+        self.local_tee(local);
+        self.i32_const(0);
+        self.assert_ne(WasmType::I32, "division by zero");
+
+        // Divide
+        self.local_get(local);
+        write!(self.body, "i32.rem_u ");
+    }
  
     #[inline(always)]
     pub fn u32_as_i64(&mut self) { write!(self.body, "i64.extend_i32_s "); }
@@ -400,7 +479,7 @@ impl WasmFunctionBuilder<'_> {
     pub fn u32_as_f64(&mut self) { write!(self.body, "f32.convert_i64_u "); }
 
     #[inline(always)]
-    pub fn u32_bw_right_shift(&mut self) { write!(self.body, "i32.shr_u"); }
+    pub fn u32_bw_right_shift(&mut self) { write!(self.body, "i32.shr_u "); }
 
     ///
     /// Reads an `u32` at a pointer
@@ -415,10 +494,101 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn u32_write(&mut self) { self.i32_write() }
+
+
+    /// 
+    /// Writes a `i8` to the given pointer
+    /// `ptr(i8)` -> 'i8'
+    ///
+    #[inline(always)]
+    pub fn i8_read(&mut self) { write!(self.body, "i32.load8_s ") }
+
+    /// 
+    /// Writes a `i8` to the given pointer
+    /// `i8`, `ptr(i8)` -> ()
+    ///
+    #[inline(always)]
+    pub fn i8_write(&mut self) { write!(self.body, "i32.store8 ") }
+
+    #[inline(always)]
+    pub fn i8_bw_left_shift(&mut self) {
+        self.i32_bw_left_shift();
+        self.i32_const(0xff);
+        self.i32_bw_and();
+    }
+
+    /// 
+    /// Writes a `u8` to the given pointer
+    /// `ptr(u8)` -> 'u8'
+    ///
+    #[inline(always)]
+    pub fn u8_read(&mut self) { write!(self.body, "i32.load8_u ") }
+
+    /// 
+    /// Writes a `u8` to the given pointer
+    /// `u8`, `ptr(u8)` -> ()
+    ///
+    #[inline(always)]
+    pub fn u8_write(&mut self) { self.i8_write() }
+
+
+    /// 
+    /// Writes a `i8` to the given pointer
+    /// `ptr(i8)` -> 'i8'
+    ///
+    #[inline(always)]
+    pub fn i16_read(&mut self) { write!(self.body, "i32.load16_s ") }
+
+    /// 
+    /// Writes a `i16` to the given pointer
+    /// `i16`, `ptr(i16)` -> ()
+    ///
+    #[inline(always)]
+    pub fn i16_write(&mut self) { write!(self.body, "i32.store16 ") }
+
+    #[inline(always)]
+    pub fn i16_bw_left_shift(&mut self) {
+        self.i32_bw_left_shift();
+        self.i32_const(0xffff);
+        self.i32_bw_and();
+    }
+
+
+    /// 
+    /// Writes a `u16` to the given pointer
+    /// `ptr(u16)` -> 'u16'
+    ///
+    #[inline(always)]
+    pub fn u16_read(&mut self) { write!(self.body, "i32.load16_u ") }
+
+    /// 
+    /// Writes a `u16` to the given pointer
+    /// `u16`, `ptr(u16)` -> ()
+    ///
+    #[inline(always)]
+    pub fn u16_write(&mut self) { self.i16_write() }
 }
 
 
 impl WasmFunctionBuilder<'_> {
+    pub fn i64_temp(&mut self) -> LocalId {
+        if let Some(val) = self.temporary_i64 {
+            return val
+        }
+
+        self.temporary_i64 = Some(self.local(WasmType::I64));
+        self.i64_temp()
+    }
+
+   pub fn i64_temp2(&mut self) -> LocalId {
+        if let Some(val) = self.temporary_i64_2 {
+            return val
+        }
+
+        self.temporary_i64_2 = Some(self.local(WasmType::I64));
+        self.i64_temp2()
+    }
+
     ///
     /// Pushes an i64 constant to the stack
     ///
@@ -492,7 +662,35 @@ impl WasmFunctionBuilder<'_> {
     pub fn i64_mul(&mut self) { write!(self.body, "i64.mul "); }
 
     #[inline(always)]
-    pub fn i64_div(&mut self) { write!(self.body, "i64.div_s "); }
+    pub fn i64_div(&mut self) {
+        let d = self.i64_temp();
+        let n = self.i64_temp2();
+        self.local_set(d);
+        self.local_set(n);
+
+        // d != 0
+        self.local_get(d);
+        self.i64_const(0);
+        self.assert_ne(WasmType::I64, "division by zero");
+
+        // n != INTMIN || d != -1
+        self.local_get(n);
+        self.i64_const(i64::MIN);
+        self.i64_ne();
+
+        self.local_get(d);
+        self.i64_const(-1);
+        self.i64_ne();
+
+        self.i32_add();
+        self.i32_const(0);
+        self.assert_eq(WasmType::I32, "division underflow");
+
+        // Divide
+        self.local_get(n);
+        self.local_get(d);
+        write!(self.body, "i64.div_s ");
+    }
 
     #[inline(always)]
     pub fn i64_rem(&mut self) { write!(self.body, "i64.rem_s "); }
@@ -608,6 +806,15 @@ impl WasmFunctionBuilder<'_> {
 
 
 impl WasmFunctionBuilder<'_> {
+    pub fn f32_temp(&mut self) -> LocalId {
+        if let Some(val) = self.temporary_f32 {
+            return val
+        }
+
+        self.temporary_f32 = Some(self.local(WasmType::F32));
+        self.f32_temp()
+    }
+
     #[inline(always)]
     pub fn f32_const(&mut self, val: f32) { write!(self.body, "f32.const {val} "); }
 
@@ -648,16 +855,68 @@ impl WasmFunctionBuilder<'_> {
     pub fn f32_as_f64(&mut self) { write!(self.body, "f64.promote_f32 "); }
 
     #[inline(always)]
-    pub fn f32_as_i32(&mut self) { write!(self.body, "i32.trunc_f32_s "); }
+    pub fn f32_as_i32(&mut self) {
+        let local = self.f32_temp();
+        self.local_set(local);
+
+        // Check that it is not NaN
+        // If it is NaN then it won't be equal
+        // to itself
+        self.local_get(local);
+        self.local_get(local);
+        self.assert_ne(WasmType::F32, "f32 is NaN");
+
+        self.local_get(local);
+        write!(self.body, "i32.trunc_f32_s ");
+    }
 
     #[inline(always)]
-    pub fn f32_as_u32(&mut self) { write!(self.body, "i32.trunc_f32_u "); }
+    pub fn f32_as_u32(&mut self) {
+        let local = self.f32_temp();
+        self.local_set(local);
+
+        // Check that it is not NaN
+        // If it is NaN then it won't be equal
+        // to itself
+        self.local_get(local);
+        self.local_get(local);
+        self.assert_ne(WasmType::F32, "f32 is NaN");
+
+        self.local_get(local);
+        write!(self.body, "i32.trunc_f32_u ");
+    }
 
     #[inline(always)]
-    pub fn f32_as_i64(&mut self) { write!(self.body, "i64.trunc_f32_u "); }
+    pub fn f32_as_i64(&mut self) {
+        let local = self.f32_temp();
+        self.local_set(local);
+
+        // Check that it is not NaN
+        // If it is NaN then it won't be equal
+        // to itself
+        self.local_get(local);
+        self.local_get(local);
+        self.assert_ne(WasmType::F32, "f32 is NaN");
+
+        self.local_get(local);
+        write!(self.body, "i64.trunc_f32_u ");
+    }
 
     #[inline(always)]
-    pub fn f32_as_u64(&mut self) { write!(self.body, "i64.trunc_f32_u "); }
+    pub fn f32_as_u64(&mut self) {
+        let local = self.f32_temp();
+        self.local_set(local);
+
+        // Check that it is not NaN
+        // If it is NaN then it won't be equal
+        // to itself
+        self.local_get(local);
+        self.local_get(local);
+        self.assert_ne(WasmType::F32, "f32 is NaN");
+
+        self.local_get(local);
+        write!(self.body, "i64.trunc_f32_u ");
+    }
 
     #[inline(always)]
     pub fn f32_reinterp_i32(&mut self) { write!(self.body, "i32.reinterpret_f32 "); }
@@ -715,6 +974,15 @@ impl WasmFunctionBuilder<'_> {
 
 
 impl WasmFunctionBuilder<'_> {
+    pub fn f64_temp(&mut self) -> LocalId {
+        if let Some(val) = self.temporary_f64 {
+            return val
+        }
+
+        self.temporary_f64 = Some(self.local(WasmType::F64));
+        self.f64_temp()
+    }
+
     #[inline(always)]
     pub fn f64_const(&mut self, val: f64) { write!(self.body, "f64.const {val} "); }
 
@@ -755,16 +1023,68 @@ impl WasmFunctionBuilder<'_> {
     pub fn f64_as_f32(&mut self) { write!(self.body, "f32.demote_f64 "); }
 
     #[inline(always)]
-    pub fn f64_as_i32(&mut self) { write!(self.body, "i32.trunc_f64_s "); }
+    pub fn f64_as_i32(&mut self) {
+        let local = self.f64_temp();
+        self.local_set(local);
+
+        // Check that it is not NaN
+        // If it is NaN then it won't be equal
+        // to itself
+        self.local_get(local);
+        self.local_get(local);
+        self.assert_ne(WasmType::F64, "f64 is NaN");
+
+        self.local_get(local);
+        write!(self.body, "i32.trunc_f64_s ");
+    }
 
     #[inline(always)]
-    pub fn f64_as_u32(&mut self) { write!(self.body, "i32.trunc_f64_u "); }
+    pub fn f64_as_u32(&mut self) {
+        let local = self.f64_temp();
+        self.local_set(local);
+
+        // Check that it is not NaN
+        // If it is NaN then it won't be equal
+        // to itself
+        self.local_get(local);
+        self.local_get(local);
+        self.assert_ne(WasmType::F64, "f64 is NaN");
+
+        self.local_get(local);
+        write!(self.body, "i32.trunc_f64_u ");
+    }
 
     #[inline(always)]
-    pub fn f64_as_i64(&mut self) { write!(self.body, "i64.trunc_f64_u "); }
+    pub fn f64_as_i64(&mut self) {
+        let local = self.f64_temp();
+        self.local_set(local);
+
+        // Check that it is not NaN
+        // If it is NaN then it won't be equal
+        // to itself
+        self.local_get(local);
+        self.local_get(local);
+        self.assert_ne(WasmType::F64, "f64 is NaN");
+
+        self.local_get(local);
+        write!(self.body, "i64.trunc_f64_u ");
+    }
 
     #[inline(always)]
-    pub fn f64_as_u64(&mut self) { write!(self.body, "i64.trunc_f64_u "); }
+    pub fn f64_as_u64(&mut self) {
+        let local = self.f64_temp();
+        self.local_set(local);
+
+        // Check that it is not NaN
+        // If it is NaN then it won't be equal
+        // to itself
+        self.local_get(local);
+        self.local_get(local);
+        self.assert_ne(WasmType::F64, "f64 is NaN");
+
+        self.local_get(local);
+        write!(self.body, "i64.trunc_f64_u ");
+    }
 
     #[inline(always)]
     pub fn f64_reinterp_i32(&mut self) { write!(self.body, "i32.reinterpret_f64 "); }

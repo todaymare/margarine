@@ -36,9 +36,17 @@ impl<'a> DataType<'a> {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum DataTypeKind<'a> {
-    Int,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
+    F64,
     Bool,
-    Float,
     Unit,
     Never,
     Option(&'a DataType<'a>),
@@ -63,41 +71,50 @@ impl<'a> DataTypeKind<'a> {
 impl std::hash::Hash for DataTypeKind<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
-            DataTypeKind::Int => 0.hash(state),
-            DataTypeKind::Bool => 1.hash(state),
-            DataTypeKind::Float => 2.hash(state),
-            DataTypeKind::Unit => 3.hash(state),
-            DataTypeKind::Never => 6.hash(state),
+            DataTypeKind::I8  => 0.hash(state),
+            DataTypeKind::I16 => 1.hash(state),
+            DataTypeKind::I32 => 2.hash(state),
+            DataTypeKind::I64 => 3.hash(state),
+            DataTypeKind::U8  => 4.hash(state),
+            DataTypeKind::U16 => 5.hash(state),
+            DataTypeKind::U32 => 6.hash(state),
+            DataTypeKind::U64 => 7.hash(state),
+            DataTypeKind::F32 => 8.hash(state),
+            DataTypeKind::F64 => 9.hash(state),
+
+            DataTypeKind::Bool => 101.hash(state),
+            DataTypeKind::Unit => 102.hash(state),
+            DataTypeKind::Never => 103.hash(state),
             DataTypeKind::Option(v) => {
-                7.hash(state);
+                201.hash(state);
                 v.kind().hash(state)
             },
             
             DataTypeKind::Result(v1, v2) => {
-                8.hash(state);
+                202.hash(state);
                 v1.kind().hash(state);
                 v2.kind().hash(state);
             },
 
             DataTypeKind::CustomType(v) => {
-                9.hash(state);
+                300.hash(state);
                 v.hash(state)
             },
 
             DataTypeKind::Tuple(v) => {
-                10.hash(state);
+                203.hash(state);
                 v.len().hash(state);
                 v.iter().for_each(|x| x.kind().hash(state));
             },
 
             DataTypeKind::Within(name, dt) => {
-                11.hash(state);
+                204.hash(state);
                 name.hash(state);
                 dt.kind().hash(state);
             },
 
             DataTypeKind::Rc(v) => {
-                12.hash(state);
+                205.hash(state);
                 v.kind().hash(state);
             }
         }
@@ -382,8 +399,16 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 DataTypeKind::Within(identifier, self.arena.alloc_new(self.expect_type()?))
             } else {
                 match identifier {
-                    StringMap::INT   => DataTypeKind::Int,
-                    StringMap::FLOAT => DataTypeKind::Float,
+                    StringMap::I8  => DataTypeKind::I8,
+                    StringMap::I16 => DataTypeKind::I16,
+                    StringMap::I32 => DataTypeKind::I32,
+                    StringMap::I64 => DataTypeKind::I64,
+                    StringMap::U8  => DataTypeKind::U8,
+                    StringMap::U16 => DataTypeKind::U16,
+                    StringMap::U32 => DataTypeKind::U32,
+                    StringMap::U64 => DataTypeKind::U64,
+                    StringMap::F32 => DataTypeKind::F32,
+                    StringMap::F64 => DataTypeKind::F64,
                     StringMap::BOOL  => DataTypeKind::Bool,
                     _ => DataTypeKind::CustomType(identifier),
                 }
