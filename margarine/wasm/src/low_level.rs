@@ -376,34 +376,34 @@ impl WasmFunctionBuilder<'_> {
     pub fn i32_reinterp_f64(&mut self) { write!(self.body, "f64.reinterpret_i32 "); }
 
     #[inline(always)]
-    pub fn i32_bw_and(&mut self) { write!(self.body, "i32.and"); }
+    pub fn i32_bw_and(&mut self) { write!(self.body, "i32.and "); }
 
     #[inline(always)]
-    pub fn i32_bw_or(&mut self) { write!(self.body, "i32.or"); }
+    pub fn i32_bw_or(&mut self) { write!(self.body, "i32.or "); }
 
     #[inline(always)]
-    pub fn i32_bw_xor(&mut self) { write!(self.body, "i32.xor"); }
+    pub fn i32_bw_xor(&mut self) { write!(self.body, "i32.xor "); }
 
     #[inline(always)]
-    pub fn i32_bw_left_shift(&mut self) { write!(self.body, "i32.shl"); }
+    pub fn i32_bw_left_shift(&mut self) { write!(self.body, "i32.shl "); }
 
     #[inline(always)]
-    pub fn i32_bw_right_shift(&mut self) { write!(self.body, "i32.shr_s"); }
+    pub fn i32_bw_right_shift(&mut self) { write!(self.body, "i32.shr_s "); }
 
     #[inline(always)]
-    pub fn i32_bw_rotate_left(&mut self) { write!(self.body, "i32.rotl"); }
+    pub fn i32_bw_rotate_left(&mut self) { write!(self.body, "i32.rotl "); }
 
     #[inline(always)]
-    pub fn i32_bw_rotate_right(&mut self) { write!(self.body, "i32.rotr"); }
+    pub fn i32_bw_rotate_right(&mut self) { write!(self.body, "i32.rotr "); }
 
     #[inline(always)]
-    pub fn i32_bw_clz(&mut self) { write!(self.body, "i32.clz"); }
+    pub fn i32_bw_clz(&mut self) { write!(self.body, "i32.clz "); }
 
     #[inline(always)]
-    pub fn i32_bw_ctz(&mut self) { write!(self.body, "i32.ctz"); }
+    pub fn i32_bw_ctz(&mut self) { write!(self.body, "i32.ctz "); }
 
     #[inline(always)]
-    pub fn i32_bw_popcunt(&mut self) { write!(self.body, "i32.popcnt"); }
+    pub fn i32_bw_popcunt(&mut self) { write!(self.body, "i32.popcnt "); }
  
     ///
     /// Reads an `i32` at a pointer
@@ -559,9 +559,9 @@ impl WasmFunctionBuilder<'_> {
     #[inline(always)]
     pub fn i32_as_i8(&mut self) {
         self.i32_const(24);
-        self.i32_bw_right_shift();
-        self.i32_const(24);
         self.i32_bw_left_shift();
+        self.i32_const(24);
+        self.i32_bw_right_shift();
     }
 
     #[inline(always)]
@@ -1024,34 +1024,34 @@ impl WasmFunctionBuilder<'_> {
     pub fn i64_reinterp_f64(&mut self) { write!(self.body, "f64.reinterpret_i64 "); }
 
     #[inline(always)]
-    pub fn i64_bw_and(&mut self) { write!(self.body, "i64.and"); }
+    pub fn i64_bw_and(&mut self) { write!(self.body, "i64.and "); }
 
     #[inline(always)]
-    pub fn i64_bw_or(&mut self) { write!(self.body, "i64.or"); }
+    pub fn i64_bw_or(&mut self) { write!(self.body, "i64.or "); }
 
     #[inline(always)]
-    pub fn i64_bw_xor(&mut self) { write!(self.body, "i64.xor"); }
+    pub fn i64_bw_xor(&mut self) { write!(self.body, "i64.xor "); }
 
     #[inline(always)]
-    pub fn i64_bw_left_shift(&mut self) { write!(self.body, "i64.shl"); }
+    pub fn i64_bw_left_shift(&mut self) { write!(self.body, "i64.shl "); }
 
     #[inline(always)]
-    pub fn i64_bw_right_shift(&mut self) { write!(self.body, "i64.shr_s"); }
+    pub fn i64_bw_right_shift(&mut self) { write!(self.body, "i64.shr_s "); }
 
     #[inline(always)]
-    pub fn i64_bw_rotate_left(&mut self) { write!(self.body, "i64.rotl"); }
+    pub fn i64_bw_rotate_left(&mut self) { write!(self.body, "i64.rotl "); }
 
     #[inline(always)]
-    pub fn i64_bw_rotate_right(&mut self) { write!(self.body, "i64.rotr"); }
+    pub fn i64_bw_rotate_right(&mut self) { write!(self.body, "i64.rotr "); }
 
     #[inline(always)]
-    pub fn i64_bw_clz(&mut self) { write!(self.body, "i64.clz"); }
+    pub fn i64_bw_clz(&mut self) { write!(self.body, "i64.clz "); }
 
     #[inline(always)]
-    pub fn i64_bw_ctz(&mut self) { write!(self.body, "i64.ctz"); }
+    pub fn i64_bw_ctz(&mut self) { write!(self.body, "i64.ctz "); }
 
     #[inline(always)]
-    pub fn i64_bw_popcunt(&mut self) { write!(self.body, "i64.popcnt"); }
+    pub fn i64_bw_popcunt(&mut self) { write!(self.body, "i64.popcnt "); }
 
     ///
     /// Reads a `i64` at a pointer
@@ -1095,7 +1095,7 @@ impl WasmFunctionBuilder<'_> {
     #[inline(always)]
     pub fn u64_as_i8(&mut self) {
         self.u64_as_i32();
-        self.i32_as_i16();
+        self.i32_as_i8();
     }
 
     #[inline(always)]

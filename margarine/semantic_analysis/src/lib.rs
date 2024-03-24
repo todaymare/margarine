@@ -1184,6 +1184,11 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         let func_ret = func.ret;
 
                         let (anal, _) = self.block(&mut wasm, func.path, scope, &body);
+                        if anal.ty.eq_lit(Type::Error) {
+                            wasm.pop();
+                            wasm.default(ret);
+                        }
+
                         if !anal.ty.eq_sem(func_ret) {
                             wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
                                 header: sig.source, item: body.last().map(|x| x.range()).unwrap_or(body.range()),

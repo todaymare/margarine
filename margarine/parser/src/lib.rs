@@ -1618,18 +1618,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
     fn as_cast(&mut self, settings: &ParserSettings<'ta>) -> ExpressionResult<'ta> {
-        let expr = self.accessors(settings)?;
-        if !self.peek_is(TokenKind::Keyword(Keyword::As)) {
-            return Ok(expr)
+        let mut expr = self.accessors(settings)?;
+        while self.peek_is(TokenKind::Keyword(Keyword::As)) {
+            self.advance();
+            self.advance();
+            let ty = self.expect_type()?;
+
+            let nk = Expression::AsCast { lhs: self.arena.alloc_new(expr), data_type: ty };
+            expr = ExpressionNode::new(nk, SourceRange::new(expr.range().start(), ty.range().end()));
         }
 
-        self.advance();
-        self.advance();
-        let ty = self.expect_type()?;
-
-        let nk = Expression::AsCast { lhs: self.arena.alloc_new(expr), data_type: ty };
-
-        Ok(ExpressionNode::new(nk, SourceRange::new(expr.range().start(), ty.range().end())))
+        Ok(expr)
     }
 
 
