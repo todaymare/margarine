@@ -358,6 +358,12 @@ impl WasmFunctionBuilder<'_> {
     pub fn i32_as_i64(&mut self) { write!(self.body, "i64.extend_i32_s "); }
 
     #[inline(always)]
+    pub fn i32_as_u64(&mut self) { }
+
+    #[inline(always)]
+    pub fn i32_as_u32(&mut self) { }
+
+    #[inline(always)]
     pub fn i32_as_f32(&mut self) { write!(self.body, "f32.convert_i32_s "); }
     
     #[inline(always)]
@@ -470,6 +476,39 @@ impl WasmFunctionBuilder<'_> {
     }
  
     #[inline(always)]
+    pub fn u32_as_i8(&mut self) {
+        self.u32_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u32_as_i16(&mut self) {
+        self.u32_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u32_as_i32(&mut self) {}
+
+    #[inline(always)]
+    pub fn u32_as_u8(&mut self) {
+        self.u32_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn u32_as_u16(&mut self) {
+        self.u32_as_i32();
+        self.i32_as_u16();
+    }
+
+    #[inline(always)]
+    pub fn u32_as_u64(&mut self) {
+        self.u32_as_i32();
+        self.i32_as_u64();
+    }
+
+    #[inline(always)]
     pub fn u32_as_i64(&mut self) { write!(self.body, "i64.extend_i32_s "); }
 
     #[inline(always)]
@@ -516,6 +555,247 @@ impl WasmFunctionBuilder<'_> {
         self.i32_const(0xff);
         self.i32_bw_and();
     }
+
+    #[inline(always)]
+    pub fn i32_as_i8(&mut self) {
+        self.i32_const(24);
+        self.i32_bw_right_shift();
+        self.i32_const(24);
+        self.i32_bw_left_shift();
+    }
+
+    #[inline(always)]
+    pub fn i32_as_i16(&mut self) {
+        self.i32_const(16);
+        self.i32_bw_right_shift();
+        self.i32_const(16);
+        self.i32_bw_left_shift();
+    }
+
+    #[inline(always)]
+    pub fn i32_as_u8(&mut self) {
+        self.i32_const(0xff);
+        self.i32_bw_and();
+    }
+
+    #[inline(always)]
+    pub fn i32_as_u16(&mut self) {
+        self.i32_const(0xffff);
+        self.i32_bw_and();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_i16(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_u8(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_u16(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_u16();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_i32(&mut self) {
+        // nop
+    }
+
+    #[inline(always)]
+    pub fn i8_as_u32(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_u32();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_i64(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_i64()
+    }
+
+    #[inline(always)]
+    pub fn i8_as_u64(&mut self) {
+        self.i8_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_f32(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_f32();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_f64(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_f64();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_i8(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_u8(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_u16(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_u16();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_i32(&mut self) {
+        // nop
+    }
+
+    #[inline(always)]
+    pub fn i16_as_u32(&mut self) {
+        self.i16_as_i32()
+    }
+
+    #[inline(always)]
+    pub fn i16_as_i64(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_u64(&mut self) {
+        self.i16_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_f32(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_f32();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_f64(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_f64();
+    }
+
+
+    #[inline(always)]
+    pub fn u8_as_i8(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_i16(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_i32(&mut self) {
+        self.i32_const(0x000000FF);
+        self.i32_bw_and();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_i64(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_u16(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_u16();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_u32(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_u32();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_u64(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_u64();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_f32(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_f32();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_f64(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_f64();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_i8(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_i16(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_i32(&mut self) {
+        self.i32_const(0x0000FFFF);
+        self.i32_bw_and();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_i64(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_u8(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_u32(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_u32();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_u64(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_u64();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_f32(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_f32();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_f64(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_f64();
+    }
+
 
     /// 
     /// Writes a `u8` to the given pointer
@@ -705,6 +985,39 @@ impl WasmFunctionBuilder<'_> {
     pub fn i64_as_f64(&mut self) { write!(self.body, "f64.convert_i64_s "); }
 
     #[inline(always)]
+    pub fn i64_as_i8(&mut self) {
+        self.i64_as_i32();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn i64_as_i16(&mut self) {
+        self.i64_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn i64_as_u8(&mut self) {
+        self.i64_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn i64_as_u16(&mut self) {
+        self.i64_as_i32();
+        self.i32_as_u16()
+    }
+
+    #[inline(always)]
+    pub fn i64_as_u32(&mut self) {
+        self.i64_as_i32();
+        self.i32_as_u32()
+    }
+
+    #[inline(always)]
+    pub fn i64_as_u64(&mut self) { }
+
+    #[inline(always)]
     pub fn i64_reinterp_f32(&mut self) { write!(self.body, "f32.reinterpret_i64 "); }
 
     #[inline(always)]
@@ -780,6 +1093,45 @@ impl WasmFunctionBuilder<'_> {
     pub fn u64_rem(&mut self) { write!(self.body, "i64.rem_u "); }
 
     #[inline(always)]
+    pub fn u64_as_i8(&mut self) {
+        self.u64_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u64_as_i16(&mut self) {
+        self.u64_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u64_as_i32(&mut self) {
+        self.i32_const(0x0000FFFF);
+        self.i32_bw_and();
+    }
+
+    #[inline(always)]
+    pub fn u64_as_u8(&mut self) {
+        self.u64_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn u64_as_u16(&mut self) {
+        self.u64_as_i32();
+        self.i32_as_u16();
+    }
+
+    #[inline(always)]
+    pub fn u64_as_u32(&mut self) {
+        self.u64_as_i32();
+        self.i32_as_u32();
+    }
+
+    #[inline(always)]
+    pub fn u64_as_i64(&mut self) {}
+
+    #[inline(always)]
     pub fn u64_as_f32(&mut self) { write!(self.body, "f32.convert_i64_u "); }
 
     #[inline(always)]
@@ -853,6 +1205,30 @@ impl WasmFunctionBuilder<'_> {
     
     #[inline(always)]
     pub fn f32_as_f64(&mut self) { write!(self.body, "f64.promote_f32 "); }
+
+    #[inline(always)]
+    pub fn f32_as_i8(&mut self) {
+        self.f32_as_i32();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn f32_as_i16(&mut self) {
+        self.f32_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn f32_as_u8(&mut self) {
+        self.f32_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn f32_as_u16(&mut self) {
+        self.f32_as_i32();
+        self.i32_as_u16();
+    }
 
     #[inline(always)]
     pub fn f32_as_i32(&mut self) {
@@ -1021,6 +1397,30 @@ impl WasmFunctionBuilder<'_> {
     
     #[inline(always)]
     pub fn f64_as_f32(&mut self) { write!(self.body, "f32.demote_f64 "); }
+
+    #[inline(always)]
+    pub fn f64_as_i8(&mut self) {
+        self.f64_as_i32();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn f64_as_i16(&mut self) {
+        self.f64_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn f64_as_u8(&mut self) {
+        self.f64_as_i32();
+        self.i64_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn f64_as_u16(&mut self) {
+        self.f64_as_i32();
+        self.i32_as_u16();
+    }
 
     #[inline(always)]
     pub fn f64_as_i32(&mut self) {

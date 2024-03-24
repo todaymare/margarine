@@ -2208,7 +2208,6 @@ impl<'out> Analyzer<'_, 'out, '_> {
                             wasm.error(self.error(Error::InOutValueIsntMut(a.0.range())))
                         }
 
-                        // self.acquire(anal.ty, wasm);
                         vec.push((anal.ty, a.0.range(), if a.1 { Some(a.0) } else { None }));
                     }
 
@@ -2414,15 +2413,116 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     | (Type::Error, _)
                     | (_, Type::Error) => return AnalysisResult::error(),
 
-                    (Type::I64, Type::I32) => wasm.i64_as_i32(),
-                    (Type::I64, Type::F64) => wasm.i64_as_f64(),
-                    (Type::I32, Type::I64) => wasm.i32_as_i64(),
-                    (Type::I32, Type::F64) => wasm.i32_as_f64(),
-                    (Type::F64, Type::I64) => wasm.f64_as_i64(),
-                    (Type::F64, Type::I32) => wasm.f64_as_i32(),
+                    (Type::I8 , Type::I16) => wasm.i8_as_i16(),
+                    (Type::I8 , Type::I32) => wasm.i8_as_i32(),
+                    (Type::I8 , Type::I64) => wasm.i8_as_i64(),
+                    (Type::I8 , Type::U8 ) => wasm.i8_as_u8(),
+                    (Type::I8 , Type::U16) => wasm.i8_as_u16(),
+                    (Type::I8 , Type::U32) => wasm.i8_as_u32(),
+                    (Type::I8 , Type::U64) => wasm.i8_as_u64(),
+                    (Type::I8 , Type::F32) => wasm.i8_as_f32(),
+                    (Type::I8 , Type::F64) => wasm.i8_as_f64(),
 
-                    | (Type::I64, Type::I64)
+                    (Type::I16, Type::I8 ) => wasm.i16_as_i8(),
+                    (Type::I16, Type::I32) => wasm.i16_as_i32(),
+                    (Type::I16, Type::I64) => wasm.i16_as_i64(),
+                    (Type::I16, Type::U8 ) => wasm.i16_as_u8(),
+                    (Type::I16, Type::U16) => wasm.i16_as_u16(),
+                    (Type::I16, Type::U32) => wasm.i16_as_u32(),
+                    (Type::I16, Type::U64) => wasm.i16_as_u64(),
+                    (Type::I16, Type::F32) => wasm.i16_as_f32(),
+                    (Type::I16, Type::F64) => wasm.i16_as_f64(),
+
+                    (Type::I32, Type::I8 ) => wasm.i32_as_i8(),
+                    (Type::I32, Type::I16) => wasm.i32_as_i16(),
+                    (Type::I32, Type::I64) => wasm.i32_as_i64(),
+                    (Type::I32, Type::U8 ) => wasm.i32_as_u8(),
+                    (Type::I32, Type::U16) => wasm.i32_as_u16(),
+                    (Type::I32, Type::U32) => wasm.i32_as_u32(),
+                    (Type::I32, Type::U64) => wasm.i32_as_u64(),
+                    (Type::I32, Type::F32) => wasm.i32_as_f32(),
+                    (Type::I32, Type::F64) => wasm.i32_as_f64(),
+
+                    (Type::I64, Type::I8 ) => wasm.i64_as_i8(),
+                    (Type::I64, Type::I16) => wasm.i64_as_i16(),
+                    (Type::I64, Type::I32) => wasm.i64_as_i32(),
+                    (Type::I64, Type::U8 ) => wasm.i64_as_u8(),
+                    (Type::I64, Type::U16) => wasm.i64_as_u16(),
+                    (Type::I64, Type::U32) => wasm.i64_as_u32(),
+                    (Type::I64, Type::U64) => wasm.i64_as_u64(),
+                    (Type::I64, Type::F32) => wasm.i64_as_f32(),
+                    (Type::I64, Type::F64) => wasm.i64_as_f64(),
+
+                    (Type::U8 , Type::I8 ) => wasm.u8_as_i8(),
+                    (Type::U8 , Type::I16) => wasm.u8_as_i16(),
+                    (Type::U8 , Type::I32) => wasm.u8_as_i32(),
+                    (Type::U8 , Type::I64) => wasm.u8_as_i64(),
+                    (Type::U8 , Type::U16) => wasm.u8_as_u16(),
+                    (Type::U8 , Type::U32) => wasm.u8_as_u32(),
+                    (Type::U8 , Type::U64) => wasm.u8_as_u64(),
+                    (Type::U8 , Type::F32) => wasm.u8_as_f32(),
+                    (Type::U8 , Type::F64) => wasm.u8_as_f64(),
+
+                    (Type::U16, Type::I8 ) => wasm.u16_as_i8(),
+                    (Type::U16, Type::I16) => wasm.u16_as_i16(),
+                    (Type::U16, Type::I32) => wasm.u16_as_i32(),
+                    (Type::U16, Type::I64) => wasm.u16_as_i64(),
+                    (Type::U16, Type::U8 ) => wasm.u16_as_u8(),
+                    (Type::U16, Type::U32) => wasm.u16_as_u32(),
+                    (Type::U16, Type::U64) => wasm.u16_as_u64(),
+                    (Type::U16, Type::F32) => wasm.u16_as_f32(),
+                    (Type::U16, Type::F64) => wasm.u16_as_f64(),
+
+                    (Type::U32, Type::I8 ) => wasm.u32_as_i8(),
+                    (Type::U32, Type::I16) => wasm.u32_as_i16(),
+                    (Type::U32, Type::I32) => wasm.u32_as_i32(),
+                    (Type::U32, Type::I64) => wasm.u32_as_i64(),
+                    (Type::U32, Type::U8 ) => wasm.u32_as_u8(),
+                    (Type::U32, Type::U16) => wasm.u32_as_u16(),
+                    (Type::U32, Type::U64) => wasm.u32_as_u64(),
+                    (Type::U32, Type::F32) => wasm.u32_as_f32(),
+                    (Type::U32, Type::F64) => wasm.u32_as_f64(),
+
+                    (Type::U64, Type::I8 ) => wasm.u64_as_i8(),
+                    (Type::U64, Type::I16) => wasm.u64_as_i16(),
+                    (Type::U64, Type::I32) => wasm.u64_as_i32(),
+                    (Type::U64, Type::I64) => wasm.u64_as_i64(),
+                    (Type::U64, Type::U8 ) => wasm.u64_as_u8(),
+                    (Type::U64, Type::U16) => wasm.u64_as_u16(),
+                    (Type::U64, Type::U32) => wasm.u64_as_u32(),
+                    (Type::U64, Type::F32) => wasm.u64_as_f32(),
+                    (Type::U64, Type::F64) => wasm.u64_as_f64(),
+
+                    (Type::F32, Type::I8 ) => wasm.f32_as_i8(),
+                    (Type::F32, Type::I16) => wasm.f32_as_i16(),
+                    (Type::F32, Type::I32) => wasm.f32_as_i32(),
+                    (Type::F32, Type::I64) => wasm.f32_as_i64(),
+                    (Type::F32, Type::U8 ) => wasm.f32_as_u8(),
+                    (Type::F32, Type::U16) => wasm.f32_as_u16(),
+                    (Type::F32, Type::U32) => wasm.f32_as_u32(),
+                    (Type::F32, Type::U64) => wasm.f32_as_u64(),
+                    (Type::F32, Type::F64) => wasm.f32_as_f64(),
+
+                    (Type::F64, Type::I8 ) => wasm.f64_as_i8(),
+                    (Type::F64, Type::I16) => wasm.f64_as_i16(),
+                    (Type::F64, Type::I32) => wasm.f64_as_i32(),
+                    (Type::F64, Type::I64) => wasm.f64_as_i64(),
+                    (Type::F64, Type::U8 ) => wasm.f64_as_u8(),
+                    (Type::F64, Type::U16) => wasm.f64_as_u16(),
+                    (Type::F64, Type::U32) => wasm.f64_as_u32(),
+                    (Type::F64, Type::U64) => wasm.f64_as_u64(),
+                    (Type::F64, Type::F32) => wasm.f64_as_f32(),
+
+
+                    | (Type::I8 , Type::I8 )
+                    | (Type::I16, Type::I16)
                     | (Type::I32, Type::I32)
+                    | (Type::I64, Type::I64)
+                    | (Type::U8 , Type::U8 )
+                    | (Type::U16, Type::U16)
+                    | (Type::U32, Type::U32)
+                    | (Type::U64, Type::U64)
+                    | (Type::F32, Type::F32)
                     | (Type::F64, Type::F64) => (),
 
                     (Type::I64, Type::BOOL) => {
