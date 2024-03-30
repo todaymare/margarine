@@ -254,6 +254,632 @@ impl WasmFunctionBuilder<'_> {
 
 
 impl WasmFunctionBuilder<'_> {
+    /// 
+    /// Writes a `i8` to the given pointer
+    /// `ptr(i8)` -> 'i8'
+    ///
+    #[inline(always)]
+    pub fn i8_read(&mut self) { write!(self.body, "i32.load8_s ") }
+
+    /// 
+    /// Writes a `i8` to the given pointer
+    /// `i8`, `ptr(i8)` -> ()
+    ///
+    #[inline(always)]
+    pub fn i8_write(&mut self) { write!(self.body, "i32.store8 ") }
+
+    #[inline(always)]
+    pub fn i8_eq(&mut self) { self.i32_eq(); }
+
+    #[inline(always)]
+    pub fn i8_ne(&mut self) { self.i32_ne(); }
+
+    #[inline(always)]
+    pub fn i8_eqz(&mut self) { self.i32_eqz(); }
+
+    #[inline(always)]
+    pub fn i8_gt(&mut self) { self.i8_as_di32(); self.i32_gt(); }
+
+    #[inline(always)]
+    pub fn i8_ge(&mut self) { self.i8_as_di32(); self.i32_ge(); }
+
+    #[inline(always)]
+    pub fn i8_lt(&mut self) { self.i8_as_di32(); self.i32_lt(); }
+
+    #[inline(always)]
+    pub fn i8_le(&mut self) { self.i8_as_di32(); self.i32_le(); }
+
+    #[inline(always)]
+    pub fn i8_add(&mut self) { self.i32_add(); }
+
+    #[inline(always)]
+    pub fn i8_sub(&mut self) { self.i32_sub(); }
+
+    #[inline(always)]
+    pub fn i8_mul(&mut self) { self.i32_mul(); }
+
+    #[inline(always)]
+    pub fn i8_div(&mut self) {
+        self.i8_as_di32();
+        self.i32_div();
+        self.i32_as_i8();
+    }
+
+
+    #[inline(always)]
+    pub fn i8_rem(&mut self) {
+        self.i8_as_di32();
+        self.i32_rem();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_i16(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_i32(&mut self) {
+        write!(self.body, "i32.extend8_s ");
+    }
+
+    #[inline(always)]
+    pub fn i8_as_i64(&mut self) {
+        write!(self.body, "i64.extend8_s ");
+    }
+
+    #[inline(always)]
+    pub fn i8_as_di32(&mut self) {
+        let rhs = self.i32_temp();
+        let lhs = self.i32_temp2();
+        self.local_set(rhs);
+        self.local_set(lhs);
+
+        self.local_get(lhs);
+        self.i8_as_i32();
+        self.local_get(rhs);
+        self.i8_as_i32();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_u8(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_u16(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_u16();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_u32(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_u32();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_u64(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_f32(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_f32();
+    }
+
+    #[inline(always)]
+    pub fn i8_as_f64(&mut self) {
+        self.i8_as_i32();
+        self.i32_as_f64();
+    }
+
+    #[inline(always)]
+    pub fn i8_bw_and(&mut self) { write!(self.body, "i32.and "); }
+
+    #[inline(always)]
+    pub fn i8_bw_or(&mut self) { write!(self.body, "i32.or "); }
+
+    #[inline(always)]
+    pub fn i8_bw_xor(&mut self) { write!(self.body, "i32.xor "); }
+
+    #[inline(always)]
+    pub fn i8_bw_left_shift(&mut self) {
+        self.i32_const(7);
+        self.i32_bw_and();
+        self.i32_bw_left_shift();
+    }
+
+    #[inline(always)]
+    pub fn i8_bw_right_shift(&mut self) {
+        self.i32_const(7);
+        self.i32_bw_and();
+        
+        let temp = self.i32_temp();
+        self.local_set(temp);
+
+        self.i8_as_i32();
+        self.local_get(temp);
+        self.i32_bw_right_shift();
+    }
+}
+
+
+impl WasmFunctionBuilder<'_> {
+    /// 
+    /// Writes a `u8` to the given pointer
+    /// `ptr(u8)` -> 'u8'
+    ///
+    #[inline(always)]
+    pub fn u8_read(&mut self) { write!(self.body, "i32.load8_u ") }
+
+    /// 
+    /// Writes a `u8` to the given pointer
+    /// `u8`, `ptr(u8)` -> ()
+    ///
+    #[inline(always)]
+    pub fn u8_write(&mut self) { self.i8_write() }
+
+    #[inline(always)]
+    pub fn u8_eq(&mut self) { self.i32_eq(); }
+
+    #[inline(always)]
+    pub fn u8_ne(&mut self) { self.i32_ne(); }
+
+    #[inline(always)]
+    pub fn u8_eqz(&mut self) { self.i32_eqz(); }
+
+    #[inline(always)]
+    pub fn u8_gt(&mut self) { self.u8_as_di32(); self.i32_gt(); }
+
+    #[inline(always)]
+    pub fn u8_ge(&mut self) { self.u8_as_di32(); self.i32_ge(); }
+
+    #[inline(always)]
+    pub fn u8_lt(&mut self) { self.u8_as_di32(); self.i32_lt(); }
+
+    #[inline(always)]
+    pub fn u8_le(&mut self) { self.u8_as_di32(); self.i32_le(); }
+
+    #[inline(always)]
+    pub fn u8_add(&mut self) { self.i32_add(); }
+
+    #[inline(always)]
+    pub fn u8_sub(&mut self) { self.i32_sub(); }
+
+    #[inline(always)]
+    pub fn u8_mul(&mut self) { self.i32_mul(); }
+
+    #[inline(always)]
+    pub fn u8_div(&mut self) {
+        self.u8_as_di32();
+        self.i32_div();
+        self.i32_as_u8();
+    }
+
+
+    #[inline(always)]
+    pub fn u8_rem(&mut self) {
+        self.u8_as_di32();
+        self.i32_rem();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_i8(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_i16(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_i32(&mut self) {
+        write!(self.body, "i32.extend8_u ");
+    }
+
+    #[inline(always)]
+    pub fn u8_as_i64(&mut self) {
+        write!(self.body, "i64.extend8_u ");
+    }
+
+    #[inline(always)]
+    pub fn u8_as_di32(&mut self) {
+        let rhs = self.i32_temp();
+        let lhs = self.i32_temp2();
+        self.local_set(rhs);
+        self.local_set(lhs);
+
+        self.local_get(lhs);
+        self.u8_as_i32();
+        self.local_get(rhs);
+        self.u8_as_i32();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_u16(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_u16();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_u32(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_u32();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_u64(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_f32(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_f32();
+    }
+
+    #[inline(always)]
+    pub fn u8_as_f64(&mut self) {
+        self.u8_as_i32();
+        self.i32_as_f64();
+    }
+
+    #[inline(always)]
+    pub fn u8_bw_and(&mut self) { write!(self.body, "i32.and "); }
+
+    #[inline(always)]
+    pub fn u8_bw_or(&mut self) { write!(self.body, "i32.or "); }
+
+    #[inline(always)]
+    pub fn u8_bw_xor(&mut self) { write!(self.body, "i32.xor "); }
+
+    #[inline(always)]
+    pub fn u8_bw_left_shift(&mut self) {
+        self.i32_const(7);
+        self.i32_bw_and();
+        self.i32_bw_left_shift();
+    }
+
+    #[inline(always)]
+    pub fn u8_bw_right_shift(&mut self) {
+        self.i32_const(7);
+        self.i32_bw_and();
+        
+        let temp = self.i32_temp();
+        self.local_set(temp);
+
+        self.i8_as_u32();
+        self.local_get(temp);
+        self.u32_bw_right_shift();
+    }
+}
+
+
+impl WasmFunctionBuilder<'_> {
+    /// 
+    /// Writes a `u16` to the given pointer
+    /// `ptr(u16)` -> 'u16'
+    ///
+    #[inline(always)]
+    pub fn u16_read(&mut self) { write!(self.body, "i32.load16_u ") }
+
+    /// 
+    /// Writes a `u16` to the given pointer
+    /// `u16`, `ptr(u16)` -> ()
+    ///
+    #[inline(always)]
+    pub fn u16_write(&mut self) { write!(self.body, "i32.store16 ") }
+
+    #[inline(always)]
+    pub fn u16_eq(&mut self) { self.i32_eq(); }
+
+    #[inline(always)]
+    pub fn u16_ne(&mut self) { self.i32_ne(); }
+
+    #[inline(always)]
+    pub fn u16_eqz(&mut self) { self.i32_eqz(); }
+
+    #[inline(always)]
+    pub fn u16_gt(&mut self) { self.i16_as_di32(); self.i32_gt(); }
+
+    #[inline(always)]
+    pub fn u16_ge(&mut self) { self.i16_as_di32(); self.i32_ge(); }
+
+    #[inline(always)]
+    pub fn u16_lt(&mut self) { self.i16_as_di32(); self.i32_lt(); }
+
+    #[inline(always)]
+    pub fn u16_le(&mut self) { self.i16_as_di32(); self.i32_le(); }
+
+    #[inline(always)]
+    pub fn u16_add(&mut self) { self.i32_add(); }
+
+    #[inline(always)]
+    pub fn u16_sub(&mut self) { self.i32_sub(); }
+
+    #[inline(always)]
+    pub fn u16_mul(&mut self) { self.i32_mul(); }
+
+    #[inline(always)]
+    pub fn u16_div(&mut self) {
+        self.u16_as_di32();
+        self.i32_div();
+        self.i32_as_i8();
+    }
+
+
+    #[inline(always)]
+    pub fn u16_rem(&mut self) {
+        self.u16_as_di32();
+        self.i32_rem();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_i8(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_i16(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_i16();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_i32(&mut self) {
+        write!(self.body, "i32.extend16_s ");
+    }
+
+    #[inline(always)]
+    pub fn u16_as_i64(&mut self) {
+        write!(self.body, "i64.extend16_s ");
+    }
+
+    #[inline(always)]
+    pub fn u16_as_di32(&mut self) {
+        let rhs = self.i32_temp();
+        let lhs = self.i32_temp2();
+        self.local_set(rhs);
+        self.local_set(lhs);
+
+        self.local_get(lhs);
+        self.u16_as_i32();
+        self.local_get(rhs);
+        self.u16_as_i32();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_u8(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_u32(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_u32();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_u64(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_f32(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_f32();
+    }
+
+    #[inline(always)]
+    pub fn u16_as_f64(&mut self) {
+        self.u16_as_i32();
+        self.i32_as_f64();
+    }
+
+    #[inline(always)]
+    pub fn u16_bw_and(&mut self) { write!(self.body, "i32.and "); }
+
+    #[inline(always)]
+    pub fn u16_bw_or(&mut self) { write!(self.body, "i32.or "); }
+
+    #[inline(always)]
+    pub fn u16_bw_xor(&mut self) { write!(self.body, "i32.xor "); }
+
+    #[inline(always)]
+    pub fn u16_bw_left_shift(&mut self) {
+        self.i32_const(15);
+        self.i32_bw_and();
+        self.i32_bw_left_shift();
+    }
+
+    #[inline(always)]
+    pub fn u16_bw_right_shift(&mut self) {
+        self.i32_const(15);
+        self.i32_bw_and();
+        
+        let temp = self.i32_temp();
+        self.local_set(temp);
+
+        self.u16_as_i32();
+        self.local_get(temp);
+        self.i32_bw_right_shift();
+    }
+}
+
+
+
+
+impl WasmFunctionBuilder<'_> {
+    /// 
+    /// Writes a `i16` to the given pointer
+    /// `ptr(i16)` -> 'i16'
+    ///
+    #[inline(always)]
+    pub fn i16_read(&mut self) { write!(self.body, "i32.load16_s ") }
+
+    /// 
+    /// Writes a `i8` to the given pointer
+    /// `i8`, `ptr(i8)` -> ()
+    ///
+    #[inline(always)]
+    pub fn i16_write(&mut self) { write!(self.body, "i32.store16 ") }
+
+    #[inline(always)]
+    pub fn i16_eq(&mut self) { self.i32_eq(); }
+
+    #[inline(always)]
+    pub fn i16_ne(&mut self) { self.i32_ne(); }
+
+    #[inline(always)]
+    pub fn i16_eqz(&mut self) { self.i32_eqz(); }
+
+    #[inline(always)]
+    pub fn i16_gt(&mut self) { self.i16_as_di32(); self.i32_gt(); }
+
+    #[inline(always)]
+    pub fn i16_ge(&mut self) { self.i16_as_di32(); self.i32_ge(); }
+
+    #[inline(always)]
+    pub fn i16_lt(&mut self) { self.i16_as_di32(); self.i32_lt(); }
+
+    #[inline(always)]
+    pub fn i16_le(&mut self) { self.i16_as_di32(); self.i32_le(); }
+
+    #[inline(always)]
+    pub fn i16_add(&mut self) { self.i32_add(); }
+
+    #[inline(always)]
+    pub fn i16_sub(&mut self) { self.i32_sub(); }
+
+    #[inline(always)]
+    pub fn i16_mul(&mut self) { self.i32_mul(); }
+
+    #[inline(always)]
+    pub fn i16_div(&mut self) {
+        self.i16_as_di32();
+        self.i32_div();
+        self.i32_as_i8();
+    }
+
+
+    #[inline(always)]
+    pub fn i16_rem(&mut self) {
+        self.i16_as_di32();
+        self.i32_rem();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_i8(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_i8();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_i32(&mut self) {
+        write!(self.body, "i32.extend16_s ");
+    }
+
+    #[inline(always)]
+    pub fn i16_as_i64(&mut self) {
+        write!(self.body, "i64.extend16_s ");
+    }
+
+    #[inline(always)]
+    pub fn i16_as_di32(&mut self) {
+        let rhs = self.i32_temp();
+        let lhs = self.i32_temp2();
+        self.local_set(rhs);
+        self.local_set(lhs);
+
+        self.local_get(lhs);
+        self.i16_as_i32();
+        self.local_get(rhs);
+        self.i16_as_i32();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_u8(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_u8();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_u16(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_u16();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_u32(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_u32();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_u64(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_i64();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_f32(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_f32();
+    }
+
+    #[inline(always)]
+    pub fn i16_as_f64(&mut self) {
+        self.i16_as_i32();
+        self.i32_as_f64();
+    }
+
+    #[inline(always)]
+    pub fn i16_bw_and(&mut self) { write!(self.body, "i32.and "); }
+
+    #[inline(always)]
+    pub fn i16_bw_or(&mut self) { write!(self.body, "i32.or "); }
+
+    #[inline(always)]
+    pub fn i16_bw_xor(&mut self) { write!(self.body, "i32.xor "); }
+
+    #[inline(always)]
+    pub fn i16_bw_left_shift(&mut self) {
+        self.i32_const(15);
+        self.i32_bw_and();
+        self.i32_bw_left_shift();
+    }
+
+    #[inline(always)]
+    pub fn i16_bw_right_shift(&mut self) {
+        self.i32_const(15);
+        self.i32_bw_and();
+        
+        let temp = self.i32_temp();
+        self.local_set(temp);
+
+        self.i16_as_i32();
+        self.local_get(temp);
+        self.i32_bw_right_shift();
+    }
+}
+
+
+impl WasmFunctionBuilder<'_> {
     pub fn i32_temp(&mut self) -> LocalId {
         if let Some(val) = self.temporary_i32 {
             return val
@@ -333,7 +959,7 @@ impl WasmFunctionBuilder<'_> {
 
         self.i32_add();
         self.i32_const(0);
-        self.assert_eq(WasmType::I32, "division underflow");
+        self.assert_ne(WasmType::I32, "division underflow");
         
         // Divide
         self.local_get(n);
@@ -355,13 +981,31 @@ impl WasmFunctionBuilder<'_> {
     }
     
     #[inline(always)]
+    pub fn i32_as_i8(&mut self) {}
+
+    #[inline(always)]
+    pub fn i32_as_i16(&mut self) {}
+
+    #[inline(always)]
     pub fn i32_as_i64(&mut self) { write!(self.body, "i64.extend_i32_s "); }
 
     #[inline(always)]
-    pub fn i32_as_u64(&mut self) { }
+    pub fn i32_as_u8(&mut self) {
+        self.i32_const(0xff);
+        self.i32_bw_and();
+    }
 
     #[inline(always)]
-    pub fn i32_as_u32(&mut self) { }
+    pub fn i32_as_u16(&mut self) {
+        self.i32_const(0xffff);
+        self.i32_bw_and();
+    }
+
+    #[inline(always)]
+    pub fn i32_as_u32(&mut self) {}
+
+    #[inline(always)]
+    pub fn i32_as_u64(&mut self) {}
 
     #[inline(always)]
     pub fn i32_as_f32(&mut self) { write!(self.body, "f32.convert_i32_s "); }
@@ -533,320 +1177,6 @@ impl WasmFunctionBuilder<'_> {
     ///
     #[inline(always)]
     pub fn u32_write(&mut self) { self.i32_write() }
-
-
-    /// 
-    /// Writes a `i8` to the given pointer
-    /// `ptr(i8)` -> 'i8'
-    ///
-    #[inline(always)]
-    pub fn i8_read(&mut self) { write!(self.body, "i32.load8_s ") }
-
-    /// 
-    /// Writes a `i8` to the given pointer
-    /// `i8`, `ptr(i8)` -> ()
-    ///
-    #[inline(always)]
-    pub fn i8_write(&mut self) { write!(self.body, "i32.store8 ") }
-
-    #[inline(always)]
-    pub fn i8_bw_left_shift(&mut self) {
-        self.i32_bw_left_shift();
-        self.i32_const(0xff);
-        self.i32_bw_and();
-    }
-
-    #[inline(always)]
-    pub fn i32_as_i8(&mut self) {
-        self.i32_const(24);
-        self.i32_bw_left_shift();
-        self.i32_const(24);
-        self.i32_bw_right_shift();
-    }
-
-    #[inline(always)]
-    pub fn i32_as_i16(&mut self) {
-        self.i32_const(16);
-        self.i32_bw_right_shift();
-        self.i32_const(16);
-        self.i32_bw_left_shift();
-    }
-
-    #[inline(always)]
-    pub fn i32_as_u8(&mut self) {
-        self.i32_const(0xff);
-        self.i32_bw_and();
-    }
-
-    #[inline(always)]
-    pub fn i32_as_u16(&mut self) {
-        self.i32_const(0xffff);
-        self.i32_bw_and();
-    }
-
-    #[inline(always)]
-    pub fn i8_as_i16(&mut self) {
-        self.i8_as_i32();
-        self.i32_as_i16();
-    }
-
-    #[inline(always)]
-    pub fn i8_as_u8(&mut self) {
-        self.i8_as_i32();
-        self.i32_as_u8();
-    }
-
-    #[inline(always)]
-    pub fn i8_as_u16(&mut self) {
-        self.i8_as_i32();
-        self.i32_as_u16();
-    }
-
-    #[inline(always)]
-    pub fn i8_as_i32(&mut self) {
-        // nop
-    }
-
-    #[inline(always)]
-    pub fn i8_as_u32(&mut self) {
-        self.i8_as_i32();
-        self.i32_as_u32();
-    }
-
-    #[inline(always)]
-    pub fn i8_as_i64(&mut self) {
-        self.i8_as_i32();
-        self.i32_as_i64()
-    }
-
-    #[inline(always)]
-    pub fn i8_as_u64(&mut self) {
-        self.i8_as_i64();
-    }
-
-    #[inline(always)]
-    pub fn i8_as_f32(&mut self) {
-        self.i8_as_i32();
-        self.i32_as_f32();
-    }
-
-    #[inline(always)]
-    pub fn i8_as_f64(&mut self) {
-        self.i8_as_i32();
-        self.i32_as_f64();
-    }
-
-    #[inline(always)]
-    pub fn i16_as_i8(&mut self) {
-        self.i16_as_i32();
-        self.i32_as_i8();
-    }
-
-    #[inline(always)]
-    pub fn i16_as_u8(&mut self) {
-        self.i16_as_i32();
-        self.i32_as_u8();
-    }
-
-    #[inline(always)]
-    pub fn i16_as_u16(&mut self) {
-        self.i16_as_i32();
-        self.i32_as_u16();
-    }
-
-    #[inline(always)]
-    pub fn i16_as_i32(&mut self) {
-        // nop
-    }
-
-    #[inline(always)]
-    pub fn i16_as_u32(&mut self) {
-        self.i16_as_i32()
-    }
-
-    #[inline(always)]
-    pub fn i16_as_i64(&mut self) {
-        self.i16_as_i32();
-        self.i32_as_i64();
-    }
-
-    #[inline(always)]
-    pub fn i16_as_u64(&mut self) {
-        self.i16_as_i64();
-    }
-
-    #[inline(always)]
-    pub fn i16_as_f32(&mut self) {
-        self.i16_as_i32();
-        self.i32_as_f32();
-    }
-
-    #[inline(always)]
-    pub fn i16_as_f64(&mut self) {
-        self.i16_as_i32();
-        self.i32_as_f64();
-    }
-
-
-    #[inline(always)]
-    pub fn u8_as_i8(&mut self) {
-        self.u8_as_i32();
-        self.i32_as_i8();
-    }
-
-    #[inline(always)]
-    pub fn u8_as_i16(&mut self) {
-        self.u8_as_i32();
-        self.i32_as_i16();
-    }
-
-    #[inline(always)]
-    pub fn u8_as_i32(&mut self) {
-        self.i32_const(0x000000FF);
-        self.i32_bw_and();
-    }
-
-    #[inline(always)]
-    pub fn u8_as_i64(&mut self) {
-        self.u8_as_i32();
-        self.i32_as_i64();
-    }
-
-    #[inline(always)]
-    pub fn u8_as_u16(&mut self) {
-        self.u8_as_i32();
-        self.i32_as_u16();
-    }
-
-    #[inline(always)]
-    pub fn u8_as_u32(&mut self) {
-        self.u8_as_i32();
-        self.i32_as_u32();
-    }
-
-    #[inline(always)]
-    pub fn u8_as_u64(&mut self) {
-        self.u8_as_i32();
-        self.i32_as_u64();
-    }
-
-    #[inline(always)]
-    pub fn u8_as_f32(&mut self) {
-        self.u8_as_i32();
-        self.i32_as_f32();
-    }
-
-    #[inline(always)]
-    pub fn u8_as_f64(&mut self) {
-        self.u8_as_i32();
-        self.i32_as_f64();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_i8(&mut self) {
-        self.u16_as_i32();
-        self.i32_as_i16();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_i16(&mut self) {
-        self.u16_as_i32();
-        self.i32_as_i16();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_i32(&mut self) {
-        self.i32_const(0x0000FFFF);
-        self.i32_bw_and();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_i64(&mut self) {
-        self.u16_as_i32();
-        self.i32_as_i64();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_u8(&mut self) {
-        self.u16_as_i32();
-        self.i32_as_u8();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_u32(&mut self) {
-        self.u16_as_i32();
-        self.i32_as_u32();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_u64(&mut self) {
-        self.u16_as_i32();
-        self.i32_as_u64();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_f32(&mut self) {
-        self.u16_as_i32();
-        self.i32_as_f32();
-    }
-
-    #[inline(always)]
-    pub fn u16_as_f64(&mut self) {
-        self.u16_as_i32();
-        self.i32_as_f64();
-    }
-
-
-    /// 
-    /// Writes a `u8` to the given pointer
-    /// `ptr(u8)` -> 'u8'
-    ///
-    #[inline(always)]
-    pub fn u8_read(&mut self) { write!(self.body, "i32.load8_u ") }
-
-    /// 
-    /// Writes a `u8` to the given pointer
-    /// `u8`, `ptr(u8)` -> ()
-    ///
-    #[inline(always)]
-    pub fn u8_write(&mut self) { self.i8_write() }
-
-
-    /// 
-    /// Writes a `i8` to the given pointer
-    /// `ptr(i8)` -> 'i8'
-    ///
-    #[inline(always)]
-    pub fn i16_read(&mut self) { write!(self.body, "i32.load16_s ") }
-
-    /// 
-    /// Writes a `i16` to the given pointer
-    /// `i16`, `ptr(i16)` -> ()
-    ///
-    #[inline(always)]
-    pub fn i16_write(&mut self) { write!(self.body, "i32.store16 ") }
-
-    #[inline(always)]
-    pub fn i16_bw_left_shift(&mut self) {
-        self.i32_bw_left_shift();
-        self.i32_const(0xffff);
-        self.i32_bw_and();
-    }
-
-
-    /// 
-    /// Writes a `u16` to the given pointer
-    /// `ptr(u16)` -> 'u16'
-    ///
-    #[inline(always)]
-    pub fn u16_read(&mut self) { write!(self.body, "i32.load16_u ") }
-
-    /// 
-    /// Writes a `u16` to the given pointer
-    /// `u16`, `ptr(u16)` -> ()
-    ///
-    #[inline(always)]
-    pub fn u16_write(&mut self) { self.i16_write() }
 }
 
 
@@ -948,12 +1278,12 @@ impl WasmFunctionBuilder<'_> {
         self.local_set(d);
         self.local_set(n);
 
-        // d != 0
+        // assert d != 0 
         self.local_get(d);
         self.i64_const(0);
         self.assert_ne(WasmType::I64, "division by zero");
 
-        // n != INTMIN || d != -1
+        // assert n != INTMIN && d != -1
         self.local_get(n);
         self.i64_const(i64::MIN);
         self.i64_ne();
@@ -964,7 +1294,7 @@ impl WasmFunctionBuilder<'_> {
 
         self.i32_add();
         self.i32_const(0);
-        self.assert_eq(WasmType::I32, "division underflow");
+        self.assert_ne(WasmType::I32, "division underflow");
 
         // Divide
         self.local_get(n);
@@ -1199,9 +1529,6 @@ impl WasmFunctionBuilder<'_> {
 
     #[inline(always)]
     pub fn f32_div(&mut self) { write!(self.body, "f32.div "); }
-
-    #[inline(always)]
-    pub fn f32_rem(&mut self) { write!(self.body, "f32.rem "); }
     
     #[inline(always)]
     pub fn f32_as_f64(&mut self) { write!(self.body, "f64.promote_f32 "); }
@@ -1392,9 +1719,6 @@ impl WasmFunctionBuilder<'_> {
     #[inline(always)]
     pub fn f64_div(&mut self) { write!(self.body, "f64.div "); }
 
-    #[inline(always)]
-    pub fn f64_rem(&mut self) { write!(self.body, "f64.rem "); }
-    
     #[inline(always)]
     pub fn f64_as_f32(&mut self) { write!(self.body, "f32.demote_f64 "); }
 

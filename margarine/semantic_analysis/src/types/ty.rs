@@ -183,6 +183,21 @@ impl Type {
     }
 
 
+    #[inline(always)]
+    pub fn is_signed(self) -> bool {
+        match self {
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::F32
+            | Type::F64 => true, 
+
+            _ => false, 
+        }
+    }
+
+
     pub fn size(self, ty_map: &TypeMap) -> usize {
         match self {
             Type::I8  => 1, 

@@ -195,6 +195,9 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
 
         write!(buffer, "(memory (export \"program_memory\") {})", self.memory);
 
+        write!(buffer, "(global $panic_reason (export \"panic_reason\") (mut i32) (i32.const {}))", 0);
+        write!(buffer, "(global $panic_len (export \"panic_len\") (mut i32) (i32.const {}))", 0);
+
         let string_pointer = self.stack_size;
         write!(buffer, "(global $string_pointer i32 (i32.const {}))", string_pointer);
 
@@ -342,11 +345,41 @@ impl<'a> WasmFunctionBuilder<'a> {
         self.u32_const(num);
 
         self.call_template("compiler_error");
-        self.panic();
+        self.panic("compiler error encountered");
     }
 
 
-    pub fn panic(&mut self) {
+    pub fn panic(&mut self, str: &str) {
+        self.u32_const(str.len() as u32);
+        self.call_template("alloc");
+        write!(self.body, "global.set $panic_reason ");
+
+        {
+            let mut iter = str.bytes();
+
+            let mut count = 0;
+            loop { 
+                let Some(n0) = iter.next()
+                else { break };
+                let n1 = iter.next().unwrap_or(0);
+                let n2 = iter.next().unwrap_or(0);
+                let n3 = iter.next().unwrap_or(0);
+
+                let num = u32::from_ne_bytes([n0, n1, n2, n3]);
+                let num = num.to_le();
+                write!(self.body, "global.get $panic_reason ");
+                write!(self.body, "i32.const {} ", count * 4);
+                write!(self.body, "i32.add ");
+                write!(self.body, "i32.const {} ", num);
+                write!(self.body, "i32.store ");
+
+                count += 1;
+            }
+        }
+
+        self.u32_const(str.len() as u32);
+        write!(self.body, "global.set $panic_len ");
+
         self.call_template("panic");
         self.unreachable();
     }
@@ -525,7 +558,7 @@ impl<'a> WasmFunctionBuilder<'a> {
     ///
     pub fn eq(&mut self, ty: WasmType) {
         match ty {
-            | WasmType::I8 
+            WasmType::I8  => self.i8_eq(),
             | WasmType::I16 
             | WasmType::U8
             | WasmType::U16
@@ -543,7 +576,7 @@ impl<'a> WasmFunctionBuilder<'a> {
     ///
     pub fn ne(&mut self, ty: WasmType) {
         match ty {
-            | WasmType::I8 
+            WasmType::I8  => self.i8_ne(),
             | WasmType::I16 
             | WasmType::U8
             | WasmType::U16
@@ -562,7 +595,7 @@ impl<'a> WasmFunctionBuilder<'a> {
         else_body: impl FnOnce(&mut Self),
     ) {
         write!(self.body, "(if (then ");
-        let r1 = then_body(self);
+        then_body(self);
         write!(self.body, ")(else ");
         else_body(self);
         write!(self.body, "))");
@@ -644,7 +677,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
         self.ite(
         |wasm| {
-            wasm.panic();
+            wasm.panic(message);
         },
         |_| {}
         );
@@ -670,7 +703,7 @@ impl<'a> WasmFunctionBuilder<'a> {
 
         self.ite(
         |wasm| {
-            wasm.panic();
+            wasm.panic(message);
         },
         |_| {}
         );

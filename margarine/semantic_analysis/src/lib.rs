@@ -1190,6 +1190,9 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         }
 
                         if !anal.ty.eq_sem(func_ret) {
+                            wasm.pop();
+                            wasm.default(ret);
+
                             wasm.error(self.error(Error::FunctionBodyAndReturnMismatch {
                                 header: sig.source, item: body.last().map(|x| x.range()).unwrap_or(body.range()),
                                 return_type: func_ret, body_type: anal.ty }));
@@ -1599,6 +1602,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                     _ if lhs_anal.ty.eq_lit(Type::Never) => false,
                     _ if lhs_anal.ty.eq_lit(Type::Error) => false,
 
+                    v if v == BinaryOperator::Rem => lhs_anal.ty.is_integer(),
                     v if v.is_arith() => lhs_anal.ty.is_number(),
                     v if v.is_bw() => lhs_anal.ty.is_number(),
                     v if v.is_ocomp() => lhs_anal.ty.is_number(),
@@ -1628,119 +1632,112 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 }
 
                 let ty = match (operator, lhs_anal.ty) {
-                    | (BinaryOperator::Add, Type::I8 )
-                    | (BinaryOperator::Add, Type::I16)
-                    | (BinaryOperator::Add, Type::I32)
-                    | (BinaryOperator::Add, Type::U8 )
-                    | (BinaryOperator::Add, Type::U16)
-                    | (BinaryOperator::Add, Type::U32) => wfunc!(i32_add, lhs_anal.ty),
-
-                    | (BinaryOperator::Add, Type::I64)
-                    | (BinaryOperator::Add, Type::U64) => wfunc!(i64_add, Type::I64),
-
+                    (BinaryOperator::Add, Type::I8 ) => wfunc!( i8_add, Type::I8 ),
+                    (BinaryOperator::Add, Type::U8 ) => wfunc!( u8_add, Type::U8 ),
+                    (BinaryOperator::Add, Type::I16) => wfunc!(i16_add, Type::I16),
+                    (BinaryOperator::Add, Type::U16) => wfunc!(u16_add, Type::U16),
+                    (BinaryOperator::Add, Type::I32) => wfunc!(i32_add, Type::I32),
+                    (BinaryOperator::Add, Type::U32) => wfunc!(i32_add, Type::U32),
+                    (BinaryOperator::Add, Type::I64) => wfunc!(i64_add, Type::I64),
+                    (BinaryOperator::Add, Type::U64) => wfunc!(i64_add, Type::U64),
                     (BinaryOperator::Add, Type::F32) => wfunc!(f32_add, Type::F32),
                     (BinaryOperator::Add, Type::F64) => wfunc!(f64_add, Type::F64),
 
 
-                    | (BinaryOperator::Sub, Type::I8 )
-                    | (BinaryOperator::Sub, Type::I16)
-                    | (BinaryOperator::Sub, Type::I32)
-                    | (BinaryOperator::Sub, Type::U8 )
-                    | (BinaryOperator::Sub, Type::U16)
-                    | (BinaryOperator::Sub, Type::U32) => wfunc!(i32_sub, lhs_anal.ty),
-
-                    | (BinaryOperator::Sub, Type::I64)
-                    | (BinaryOperator::Sub, Type::U64) => wfunc!(i64_sub, Type::I64),
-
+                    (BinaryOperator::Sub, Type::I8 ) => wfunc!( i8_sub, Type::I8 ),
+                    (BinaryOperator::Sub, Type::U8 ) => wfunc!( u8_sub, Type::U8 ),
+                    (BinaryOperator::Sub, Type::I16) => wfunc!(i16_sub, Type::I16),
+                    (BinaryOperator::Sub, Type::U16) => wfunc!(u16_sub, Type::U16),
+                    (BinaryOperator::Sub, Type::I32) => wfunc!(i32_sub, Type::I32),
+                    (BinaryOperator::Sub, Type::U32) => wfunc!(i32_sub, Type::U32),
+                    (BinaryOperator::Sub, Type::I64) => wfunc!(i64_sub, Type::I64),
+                    (BinaryOperator::Sub, Type::U64) => wfunc!(i64_sub, Type::U64),
                     (BinaryOperator::Sub, Type::F32) => wfunc!(f32_sub, Type::F32),
                     (BinaryOperator::Sub, Type::F64) => wfunc!(f64_sub, Type::F64),
 
-
-                    | (BinaryOperator::Mul, Type::I8 )
-                    | (BinaryOperator::Mul, Type::I16)
-                    | (BinaryOperator::Mul, Type::I32)
-                    | (BinaryOperator::Mul, Type::U8 )
-                    | (BinaryOperator::Mul, Type::U16)
-                    | (BinaryOperator::Mul, Type::U32) => wfunc!(i32_mul, lhs_anal.ty),
-
-                    | (BinaryOperator::Mul, Type::I64)
-                    | (BinaryOperator::Mul, Type::U64) => wfunc!(i64_mul, Type::I64),
-
+                    (BinaryOperator::Mul, Type::I8 ) => wfunc!( i8_mul, Type::I8 ),
+                    (BinaryOperator::Mul, Type::U8 ) => wfunc!( u8_mul, Type::U8 ),
+                    (BinaryOperator::Mul, Type::I16) => wfunc!(i16_mul, Type::I16),
+                    (BinaryOperator::Mul, Type::U16) => wfunc!(u16_mul, Type::U16),
+                    (BinaryOperator::Mul, Type::I32) => wfunc!(i32_mul, Type::I32),
+                    (BinaryOperator::Mul, Type::U32) => wfunc!(i32_mul, Type::U32),
+                    (BinaryOperator::Mul, Type::I64) => wfunc!(i64_mul, Type::I64),
+                    (BinaryOperator::Mul, Type::U64) => wfunc!(i64_mul, Type::U64),
                     (BinaryOperator::Mul, Type::F32) => wfunc!(f32_mul, Type::F32),
                     (BinaryOperator::Mul, Type::F64) => wfunc!(f64_mul, Type::F64),
 
 
-                    | (BinaryOperator::Div, Type::I8 )
-                    | (BinaryOperator::Div, Type::I16)
-                    | (BinaryOperator::Div, Type::U8 )
-                    | (BinaryOperator::Div, Type::U16)
-                    | (BinaryOperator::Div, Type::U32) => wfunc!(u32_div, lhs_anal.ty),
-
+                    (BinaryOperator::Div, Type::I8 ) => wfunc!( i8_div, Type::I8 ),
+                    (BinaryOperator::Div, Type::U8 ) => wfunc!( u8_div, Type::U8 ),
+                    (BinaryOperator::Div, Type::I16) => wfunc!(i16_div, Type::I16),
+                    (BinaryOperator::Div, Type::U16) => wfunc!(u16_div, Type::U16),
                     (BinaryOperator::Div, Type::I32) => wfunc!(i32_div, Type::I32),
+                    (BinaryOperator::Div, Type::U32) => wfunc!(u32_div, Type::U32),
                     (BinaryOperator::Div, Type::I64) => wfunc!(i64_div, Type::I64),
                     (BinaryOperator::Div, Type::U64) => wfunc!(u64_div, Type::U64),
-
                     (BinaryOperator::Div, Type::F32) => wfunc!(f32_div, Type::F32),
                     (BinaryOperator::Div, Type::F64) => wfunc!(f64_div, Type::F64),
 
 
-                    | (BinaryOperator::Rem, Type::I8 )
-                    | (BinaryOperator::Rem, Type::I16)
-                    | (BinaryOperator::Rem, Type::U8 )
-                    | (BinaryOperator::Rem, Type::U16)
-                    | (BinaryOperator::Rem, Type::U32) => wfunc!(u32_rem, lhs_anal.ty),
-
-                    (BinaryOperator::Rem, Type::I32) => wfunc!(i32_div, Type::I32),
-                    (BinaryOperator::Rem, Type::I64) => wfunc!(i64_div, Type::I64),
-                    (BinaryOperator::Rem, Type::U64) => wfunc!(u64_div, Type::U64),
-
-                    (BinaryOperator::Rem, Type::F32) => wfunc!(f32_div, Type::F32),
-                    (BinaryOperator::Rem, Type::F64) => wfunc!(f64_div, Type::F64),
+                    (BinaryOperator::Rem, Type::I8 ) => wfunc!( i8_rem, Type::I8 ),
+                    (BinaryOperator::Rem, Type::U8 ) => wfunc!( u8_rem, Type::U8 ),
+                    (BinaryOperator::Rem, Type::I16) => wfunc!(i16_rem, Type::I16),
+                    (BinaryOperator::Rem, Type::U16) => wfunc!(u16_rem, Type::U16),
+                    (BinaryOperator::Rem, Type::I32) => wfunc!(i32_rem, Type::I32),
+                    (BinaryOperator::Rem, Type::U32) => wfunc!(i32_rem, Type::U32),
+                    (BinaryOperator::Rem, Type::I64) => wfunc!(i64_rem, Type::I64),
+                    (BinaryOperator::Rem, Type::U64) => wfunc!(i64_rem, Type::U64),
 
 
-                    (BinaryOperator::BitshiftLeft, Type::I8  | Type::U8 ) => wfunc!(i8_bw_left_shift , lhs_anal.ty),
-                    (BinaryOperator::BitshiftLeft, Type::I16 | Type::U16) => wfunc!(i16_bw_left_shift, lhs_anal.ty),
-                    (BinaryOperator::BitshiftLeft, Type::I32 | Type::U32) => wfunc!(i32_bw_left_shift, lhs_anal.ty),
-                    (BinaryOperator::BitshiftLeft, Type::I64 | Type::U64) => wfunc!(i64_bw_left_shift, lhs_anal.ty),
+                    (BinaryOperator::BitshiftLeft, Type::I8 ) => wfunc!( i8_bw_left_shift, Type::I8 ),
+                    (BinaryOperator::BitshiftLeft, Type::U8 ) => wfunc!( u8_bw_left_shift, Type::U8 ),
+                    (BinaryOperator::BitshiftLeft, Type::U16) => wfunc!(u16_bw_left_shift, Type::U16),
+                    (BinaryOperator::BitshiftLeft, Type::I16) => wfunc!(i16_bw_left_shift, Type::I16),
+                    (BinaryOperator::BitshiftLeft, Type::I32) => wfunc!(i32_bw_left_shift, Type::I32),
+                    (BinaryOperator::BitshiftLeft, Type::U32) => wfunc!(i32_bw_left_shift, Type::U32),
+                    (BinaryOperator::BitshiftLeft, Type::I64) => wfunc!(i64_bw_left_shift, Type::I64),
+                    (BinaryOperator::BitshiftLeft, Type::U64) => wfunc!(i64_bw_left_shift, Type::U64),
 
-                    (BinaryOperator::BitshiftRight, Type::I8  | Type::U8 ) => wfunc!(u32_bw_right_shift, lhs_anal.ty),
-                    (BinaryOperator::BitshiftRight, Type::I16 | Type::U16) => wfunc!(u32_bw_right_shift, lhs_anal.ty),
-                    (BinaryOperator::BitshiftRight, Type::U32) => wfunc!(u32_bw_right_shift, Type::I32),
+
+                    (BinaryOperator::BitshiftRight, Type::I8 ) => wfunc!( i8_bw_right_shift, Type::I8 ),
+                    (BinaryOperator::BitshiftRight, Type::U8 ) => wfunc!( u8_bw_right_shift, Type::U8 ),
+                    (BinaryOperator::BitshiftRight, Type::U16) => wfunc!(u16_bw_right_shift, Type::U16),
+                    (BinaryOperator::BitshiftRight, Type::I16) => wfunc!(i16_bw_right_shift, Type::I16),
                     (BinaryOperator::BitshiftRight, Type::I32) => wfunc!(i32_bw_right_shift, Type::I32),
-                    (BinaryOperator::BitshiftRight, Type::U64) => wfunc!(u64_bw_right_shift, Type::I64),
+                    (BinaryOperator::BitshiftRight, Type::U32) => wfunc!(i32_bw_right_shift, Type::U32),
                     (BinaryOperator::BitshiftRight, Type::I64) => wfunc!(i64_bw_right_shift, Type::I64),
-
-                    | (BinaryOperator::BitwiseAnd, Type::I8 )
-                    | (BinaryOperator::BitwiseAnd, Type::I16)
-                    | (BinaryOperator::BitwiseAnd, Type::I32)
-                    | (BinaryOperator::BitwiseAnd, Type::U8 )
-                    | (BinaryOperator::BitwiseAnd, Type::U16)
-                    | (BinaryOperator::BitwiseAnd, Type::U32) => wfunc!(i32_bw_and, lhs_anal.ty),
-
-                    | (BinaryOperator::BitwiseAnd, Type::U64)
-                    | (BinaryOperator::BitwiseAnd, Type::I64) => wfunc!(i64_bw_and, lhs_anal.ty),
+                    (BinaryOperator::BitshiftRight, Type::U64) => wfunc!(i64_bw_right_shift, Type::U64),
 
 
-                    | (BinaryOperator::BitwiseOr, Type::I8 )
-                    | (BinaryOperator::BitwiseOr, Type::I16)
-                    | (BinaryOperator::BitwiseOr, Type::I32)
-                    | (BinaryOperator::BitwiseOr, Type::U8 )
-                    | (BinaryOperator::BitwiseOr, Type::U16)
-                    | (BinaryOperator::BitwiseOr, Type::U32) => wfunc!(i32_bw_and, lhs_anal.ty),
+                    (BinaryOperator::BitwiseAnd, Type::I8 ) => wfunc!( i8_bw_and, Type::I8 ),
+                    (BinaryOperator::BitwiseAnd, Type::U8 ) => wfunc!( u8_bw_and, Type::U8 ),
+                    (BinaryOperator::BitwiseAnd, Type::I16) => wfunc!(i16_bw_and, Type::I16),
+                    (BinaryOperator::BitwiseAnd, Type::U16) => wfunc!(u16_bw_and, Type::U16),
+                    (BinaryOperator::BitwiseAnd, Type::I32) => wfunc!(i32_bw_and, Type::I32),
+                    (BinaryOperator::BitwiseAnd, Type::U32) => wfunc!(i32_bw_and, Type::U32),
+                    (BinaryOperator::BitwiseAnd, Type::I64) => wfunc!(i64_bw_and, Type::I64),
+                    (BinaryOperator::BitwiseAnd, Type::U64) => wfunc!(i64_bw_and, Type::U64),
 
-                    | (BinaryOperator::BitwiseOr, Type::U64)
-                    | (BinaryOperator::BitwiseOr, Type::I64) => wfunc!(i64_bw_or, lhs_anal.ty),
+
+                    (BinaryOperator::BitwiseOr, Type::I8 ) => wfunc!( i8_bw_or, Type::I8 ),
+                    (BinaryOperator::BitwiseOr, Type::U8 ) => wfunc!( u8_bw_or, Type::U8 ),
+                    (BinaryOperator::BitwiseOr, Type::I16) => wfunc!(i16_bw_or, Type::I16),
+                    (BinaryOperator::BitwiseOr, Type::U16) => wfunc!(u16_bw_or, Type::U16),
+                    (BinaryOperator::BitwiseOr, Type::I32) => wfunc!(i32_bw_or, Type::I32),
+                    (BinaryOperator::BitwiseOr, Type::U32) => wfunc!(i32_bw_or, Type::U32),
+                    (BinaryOperator::BitwiseOr, Type::I64) => wfunc!(i64_bw_or, Type::I64),
+                    (BinaryOperator::BitwiseOr, Type::U64) => wfunc!(i64_bw_or, Type::U64),
 
 
-                    | (BinaryOperator::BitwiseXor, Type::I8 )
-                    | (BinaryOperator::BitwiseXor, Type::I16)
-                    | (BinaryOperator::BitwiseXor, Type::I32)
-                    | (BinaryOperator::BitwiseXor, Type::U8 )
-                    | (BinaryOperator::BitwiseXor, Type::U16)
-                    | (BinaryOperator::BitwiseXor, Type::U32) => wfunc!(i32_bw_xor, lhs_anal.ty),
+                    (BinaryOperator::BitwiseXor, Type::I8 ) => wfunc!( i8_bw_xor, Type::I8 ),
+                    (BinaryOperator::BitwiseXor, Type::U8 ) => wfunc!( u8_bw_xor, Type::U8 ),
+                    (BinaryOperator::BitwiseXor, Type::I16) => wfunc!(i16_bw_xor, Type::I16),
+                    (BinaryOperator::BitwiseXor, Type::U16) => wfunc!(u16_bw_xor, Type::U16),
+                    (BinaryOperator::BitwiseXor, Type::I32) => wfunc!(i32_bw_xor, Type::I32),
+                    (BinaryOperator::BitwiseXor, Type::U32) => wfunc!(i32_bw_xor, Type::U32),
+                    (BinaryOperator::BitwiseXor, Type::I64) => wfunc!(i64_bw_xor, Type::I64),
+                    (BinaryOperator::BitwiseXor, Type::U64) => wfunc!(i64_bw_xor, Type::U64),
 
-                    | (BinaryOperator::BitwiseXor, Type::U64)
-                    | (BinaryOperator::BitwiseXor, Type::I64) => wfunc!(i64_bw_xor, lhs_anal.ty),
 
                     (BinaryOperator::Eq, _) => {
                         wasm.eq(lhs_anal.ty.to_wasm_ty(&self.types));
@@ -1752,50 +1749,49 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         Type::BOOL
                     }
 
-                    | (BinaryOperator::Gt, Type::I8)    => wfunc!(i32_gt, Type::BOOL),
-                    | (BinaryOperator::Gt, Type::I16)   => wfunc!(i32_gt, Type::BOOL),
-                    | (BinaryOperator::Gt, Type::U8)    => wfunc!(i32_gt, Type::BOOL),
-                    | (BinaryOperator::Gt, Type::U16)   => wfunc!(i32_gt, Type::BOOL),
-                    | (BinaryOperator::Gt, Type::I32)   => wfunc!(i32_gt, Type::BOOL),
-                    (BinaryOperator::Gt, Type::U32)     => wfunc!(u32_gt, Type::BOOL),
-                    (BinaryOperator::Gt, Type::U64)     => wfunc!(u64_gt, Type::BOOL),
-                    (BinaryOperator::Gt, Type::I64)     => wfunc!(i64_gt, Type::BOOL),
-                    (BinaryOperator::Gt, Type::F32)     => wfunc!(f32_gt, Type::BOOL),
-                    (BinaryOperator::Gt, Type::F64)     => wfunc!(f64_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::I8)    => wfunc!(i8_gt , Type::BOOL),
+                    (BinaryOperator::Gt, Type::U8)    => wfunc!(u8_gt , Type::BOOL),
+                    (BinaryOperator::Gt, Type::I16)   => wfunc!(i16_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::U16)   => wfunc!(u16_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::I32)   => wfunc!(i32_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::U32)   => wfunc!(u32_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::U64)   => wfunc!(u64_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::I64)   => wfunc!(i64_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::F32)   => wfunc!(f32_gt, Type::BOOL),
+                    (BinaryOperator::Gt, Type::F64)   => wfunc!(f64_gt, Type::BOOL),
 
-                    | (BinaryOperator::Lt, Type::I8)    => wfunc!(i32_lt, Type::BOOL),
-                    | (BinaryOperator::Lt, Type::I16)   => wfunc!(i32_lt, Type::BOOL),
-                    | (BinaryOperator::Lt, Type::U8)    => wfunc!(i32_lt, Type::BOOL),
-                    | (BinaryOperator::Lt, Type::U16)   => wfunc!(i32_lt, Type::BOOL),
-                    | (BinaryOperator::Lt, Type::I32)   => wfunc!(i32_lt, Type::BOOL),
-                    (BinaryOperator::Lt, Type::U32)     => wfunc!(u32_lt, Type::BOOL),
-                    (BinaryOperator::Lt, Type::U64)     => wfunc!(u64_lt, Type::BOOL),
-                    (BinaryOperator::Lt, Type::I64)     => wfunc!(i64_lt, Type::BOOL),
-                    (BinaryOperator::Lt, Type::F32)     => wfunc!(f32_lt, Type::BOOL),
-                    (BinaryOperator::Lt, Type::F64)     => wfunc!(f64_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::I8)    => wfunc!(i8_lt , Type::BOOL),
+                    (BinaryOperator::Lt, Type::U8)    => wfunc!(u8_lt , Type::BOOL),
+                    (BinaryOperator::Lt, Type::I16)   => wfunc!(i16_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::U16)   => wfunc!(u16_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::I32)   => wfunc!(i32_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::U32)   => wfunc!(u32_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::U64)   => wfunc!(u64_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::I64)   => wfunc!(i64_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::F32)   => wfunc!(f32_lt, Type::BOOL),
+                    (BinaryOperator::Lt, Type::F64)   => wfunc!(f64_lt, Type::BOOL),
 
-                    | (BinaryOperator::Ge, Type::I8)    => wfunc!(i32_ge, Type::BOOL),
-                    | (BinaryOperator::Ge, Type::I16)   => wfunc!(i32_ge, Type::BOOL),
-                    | (BinaryOperator::Ge, Type::U8)    => wfunc!(i32_ge, Type::BOOL),
-                    | (BinaryOperator::Ge, Type::U16)   => wfunc!(i32_ge, Type::BOOL),
-                    | (BinaryOperator::Ge, Type::I32)   => wfunc!(i32_ge, Type::BOOL),
-                    (BinaryOperator::Ge, Type::U32)     => wfunc!(u32_ge, Type::BOOL),
-                    (BinaryOperator::Ge, Type::U64)     => wfunc!(u64_ge, Type::BOOL),
-                    (BinaryOperator::Ge, Type::I64)     => wfunc!(i64_ge, Type::BOOL),
-                    (BinaryOperator::Ge, Type::F32)     => wfunc!(f32_ge, Type::BOOL),
-                    (BinaryOperator::Ge, Type::F64)     => wfunc!(f64_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::I8)    => wfunc!(i8_ge , Type::BOOL),
+                    (BinaryOperator::Ge, Type::U8)    => wfunc!(u8_ge , Type::BOOL),
+                    (BinaryOperator::Ge, Type::I16)   => wfunc!(i16_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::U16)   => wfunc!(u16_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::I32)   => wfunc!(i32_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::U32)   => wfunc!(u32_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::U64)   => wfunc!(u64_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::I64)   => wfunc!(i64_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::F32)   => wfunc!(f32_ge, Type::BOOL),
+                    (BinaryOperator::Ge, Type::F64)   => wfunc!(f64_ge, Type::BOOL),
 
-
-                    | (BinaryOperator::Le, Type::I8)    => wfunc!(i32_le, Type::BOOL),
-                    | (BinaryOperator::Le, Type::I16)   => wfunc!(i32_le, Type::BOOL),
-                    | (BinaryOperator::Le, Type::U8)    => wfunc!(i32_le, Type::BOOL),
-                    | (BinaryOperator::Le, Type::U16)   => wfunc!(i32_le, Type::BOOL),
-                    | (BinaryOperator::Le, Type::I32)   => wfunc!(i32_le, Type::BOOL),
-                    (BinaryOperator::Le, Type::U32)     => wfunc!(u32_le, Type::BOOL),
-                    (BinaryOperator::Le, Type::U64)     => wfunc!(u64_le, Type::BOOL),
-                    (BinaryOperator::Le, Type::I64)     => wfunc!(i64_le, Type::BOOL),
-                    (BinaryOperator::Le, Type::F32)     => wfunc!(f32_le, Type::BOOL),
-                    (BinaryOperator::Le, Type::F64)     => wfunc!(f64_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::I8)    => wfunc!(i8_le , Type::BOOL),
+                    (BinaryOperator::Le, Type::U8)    => wfunc!(u8_le , Type::BOOL),
+                    (BinaryOperator::Le, Type::I16)   => wfunc!(i16_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::U16)   => wfunc!(u16_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::I32)   => wfunc!(i32_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::U32)   => wfunc!(u32_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::U64)   => wfunc!(u64_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::I64)   => wfunc!(i64_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::F32)   => wfunc!(f32_le, Type::BOOL),
+                    (BinaryOperator::Le, Type::F64)   => wfunc!(f64_le, Type::BOOL),
 
                     _ => panic!("op: {operator:?} lhs: {lhs_anal:?} rhs: {rhs_anal:?}"),
                 };
@@ -1816,7 +1812,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
 
                     match operator {
                         UnaryOperator::Not if rhs_anal.ty.eq_lit(Type::BOOL) => Ok(()),
-                        UnaryOperator::Neg if rhs_anal.ty.is_number() => Ok(()),
+                        UnaryOperator::Neg if rhs_anal.ty.is_signed() => Ok(()),
                         _ => {
                             wasm.error(self.error(Error::InvalidUnaryOp {
                                 operator, rhs: rhs_anal.ty, source
@@ -1844,6 +1840,13 @@ impl<'out> Analyzer<'_, 'out, '_> {
                         wasm.i64_mul();
                     },
 
+                    (UnaryOperator::Neg, Type::I8 | Type::I16 | Type::I32) => {
+                        // thanks wasm.
+                        wasm.i32_const(-1);
+                        wasm.i32_mul();
+                    },
+
+                    (UnaryOperator::Neg, Type::F32) => wasm.f32_neg(),
                     (UnaryOperator::Neg, Type::F64) => wasm.f64_neg(),
 
                     _ => panic!("op: {operator:?} rhs: {rhs:?}")
@@ -2606,8 +2609,7 @@ impl<'out> Analyzer<'_, 'out, '_> {
                 let mut ret_ty = Type::Unit;
                 wasm.ite(
                 |wasm| {
-                    // TODO: Error messages, add it once errors are properly made
-                    wasm.panic();
+                    wasm.panic("unwrapped on none value");
 
                     let ty = match e.kind() {
                         TypeEnumKind::TaggedUnion(v) => v.fields()[0].ty().unwrap_or(Type::Unit),

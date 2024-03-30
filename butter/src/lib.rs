@@ -94,6 +94,8 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
         sema_errors.push(report);
     } 
 
+    dbg!(&sema);
+
     let code = sema.module_builder.build(&mut sema.string_map);
 
     /*
@@ -151,7 +153,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
             // .arg("-iit")
             .arg("-aimfs=128")
             .arg("-fimfs=512")
-            .arg("-lmu")
+            // .arg("-lmu")
             .arg("-pii=64")
             .arg("-ifwl")
             .arg("-o=-")
