@@ -386,7 +386,7 @@ impl<'a> WasmFunctionBuilder<'a> {
                                               n4, n5, n6, n7]);
                 let num = num.to_le();
                 write!(self.body, "global.get $panic_reason ");
-                write!(self.body, "i32.const {} ", count * 4);
+                write!(self.body, "i32.const {} ", count * 8);
                 write!(self.body, "i32.add ");
                 write!(self.body, "i64.const {} ", num);
                 write!(self.body, "i64.store ");
