@@ -204,7 +204,19 @@ impl<'a, 'strs> WasmModuleBuilder<'a, 'strs> {
         {
             let mut c = string_pointer;
             for f in &self.strs {
-                write!(buffer, "(data (i32.const {c}) \"\\01\\00\\00\\00\\00\\00\\00\\00{}\")", f);
+                write!(buffer, "(data (i32.const {c}) \"\\01\\00\\00\\00\\00\\00\\00\\00");
+                for i in f.chars() {
+                    match i {
+                        '\n' => buffer.push("\\n"),
+                        '\r' => buffer.push("\\r"),
+                        '\t' => buffer.push("\\t"),
+                        '\\' => buffer.push("\\\\"),
+                        '\0' => buffer.push("\\0"),
+                        '\"' => buffer.push("\\\""),
+                        _ => buffer.push_char(i),
+                    }
+                }
+                write!(buffer, "\")");
                 c += f.len() + 8;
             }
         }
@@ -350,7 +362,8 @@ impl<'a> WasmFunctionBuilder<'a> {
 
 
     pub fn panic(&mut self, str: &str) {
-        self.u32_const(str.len() as u32);
+        let len = ((str.len() + 7) / 8) * 8;
+        self.u32_const(len as u32);
         self.call_template("alloc");
         write!(self.body, "global.set $panic_reason ");
 
@@ -364,14 +377,19 @@ impl<'a> WasmFunctionBuilder<'a> {
                 let n1 = iter.next().unwrap_or(0);
                 let n2 = iter.next().unwrap_or(0);
                 let n3 = iter.next().unwrap_or(0);
+                let n4 = iter.next().unwrap_or(0);
+                let n5 = iter.next().unwrap_or(0);
+                let n6 = iter.next().unwrap_or(0);
+                let n7 = iter.next().unwrap_or(0);
 
-                let num = u32::from_ne_bytes([n0, n1, n2, n3]);
+                let num = u64::from_ne_bytes([n0, n1, n2, n3,
+                                              n4, n5, n6, n7]);
                 let num = num.to_le();
                 write!(self.body, "global.get $panic_reason ");
                 write!(self.body, "i32.const {} ", count * 4);
                 write!(self.body, "i32.add ");
-                write!(self.body, "i32.const {} ", num);
-                write!(self.body, "i32.store ");
+                write!(self.body, "i64.const {} ", num);
+                write!(self.body, "i64.store ");
 
                 count += 1;
             }

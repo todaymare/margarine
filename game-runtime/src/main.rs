@@ -128,13 +128,13 @@ fn run(file: &[u8]) {
             let len = ctx.read_global("panic_len").u32();
             let ptr = ctx.read_global("panic_reason").u32();
 
-            let mem = ctx.read_mem(WasmPtr::<u32>::from_u32(ptr));
-            let mem = mem as *const u32;
+            let mem = ctx.read_mem(WasmPtr::<u64>::from_u32(ptr));
+            let mem = mem as *const u64;
 
             let mut str = Vec::with_capacity(len as usize);
             for i in 0..len {
                 let num = unsafe { *mem.add(i as usize) };
-                let num = u32::from_le(num);
+                let num = u64::from_le(num);
                 str.extend_from_slice(&num.to_ne_bytes());
             }
 
