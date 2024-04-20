@@ -2,7 +2,7 @@
 use std::fmt::Debug;
 
 use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, hashables::NonNaNF64};
-use sti::prelude::Arena;
+use sti::arena::Arena;
 
 use crate::{lex, Token, TokenKind, Literal, errors::Error};
 

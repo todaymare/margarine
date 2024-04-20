@@ -9,10 +9,7 @@ fuzzer = []
 
 [dependencies]
 margarine = { path = "../margarine" }
-game-runtime = { path = "../game-runtime" }
+# game-runtime = { path = "../game-runtime" }
 
 colourful = { git = "https://github.com/rookieCookies/colourful" }
 sti = { git = "https://github.com/leddoo/sti" }
-
-# wasmtime = "*"
-libloading = "*"

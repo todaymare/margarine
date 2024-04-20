@@ -1,0 +1,16 @@
+[package]
+name = "semantic_analysis"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+lexer  = { path = "../lexer" }
+parser = { path = "../parser" }
+errors = { path = "../errors" }
+common = { path = "../common" }
+llvm-api = { path = "../../../llvm-api" }
+istd = { git = "https://github.com/rookieCookies/istd" }
+sti = { git = "https://github.com/leddoo/sti" }
+

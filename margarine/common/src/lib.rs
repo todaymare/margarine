@@ -5,7 +5,7 @@ pub mod toggle_buffer;
 
 use std::time::Instant;
 
-use sti::{prelude::Alloc, vec::Vec};
+use sti::{alloc::Alloc, arena::Arena, vec::Vec};
 use colourful::*;
 
 
@@ -76,9 +76,18 @@ pub fn warn(string: &str) {
     println!("{}: {string}", "warn".colour(Colour::rgb(207, 188, 148)).bold())
 }
 
+
 #[inline(always)]
 pub fn num_size(num: u32) -> u32 {
     num.checked_ilog10().unwrap_or(0) + 1
+}
+
+
+pub fn copy_slice_in<'a, 'b, T: Copy>(arena: &'a Arena, slice: &'b [T]) -> &'a [T] {
+    let mut vec = sti::vec::Vec::with_cap_in(arena, slice.len());
+    unsafe { std::ptr::copy(slice.as_ptr(), vec.as_mut_ptr(), slice.len()) };
+    unsafe { vec.set_len(slice.len()) }
+    vec.leak()
 }
 
 

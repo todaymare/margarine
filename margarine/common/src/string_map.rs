@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-use sti::{prelude::Arena, arena::ArenaStats, hash::{HashFn, fxhash::FxHasher32, HashMapF}, define_key};
+use sti::{arena::{Arena, ArenaStats}, define_key, format_in, hash::{fxhash::FxHasher32, HashFn, HashMapF}};
 
-define_key!(u32, pub StringIndex);
+define_key!(u32, pub StringIndex, opt: pub OptStringIndex);
 
 pub struct StringMap<'a> {
     arena: &'a Arena,
@@ -31,7 +31,7 @@ impl<'a> StringMap<'a> {
     pub const UNIT : StringIndex = StringIndex(16);
     pub const NEVER : StringIndex = StringIndex(17);
     pub const OK : StringIndex = StringIndex(18);
-    pub const ERR : StringIndex = StringIndex(19);
+    pub const ERROR : StringIndex = StringIndex(19);
     pub const SOME : StringIndex = StringIndex(20);
     pub const NONE : StringIndex = StringIndex(21);
     pub const SELF : StringIndex = StringIndex(22);
@@ -41,8 +41,9 @@ impl<'a> StringMap<'a> {
     pub const LOW   : StringIndex = StringIndex(26);
     pub const HIGH  : StringIndex = StringIndex(27);
     pub const COUNT : StringIndex = StringIndex(28);
+    pub const TUPLE : StringIndex = StringIndex(29);
 
-    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(29);
+    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(30);
 
  
     #[inline(always)]
@@ -79,7 +80,7 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("unit"), Self::UNIT);
         assert_eq!(s.insert("never"), Self::NEVER);
         assert_eq!(s.insert("ok"), Self::OK);
-        assert_eq!(s.insert("err"), Self::ERR);
+        assert_eq!(s.insert("err"), Self::ERROR);
         assert_eq!(s.insert("some"), Self::SOME);
         assert_eq!(s.insert("none"), Self::NONE);
         assert_eq!(s.insert("self"), Self::SELF);
@@ -90,6 +91,7 @@ impl<'a> StringMap<'a> {
         assert_eq!(s.insert("low"), Self::LOW);
         assert_eq!(s.insert("high"), Self::HIGH);
         assert_eq!(s.insert("count"), Self::COUNT);
+        assert_eq!(s.insert("tuple"), Self::TUPLE);
 
         assert_eq!(s.insert("__next__"), Self::ITER_NEXT_FUNC);
         s
@@ -140,6 +142,18 @@ impl<'a> StringMap<'a> {
     pub fn reserve(&mut self, additional: usize) {
         self.vec.reserve(additional);
         self.map.reserve(additional);
+    }
+
+
+    pub fn concat(&mut self, a: StringIndex, b: StringIndex) -> StringIndex {
+        let a = self.get(a);
+        if a.is_empty() { return b }
+
+        let b = self.get(b);
+
+        let temp = Arena::tls_get_temp();
+        let str = format_in!(&*temp, "{}::{}", a, b);
+        self.insert(&*str)
     }
 }
 

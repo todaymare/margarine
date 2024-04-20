@@ -3,16 +3,10 @@ name = "semantic_analysis"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-lexer  = { path = "../lexer" }
-parser = { path = "../parser" }
-errors = { path = "../errors" }
 common = { path = "../common" }
-wasm = { path = "../wasm" }
-istd = { git = "https://github.com/rookieCookies/istd" }
+errors = { path = "../errors" }
+parser = { path = "../parser" }
+lexer  = { path = "../lexer" }
 sti = { git = "https://github.com/leddoo/sti" }
-
-
-polonius-the-crab = "*"
+llvm-api = { path = "../../../llvm-api" }

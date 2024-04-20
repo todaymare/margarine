@@ -5,7 +5,7 @@ use errors::ErrorType;
 use parser::nodes::expr::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
-use crate::types::{Type, SymbolMap};
+use crate::types::{ty::Type, ty_map::TypeMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {
@@ -239,8 +239,8 @@ pub enum Error {
 }
 
 
-impl<'a> ErrorType<SymbolMap<'_>> for Error {
-    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, types: &SymbolMap) {
+impl<'a> ErrorType<TypeMap<'_>> for Error {
+    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, types: &TypeMap) {
         match self {
             Error::NameIsAlreadyDefined { source, name } => {
                 let name = fmt.string(*name).to_string();

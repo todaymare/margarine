@@ -3,7 +3,7 @@ use errors::SemaError;
 use sti::{vec::Vec, hash::{HashMap, DefaultSeed}, arena::Arena, traits::FromIn, keyed::KVec, arena_pool::ArenaPool};
 use wasm::{WasmModuleBuilder, WasmFunctionBuilder, WasmType};
 
-use crate::{concat_path, errors::Error, funcs::{Function, FunctionKind, FunctionMap}, namespace::{Namespace, NamespaceMap}, types::ty_sym::{StructField, TaggedUnionField, TypeEnumKind, TypeKind, TypeStruct, TypeTaggedUnion}};
+use crate::{concat_path, errors::Error, funcs::{Func, FunctionKind, FunctionMap}, namespace::{Namespace, NamespaceMap}, types::ty_sym::{StructField, TaggedUnionField, TypeEnumKind, TypeKind, TypeStruct, TypeTaggedUnion}};
 
 use super::{ty::Type, ty_map::{TypeId, TypeMap}, ty_sym::{TypeEnum, TypeEnumStatus, TypeStructStatus, TypeSymbol, TypeTag}};
 
@@ -464,7 +464,7 @@ impl<'out> TypeBuilder<'_> {
                         wf.write(wfty);
 
 
-                        func = Function::new(
+                        func = Func::new(
                             f.name(),
                             path,
                             data.arena.alloc_new([(StringMap::VALUE, false, fty)]),
@@ -473,7 +473,7 @@ impl<'out> TypeBuilder<'_> {
                         );
 
                     } else {
-                        func = Function::new(f.name(), path, &[], Type::Custom(ty), wfid,
+                        func = Func::new(f.name(), path, &[], Type::Custom(ty), wfid,
                                 FunctionKind::UserDefined { inout: None });
                     }
 
@@ -505,7 +505,7 @@ impl<'out> TypeBuilder<'_> {
 
                     data.module_builder.register(wf);
                     
-                    let func = Function::new(*f, path, &[], Type::Custom(ty), wfid,
+                    let func = Func::new(*f, path, &[], Type::Custom(ty), wfid,
                         FunctionKind::UserDefined { inout: None });
 
                     let func_id = data.function_map.pending();
@@ -537,7 +537,7 @@ impl<'out> TypeBuilder<'_> {
         // fn count(ty: T): *T
         {
             let wid = data.module_builder.function_id();
-            let func = Function::new(
+            let func = Func::new(
                 StringMap::NEW,
                 path_new,
                 data.arena.alloc_new([
@@ -596,7 +596,7 @@ impl<'out> TypeBuilder<'_> {
         // fn count(self): int
         {
             let wid = data.module_builder.function_id();
-            let func = Function::new(
+            let func = Func::new(
                 StringMap::COUNT,
                 path_count,
                 data.arena.alloc_new([
@@ -610,7 +610,6 @@ impl<'out> TypeBuilder<'_> {
             data.function_map.put(func_id, func);
 
             ns.add_func(StringMap::COUNT, func_id);
-
             {
                 let mut builder = WasmFunctionBuilder::new(data.arena, wid);
                 builder.export(path_count);

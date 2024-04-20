@@ -1,313 +1,196 @@
-use std::thread::current;
+use std::{collections::HashMap, thread::scope};
 
-use common::{string_map::{StringIndex, StringMap}, source::SourceRange, Swap};
+use common::{source::SourceRange, string_map::StringIndex};
+use llvm_api::builder::{Local, Loop};
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
-use wasm::{FunctionId, LocalId, LoopId};
 
-use crate::{funcs::FuncId, namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, ty_map::TypeMap}};
+use crate::{funcs::FunctionSymbolId, namespace::{Namespace, NamespaceId, NamespaceMap}, types::{SymbolMap, Type, TypeSymbolId}};
 
 define_key!(u32, pub ScopeId);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Scope {
+
+#[derive(Debug, Clone, Copy)]
+pub struct Scope<'me> {
     parent: PackedOption<ScopeId>,
-    kind: ScopeKind,
+    kind  : ScopeKind<'me>,
 }
 
 
-impl Scope {
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum ScopeKind<'me> {
+    ImplicitNamespace(NamespaceId),
+    VariableScope(VariableScope),
+    Generics(GenericsScope<'me>),
+    Loop(Loop),
+    Function(FunctionScope),
+    Root,
+}
+
+
+#[derive(Debug)]
+pub struct ScopeMap<'me> {
+    map: KVec<ScopeId, Scope<'me>>
+}
+
+
+impl<'me> ScopeMap<'me> {
+    pub fn new() -> Self { Self { map: KVec::new() } }
+
     #[inline(always)]
-    pub fn new(kind: ScopeKind, parent: PackedOption<ScopeId>) -> Self {
-        Self {
-            parent,
-            kind,
+    pub fn push(&mut self, scope: Scope<'me>) -> ScopeId {
+        self.map.push(scope)
+    }
+
+    #[inline(always)]
+    pub fn get(&self, id: ScopeId) -> Scope<'me> {
+        self.map[id]
+    }
+}
+
+
+impl<'me> Scope<'me> {
+    pub fn new(parent: impl Into<PackedOption<ScopeId>>, kind: ScopeKind<'me>) -> Self { Self { parent: parent.into(), kind } }
+
+    pub fn find_func(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap) -> Option<FunctionSymbolId> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
+                let ns = namespaces.get_ns(ns);
+                if let Some(ty) = ns.get_func(name) {
+                    return Some(ty)
+                }
+            }
+
+            None
+        })
+    }
+
+
+    pub fn find_ty(self, name: StringIndex, scope_map: &ScopeMap, symbols: &SymbolMap, namespaces: &NamespaceMap) -> Option<TypeSymbolId> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
+                let ns = namespaces.get_ns(ns);
+                if let Some(ty) = ns.get_ty_sym(name) {
+                    return Some(ty)
+                }
+            }
+
+
+            if let ScopeKind::Generics(generics_scope) = scope.kind {
+                if let Some(ty) = generics_scope.generics.get(&name) {
+                    return Some(symbols.get_ty_val(*ty).symbol())
+                }
+            }
+
+            None
+        })
+    }
+
+
+    pub fn find_ns(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap) -> Option<NamespaceId> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
+                let ns = namespaces.get_ns(ns);
+                if let Some(ns) = ns.get_ns(name) {
+                    return Some(ns)
+                }
+            }
+
+            None
+        })
+    }
+
+
+    pub fn find_var(self, name: StringIndex, scope_map: &ScopeMap) -> Option<VariableScope> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::VariableScope(v) = scope.kind {
+                if v.name() == name { return Some(v) }
+            }
+
+            None
+        })
+    }
+
+
+    pub fn find_loop(self, scope_map: &ScopeMap) -> Option<Loop> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::Loop(l) = scope.kind {
+                return Some(l)
+            }
+
+            None
+        })
+    }
+
+
+    pub fn find_curr_func(self, scope_map: &ScopeMap) -> Option<FunctionScope> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::Function(l) = scope.kind {
+                return Some(l)
+            }
+
+            None
+        })
+    }
+
+    fn over<T>(self, scope_map: &ScopeMap, mut func: impl FnMut(Scope) -> Option<T>) -> Option<T> {
+        let mut this = Some(self);
+        while let Some(scope) = this {
+            if let Some(val) = func(scope) { return Some(val) }
+
+            this = scope.parent.to_option()
+                .map(|x| scope_map.get(x))
         }
-    }
-
-    #[inline(always)]
-    pub fn parent(self) -> PackedOption<ScopeId> { self.parent }
-
-    #[inline(always)]
-    pub fn kind(self) -> ScopeKind { self.kind }
-
-    pub fn get_type(
-        self,
-        name: StringIndex,
-        scopes: &ScopeMap,
-        namespaces: &NamespaceMap,
-    ) -> Option<Type> {
-        self.over(scopes, |current| {
-            if let ScopeKind::ImportType((ty, id)) = current.kind() {
-                if ty == name { return Some(id) }
-            }
-
-            if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
-                let Some(ns) = namespaces.get(ns)
-                else { return Some(Type::Error) };
-                if let Some(val) = ns.get_type(name) { return Some(Type::Custom(val)) }
-            }
-
-            None
-        })
-    }
-
-
-    pub fn get_func(
-        self,
-        name: StringIndex,
-        scopes: &ScopeMap,
-        namespaces: &NamespaceMap,
-    ) -> Option<FuncId> {
-        self.over(scopes, |current| {
-            if let ScopeKind::ImportFunction((func, id)) = current.kind() {
-                if func == name { return Some(id) }
-            }
-
-            if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
-                let Some(ns) = namespaces.get(ns)
-                else { return None };
-                if let Some(val) = ns.get_func(name) { return Some(val) }
-            }
-
-            None
-        })
-    }
-
-
-    pub fn get_var(
-        self,
-        name: StringIndex,
-        scopes: &ScopeMap,
-    ) -> Option<VariableScope> {
-        self.over(scopes, |current| {
-            if let ScopeKind::Variable(var) = current.kind() {
-                if var.name == name {
-                    return Some(var)
-                }
-            }
-
-            None
-        })
-    }
-
-
-    pub fn get_mod(
-        self,
-        name: StringIndex,
-        scopes: &ScopeMap,
-        namespaces: &NamespaceMap,
-    ) -> Option<NamespaceId> {
-        self.over(scopes, |current| {
-            if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
-                if let Some(ns) = namespaces.get(ns)?.get_mod(name) {
-                    return Some(ns);
-                }
-            }
-
-            None
-        })
-    }
-
-    pub fn get_ns(
-        self,
-        name: StringIndex,
-        scopes: &ScopeMap,
-        namespaces: &mut NamespaceMap,
-        types: &TypeMap,
-    ) -> Option<NamespaceId> {
-        let check_prims = |name, namespaces: &mut NamespaceMap<'_>| {
-            let val = match name {
-                StringMap::I8  => namespaces.get_type(Type::I8 , types),
-                StringMap::I16 => namespaces.get_type(Type::I16, types),
-                StringMap::I32 => namespaces.get_type(Type::I32, types),
-                StringMap::I64 => namespaces.get_type(Type::I64, types),
-                StringMap::U8  => namespaces.get_type(Type::I8 , types),
-                StringMap::U16 => namespaces.get_type(Type::I16, types),
-                StringMap::U32 => namespaces.get_type(Type::I32, types),
-                StringMap::U64 => namespaces.get_type(Type::I64, types),
-                StringMap::F32 => namespaces.get_type(Type::F32, types),
-                StringMap::F64 => namespaces.get_type(Type::F64, types),
-
-                StringMap::BOOL => namespaces.get_type(Type::BOOL, types),
-                _ => return None,
-            };
-
-            Some(val)
-        };
-        let s = self.over(scopes, |current| {
-            if let ScopeKind::ExplicitNamespace(var) = current.kind() {
-                if var.name == name {
-                    return Some(var.namespace)
-                }
-            }
-
-            if let ScopeKind::ImplicitNamespace(ns) = current.kind() {
-                let ns = namespaces.get(ns);
-                if let Some(val) = ns?.get_type(name) {
-                    return Some(namespaces.get_type(Type::Custom(val), types))
-                }
-
-                if let Some(val) = ns?.get_mod(name) {
-                    return Some(val)
-                }
-            }
-
-            if let ScopeKind::ImportType(ty) = current.kind() {
-                if ty.0 == name { return Some(namespaces.get_type(ty.1, types)) }
-            }
-            
-            if let ScopeKind::Root = current.kind() {
-                return check_prims(name, namespaces); 
-            }
-
-            None
-        });
-
-        if let Some(s) = s { return Some(s) }
-
-        check_prims(name, namespaces)
-    }
-
-
-    pub fn get_func_def(
-        self,
-        scopes: &ScopeMap,
-    ) -> Option<FunctionDefinitionScope> {
-        self.over(scopes, |current| {
-            if let ScopeKind::FunctionDefinition(funcdef) = current.kind() {
-                return Some(funcdef)
-            }
-
-            None
-        })
-    }
-
-
-    pub fn get_loop(
-        self,
-        scopes: &ScopeMap,
-    ) -> Option<LoopScope> {
-        self.over(scopes, |current| {
-            if let ScopeKind::Loop(funcdef) = current.kind() {
-                return Some(funcdef)
-            }
-
-            None
-        })
-    }
-
-
-    ///
-    /// Iterates over the current scope and all of its
-    /// parents, calling `func` on each of them. If `func`
-    /// returns `Some` it will return that value, short-circuiting.
-    /// 
-    /// If `func` does not return `Some` and there are no more parents
-    /// left, this function will return `None`
-    ///
-    pub fn over<T>(
-        self,
-        scopes: &ScopeMap,
-        mut func: impl FnMut(Self) -> Option<T>
-    ) -> Option<T> {
-        let mut current = self;
-        loop {
-            if let Some(val) = func(current) {
-                return Some(val)
-            }
-
-            let Some(parent) = current.parent().to_option()
-                else { break };
-
-            current = scopes.get(parent);
-        }
-
         None
     }
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ScopeKind {
-    ExplicitNamespace(ExplicitNamespace),
-    ImplicitNamespace(NamespaceId),
-    FunctionDefinition(FunctionDefinitionScope),
-    ImportType((StringIndex, Type)),
-    ImportFunction((StringIndex, FuncId)),
-    Variable(VariableScope),
-    Loop(LoopScope),
-    Root,
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct VariableScope {
-    pub name: StringIndex,
-    pub is_mutable: bool,
-    pub ty: Type,
-    pub local_id: LocalId,
+    name  : StringIndex,
+    ty    : Type,
+    is_mut: bool, 
+    local : Local,
 }
 
 impl VariableScope {
-    pub fn new(name: StringIndex, is_mutable: bool, ty: Type, local_id: LocalId) -> Self { Self { name, is_mutable, ty, local_id } }
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExplicitNamespace {
-    pub name: StringIndex,
-    pub namespace: NamespaceId,
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FunctionDefinitionScope {
-    pub return_type: Type,
-    pub return_source: SourceRange,
-}
-
-impl FunctionDefinitionScope {
-    pub fn new(return_type: Type, return_source: SourceRange) -> Self { Self { return_type, return_source } }
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LoopScope {
-    pub loop_id: LoopId,
-}
-
-impl LoopScope {
-    pub fn new(loop_id: LoopId) -> Self { Self { loop_id } }
-}
-
-
-#[derive(Debug)]
-pub struct ScopeMap {
-    map: KVec<ScopeId, Scope>,
-}
-
-
-impl ScopeMap {
-    pub const ROOT : ScopeId = ScopeId(0);
-
-    pub fn new() -> Self { 
-        let mut slf = Self { map: KVec::new() };
-        slf.push(Scope::new(ScopeKind::Root, None.into()));
-        slf
-    }
+    pub fn new(name: StringIndex, ty: Type, is_mut: bool, local: Local) -> Self { Self { name, ty, is_mut, local } }
 
     #[inline(always)]
-    pub fn push(&mut self, scope: Scope) -> ScopeId {
-        self.map.push(scope)
-    }
+    pub fn is_mut(&self) -> bool { self.is_mut }
 
     #[inline(always)]
-    pub fn get(&self, scope_id: ScopeId) -> Scope {
-        *self.map.get(scope_id).unwrap()
-    }
+    pub fn ty(&self) -> Type { self.ty }
 
     #[inline(always)]
-    pub fn swap(&mut self, scope_id: ScopeId, scope: Scope) -> Scope {
-        self.map.get_mut(scope_id).unwrap().swap(scope)
-    }
+    pub fn name(&self) -> StringIndex { self.name }
+
+    #[inline(always)]
+    pub fn local(&self) -> Local { self.local }
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct GenericsScope<'me> {
+    generics: &'me HashMap<StringIndex, Type>,
+}
+
+
+impl<'me> GenericsScope<'me> {
+    pub fn new(generics: &'me HashMap<StringIndex, Type>) -> Self { Self { generics } }
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct FunctionScope {
+    pub ret: Type,
+    pub ret_source: SourceRange,
+        
+}
+
+
+impl FunctionScope {
+    pub fn new(ret: Type, ret_source: SourceRange) -> Self { Self { ret, ret_source } }
+
 }

@@ -1,136 +1,85 @@
-use common::string_map::StringIndex;
-use sti::{define_key, hash::{HashMap, DefaultSeed}, keyed::KVec, arena::Arena};
+use std::collections::HashMap;
 
-use crate::{funcs::FuncId, types::{ty::Type, ty_map::{TypeId, TypeMap}}};
+use common::string_map::StringIndex;
+use sti::{define_key, keyed::KVec};
+
+use crate::{funcs::FunctionSymbolId, scope::Scope, types::TypeSymbolId};
 
 define_key!(u32, pub NamespaceId);
 
 
 #[derive(Debug)]
-pub struct Namespace<'out> {
-    types: HashMap<StringIndex, TypeId, DefaultSeed, &'out Arena>,
-    funcs: HashMap<StringIndex, FuncId, DefaultSeed, &'out Arena>,
-    modules: HashMap<StringIndex, NamespaceId, DefaultSeed, &'out Arena>,
-    path: StringIndex,
-}
-
-
-impl<'out> Namespace<'out> {
-    pub fn new(arena: &'out Arena, path: StringIndex) -> Self {
-        Namespace::with_ty_and_fn_cap(arena, path, 0, 0)
-    }
-
-
-    pub fn with_fn_cap(arena: &'out Arena, path: StringIndex, fn_cap: usize) -> Self {
-        Self::with_ty_and_fn_cap(arena, path, 0, fn_cap)
-    }
-
-
-    pub fn with_ty_cap(arena: &'out Arena, path: StringIndex, ty_cap: usize) -> Self {
-        Self::with_ty_and_fn_cap(arena, path, ty_cap, 0)
-    }
-
-
-    pub fn with_ty_and_fn_cap(arena: &'out Arena, path: StringIndex, ty_cap: usize, fn_cap: usize) -> Self {
-        Namespace {
-            types: HashMap::with_cap_in(arena, ty_cap),
-            funcs: HashMap::with_cap_in(arena, fn_cap),
-            modules: HashMap::with_cap_in(arena, 0),
-            path,
-        }
-    }
-    
-
-    pub fn add_type(&mut self, name: StringIndex, ty: TypeId) {
-        let prev_value = self.types.insert(name, ty);
-        assert!(prev_value.is_none());
-    }
-
-
-    pub fn add_func(&mut self, name: StringIndex, func: FuncId) {
-        let prev_value = self.funcs.insert(name, func);
-        assert!(prev_value.is_none());
-    }
-
-
-    pub fn add_mod(&mut self, name: StringIndex, module: NamespaceId) {
-        let prev_value = self.modules.insert(name, module);
-        assert!(prev_value.is_none());
-    }
-
-
-    pub fn get_type(&self, id: StringIndex) -> Option<TypeId> {
-        self.types.get(&id).copied()
-    }
-
-
-    pub fn get_func(&self, id: StringIndex) -> Option<FuncId> {
-        self.funcs.get(&id).copied()
-    }
-
-    pub fn get_mod(&self, id: StringIndex) -> Option<NamespaceId> {
-        self.modules.get(&id).copied()
-    }
-
-    pub fn path(&self) -> StringIndex { self.path }
+pub struct Namespace {
+    ty_symbols  : HashMap<StringIndex, TypeSymbolId>,
+    func_symbols: HashMap<StringIndex, FunctionSymbolId>,
+    namespaces  : HashMap<StringIndex, NamespaceId>,
+    pub path: StringIndex,
 }
 
 
 #[derive(Debug)]
-pub struct NamespaceMap<'out> {
-    map: KVec<NamespaceId, Option<Namespace<'out>>>,
-    type_to_ns: HashMap<Type, NamespaceId>,
-    arena: &'out Arena,
+pub struct NamespaceMap {
+    map: KVec<NamespaceId, Namespace>,
 }
 
 
-impl<'out> NamespaceMap<'out> {
-    pub fn new(arena: &'out Arena) -> Self {
+impl NamespaceMap {
+    pub fn new() -> Self { Self { map: KVec::new() } }
+
+    pub fn push(&mut self, ns: Namespace) -> NamespaceId {
+        self.map.push(ns)
+    }
+
+
+    pub fn get_ns(&self, ns: NamespaceId) -> &Namespace {
+        &self.map[ns]
+    }
+
+
+    pub fn get_ns_mut(&mut self, ns: NamespaceId) -> &mut Namespace {
+        &mut self.map[ns]
+    }
+}
+
+
+impl Namespace {
+    pub fn new(path: StringIndex) -> Self {
         Self {
-            map: KVec::new(),
-            type_to_ns: HashMap::new(),
-            arena,
+            ty_symbols: HashMap::new(),
+            func_symbols: HashMap::new(),
+            namespaces: HashMap::new(),
+            path,
         }
     }
-
-
-    #[inline(always)]
-    pub fn get_type(&mut self, id: Type, types: &TypeMap) -> NamespaceId {
-        if let Some(v) = self.type_to_ns.get(&id) { return *v }
-
-        let nid = self.map.push(Some(Namespace::new(self.arena, id.path(types))));
-        assert!(self.type_to_ns.insert(id, nid).is_none());
-
-        nid
+    pub fn add_sym(&mut self, name: StringIndex, sym: TypeSymbolId) {
+        let old_sym = self.ty_symbols.insert(name, sym);
+        assert!(old_sym.is_none());
     }
 
 
-    #[inline(always)]
-    pub fn get_type_mut(&mut self, id: Type, types: &TypeMap) -> &mut Namespace<'out> {
-        let id = self.get_type(id, types);
-        self.get_mut(id).unwrap()
+    pub fn add_func(&mut self, name: StringIndex, sym: FunctionSymbolId) {
+        let old_sym = self.func_symbols.insert(name, sym);
+        assert!(old_sym.is_none());
     }
 
 
-    #[inline(always)]
-    pub fn get(&self, id: NamespaceId) -> Option<&Namespace<'out>> {
-        self.map[id].as_ref()
+    pub fn add_ns(&mut self, name: StringIndex, ns: NamespaceId) {
+        let old_sym = self.namespaces.insert(name, ns);
+        assert!(old_sym.is_none());
     }
 
 
-    #[inline(always)]
-    pub fn get_mut(&mut self, id: NamespaceId) -> Option<&mut Namespace<'out>> {
-        self.map[id].as_mut()
+    pub fn get_ty_sym(&self, name: StringIndex) -> Option<TypeSymbolId> {
+        self.ty_symbols.get(&name).copied()
     }
 
 
-    #[inline(always)]
-    pub fn put(&mut self, ns: Namespace<'out>) -> NamespaceId {
-        self.map.push(Some(ns))
+    pub fn get_func(&self, name: StringIndex) -> Option<FunctionSymbolId> {
+        self.func_symbols.get(&name).copied()
     }
 
 
-    pub fn error(&mut self, ns: NamespaceId) {
-        self.map[ns] = None;
+    pub fn get_ns(&self, name: StringIndex) -> Option<NamespaceId> {
+        self.namespaces.get(&name).copied()
     }
 }

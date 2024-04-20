@@ -3,12 +3,12 @@ pub mod errors;
 
 use std::ops::Deref;
 
-use common::{source::SourceRange, string_map::{StringMap, StringIndex}};
+use common::{source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{attr::{Attribute, AttributeNode}, decl::{Declaration, DeclarationNode, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, Generic, StructKind, UseItem, UseItemKind}, err::ErrorNode, expr::{Expression, ExpressionNode, MatchMapping, UnaryOperator}, stmt::{Statement, StatementNode}, Node, Pattern, PatternKind};
-use sti::{prelude::{Vec, Arena}, arena_pool::ArenaPool, keyed::KVec, format_in};
+use nodes::{attr::{Attribute, AttributeNode}, decl::{Declaration, DeclarationNode, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, StructKind, UseItem, UseItemKind}, err::ErrorNode, expr::{Expression, ExpressionNode, MatchMapping, UnaryOperator}, stmt::{Statement, StatementNode}, Node, Pattern, PatternKind};
+use sti::{arena::Arena, vec::Vec, keyed::KVec, format_in};
 
 use crate::nodes::expr::BinaryOperator;
 
@@ -36,25 +36,11 @@ impl<'a> DataType<'a> {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum DataTypeKind<'a> {
-    I8,
-    I16,
-    I32,
-    I64,
-    U8,
-    U16,
-    U32,
-    U64,
-    F32,
-    F64,
-    Bool,
     Unit,
     Never,
-    Option(&'a DataType<'a>),
-    Result(&'a DataType<'a>, &'a DataType<'a>),
-    Tuple(&'a [DataType<'a>]),
+    Tuple(&'a [(OptStringIndex, DataType<'a>)]),
     Within(StringIndex, &'a DataType<'a>),
-    Rc(&'a DataType<'a>),
-    CustomType(StringIndex),
+    CustomType(StringIndex, &'a [DataType<'a>]),
 }
 
 
@@ -71,40 +57,13 @@ impl<'a> DataTypeKind<'a> {
 impl std::hash::Hash for DataTypeKind<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
-            DataTypeKind::I8  => 0.hash(state),
-            DataTypeKind::I16 => 1.hash(state),
-            DataTypeKind::I32 => 2.hash(state),
-            DataTypeKind::I64 => 3.hash(state),
-            DataTypeKind::U8  => 4.hash(state),
-            DataTypeKind::U16 => 5.hash(state),
-            DataTypeKind::U32 => 6.hash(state),
-            DataTypeKind::U64 => 7.hash(state),
-            DataTypeKind::F32 => 8.hash(state),
-            DataTypeKind::F64 => 9.hash(state),
-
-            DataTypeKind::Bool => 101.hash(state),
             DataTypeKind::Unit => 102.hash(state),
             DataTypeKind::Never => 103.hash(state),
-            DataTypeKind::Option(v) => {
-                201.hash(state);
-                v.kind().hash(state)
-            },
-            
-            DataTypeKind::Result(v1, v2) => {
-                202.hash(state);
-                v1.kind().hash(state);
-                v2.kind().hash(state);
-            },
 
-            DataTypeKind::CustomType(v) => {
+            DataTypeKind::CustomType(v, gens) => {
                 300.hash(state);
-                v.hash(state)
-            },
-
-            DataTypeKind::Tuple(v) => {
-                203.hash(state);
-                v.len().hash(state);
-                v.iter().for_each(|x| x.kind().hash(state));
+                v.hash(state);
+                gens.iter().for_each(|x| x.kind().hash(state));
             },
 
             DataTypeKind::Within(name, dt) => {
@@ -113,10 +72,13 @@ impl std::hash::Hash for DataTypeKind<'_> {
                 dt.kind().hash(state);
             },
 
-            DataTypeKind::Rc(v) => {
+            DataTypeKind::Tuple(v) => {
                 205.hash(state);
-                v.kind().hash(state);
-            }
+                v.iter().for_each(|x| {
+                    x.0.hash(state);
+                    x.1.kind().hash(state);
+                });
+            },
         }
     }
 }
@@ -180,13 +142,17 @@ pub fn parse<'a>(
     };
 
 
-    let result = parser.parse_till(
+    let mut result = parser.parse_till_decl(
         TokenKind::EndOfFile, 
         0, 
         &ParserSettings::default()
     ).unwrap();
 
-    (result.0, parser.errors)
+    if result.is_empty() {
+        result = arena.alloc_new([ExpressionNode::new(Expression::Unit, SourceRange::new(0, 0)).into()]);
+    }
+
+    (Block::new(result, SourceRange::new(0, 0)), parser.errors)
 }
 
 
@@ -349,9 +315,9 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 DataType::new(self.current_range(), DataTypeKind::Unit)
             } else {
                 let start = self.current_range().start();
-                let pool = ArenaPool::tls_get_rec();
-                let mut vec = Vec::new_in(&*pool);
+                let pool = Arena::tls_get_rec();
 
+                let mut vec = Vec::new_in(&*pool);
                 loop {
                     if self.current_is(TokenKind::RightParenthesis) {
                         break
@@ -361,36 +327,35 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         self.expect(TokenKind::Comma)?;
                         self.advance();
                     }
+
                     
                     if self.current_is(TokenKind::RightParenthesis) {
                         break
                     }
 
+                    let name = if matches!(self.current_kind(), TokenKind::Identifier(_)) 
+                                  && self.peek_is(TokenKind::Colon) {
+                        let ident = self.expect_identifier()?;
+                        self.advance();
+
+                        self.expect(TokenKind::Colon)?;
+                        self.advance();
+
+                        ident.some()
+                    } else { None.into() };
+
                     let typ = self.expect_type()?;
-                    vec.push(typ);
+                    vec.push((name, typ));
                     self.advance();
                 }
 
                 self.expect(TokenKind::RightParenthesis)?;
 
-                if vec.len() == 1 {
-                    vec[0]
-                } else {
-                    DataType::new(
-                        SourceRange::new(start, self.current_range().end()),
-                        DataTypeKind::Tuple(vec.move_into(self.arena).leak())
-                    )
-                }
+                DataType::new(
+                    SourceRange::new(start, self.current_range().end()),
+                    DataTypeKind::Tuple(vec.move_into(self.arena).leak())
+                )
             }
-        } else if self.current_is(TokenKind::Star) {
-            self.advance();
-
-            let ty = self.expect_type()?;
-            let alloc = self.arena.alloc_new(ty);
-            DataType::new(
-                SourceRange::new(start, ty.range().end()),
-                DataTypeKind::Rc(alloc)
-            )
         } else {
             let identifier = self.expect_identifier()?;
             let result = if self.peek_is(TokenKind::DoubleColon) {
@@ -398,71 +363,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 self.advance();
                 DataTypeKind::Within(identifier, self.arena.alloc_new(self.expect_type()?))
             } else {
-                match identifier {
-                    StringMap::I8  => DataTypeKind::I8,
-                    StringMap::I16 => DataTypeKind::I16,
-                    StringMap::I32 => DataTypeKind::I32,
-                    StringMap::I64 => DataTypeKind::I64,
-                    StringMap::U8  => DataTypeKind::U8,
-                    StringMap::U16 => DataTypeKind::U16,
-                    StringMap::U32 => DataTypeKind::U32,
-                    StringMap::U64 => DataTypeKind::U64,
-                    StringMap::F32 => DataTypeKind::F32,
-                    StringMap::F64 => DataTypeKind::F64,
-                    StringMap::BOOL  => DataTypeKind::Bool,
-                    _ => DataTypeKind::CustomType(identifier),
-                }
+                DataTypeKind::CustomType(identifier, &[])
             };
             
-            let mut result = DataType::new(
+            DataType::new(
                 SourceRange::new(start, self.current_range().end()), 
                 result
-            );
-
-
-            loop {
-                let mut has_updated = false;
-                if self.peek_is(TokenKind::QuestionMark) {
-                    self.advance();
-                    let end = self.current_range().end();
-                    let option_result = DataTypeKind::Option(self.arena.alloc_new(result));
-                    let option_result = DataType::new(
-                        SourceRange::new(start, end),
-                        option_result,
-                    );
-
-                    result = option_result;
-                    has_updated = true;
-                }
-
-                if self.peek_is(TokenKind::SquigglyDash) {
-                    self.advance();
-                    self.advance();
-
-                    let oth_typ = self.expect_type()?;
-
-                    let range = SourceRange::new(result.range().start(), oth_typ.range().end());
-
-                    let new_result = DataTypeKind::Result(
-                        self.arena.alloc_new(result), 
-                        self.arena.alloc_new(oth_typ)
-                    );
-
-                    let new_result = DataType::new(
-                        range,
-                        new_result,
-                    );
-
-                    result = new_result;
-                    has_updated = true;
-                }
-
-                if !has_updated {
-                    break
-                }
-            }
-
-            result
+            )
 
         };
 
@@ -495,7 +402,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 self.advance();
                 self.advance();
 
-                let pool = ArenaPool::tls_get_rec();
+                let pool = Arena::tls_get_rec();
                 let mut vec = Vec::new_in(&*pool);
 
                 loop {
@@ -525,10 +432,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn parse_pattern(&mut self) -> Result<Pattern<'ta>, ErrorId> {
+    fn _parse_pattern(&mut self) -> Result<Pattern<'ta>, ErrorId> {
         let start = self.current_range().start();
         
-        let pool = ArenaPool::tls_get_temp();
+        let pool = Arena::tls_get_temp();
         let mut vec = Vec::new_in(&*pool);
         loop {
             if !vec.is_empty() {
@@ -539,7 +446,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             if self.current_is(TokenKind::LeftParenthesis) {
                 self.advance();
 
-                let pattern = self.parse_pattern()?;
+                let pattern = self._parse_pattern()?;
                 self.advance();
 
                 self.expect(TokenKind::RightParenthesis)?;
@@ -553,8 +460,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let is_inout = self.is_inout();
             let ident = self.expect_identifier()?;
 
-            if self.peek_is(TokenKind::DoubleColon) { pattern = self.parse_pattern_struct(is_inout)? }
-            else if self.peek_is(TokenKind::LeftBracket) { pattern = self.parse_pattern_struct(is_inout)? }
+            if self.peek_is(TokenKind::DoubleColon) { pattern = self._parse_pattern_struct(is_inout)? }
+            else if self.peek_is(TokenKind::LeftBracket) { pattern = self._parse_pattern_struct(is_inout)? }
             else { pattern = Pattern::new(self.current_range(), is_inout, PatternKind::Ident(ident)) }
 
             vec.push(pattern)
@@ -581,7 +488,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn parse_pattern_struct(&mut self, is_inout: bool) -> Result<Pattern<'ta>, ErrorId> {
+    fn _parse_pattern_struct(&mut self, is_inout: bool) -> Result<Pattern<'ta>, ErrorId> {
         let start = self.current_range().start();
         let ty = self.expect_type()?;
         self.advance();
@@ -601,7 +508,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             parser.advance();
             parser.advance();
 
-            let pattern = parser.parse_pattern()?;
+            let pattern = parser._parse_pattern()?;
             Ok((
                 ident,
                 pattern,
@@ -740,10 +647,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
         terminator: TokenKind, 
         start: u32,
         settings: &ParserSettings<'ta>
-    ) -> Result<&'ta [Node<'ta>], ErrorId> {
+    ) -> Result<&'ta mut [Node<'ta>], ErrorId> {
         let parse_till = self.parse_till(terminator, start, settings)?;
         if parse_till.1 {
-            return Ok(&[]);
+            return Ok(&mut []);
         }
 
         let mut vec = Vec::with_cap_in(self.arena, parse_till.0.len());
@@ -754,8 +661,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
 
             if !matches!(kind, Node::Declaration(_)) {
-                return Err(ErrorId::Parser((self.file, self.errors.push(
-                            Error::DeclarationOnlyBlock { source: n.range() }))));
+                self.errors.push(Error::DeclarationOnlyBlock { source: n.range() });
+                continue;
             };
 
             vec.push(*n);
@@ -765,7 +672,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn generic_decl(&mut self) -> Result<&'ta [Generic], ErrorId> {
+    fn generic_decl(&mut self) -> Result<&'ta [StringIndex], ErrorId> {
         if !self.current_is(TokenKind::LeftAngle) {
             return Ok(&[]);
         }
@@ -774,7 +681,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let list = self.list(TokenKind::RightAngle, Some(TokenKind::Comma),
         |slf, _| {
             let ident = slf.expect_identifier()?;
-            Ok(Generic::new(ident, slf.current_range()))
+            Ok(ident)
         })?;
         self.advance();
 
@@ -873,7 +780,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::RightBracket)?;
         let end = self.current_range().end();
 
-        let node = Declaration::Struct { kind, name, header, fields };
+        let node = Declaration::Struct { kind, name, header, fields, generics: &[] };
 
         Ok(DeclarationNode::new(
             node, 
@@ -1021,6 +928,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let name = self.expect_identifier()?;
+        let header_end = self.current_range().end();
         self.advance();
 
         let body_start = self.current_range().start();
@@ -1031,7 +939,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(DeclarationNode::new(
-            Declaration::Module { name, body },
+            Declaration::Module { name, body, header: SourceRange::new(start, header_end) },
             SourceRange::new(start, end)
         ))
     }
@@ -1196,7 +1104,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(DeclarationNode::new(
-            Declaration::Enum { name, mappings, header },
+            Declaration::Enum { name, mappings, header, generics: &[] },
             SourceRange::new(start, end)
         ))
     }
@@ -1296,7 +1204,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Let))?;
         self.advance();
 
-        let pool = ArenaPool::tls_get_temp();
+        let pool = Arena::tls_get_temp();
         let mut bindings = Vec::new_in(&*pool);
         loop {
             if !bindings.is_empty() {
@@ -1671,7 +1579,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let start = self.current_range().start();
             let ident = match self.current_kind() {
                 TokenKind::Literal(Literal::Integer(int)) => {
-                    let pool = ArenaPool::tls_get_temp();
+                    let pool = Arena::tls_get_temp();
                     let string = format_in!(&*pool, "{}", int);
                     self.string_map.insert(&string)
                 },
@@ -1742,7 +1650,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 self.advance();
 
                 if self.current_is(TokenKind::Comma) {
-                    let pool = ArenaPool::tls_get_rec();
+                    let pool = Arena::tls_get_rec();
                     let mut vec = Vec::new_in(&*pool);
                     vec.push(expr);
                     while self.current_is(TokenKind::Comma) {
@@ -2085,7 +1993,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         associated: Option<ExpressionNode<'ta>>
     ) -> Result<&'ta mut [(ExpressionNode<'ta>, bool)], ErrorId> {
 
-        let binding = ArenaPool::tls_get_rec();
+        let binding = Arena::tls_get_rec();
         let mut args = Vec::new_in(&*binding);
 
         if let Some(node) = associated {

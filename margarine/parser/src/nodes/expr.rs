@@ -13,7 +13,7 @@ pub struct ExpressionNode<'a> {
 
 
 impl<'arena> ExpressionNode<'arena> {
-    pub fn new(kind: Expression<'arena>, source_range: SourceRange) -> Self { 
+    pub const fn new(kind: Expression<'arena>, source_range: SourceRange) -> Self { 
         Self {
             kind, 
             source_range,

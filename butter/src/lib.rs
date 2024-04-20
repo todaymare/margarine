@@ -1,8 +1,5 @@
-use std::{env, fs, io::{Read, Write}, process::{Command, ExitCode, Stdio}};
-
-use game_runtime::encode;
 use margarine::{nodes::{decl::{Declaration, DeclarationNode}, Node}, DropTimer, FileData, SourceRange, StringMap};
-use sti::prelude::Arena;
+use sti::arena::Arena;
 
 pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &'static str> {
     let mut global = vec![];
@@ -38,8 +35,9 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
 
         global.push(DeclarationNode::new(
             Declaration::Module {
-               name: f.name(),
-               body: ast.inner(),
+                name: f.name(),
+                body: ast.inner(),
+                header: SourceRange::new(0, 0),
            },
 
            SourceRange::new(source_offset, source_offset + f.read().len() as u32),
@@ -52,11 +50,11 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
     assert_eq!(parse_errors.len(), files.len());
 
 
-    let ns_arena = Arena::new();
+    let sema_arena = Arena::new();
     let _scopes = Arena::new();
-    let mut sema = {
+    let (sema, ctx) = {
         let _1 = DropTimer::new("semantic analysis");
-        margarine::Analyzer::run(&ns_arena, string_map, &*global)
+        margarine::Analyzer::run(&sema_arena, &global, string_map)
     };
 
     // todo: find a way to comrpess these errors into vecs
@@ -94,84 +92,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
         sema_errors.push(report);
     } 
 
-    dbg!(&sema);
-
-    let code = sema.module_builder.build(&mut sema.string_map);
-
-    /*
-    println!("symbol map arena {:?} ns_arena: {ns_arena:?}, arena: {arena:?}", string_map.arena_stats());
-    println!("{:?}", &*ArenaPool::tls_get_temp());
-    println!("{:?}", &*ArenaPool::tls_get_rec());
-    */
-
-    // ------ Prepare data for transmission ------
-    let data_imports = {
-        let mut vec = Vec::with_capacity(sema.module_builder.externs.len());
-        for (path, value) in sema.module_builder.externs.iter() {
-            let mut values : Vec<&str> = Vec::with_capacity(value.len());
-            for i in value {
-                let str = sema.string_map.get(i.0);
-                if values.contains(&str) { continue }
-                values.push(str)
-            }
-            vec.push((sema.string_map.get(*path), values));
-        }
-        vec
-    };
-
-    let data_funcs = {
-        let mut vec = Vec::with_capacity(sema.funcs.len() + 1);
-
-        let mut funcs = sema.funcs.iter().collect::<Vec<_>>();
-        funcs.sort_unstable_by_key(|x| x.wasm_id);
-        for f in funcs.iter() {
-            vec.push(sema.string_map.get(f.path));
-        }
-
-        vec
-    };
-
-    // ------------------------------------------
-     
-    #[cfg(not(feature = "fuzzer"))]
-    {
-        fs::write("out.wat", &*code).unwrap();
-
-        let mut wat2wasm = Command::new("wat2wasm")
-            .arg("-")
-            .arg("--output=-")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn().unwrap();
-
-        wat2wasm.stdin.as_mut().unwrap().write_all(&code).unwrap();
-        assert!(wat2wasm.wait().unwrap().success());
-
-        let mut wasmopt = Command::new("wasm-opt")
-            .arg("-O4")
-            .arg("--enable-bulk-memory")
-            // .arg("-iit")
-            .arg("-aimfs=128")
-            .arg("-fimfs=512")
-            // .arg("-lmu")
-            .arg("-pii=64")
-            .arg("-ifwl")
-            .arg("-o=-")
-            .stdin(Stdio::from(wat2wasm.stdout.unwrap()))
-            .stdout(Stdio::piped())
-            .spawn().unwrap();
-
-        assert!(wasmopt.wait().unwrap().success());
-        let mut wasm = Vec::new();
-        wasmopt.stdout.unwrap().read_to_end(&mut wasm).unwrap();
-
-        let wasm = wasm;
-        fs::write("out.wasm", &*wasm).unwrap();
-
-        let result = encode(&wasm, &data_imports, &data_funcs, [&lex_error_files, &parse_error_files, &[sema_errors]]);
-        fs::write("out", result).unwrap();
-    }
-    
+    ctx.module(sema.module).dump();
 
      Ok(())
 }

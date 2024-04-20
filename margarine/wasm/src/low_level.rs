@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use sti::{write, format_in, arena_pool::ArenaPool};
+use sti::{arena::Arena, format_in, write};
 
 use crate::{BlockId, FunctionId, GlobalId, LocalId, LoopId, StackPointer, StringAddress, WasmFunctionBuilder, WasmType};
 
@@ -9,7 +9,7 @@ impl WasmFunctionBuilder<'_> {
     /// Inserts a `local.set` at a specific offset
     ///
     pub fn insert_local_set(&mut self, offset: usize, local: LocalId) -> usize {
-        self.insert(format_in!(&*ArenaPool::tls_get_temp(), "local.set $_{} ", local.0).as_str(), offset)
+        self.insert(format_in!(&*Arena::tls_get_temp(), "local.set $_{} ", local.0).as_str(), offset)
     }
 
     
@@ -88,20 +88,6 @@ impl WasmFunctionBuilder<'_> {
     #[inline(always)]
     pub fn memory_size(&mut self) { write!(self.body, "memory.size "); }
 
-    
-    ///
-    /// Pushes the specified global's value to the stack
-    /// () -> `$global`
-    ///
-    #[inline(always)]
-    pub fn global_get(&mut self, index: GlobalId) { write!(self.body, "global.get {}", index.0); }
-
-    ///
-    /// Sets the value of the specified global
-    /// `$global` -> ()
-    ///
-    #[inline(always)]
-    pub fn global_set(&mut self, index: GlobalId) { write!(self.body, "global.set {}", index.0); }
 
     ///
     /// Calls a function
