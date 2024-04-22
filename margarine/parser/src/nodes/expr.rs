@@ -1,75 +1,51 @@
-use std::fmt::Display;
+use std::{fmt::Display, ops::Deref};
 
 use common::{source::SourceRange, string_map::StringIndex};
 use lexer::Literal;
+use sti::define_key;
 
-use crate::{DataType, Block};
+use crate::DataType;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub struct ExpressionNode<'a> {
-    kind: Expression<'a>,
-    pub(crate) source_range: SourceRange,
-}
+use super::NodeId;
 
-
-impl<'arena> ExpressionNode<'arena> {
-    pub const fn new(kind: Expression<'arena>, source_range: SourceRange) -> Self { 
-        Self {
-            kind, 
-            source_range,
-        } 
-    }
-
-
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange {
-        self.source_range
-    }
-
-
-    #[inline(always)]
-    pub fn kind(&self) -> Expression<'arena> {
-        self.kind
-    }
-}
-
+define_key!(u32, pub ExprId);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Expression<'a> {
+pub enum Expr<'a> {
     Unit,
     
     Literal(Literal),
 
     Identifier(StringIndex),
 
-    Deref(&'a ExpressionNode<'a>),
+    Deref(ExprId),
 
     Range {
-        lhs: &'a ExpressionNode<'a>,
-        rhs: &'a ExpressionNode<'a>,
+        lhs: ExprId,
+        rhs: ExprId,
     },
 
     BinaryOp {
         operator: BinaryOperator,
-        lhs: &'a ExpressionNode<'a>,
-        rhs: &'a ExpressionNode<'a>,
+        lhs: ExprId,
+        rhs: ExprId,
     },
 
     UnaryOp {
         operator: UnaryOperator,
-        rhs: &'a ExpressionNode<'a>,
+        rhs: ExprId,
     },
 
     If {
-        condition: &'a ExpressionNode<'a>,
-        body: &'a ExpressionNode<'a>,
-        else_block: Option<&'a ExpressionNode<'a>>,
+        condition: ExprId,
+        body: ExprId,
+        else_block: Option<ExprId>,
     },
 
     Match {
-        value: &'a ExpressionNode<'a>,
+        value: ExprId,
         taken_as_inout: bool,
-        mappings: &'a [MatchMapping<'a>],
+        mappings: &'a [MatchMapping],
     },
 
     Block {
@@ -78,70 +54,70 @@ pub enum Expression<'a> {
 
     CreateStruct {
         data_type: DataType<'a>,
-        fields: &'a [(StringIndex, SourceRange, ExpressionNode<'a>)],
+        fields: &'a [(StringIndex, SourceRange, ExprId)],
     },
 
     AccessField {
-        val: &'a ExpressionNode<'a>,
+        val: ExprId,
         field_name: StringIndex,
     },
 
     CallFunction {
         name: StringIndex,
         is_accessor: bool,
-        args: &'a [(ExpressionNode<'a>, bool)],
+        args: &'a [(ExprId, bool)],
     },
 
     WithinNamespace {
         namespace: StringIndex,
         namespace_source: SourceRange,
-        action: &'a ExpressionNode<'a>,
+        action: ExprId,
     },
 
     WithinTypeNamespace {
         namespace: DataType<'a>,
-        action: &'a ExpressionNode<'a>,
+        action: ExprId,
     },
 
     Loop {
         body: Block<'a>,
     },
     
-    Return(&'a ExpressionNode<'a>),
+    Return(ExprId),
     Continue,
     Break,
 
-    Tuple(&'a [ExpressionNode<'a>]),
+    Tuple(&'a [ExprId]),
 
     AsCast {
-        lhs: &'a ExpressionNode<'a>,
+        lhs: ExprId,
         data_type: DataType<'a>,
     },
 
-    Unwrap(&'a ExpressionNode<'a>),
+    Unwrap(ExprId),
 
-    OrReturn(&'a ExpressionNode<'a>),
+    OrReturn(ExprId),
 }
 
 
 #[derive(Debug, PartialEq)]
-pub struct MatchMapping<'a> {
+pub struct MatchMapping {
     variant: StringIndex,
     binding: StringIndex,
     binding_range: SourceRange,
     source_range: SourceRange,
-    expression: ExpressionNode<'a>,
+    expression: ExprId,
     is_inout: bool,
 }
 
 
-impl<'arena> MatchMapping<'arena> {
+impl MatchMapping {
     pub fn new(
         variant: StringIndex, 
         binding: StringIndex, 
         binding_range: SourceRange,
         source_range: SourceRange, 
-        expression: ExpressionNode<'arena>,
+        expression: ExprId,
         is_inout: bool,
     ) -> Self { 
         Self { 
@@ -160,7 +136,7 @@ impl<'arena> MatchMapping<'arena> {
     #[inline(always)]
     pub fn binding(&self) -> StringIndex { self.binding }
     #[inline(always)]
-    pub fn node(&self) -> ExpressionNode<'arena> { self.expression }
+    pub fn expr(&self) -> ExprId{ self.expression }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
     #[inline(always)]
@@ -169,6 +145,29 @@ impl<'arena> MatchMapping<'arena> {
     pub fn is_inout(&self) -> bool { self.is_inout }
 
 }
+
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct Block<'a>(&'a [NodeId], SourceRange);
+
+impl<'a> Block<'a> {
+    pub fn new(body: &'a [NodeId], sr: SourceRange) -> Self {
+        Self(body, sr)
+    }
+
+
+    pub fn range(self) -> SourceRange { self.1 }
+}
+
+
+impl<'a> Deref for Block<'a> {
+    type Target = &'a [NodeId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,40 +1,12 @@
 use common::{string_map::StringIndex, source::SourceRange};
+use sti::define_key;
 
 use crate::{DataType, Block};
 
-use super::Node;
+define_key!(u32, pub DeclId);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub struct DeclarationNode<'a> {
-    kind: Declaration<'a>,
-    pub(crate) source_range: SourceRange,
-}
-
-
-impl<'arena> DeclarationNode<'arena> {
-    pub fn new(kind: Declaration<'arena>, source_range: SourceRange) -> Self { 
-        Self {
-            kind, 
-            source_range,
-        } 
-    }
-
-
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange {
-        self.source_range
-    }
-
-
-    #[inline(always)]
-    pub fn kind(&self) -> Declaration<'arena> {
-        self.kind
-    }
-}
-
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Declaration<'a> {
+pub enum Decl<'a> {
     Struct {
         kind: StructKind,
         name: StringIndex,
@@ -58,7 +30,7 @@ pub enum Declaration<'a> {
     
     Impl {
         data_type: DataType<'a>,
-        body: &'a [Node<'a>],
+        body: Block<'a>,
     },
 
     Using {
@@ -68,7 +40,7 @@ pub enum Declaration<'a> {
     Module {
         name: StringIndex,
         header: SourceRange,
-        body: &'a [Node<'a>],
+        body: Block<'a>,
     },
 
     Extern {

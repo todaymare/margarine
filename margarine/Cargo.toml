@@ -9,7 +9,6 @@ edition = "2021"
 lexer = { path = "./lexer" }
 parser = { path = "./parser" }
 semantic_analysis = { path = "./semantic_analysis" }
-wasm = { path = "./wasm" }
 common = { path = "./common" }
 errors = { path = "./errors" }
 

@@ -1,92 +1,101 @@
 pub mod expr;
 pub mod stmt;
 pub mod decl;
-pub mod attr;
 pub mod err;
 
 
-use common::{source::SourceRange, string_map::StringIndex};
+use common::source::SourceRange;
+use errors::ErrorId;
+use sti::keyed::{KSlice, KVec};
 
-use crate::DataType;
-
-use self::{decl::DeclarationNode, stmt::StatementNode, expr::ExpressionNode, attr::AttributeNode, err::ErrorNode};
-
+use self::{decl::{Decl, DeclId}, expr::{Expr, ExprId}, stmt::{Stmt, StmtId}};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Node<'a> {
-    Declaration(DeclarationNode<'a>),
-    Statement(StatementNode<'a>),
-    Expression(ExpressionNode<'a>),
-    Attribute(&'a AttributeNode<'a>),
-    Error(ErrorNode),
+pub enum NodeId {
+    Decl(DeclId),
+    Stmt(StmtId),
+    Expr(ExprId),
+    Err (ErrorId),
 }
 
 
-impl Node<'_> {
-    pub fn range(self) -> SourceRange {
-        match self {
-            Node::Declaration(v) => v.range(),
-            Node::Statement(v) => v.range(),
-            Node::Expression(v) => v.range(),
-            Node::Attribute(v) => v.range(),
-            Node::Error(v) => v.range(),
+#[derive(Debug)]
+pub struct AST<'a> {
+    stmts: KVec<StmtId, (Stmt<'a>, SourceRange)>,
+    exprs: KVec<ExprId, (Expr<'a>, SourceRange)>,
+    decls: KVec<DeclId, (Decl<'a>, SourceRange)>,
+}
+
+impl<'a> AST<'a> {
+    pub fn new() -> Self {
+        Self {
+            stmts: KVec::new(),
+            exprs: KVec::new(),
+            decls: KVec::new() 
         }
     }
-}
 
 
-impl<'a> From<DeclarationNode<'a>> for Node<'a> {
-    fn from(value: DeclarationNode<'a>) -> Self {
-        Self::Declaration(value)
+    pub fn range(&self, node: impl Into<NodeId>) -> SourceRange {
+        match node.into() {
+            NodeId::Stmt(e) => self.stmts[e].1,
+            NodeId::Expr(e) => self.exprs[e].1,
+            NodeId::Decl(e) => self.decls[e].1,
+            NodeId::Err (_) => SourceRange::ZERO,
+        }
+    }
+
+
+    pub fn add_stmt(&mut self, stmt: Stmt<'a>, src: SourceRange) -> StmtId {
+        self.stmts.push((stmt, src))
+    }
+
+
+    pub fn add_expr(&mut self, expr: Expr<'a>, src: SourceRange) -> ExprId {
+        self.exprs.push((expr, src))
+    }
+
+
+    pub fn add_decl(&mut self, decl: Decl<'a>, src: SourceRange) -> DeclId {
+        self.decls.push((decl, src))
+    }
+
+
+    pub fn stmt(&mut self, stmt: StmtId) -> Stmt<'a> { self.stmts[stmt].0 }
+    pub fn expr(&mut self, expr: ExprId) -> Expr<'a> { self.exprs[expr].0 }
+    pub fn decl(&mut self, decl: DeclId) -> Decl<'a> { self.decls[decl].0 }
+
+
+    pub fn stmts(&self) -> &KSlice<StmtId, (Stmt<'a>, SourceRange)> {
+        self.stmts.as_slice()
+    }
+
+    pub fn exprs(&self) -> &KSlice<ExprId, (Expr<'a>, SourceRange)> {
+        self.exprs.as_slice()
+    }
+
+    pub fn decls(&self) -> &KSlice<DeclId, (Decl<'a>, SourceRange)> {
+        self.decls.as_slice()
     }
 }
 
-impl<'a> From<StatementNode<'a>> for Node<'a> {
-    fn from(value: StatementNode<'a>) -> Self {
-        Self::Statement(value)
-    }
-}
 
-impl<'a> From<ExpressionNode<'a>> for Node<'a> {
-    fn from(value: ExpressionNode<'a>) -> Self {
-        Self::Expression(value)
-    }
-}
 
-impl<'a> From<&'a AttributeNode<'a>> for Node<'a> {
-    fn from(value: &'a AttributeNode<'a>) -> Self {
-        Self::Attribute(value)
-    }
-}
-
-impl<'a> From<ErrorNode> for Node<'a> {
-    fn from(value: ErrorNode) -> Self {
-        Self::Error(value)
+impl Into<NodeId> for StmtId {
+    fn into(self) -> NodeId {
+        NodeId::Stmt(self)
     }
 }
 
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub struct Pattern<'a> {
-    source: SourceRange,
-    is_inout: bool,
-    kind: PatternKind<'a>,
+impl Into<NodeId> for ExprId {
+    fn into(self) -> NodeId {
+        NodeId::Expr(self)
+    }
 }
 
-
-impl<'a> Pattern<'a> {
-    pub fn new(source: SourceRange, is_inout: bool, kind: PatternKind<'a>) -> Self { Self { source, kind, is_inout } }
-
-    #[inline(always)]
-    pub fn is_inout(&self) -> bool { self.is_inout }
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange { self.source }
-}
-
-
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum PatternKind<'a> {
-    Ident(StringIndex),
-    Tuple(&'a [Pattern<'a>]),
-    Struct(DataType<'a>, &'a [(StringIndex, Pattern<'a>)]),
+impl Into<NodeId> for DeclId {
+    fn into(self) -> NodeId {
+        NodeId::Decl(self)
+    }
 }

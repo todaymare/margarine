@@ -2,14 +2,13 @@ use std::collections::HashMap;
 
 use common::string_map::{StringIndex, StringMap};
 use errors::Error;
-use ::errors::SemaError;
-use funcs::{FunctionId, FunctionMap};
-use llvm_api::{builder::Builder, tys::IsType, values::Value, Context, Function, Module};
+use ::errors::{ErrorId, SemaError};
+use funcs::FunctionMap;
 use namespace::{Namespace, NamespaceMap};
-use parser::{nodes::Node, DataType, DataTypeKind};
+use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, hash::DefaultSeed, keyed::KVec, packed_option::PackedOption};
-use types::{Generic, GenericKind, SymbolMap, Type, TypeSymbol, TypeSymbolId};
+use sti::{arena::Arena, keyed::KVec};
+use types::{Generic, GenericKind, SymbolMap, Type, TypeSymbolId};
 
 use crate::scope::ScopeKind;
 
@@ -21,50 +20,76 @@ pub mod errors;
 pub mod analysis;
 
 #[derive(Debug)]
-pub struct Analyzer<'me, 'out, 'ast, 'str> {
+pub struct TyChecker<'me, 'out, 'ast, 'str> {
     output    : &'out Arena,
     pub string_map: &'me mut StringMap<'str>,
-
-    pub module    : Module,
+    ast       : &'me mut AST<'ast>,
 
     scopes    : ScopeMap<'out>,
     namespaces: NamespaceMap,
-    pub types     : SymbolMap<'out>,
+    pub types : SymbolMap<'out>,
     funcs     : FunctionMap<'out, 'ast>,
+    type_info : TyInfo,
 
     pub errors    : KVec<SemaError, Error>,
+}
+
+
+#[derive(Debug)]
+pub struct TyInfo {
+    exprs: KVec<ExprId, Option<ExprInfo>>,
+    stmts: KVec<StmtId, Option<ErrorId>>,
+    decls: KVec<DeclId, Option<ErrorId>>,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum ExprInfo {
+    Result {
+        ty    : Type,
+        is_mut: bool,
+    },
+    Errored(ErrorId),
 }
 
 
 #[derive(Debug, Clone, Copy)]
 pub struct AnalysisResult {
     ty    : Type,
-    value : Value,
     is_mut: bool,
 }
 
 impl AnalysisResult {
-    pub fn new(ty: Type, value: Value, is_mut: bool) -> Self { Self { ty, value, is_mut } }
+    pub fn new(ty: Type, is_mut: bool) -> Self { Self { ty, is_mut } }
 }
 
 
-impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
+impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     pub fn run(out: &'out Arena,
-               ast: &[Node<'ast>],
-               string_map: &'me mut StringMap<'str>) -> (Self, Context) {
-        let mut ctx = Context::new();
-        let module = Module::new(&mut ctx, "main");
-        ctx.module_mut(module).target(llvm_api::Target::Wasm);
-        let mut analyzer = Analyzer {
+               ast: &'me mut AST<'ast>,
+               block: &[NodeId],
+               string_map: &'me mut StringMap<'str>) -> Self {
+        let mut analyzer = TyChecker {
             output: out,
             string_map,
-            module,
             scopes: ScopeMap::new(),
             namespaces: NamespaceMap::new(),
-            types: SymbolMap::new(out, &mut ctx),
+            types: SymbolMap::new(out),
             funcs: FunctionMap::new(out),
             errors: KVec::new(),
+            type_info: TyInfo {
+                exprs: KVec::new(),
+                stmts: KVec::new(),
+                decls: KVec::new(),
+            },
+            ast,
         };
+
+        {
+            analyzer.type_info.exprs.inner_mut_unck().resize(analyzer.ast.exprs().len(), None);
+            analyzer.type_info.stmts.inner_mut_unck().resize(analyzer.ast.stmts().len(), None);
+            analyzer.type_info.decls.inner_mut_unck().resize(analyzer.ast.decls().len(), None);
+        }
 
         let core_ns = {
             let mut namespace = Namespace::new(analyzer.string_map.insert("::core"));
@@ -90,70 +115,73 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
             analyzer.namespaces.push(namespace)
         };
 
-        let ret = ctx.zst();
-        let mut builder = Function::new(&mut ctx, module, "init", ret.ty(), &[]);
         let scope = Scope::new(None, ScopeKind::ImplicitNamespace(core_ns));
         let scope = analyzer.scopes.push(scope);
         let empty = analyzer.string_map.insert("");
-        analyzer.block(&mut builder, empty, scope, ast);
+        analyzer.block(empty, scope, block);
 
-        let ret = builder.unit();
-        builder.ret(ret);
-        builder.build();
-
-        dbg!(&analyzer);
-        (analyzer, ctx)
+        analyzer
     }
 
 
-    fn error(&mut self, builder: &mut Builder, error: Error) -> AnalysisResult {
-        let id = self.errors.push(error);
-        self.place_error(builder, ::errors::ErrorId::Sema(id));
-        self.empty_error(builder)
+    fn error(&mut self, node: impl Into<NodeId>, error: Error) -> AnalysisResult {
+        let error = self.errors.push(error);
+        let error = ErrorId::Sema(error);
+        match node.into() {
+            NodeId::Expr(id) => {
+                let val = &mut self.type_info.exprs[id];
+                match val {
+                    Some(v) => match v {
+                        ExprInfo::Result { .. } => *val = Some(ExprInfo::Errored(error)),
+                        ExprInfo::Errored(_) => (),
+                    },
+                    None => *val = Some(ExprInfo::Errored(error)),
+                };
+            },
+
+            NodeId::Decl(v) => self.type_info.set_decl(v, error),
+            NodeId::Stmt(v) => self.type_info.set_stmt(v, error),
+            NodeId::Err(_) => (),
+        }
+
+        AnalysisResult::new(Type::ERROR, true)
     }
 
 
-    fn place_error(&mut self, builder: &mut Builder, err: ::errors::ErrorId) {
-        // TODO: Print and panic on error
+    fn empty_error(&mut self) -> AnalysisResult {
+        AnalysisResult::new(Type::ERROR, true)
     }
 
 
-    fn empty_error(&mut self, builder: &mut Builder) -> AnalysisResult {
-        AnalysisResult::new(Type::ERROR, builder.unit(), true)
-    }
-
-
-    fn never(&mut self, builder: &mut Builder) -> AnalysisResult {
-        AnalysisResult::new(Type::NEVER, builder.unit(), true)
+    fn never(&mut self) -> AnalysisResult {
+        AnalysisResult::new(Type::NEVER, true)
     }
 
     
-    fn gen_to_ty(&mut self, ctx: &mut Context, 
-                 gen: Generic, gens: &HashMap<StringIndex, Type>) -> Result<Type, Error> {
+    fn gen_to_ty(&mut self, gen: Generic, gens: &HashMap<StringIndex, Type>) -> Result<Type, Error> {
         match gen.kind {
             GenericKind::Generic(v) => gens.get(&v)
-                                            .map(|x| self.types.get_ty_val(*x).symbol())
-                                            .map(|x| self.get_ty(ctx, x, &[]))
-                                            .ok_or(Error::UnknownType(v, gen.range)),
+                                        .copied()
+                                        .ok_or(Error::UnknownType(v, gen.range)),
 
             GenericKind::Symbol { symbol, generics } => {
                 let pool = Arena::tls_get_rec();
                 let generics = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, generics.len());
                     for g in generics {
-                        vec.push(self.gen_to_ty(ctx, *g, gens).unwrap_or(Type::ERROR));
+                        vec.push(self.gen_to_ty(*g, gens).unwrap_or(Type::ERROR));
                     }
                     vec
                 };
                 
-                Ok(self.get_ty(ctx, symbol, &generics))
+                Ok(self.get_ty(symbol, &generics))
             },
         }
     }
 
 
-    fn dt_to_gen(&mut self, ctx: &mut Context, scope: Scope,
-                 dt: DataType, gens: &[StringIndex]) -> Result<Generic<'out>, Error> {
+    fn dt_to_gen(&mut self, scope: Scope, dt: DataType,
+                 gens: &[StringIndex]) -> Result<Generic<'out>, Error> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Symbol {
                                         symbol: TypeSymbolId::UNIT, generics: &[] })),
@@ -177,7 +205,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     let mut vec = sti::vec::Vec::with_cap_in(&*self.output, v.len());
 
                     for g in v {
-                        vec.push(self.dt_to_gen(ctx, scope, g.1, gens)?);
+                        vec.push(self.dt_to_gen(scope, g.1, gens)?);
                     }
                     vec
                 };
@@ -192,7 +220,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                 else { return Err(Error::NamespaceNotFound { namespace: ns, source: dt.range() }) };
 
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
-                self.dt_to_gen(ctx, scope, *dt, gens)
+                self.dt_to_gen(scope, *dt, gens)
             },
 
 
@@ -207,7 +235,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     let mut vec = sti::vec::Vec::with_cap_in(&*self.output, generics.len());
 
                     for g in generics {
-                        vec.push(self.dt_to_gen(ctx, scope, *g, gens)?);
+                        vec.push(self.dt_to_gen(scope, *g, gens)?);
                     }
                     vec
                 };
@@ -219,7 +247,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
     }
 
 
-    fn dt_to_ty(&mut self, ctx: &mut Context, scope_id: ScopeId,
+    fn dt_to_ty(&mut self, scope_id: ScopeId,
                 dt: DataType) -> Result<Type, Error> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Type::UNIT),
@@ -233,7 +261,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
 
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
                 let scope = self.scopes.push(scope);
-                self.dt_to_ty(ctx, scope, *dt)
+                self.dt_to_ty(scope, *dt)
             },
 
 
@@ -247,12 +275,12 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, generics.len());
 
                     for g in generics {
-                        vec.push(self.dt_to_ty(ctx, scope_id, *g)?);
+                        vec.push(self.dt_to_ty(scope_id, *g)?);
                     }
                     vec
                 };
 
-                let ty = self.get_ty(ctx, base, &*generics);
+                let ty = self.get_ty(base, &*generics);
                 Ok(ty)
             },
 
@@ -261,13 +289,37 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                 let pool = Arena::tls_get_rec();
                 let mut vec = sti::vec::Vec::with_cap_in(&*pool, v.len());
                 for i in v {
-                    let ty = self.dt_to_ty(ctx, scope_id, i.1)?;
+                    let ty = self.dt_to_ty(scope_id, i.1)?;
                     vec.push((i.0, ty));
                 }
 
-                Ok(self.tuple(ctx, &*vec))
+                Ok(self.tuple(&*vec))
             },
         }
     }
 }
 
+
+impl TyInfo {
+    pub fn set_stmt(&mut self, stmt: StmtId, info: ErrorId) {
+        let val = &mut self.stmts[stmt];
+        if val.is_none() {
+            *val = Some(info)
+        }
+    }
+    
+    pub fn set_expr(&mut self, expr: ExprId, info: AnalysisResult) {
+        let val = &mut self.exprs[expr];
+        if val.is_none() {
+            *val = Some(ExprInfo::Result { ty: info.ty, is_mut: info.is_mut })
+        }
+    }
+
+
+    pub fn set_decl(&mut self, decl: DeclId, info: ErrorId) {
+        let val = &mut self.decls[decl];
+        if val.is_none() {
+            *val = Some(info)
+        }
+    }
+}

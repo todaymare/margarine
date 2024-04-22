@@ -3,7 +3,7 @@ pub mod hashables;
 pub mod source;
 pub mod toggle_buffer;
 
-use std::time::Instant;
+use std::{ops::Deref, time::Instant};
 
 use sti::{alloc::Alloc, arena::Arena, vec::Vec};
 use colourful::*;
@@ -92,7 +92,20 @@ pub fn copy_slice_in<'a, 'b, T: Copy>(arena: &'a Arena, slice: &'b [T]) -> &'a [
 
 
 
-pub enum Either<T, A> {
-    Left(T),
-    Right(A),
+pub struct NonEmpty<'a, T>(&'a [T]);
+
+impl<'a, T> NonEmpty<'a, T> {
+    pub fn new(body: &'a [T]) -> Option<Self> {
+        if body.is_empty() { return None }
+        Some(Self(body))
+    }
+
+}
+
+impl<'a, T> Deref for NonEmpty<'a, T> {
+    type Target = &'a [T];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }

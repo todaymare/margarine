@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-colourful = "*"
+colourful = { git = "https://github.com/rookieCookies/colourful" }
 display_plus = { git = "https://github.com/rookieCookies/display_plus" }
 sti = { git = "https://github.com/leddoo/sti" }
 common = { path = "../common" }

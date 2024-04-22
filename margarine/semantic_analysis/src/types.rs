@@ -1,19 +1,18 @@
-use std::{collections::HashMap, fmt::Write, hash::{Hash, Hasher}};
+use std::{collections::HashMap, hash::{Hash, Hasher}, fmt::Write};
 
 use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
-use llvm_api::{builder::Local, tys::IsType, Context};
-use parser::nodes::decl::StructKind;
-use sti::{arena::Arena, define_key, format_in, hash::fxhash::FxHasher32, keyed::{KVec, Key}};
+use sti::{arena::Arena, define_key, hash::fxhash::FxHasher32, keyed::KVec};
 
-use crate::{scope::{Scope, ScopeId, VariableScope}, Analyzer};
+use crate::TyChecker;
 
 define_key!(u32, pub TypeSymbolId);
 define_key!(u32, pub TypeId);
+define_key!(u32, pub VarId);
 
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeSymbol<'me> {
-    pub name: StringIndex,
+    name    : StringIndex,
     generics: &'me [StringIndex],
     kind    : TypeSymbolKind<'me>,
 }
@@ -74,13 +73,11 @@ pub enum Enum<'me> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct TypeValue<'me> {
-    pub symbol  : TypeSymbolId,
-    llvm_ty : llvm_api::tys::Type,
+    symbol  : TypeSymbolId,
 
-    // technically we don't need this
-    // as it can be found from evaluating
-    // the generics. but it's a nice optimisation
-    name    : StringIndex,
+    // if is_init is true then generics
+    // may not contain any `Type::Var`s
+    is_init : bool,
 
     // assumes the generics are in the same
     // order as the symbol's generics
@@ -90,15 +87,18 @@ pub struct TypeValue<'me> {
 
 #[derive(Debug)]
 pub struct SymbolMap<'me> {
-    symbols     : KVec   <TypeSymbolId      , Option<Symbol<'me>>>,
-    tys         : KVec   <TypeId            , TypeValue<'me>>,
-    named_tuples: HashMap<&'me [OptStringIndex], TypeSymbolId>,
+    symbols     : KVec   <TypeSymbolId, Option<Symbol<'me>>>,
+    tys         : KVec   <TypeId      , TypeValue<'me>>,
+    vars        : KVec   <VarId       , (StringIndex, Option<Type>)>,
     arena       : &'me Arena,
 }
 
 
 #[derive(Debug, Clone, Copy)]
-pub struct Type(TypeId);
+pub enum Type {
+    Ty(TypeId),
+    Var(VarId),
+}
 
 
 #[derive(Debug)]
@@ -109,78 +109,49 @@ struct Symbol<'me> {
 
 
 impl<'me> SymbolMap<'me> {
-    pub fn new(arena: &'me Arena, ctx: &mut Context) -> Self {
+    pub fn new(arena: &'me Arena) -> Self {
         let mut slf = SymbolMap {
             symbols: KVec::new(),
             tys    : KVec::new(),
-            named_tuples : HashMap::new(),
+            vars   : KVec::new(),
             arena,
         };
         let map = &[];
         
         // register types
-        macro_rules! register_int {
-            ($func: ident, $name: ident, $size: literal) => {
+        macro_rules! register {
+            ($func: ident, $name: ident $(, $size: literal)?) => {
                 let sym = slf.pending();
                 slf.add_sym(sym, TypeSymbol::new(StringMap::$name, &[], TypeSymbolKind::BuiltIn));
-                let tyid = slf.tys.push(TypeValue::new(sym, ctx.$func($size).ty(), StringMap::$name, map));
+                let tyid = slf.tys.push(TypeValue::new(sym, map));
                 slf.insert_to_sym(sym, &[], tyid);
                 assert_eq!(sym, TypeSymbolId::$name);
-                assert_eq!(tyid, Type::$name.0);
+                assert_eq!(Some(tyid), Type::$name.tyid(&slf));
             };
         }
 
-        register_int!(signed_int  , I8 , 8 );
-        register_int!(signed_int  , I16, 16);
-        register_int!(signed_int  , I32, 32);
-        register_int!(signed_int  , I64, 64);
+        register!(signed_int  , I8 , 8 );
+        register!(signed_int  , I16, 16);
+        register!(signed_int  , I32, 32);
+        register!(signed_int  , I64, 64);
 
-        register_int!(unsigned_int, U8 , 8 );
-        register_int!(unsigned_int, U16, 16);
-        register_int!(unsigned_int, U32, 32);
-        register_int!(unsigned_int, U64, 64);
+        register!(unsigned_int, U8 , 8 );
+        register!(unsigned_int, U16, 16);
+        register!(unsigned_int, U32, 32);
+        register!(unsigned_int, U64, 64);
 
-        let sym = slf.pending();
-        slf.add_sym(sym, TypeSymbol::new(StringMap::F32, &[], TypeSymbolKind::BuiltIn));
-        let tyid = slf.tys.push(TypeValue::new(sym, ctx.f32().ty(), StringMap::F32, map));
-        slf.insert_to_sym(sym, &[], tyid);
-        assert_eq!(sym, TypeSymbolId::F32);
-        assert_eq!(tyid, Type::F32.0);
-
-        let sym = slf.pending();
-        slf.add_sym(sym, TypeSymbol::new(StringMap::F64, &[], TypeSymbolKind::BuiltIn));
-        let tyid = slf.tys.push(TypeValue::new(sym, ctx.f64().ty(), StringMap::F64, map));
-        slf.insert_to_sym(sym, &[], tyid);
-        assert_eq!(sym, TypeSymbolId::F64);
-        assert_eq!(tyid, Type::F64.0);
-
-        let sym = slf.pending();
-        slf.add_sym(sym, TypeSymbol::new(StringMap::UNIT, &[], TypeSymbolKind::BuiltIn));
-        let tyid = slf.tys.push(TypeValue::new(sym, ctx.zst().ty(), StringMap::UNIT, map));
-        slf.insert_to_sym(sym, &[], tyid);
-        assert_eq!(sym, TypeSymbolId::UNIT);
-        assert_eq!(tyid, Type::UNIT.0);
-
-        let sym = slf.pending();
-        slf.add_sym(sym, TypeSymbol::new(StringMap::ERROR, &[], TypeSymbolKind::BuiltIn));
-        let tyid = slf.tys.push(TypeValue::new(sym, ctx.zst().ty(), StringMap::ERROR, map));
-        slf.insert_to_sym(sym, &[], tyid);
-        assert_eq!(sym, TypeSymbolId::ERROR);
-        assert_eq!(tyid, Type::ERROR.0);
-
-        let sym = slf.pending();
-        slf.add_sym(sym, TypeSymbol::new(StringMap::NEVER, &[], TypeSymbolKind::BuiltIn));
-        let tyid = slf.tys.push(TypeValue::new(sym, ctx.zst().ty(), StringMap::NEVER, map));
-        slf.insert_to_sym(sym, &[], tyid);
-        assert_eq!(sym, TypeSymbolId::NEVER);
-        assert_eq!(tyid, Type::NEVER.0);
+        register!(f32, F32);
+        register!(f64, F64);
+        register!(zst, UNIT);
+        register!(zst, ERROR);
+        register!(zst, NEVER);
 
         let sym = slf.pending();
         slf.add_sym(sym, TypeSymbol::new(StringMap::BOOL, &[], TypeSymbolKind::Enum(Enum::Tag(&[StringMap::FALSE, StringMap::TRUE]))));
-        let tyid = slf.tys.push(TypeValue::new(sym, ctx.unsigned_int(1).ty(), StringMap::BOOL, map));
+        let tyid = slf.tys.push(TypeValue::new(sym, map));
         slf.insert_to_sym(sym, &[], tyid);
         assert_eq!(sym, TypeSymbolId::BOOL);
-        assert_eq!(tyid, Type::BOOL.0);
+        assert_eq!(Some(tyid), Type::BOOL.tyid(&slf));
 
         slf
 
@@ -200,8 +171,8 @@ impl<'me> SymbolMap<'me> {
 
 
     #[inline(always)]
-    pub fn get_ty_val(&self, ty: Type) -> TypeValue<'me> {
-        self.tys[ty.0]
+    pub fn get_ty_val(&self, ty: TypeId) -> TypeValue<'me> {
+        self.tys[ty]
     }
 
 
@@ -225,75 +196,32 @@ impl<'me> SymbolMap<'me> {
 }
 
 
-impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
+impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     #[inline(always)]
-    pub fn get_ty(&mut self, context: &mut Context,
+    pub fn get_ty(&mut self,
                   sym: TypeSymbolId,
                   gens: &[Type]) -> Type {
-        if let Some(val) = self.types.get_from_sym(sym, gens) { return Type(val) }
+        if let Some(val) = self.types.get_from_sym(sym, gens) { return Type::Ty(val) }
         let entry = self.types.symbols[sym].as_mut().unwrap();
 
         assert!(!matches!(entry.symbol.kind(), TypeSymbolKind::BuiltIn), "{entry:?}");
         assert_eq!(entry.symbol.generics.len(), gens.len());
 
-        let pool = Arena::tls_get_temp();
         if let TypeSymbolKind::Structure(strct) = entry.symbol.kind {
-            if strct.is_tuple { return self.tuple_from_sym(context, sym, gens) }
-        };
-
-        // generate the name for the type
-        let name = 'l: {
-            if gens.is_empty() { break 'l self.string_map.get(entry.symbol.name) }
-            let mut str = sti::string::String::new_in(&*pool);
-            str.push(self.string_map.get(entry.symbol.name));
-            str.push("<");
- 
-            for (i, t) in gens.iter().enumerate() {
-                if i != 0 { str.push(", "); }
-
-                let ty = self.types.get_ty_val(*t);
-                let sym = self.types.get_sym(ty.symbol);
-                let name = sym.name;
-                let name = self.string_map.get(name);
-                str.push(name);
-            }
-
-            str.push_char('>');
-           
-            str.leak()
+            if strct.is_tuple { return self.tuple_from_sym(sym, gens) }
         };
         
         // move `gens` into the arena
-        let entry = self.types.symbols[sym].as_mut().unwrap();
-        let gens_map = {
-            let mut map = HashMap::with_capacity(gens.len());
-            for (n, g) in entry.symbol.generics().iter().zip(gens.iter()) {
-                map.insert(*n, *g);
-            }
-            sti::boks::Box::new_in(self.types.arena, map).leak()
-        };
         let gens = copy_slice_in(self.types.arena, gens);
 
         let entry = self.types.symbols[sym].as_mut().unwrap();
         let value = match entry.symbol.kind {
             TypeSymbolKind::Structure(strct) => {
                 debug_assert!(!strct.is_tuple);
-
-                // fiedls
-                let mut llvm_fields = sti::vec::Vec::with_cap_in(&*pool, strct.fields.len());
-                for field in strct.fields.iter() {
-                    let ty = self.gen_to_ty(context, field.symbol, gens_map).unwrap_or(Type::ERROR);
-                    let ty = self.types.get_ty_val(ty);
-                    llvm_fields.push(ty.llvm_ty());
-                }
-
-                // finalise
-                let llvm_ty = context.structure(&*name);
-                llvm_ty.set_fields(context, &*llvm_fields);
-
                 TypeValue {
-                    symbol: sym, llvm_ty: llvm_ty.ty(),
-                    generics: gens, name: self.string_map.insert(&*name)
+                    symbol: sym, 
+                    generics: gens,
+                    is_init: false,
                 }
 
             },
@@ -303,7 +231,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
         
         let ty = self.types.tys.push(value);
         self.types.insert_to_sym(sym, gens, ty);
-        Type(ty)
+        Type::Ty(ty)
     }
 
 
@@ -331,57 +259,27 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
     }
 
     
-    pub fn tuple_from_sym(&mut self, ctx: &mut Context, sym_id: TypeSymbolId, generics: &[Type]) -> Type {
-        let pool = Arena::tls_get_temp();
+    pub fn tuple_from_sym(&mut self, sym_id: TypeSymbolId, generics: &[Type]) -> Type {
         let sym  = self.types.get_sym(sym_id);
         debug_assert!(if let TypeSymbolKind::Structure(s) = sym.kind { s.is_tuple } else { false });
 
-        if let Some(val) = self.types.get_from_sym(sym_id, generics) { return Type(val) }
+        if let Some(val) = self.types.get_from_sym(sym_id, generics) { return Type::Ty(val) }
 
         let TypeSymbolKind::Structure(strct) = sym.kind
         else { unreachable!() };
         assert!(strct.is_tuple);
 
-        let name = {
-            let mut name = sti::string::String::new_in(&*pool);
-            name.push_char('(');
-            for (i, m) in generics.iter().zip(strct.fields.iter()).enumerate() {
-                if i != 0 { name.push(", ") }
-                let ty_name = self.types.get_ty_val(*m.0).name;
-                let ty_name = self.string_map.get(ty_name);
-                let _ = match m.1.name.to_option() {
-                    Some(v) => write!(name, "{}: {}", self.string_map.get(v), ty_name),
-                    None    => write!(name, "{}", ty_name),
-                };
-            }
-            name.push_char(')');
-            name
-        };
-
-        let llvm_ty = ctx.structure(&*name);
-        let name_id = self.string_map.insert(&*name);
-
-        let llvm_fields = {
-            let mut vec = sti::vec::Vec::with_cap_in(&*pool, generics.len());
-            for i in generics {
-                vec.push(self.types.get_ty_val(*i).llvm_ty)
-            }
-            vec
-        };
-
-        llvm_ty.set_fields(ctx, &*llvm_fields);
-
         let generics = copy_slice_in(self.types.arena, generics);
-        let tv = TypeValue::new(sym_id, llvm_ty.ty(), name_id, generics);
+        let tv = TypeValue::new(sym_id, generics);
         let tyid = self.types.tys.push(tv);
         self.types.insert_to_sym(sym_id, generics, tyid);
 
-        Type(tyid)
+        Type::Ty(tyid)
     }
 
 
     #[inline(always)]
-    pub fn tuple(&mut self, ctx: &mut Context, mapping: &[(OptStringIndex, Type)]) -> Type {
+    pub fn tuple(&mut self, mapping: &[(OptStringIndex, Type)]) -> Type {
         let names = {
             let mut vec = sti::vec::Vec::with_cap_in(self.types.arena, mapping.len());
             for f in mapping { vec.push(f.0) }
@@ -395,44 +293,153 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
         };
 
         let sym = self.tuple_sym(names);
-        self.tuple_from_sym(ctx, sym, tys)
+        self.tuple_from_sym(sym, tys)
     }
 }
 
 
 impl Type {
-    pub const I8   : Self = Self(TypeId(0 ));
-    pub const I16  : Self = Self(TypeId(1 ));
-    pub const I32  : Self = Self(TypeId(2 ));
-    pub const I64  : Self = Self(TypeId(3 ));
-    pub const U8   : Self = Self(TypeId(4 ));
-    pub const U16  : Self = Self(TypeId(5 ));
-    pub const U32  : Self = Self(TypeId(6 ));
-    pub const U64  : Self = Self(TypeId(7 ));
-    pub const F32  : Self = Self(TypeId(8 ));
-    pub const F64  : Self = Self(TypeId(9 ));
-    pub const UNIT : Self = Self(TypeId(10));
-    pub const ERROR: Self = Self(TypeId(11));
-    pub const NEVER: Self = Self(TypeId(12));
-    pub const BOOL : Self = Self(TypeId(13));
-    pub const TUPLE: Self = Self(TypeId(13));
+    pub const I8   : Self = Self::Ty(TypeId::I8 );
+    pub const I16  : Self = Self::Ty(TypeId::I16);
+    pub const I32  : Self = Self::Ty(TypeId::I32);
+    pub const I64  : Self = Self::Ty(TypeId::I64);
+    pub const U8   : Self = Self::Ty(TypeId::U8 );
+    pub const U16  : Self = Self::Ty(TypeId::U16);
+    pub const U32  : Self = Self::Ty(TypeId::U32);
+    pub const U64  : Self = Self::Ty(TypeId::U64);
+    pub const F32  : Self = Self::Ty(TypeId::F32);
+    pub const F64  : Self = Self::Ty(TypeId::F64);
+    pub const UNIT : Self = Self::Ty(TypeId::UNIT);
+    pub const ERROR: Self = Self::Ty(TypeId::ERROR);
+    pub const NEVER: Self = Self::Ty(TypeId::NEVER);
+    pub const BOOL : Self = Self::Ty(TypeId::BOOL);
 
-    pub fn new(ty: TypeId) -> Type { Type(ty) }
+    pub fn new(ty: TypeId) -> Type { Type::Ty(ty) }
 
     pub fn display<'str>(self,
                          string_map: &StringMap<'str>,
                          symbol_map: &SymbolMap) -> &'str str {
-        let name = symbol_map.tys[self.0].name;
-        string_map.get(name)
+        match self.instantiate_shallow(symbol_map) {
+            Type::Ty(id) => {
+                let name = symbol_map.tys[id].symbol;
+                let name = symbol_map.get_sym(name).name;
+                string_map.get(name)
+            },
+
+            Type::Var(var) => {
+                let name = symbol_map.vars[var].0;
+                string_map.get(name)
+            },
+        }
+    }
+
+
+    pub fn is_recursive(self, symbol_map: &SymbolMap, var: VarId) -> bool {
+        match self {
+            Type::Ty (id) => {
+                let sym = symbol_map.get_ty_val(id);
+                if !sym.is_init {
+                    for g in sym.generics {
+                        if g.is_recursive(symbol_map, var) { return true }
+                    }
+                }
+                false
+            },
+
+            Type::Var(v) => v == var,
+        }
+    }
+
+
+    pub fn instantiate(self, symbol_map: &mut SymbolMap) -> Type {
+        match self {
+            Type::Ty (id) => {
+                let sym = symbol_map.get_ty_val(id);
+                if !sym.is_init {
+                    let mut generics = sti::vec::Vec::with_cap_in(symbol_map.arena, sym.generics.len());
+                    for g in sym.generics {
+                        generics.push(g.instantiate(symbol_map))
+                    }
+
+                    let sym = &mut symbol_map.tys[id];
+                    sym.generics = generics.leak();
+                    sym.is_init  = true;
+                }
+                self
+            },
+
+            Type::Var(v) => symbol_map.vars[v].1.unwrap_or(self),
+        }
+    }
+
+
+    pub fn instantiate_shallow(self, symbol_map: &SymbolMap) -> Type {
+        if let Type::Var(id) = self {
+            if let Some(value) = symbol_map.vars[id].1 { return value }
+        }
+        self
+    }
+
+    
+    pub fn assign(self, symbol_map: &mut SymbolMap, var: VarId) -> bool {
+        if matches!(self, Type::Var(v) if v == var) { return true }
+        if self.is_recursive(symbol_map, var) { return false }
+        let sym = &mut symbol_map.vars[var];
+        match sym.1 {
+            Some(v) => return self.eq(symbol_map, v),
+            None => sym.1 = Some(self),
+        }
+        true
+
+    }
+
+
+    pub fn eq(self, symbol_map: &mut SymbolMap, oth: Type) -> bool {
+        let a = self.instantiate_shallow(symbol_map);
+        let b = oth.instantiate_shallow(symbol_map);
+
+        match (a, b) {
+            (Type::Ty(ida), Type::Ty(idb)) => {
+                if ida == idb { return true }
+
+                // supports structural equality
+                let vala = symbol_map.tys[ida];
+                let syma = symbol_map.get_sym(vala.symbol);
+                let TypeSymbolKind::Structure(structa) = syma.kind
+                else { return false };
+                if !structa.is_tuple { return false };
+
+                let valb = symbol_map.tys[idb];
+                let symb = symbol_map.get_sym(valb.symbol);
+                let TypeSymbolKind::Structure(structb) = symb.kind
+                else { return false };
+                if !structb.is_tuple { return false };
+
+                // structural equality
+                if vala.generics.len() != valb.generics.len() { return false }
+                for (a, b) in vala.generics.iter().zip(valb.generics.iter()) {
+                    if !a.eq(symbol_map, *b) { return false }
+                }
+
+                true
+            },
+
+            (Type::Var(ida), _) => oth.assign(symbol_map, ida),
+            (_, Type::Var(idb)) => self.assign(symbol_map, idb),
+        }
     }
 
 
     fn hash(self, ty_map: &SymbolMap, hasher: &mut impl Hasher) {
-        let this = ty_map.get_ty_val(self);
+        let slf = match self {
+            Type::Ty(v) => v,
+            Type::Var(_) => todo!(),
+        };
+        let this = ty_map.get_ty_val(slf);
         let this_sym = ty_map.get_sym(this.symbol());
         let TypeSymbolKind::Structure(this_strct) = this_sym.kind
-        else { false.hash(hasher); return self.0.hash(hasher) };
-        if !this_strct.is_tuple { false.hash(hasher); return self.0.hash(hasher) }
+        else { false.hash(hasher); return slf.hash(hasher) };
+        if !this_strct.is_tuple { false.hash(hasher); return slf.hash(hasher) }
 
         true.hash(hasher);
         this_sym.generics.hash(hasher);
@@ -440,124 +447,112 @@ impl Type {
     }
 
 
-    pub fn eq(self, oth: Type, ty_map: &SymbolMap) -> bool {
-        if self.0 == oth.0 { return true }
+    pub fn ne(self, symbol_map: &mut SymbolMap, oth: Type) -> bool {
+        !self.eq(symbol_map, oth)
+    }
 
-        let this = ty_map.get_ty_val(self);
-        let this_sym = ty_map.get_sym(this.symbol());
-        let TypeSymbolKind::Structure(this_strct) = this_sym.kind
-        else { return false };
-        if !this_strct.is_tuple { return false }
 
-        let oth = ty_map.get_ty_val(oth );
-        let oth_sym = ty_map.get_sym(this.symbol());
-        let TypeSymbolKind::Structure(oth_strct) = oth_sym.kind
-        else { return false };
-        if !oth_strct.is_tuple { return false }
+    pub fn tyid(self, symbol_map: &SymbolMap) -> Option<TypeId> {
+        match self.instantiate_shallow(symbol_map) {
+            Type::Ty(v) => Some(v),
+            Type::Var(_) => None,
+        }
+    }
 
-        if this_sym.generics != oth_sym.generics { return false }
-        if this_strct.fields.len() != oth_strct.fields.len() { return false }
-        if this.generics.iter().zip(oth.generics.iter()).all(|(a, b)| a.eq(*b, ty_map)) { return false }
+
+    pub fn supports_arith(self, symbol_map: &SymbolMap) -> bool {
+        let Some(id) = self.tyid(symbol_map) else { return false };
         true
+        || id == TypeId::I8
+        || id == TypeId::I16
+        || id == TypeId::I32
+        || id == TypeId::I64
+        || id == TypeId::U8
+        || id == TypeId::U16
+        || id == TypeId::U32
+        || id == TypeId::U64
+        || id == TypeId::F32
+        || id == TypeId::F64
     }
 
 
-    pub fn ne(self, oth: Type, ty_map: &SymbolMap) -> bool {
-        !self.eq(oth, ty_map)
-    }
-
-
-    pub fn supports_arith(self) -> bool {
+    pub fn supports_ord(self, symbol_map: &SymbolMap) -> bool {
+        let Some(id) = self.tyid(symbol_map) else { return false };
         true
-        || self.0 == Self::I8.0
-        || self.0 == Self::I16.0
-        || self.0 == Self::I32.0
-        || self.0 == Self::I64.0
-        || self.0 == Self::U8.0
-        || self.0 == Self::U16.0
-        || self.0 == Self::U32.0
-        || self.0 == Self::U64.0
-        || self.0 == Self::F32.0
-        || self.0 == Self::F64.0
+        || id == TypeId::I8
+        || id == TypeId::I16
+        || id == TypeId::I32
+        || id == TypeId::I64
+        || id == TypeId::U8
+        || id == TypeId::U16
+        || id == TypeId::U32
+        || id == TypeId::U64
+        || id == TypeId::F32
+        || id == TypeId::F64
     }
 
 
-    pub fn supports_ord(self) -> bool {
+    pub fn supports_eq(self, symbol_map: &SymbolMap) -> bool {
+        let Some(id) = self.tyid(symbol_map) else { return false };
         true
-        || self.0 == Self::I8.0
-        || self.0 == Self::I16.0
-        || self.0 == Self::I32.0
-        || self.0 == Self::I64.0
-        || self.0 == Self::U8.0
-        || self.0 == Self::U16.0
-        || self.0 == Self::U32.0
-        || self.0 == Self::U64.0
-        || self.0 == Self::F32.0
-        || self.0 == Self::F64.0
+        || id == TypeId::I8
+        || id == TypeId::I16
+        || id == TypeId::I32
+        || id == TypeId::I64
+        || id == TypeId::U8
+        || id == TypeId::U16
+        || id == TypeId::U32
+        || id == TypeId::U64
+        || id == TypeId::F32
+        || id == TypeId::F64
     }
 
 
-    pub fn supports_eq(self) -> bool {
+    pub fn supports_bw(self, symbol_map: &SymbolMap) -> bool {
+        let Some(id) = self.tyid(symbol_map) else { return false };
         true
-        || self.0 == Self::I8.0
-        || self.0 == Self::I16.0
-        || self.0 == Self::I32.0
-        || self.0 == Self::I64.0
-        || self.0 == Self::U8.0
-        || self.0 == Self::U16.0
-        || self.0 == Self::U32.0
-        || self.0 == Self::U64.0
-        || self.0 == Self::F32.0
-        || self.0 == Self::F64.0
+        || id == TypeId::I8
+        || id == TypeId::I16
+        || id == TypeId::I32
+        || id == TypeId::I64
+        || id == TypeId::U8
+        || id == TypeId::U16
+        || id == TypeId::U32
+        || id == TypeId::U64
     }
 
 
-    pub fn supports_bw(self) -> bool {
+    pub fn is_sint(self, symbol_map: &SymbolMap) -> bool {
+        let Some(id) = self.tyid(symbol_map) else { return false };
         true
-        || self.0 == Self::I8.0
-        || self.0 == Self::I16.0
-        || self.0 == Self::I32.0
-        || self.0 == Self::I64.0
-        || self.0 == Self::U8.0
-        || self.0 == Self::U16.0
-        || self.0 == Self::U32.0
-        || self.0 == Self::U64.0
+        || id == TypeId::I8
+        || id == TypeId::I16
+        || id == TypeId::I32
+        || id == TypeId::I64
     }
 
 
-    pub fn is_sint(self) -> bool {
+    pub fn is_uint(self, symbol_map: &SymbolMap) -> bool {
+        let Some(id) = self.tyid(symbol_map) else { return false };
         true
-        || self.0 == Self::I8.0
-        || self.0 == Self::I16.0
-        || self.0 == Self::I32.0
-        || self.0 == Self::I64.0
+        || id == TypeId::U8
+        || id == TypeId::U16
+        || id == TypeId::U32
+        || id == TypeId::U64
     }
 
 
-    pub fn is_uint(self) -> bool {
-        true
-        || self.0 == Self::U8.0
-        || self.0 == Self::U16.0
-        || self.0 == Self::U32.0
-        || self.0 == Self::U64.0
+    pub fn is_f32(self, symbol_map: &SymbolMap) -> bool {
+        let Some(id) = self.tyid(symbol_map) else { return false };
+        id == TypeId::F32
     }
 
 
-    pub fn is_f32(self) -> bool {
-        self.0 == Self::F32.0
+    pub fn is_f64(self, symbol_map: &SymbolMap) -> bool {
+        let Some(id) = self.tyid(symbol_map) else { return false };
+        id == TypeId::F32
     }
 
-
-    pub fn is_f64(self) -> bool {
-        self.0 == Self::F32.0
-    }
-
-    
-    pub fn shortcircuit(self) -> bool {
-        true
-        || self.0 == Self::NEVER.0
-        || self.0 == Self::ERROR.0
-    }
 }
 
 
@@ -580,6 +575,26 @@ impl TypeSymbolId {
 }
 
 
+impl TypeId {
+    pub const I8   : Self = Self(0 );
+    pub const I16  : Self = Self(1 );
+    pub const I32  : Self = Self(2 );
+    pub const I64  : Self = Self(3 );
+    pub const U8   : Self = Self(4 );
+    pub const U16  : Self = Self(5 );
+    pub const U32  : Self = Self(6 );
+    pub const U64  : Self = Self(7 );
+    pub const F32  : Self = Self(8 );
+    pub const F64  : Self = Self(9 );
+    pub const UNIT : Self = Self(10);
+    pub const ERROR: Self = Self(11);
+    pub const NEVER: Self = Self(12);
+    pub const BOOL : Self = Self(13);
+    pub const TUPLE: Self = Self(14);
+}
+
+
+
 impl<'me> TypeSymbol<'me> {
     pub fn new(name: StringIndex, generics: &'me [StringIndex], kind: TypeSymbolKind<'me>) -> Self { Self { name, generics, kind } }
 
@@ -592,18 +607,12 @@ impl<'me> TypeSymbol<'me> {
 
 
 impl<'me> TypeValue<'me> {
-    pub fn new(symbol: TypeSymbolId, llvm_ty: llvm_api::tys::Type, name: StringIndex, generics: &'me [Type]) -> Self { Self { symbol, llvm_ty, name, generics } }
+    pub fn new(symbol: TypeSymbolId, generics: &'me [Type]) -> Self { Self { symbol, generics, is_init: false } }
 
 
     #[inline(always)]
     pub fn symbol(&self) -> TypeSymbolId {
         self.symbol
-    }
-
-
-    #[inline(always)]
-    pub fn llvm_ty(&self) -> llvm_api::tys::Type {
-        self.llvm_ty
     }
 
     pub fn generics(&self) -> &[Type] {

@@ -6,8 +6,7 @@ pub use parser::nodes;
 pub use common::source::{FileData, Extension};
 pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
-pub use semantic_analysis::Analyzer;
-pub use wasm::*;
+pub use semantic_analysis::TyChecker;
 pub use errors::display;
 // pub use ::runtime::*;
 

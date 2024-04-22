@@ -12,7 +12,6 @@ members = [
   "margarine/lexer",
   "margarine/parser",
   "margarine/semantic_analysis",
-  "margarine/wasm",
   "margarine/errors",
-  "fuzz",
+# "fuzz",
 ]

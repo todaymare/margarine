@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use common::string_map::StringIndex;
 use sti::{define_key, keyed::KVec};
 
-use crate::{funcs::FunctionSymbolId, scope::Scope, types::TypeSymbolId};
+use crate::{funcs::FunctionSymbolId, types::TypeSymbolId};
 
 define_key!(u32, pub NamespaceId);
 

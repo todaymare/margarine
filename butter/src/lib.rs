@@ -1,12 +1,13 @@
-use margarine::{nodes::{decl::{Declaration, DeclarationNode}, Node}, DropTimer, FileData, SourceRange, StringMap};
+use margarine::{nodes::{decl::Decl, AST}, DropTimer, FileData, SourceRange, StringMap};
 use sti::arena::Arena;
 
 pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &'static str> {
-    let mut global = vec![];
+    let arena = Arena::new();
+    let mut global = AST::new();
+    let mut modules = vec![];
     let mut lex_errors = vec![];
     let mut parse_errors = vec![];
 
-    let arena = Arena::new();
     let mut source_offset = 0;
     for (i, f) in files.iter().enumerate() {
         let (tokens, le) = DropTimer::with_timer("tokenisation", || {
@@ -14,29 +15,17 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
             tokens
         });
 
-        let (ast, pe) = DropTimer::with_timer("parsing", || {
-            let ast = margarine::parse(tokens, i.try_into().unwrap(), &arena, string_map);
-            ast
+        let (body, pe) = DropTimer::with_timer("parsing", || {
+            margarine::parse(tokens, i.try_into().unwrap(), &arena, string_map, &mut global)
         });
-
-        {
-            for n in ast.iter() {
-                if matches!(n, Node::Declaration(_)) { continue }
-                if let Node::Attribute(attr) = n {
-                    if matches!(attr.node(), Node::Declaration(_)) { continue }
-                }
-
-                ()
-            }
-        }
 
         lex_errors.push(le);
         parse_errors.push(pe);
 
-        global.push(DeclarationNode::new(
-            Declaration::Module {
+        modules.push(global.add_decl(
+            Decl::Module {
                 name: f.name(),
-                body: ast.inner(),
+                body,
                 header: SourceRange::new(0, 0),
            },
 
@@ -52,9 +41,9 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
 
     let sema_arena = Arena::new();
     let _scopes = Arena::new();
-    let (sema, ctx) = {
+    let sema = {
         let _1 = DropTimer::new("semantic analysis");
-        margarine::Analyzer::run(&sema_arena, &global, string_map)
+        margarine::TyChecker::run(&sema_arena, &mut global, &*modules, string_map)
     };
 
     // todo: find a way to comrpess these errors into vecs
@@ -92,7 +81,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
         sema_errors.push(report);
     } 
 
-    ctx.module(sema.module).dump();
+    // ctx.module(sema.module).dump();
 
      Ok(())
 }

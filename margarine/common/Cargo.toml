@@ -10,5 +10,4 @@ fuzzer = []
 
 [dependencies]
 sti = { git = "https://github.com/leddoo/sti"}
-istd = { git = "https://github.com/rookieCookies/istd" }
-colourful = "*"
+colourful = { git = "https://github.com/rookieCookies/colourful" }

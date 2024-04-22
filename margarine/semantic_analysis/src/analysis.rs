@@ -1,19 +1,16 @@
-use std::collections::{hash_map::Entry, HashMap};
-
 use common::{copy_slice_in, string_map::StringIndex};
-use llvm_api::{builder::Builder, values::IsValue};
-use parser::nodes::{decl::{Declaration, DeclarationNode}, expr::{BinaryOperator, Expression, ExpressionNode, UnaryOperator}, stmt::{Statement, StatementNode}, Node};
+use parser::nodes::{decl::{Decl, DeclId}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
 use sti::arena::Arena;
 
-use crate::{errors::Error, funcs::{FunctionArgument, FunctionSymbol}, namespace::{Namespace, NamespaceId}, scope::{Scope, ScopeId, ScopeKind, VariableScope}, types::{Generic, GenericKind, Structure, StructureField, Type, TypeSymbol, TypeSymbolId, TypeSymbolKind}, AnalysisResult, Analyzer};
+use crate::{errors::Error, funcs::{FunctionArgument, FunctionSymbol}, namespace::{Namespace, NamespaceId}, scope::{Scope, ScopeId, ScopeKind, VariableScope}, types::{Generic, GenericKind, Structure, StructureField, Type, TypeSymbol, TypeSymbolId, TypeSymbolKind}, AnalysisResult, TyChecker};
 
-impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
-    pub fn block(&mut self, builder: &mut Builder, path: StringIndex, scope: ScopeId, body: &[Node<'ast>]) -> AnalysisResult {
+impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
+    pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
         let scope = scope;
         let mut namespace = Namespace::new(path);
 
         // Collect type names
-        self.collect_names(builder, path, &mut namespace, body);
+        self.collect_names(path, &mut namespace, body);
 
         // Update the current scope so the following functions
         // are able to see the namespace
@@ -23,36 +20,36 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
         let mut scope = self.scopes.push(scope);
 
         // Compute types & functions
-        self.compute_types(builder, path, scope, namespace, body);
+        self.compute_types(path, scope, namespace, body);
 
         // Analyze all nodes
         let mut last_node = None;
         for node in body.iter() {
-            dbg!(&node);
-            let eval = self.node(builder, path, &mut scope, namespace, *node);
+            let eval = self.node(path, &mut scope, namespace, *node);
             last_node = Some(eval);
         }
 
         // Finalise
         let result = match last_node {
             Some(v) => v,
-            None    => AnalysisResult::new(Type::UNIT, builder.unit(), true),
+            None    => AnalysisResult::new(Type::UNIT, true),
         };
 
         result
     }
 
 
-    pub fn collect_names(&mut self, builder: &mut Builder, path: StringIndex, ns: &mut Namespace, nodes: &[Node]) {
+    pub fn collect_names(&mut self, path: StringIndex, ns: &mut Namespace, nodes: &[NodeId]) {
         for n in nodes {
-            let Node::Declaration(decl) = n
+            let NodeId::Decl(decl) = n
             else { continue };
 
-            match decl.kind() {
-                | Declaration::Enum { name, header, .. } 
-                | Declaration::Struct { name, header, .. } => {
+            let decl = self.ast.decl(*decl);
+            match decl {
+                | Decl::Enum { name, header, .. } 
+                | Decl::Struct { name, header, .. } => {
                     if ns.get_ty_sym(name).is_some() {
-                        self.error(builder, Error::NameIsAlreadyDefined {
+                        self.error(*n, Error::NameIsAlreadyDefined {
                             source: header, name });
                         continue
                     }
@@ -61,9 +58,9 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     ns.add_sym(name, pend);
                 },
 
-                Declaration::Module { name, header, body } => {
+                Decl::Module { name, header, body } => {
                     if ns.get_ns(name).is_some() {
-                        self.error(builder, Error::NameIsAlreadyDefined {
+                        self.error(*n, Error::NameIsAlreadyDefined {
                             source: header, name });
                         continue
                     }
@@ -71,7 +68,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     let path = self.string_map.concat(path, name);
 
                     let mut module_ns = Namespace::new(path);
-                    self.collect_names(builder, path, &mut module_ns, body);
+                    self.collect_names(path, &mut module_ns, &*body);
                     ns.add_ns(name, self.namespaces.push(module_ns));
                 }
 
@@ -82,24 +79,25 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
 
 
     // `Self::collect_names` must be ran before this
-    pub fn compute_types(&mut self, builder: &mut Builder, path: StringIndex,
-                         scope: ScopeId, ns: NamespaceId, nodes: &[Node<'ast>]) {
+    pub fn compute_types(&mut self, path: StringIndex, scope: ScopeId,
+                         ns: NamespaceId, nodes: &[NodeId]) {
         for n in nodes {
-            let Node::Declaration(decl) = n
+            let NodeId::Decl(decl) = n
             else { continue };
 
-            match decl.kind() {
-                 Declaration::Struct { name, fields, generics, .. } => {
+            let decl = self.ast.decl(*decl);
+            match decl {
+                 Decl::Struct { name, fields, generics, .. } => {
                     let ns = self.namespaces.get_ns(ns);
                     let mut structure_fields = sti::vec::Vec::with_cap_in(self.output, fields.len());
                     let tsi = ns.get_ty_sym(name).unwrap();
 
                     for f in fields {
-                        let sym = self.dt_to_gen(builder.ctx(), self.scopes.get(scope), f.1, generics);
+                        let sym = self.dt_to_gen(self.scopes.get(scope), f.1, generics);
                         let sym = match sym {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(builder, v);
+                                self.error(*n, v);
                                 Generic::new(f.1.range(), GenericKind::Symbol {
                                     symbol: TypeSymbolId::ERROR, generics: &[] })
                             },
@@ -119,18 +117,18 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                 },
 
 
-                Declaration::Enum { .. } => todo!(),
+                Decl::Enum { .. } => todo!(),
 
 
-                Declaration::Function { sig, body, .. } => {
+                Decl::Function { sig, body, .. } => {
                     let mut args = sti::vec::Vec::with_cap_in(self.output, sig.arguments.len());
 
                     for a in sig.arguments {
-                        let sym = self.dt_to_gen(builder.ctx(), self.scopes.get(scope), a.data_type(), sig.generics);
+                        let sym = self.dt_to_gen(self.scopes.get(scope), a.data_type(), sig.generics);
                         let sym = match sym {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(builder, v);
+                                self.error(*n, v);
                                 Generic::new(a.data_type().range(), GenericKind::Symbol {
                                     symbol: TypeSymbolId::ERROR, generics: &[] })
                             },
@@ -141,11 +139,11 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     }
 
 
-                    let ret = self.dt_to_gen(builder.ctx(), self.scopes.get(scope), sig.return_type, sig.generics);
+                    let ret = self.dt_to_gen( self.scopes.get(scope), sig.return_type, sig.generics);
                     let ret = match ret{
                         Ok(v) => v,
                         Err(v) => {
-                            self.error(builder, v);
+                            self.error(*n, v);
                             Generic::new(sig.return_type.range(), GenericKind::Symbol {
                                 symbol: TypeSymbolId::ERROR, generics: &[] })
                         },
@@ -155,7 +153,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     // Finalise
                     let generics = copy_slice_in(self.output, sig.generics);
                     let sym_name = self.string_map.concat(path, sig.name);
-                    let func = FunctionSymbol::new(sym_name, ret, args.leak(), generics, body);
+                    let func = FunctionSymbol::new(sym_name, ret, args.leak(), generics, body, sig.source);
                     let id = self.funcs.push(func);
                     let ns = self.namespaces.get_ns_mut(ns);
                     ns.add_func(sig.name, id);
@@ -163,7 +161,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                 }
 
 
-                Declaration::Module { name, body, .. } => {
+                Decl::Module { name, body, .. } => {
                     let ns = self.namespaces.get_ns(ns);
                     let Some(module_ns) = ns.get_ns(name)
                     else { continue };
@@ -173,7 +171,7 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     let scope = self.scopes.push(scope);
 
                     let path = self.namespaces.get_ns(module_ns).path;
-                    self.compute_types(builder, path, scope, module_ns, body);
+                    self.compute_types(path, scope, module_ns, &*body);
 
                 }
 
@@ -183,38 +181,36 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
     }
 
 
-    pub fn node(&mut self, builder: &mut Builder, path: StringIndex, scope: &mut ScopeId, ns: NamespaceId, node: Node<'ast>) -> AnalysisResult {
+    pub fn node(&mut self, path: StringIndex,
+                scope: &mut ScopeId, ns: NamespaceId, node: NodeId) -> AnalysisResult {
         match node {
-            Node::Declaration(decl) => {
-                self.decl(builder, scope, ns, decl);
-                self.empty_error(builder)
+            NodeId::Decl(decl) => {
+                self.decl(scope, ns, decl);
+                AnalysisResult::new(Type::UNIT, true)
             },
 
-            Node::Statement(stmt) => {
-                self.stmt(builder, path, scope, stmt);
-                self.empty_error(builder)
+            NodeId::Stmt(stmt) => {
+                self.stmt(path, scope, stmt);
+                AnalysisResult::new(Type::UNIT, true)
             },
 
-            Node::Expression(expr) => self.expr(builder, path, *scope, expr),
+            NodeId::Expr(expr) => self.expr(path, *scope, expr),
 
-            Node::Attribute(_) => todo!(),
-
-            Node::Error(e) => {
-                self.place_error(builder, e.id());
-                self.empty_error(builder)
+            NodeId::Err(_) => {
+                AnalysisResult::new(Type::ERROR, true)
             },
         }
     }
 
 
-    pub fn decl(&mut self, builder: &mut Builder, scope: &mut ScopeId, ns: NamespaceId, decl: DeclarationNode<'ast>) {
-        let decl = decl.kind();
+    pub fn decl(&mut self, scope: &mut ScopeId, ns: NamespaceId, decl: DeclId) {
+        let decl = self.ast.decl(decl);
         match decl {
-            Declaration::Struct { .. } => (),
-            Declaration::Enum { .. } => (),
+            Decl::Struct { .. } => (),
+            Decl::Enum { .. } => (),
 
             
-            Declaration::Function { sig, .. } => {
+            Decl::Function { sig, .. } => {
                 let ns = self.namespaces.get_ns(ns);
                 let Some(func) = ns.get_func(sig.name)
                 else { return };
@@ -228,21 +224,21 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                     for gen in generics {
                         let ty = self.types.pending();
                         self.types.add_sym(ty, TypeSymbol::new(*gen, &[], TypeSymbolKind::Structure(Structure::new(false, &[]))));
-                        vec.push(self.get_ty(builder.ctx(), ty, &[]));
+                        vec.push(self.get_ty(ty, &[]));
                     }
 
                     vec
                 };
                 
                 // this function will automatically generate & tyck the function
-                self.get_func(false, builder.ctx(), *scope, func, &*generics);
+                self.get_func(false, *scope, func, &*generics);
             },
 
 
-            Declaration::Impl { .. } => todo!(),
-            Declaration::Using { .. } => todo!(),
+            Decl::Impl { .. } => todo!(),
+            Decl::Using { .. } => todo!(),
 
-            Declaration::Module { name, body, .. } => {
+            Decl::Module { name, body, .. } => {
                 let ns = self.namespaces.get_ns(ns);
                 let Some(module_ns) = ns.get_ns(name)
                 else { return };
@@ -251,96 +247,87 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
                 let mut scope = self.scopes.push(scope);
 
                 let path = self.namespaces.get_ns(module_ns).path;
-                for n in body {
-                    self.node(builder, path, &mut scope, module_ns, *n);
+                for n in body.iter() {
+                    self.node(path, &mut scope, module_ns, *n);
                 }
             },
 
-            Declaration::Extern { .. } => todo!(),
+            Decl::Extern { .. } => todo!(),
         }
     }
 
 
-    pub fn stmt(&mut self, builder: &mut Builder, path: StringIndex, scope: &mut ScopeId, stmt: StatementNode<'ast>) {
-        let source = stmt.range();
-        let stmt = stmt.kind();
+    pub fn stmt(&mut self, path: StringIndex,
+                scope: &mut ScopeId, id: StmtId) {
+        let source = self.ast.range(id);
+        let stmt = self.ast.stmt(id);
         match stmt {
-            Statement::Variable { name, hint, is_mut, rhs } => {
-                let rhs_anal = self.expr(builder, path, *scope, rhs);
+            Stmt::Variable { name, hint, is_mut, rhs } => {
+                let rhs_anal = self.expr(path, *scope, rhs);
                 
-                let place_dummy = |slf: &mut Analyzer<'_, 'out, '_, '_>, builder: &mut Builder<'_>, scope: &mut ScopeId| {
-                    let ty = slf.types.get_ty_val(Type::ERROR).llvm_ty();
-                    let local = builder.local(ty);
-                    let vs = VariableScope::new(name, Type::ERROR, is_mut, local);
+                let place_dummy = |slf: &mut TyChecker<'_, 'out, '_, '_>, scope: &mut ScopeId| {
+                    let vs = VariableScope::new(name, Type::ERROR, is_mut);
                     *scope = slf.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
                 };
 
                 // Validation
-                if rhs_anal.ty.eq(Type::ERROR, &self.types) {
-                    place_dummy(self, builder, scope);
+                if rhs_anal.ty.eq(&mut self.types, Type::ERROR) {
+                    place_dummy(self, scope);
                     return;
                 }
 
                 if let Some(hint) = hint {
-                    let hint = match self.dt_to_ty(builder.ctx(), *scope, hint) {
+                    let hint = match self.dt_to_ty(*scope, hint) {
                         Ok(v)  => v,
                         Err(v) => {
-                            place_dummy(self, builder, scope);
-                            self.error(builder, v);
+                            place_dummy(self, scope);
+                            self.error(id, v);
                             return
                         },
                     };
 
-                    if rhs_anal.ty.eq(Type::NEVER, &self.types) && rhs_anal.ty.eq(hint, &self.types) {
-                        place_dummy(self, builder, scope);
-                        self.error(builder, Error::VariableValueAndHintDiffer {
+                    if rhs_anal.ty.eq(&mut self.types, Type::NEVER) && rhs_anal.ty.eq(&mut self.types, hint) {
+                        place_dummy(self, scope);
+                        self.error(id, Error::VariableValueAndHintDiffer {
                             value_type: rhs_anal.ty, hint_type: hint, source });
                         return
                     }
                 }
 
                 // finalise
-                let ty = self.types.get_ty_val(rhs_anal.ty).llvm_ty();
-                let local = builder.local(ty);
-                builder.local_set(local, rhs_anal.value);
-
-                let vs = VariableScope::new(name, rhs_anal.ty, is_mut, local);
+                let vs = VariableScope::new(name, rhs_anal.ty, is_mut);
                 *scope = self.scopes.push(Scope::new(scope.some(),
                                           ScopeKind::VariableScope(vs)));
             },
 
 
-            Statement::VariableTuple { .. } => todo!(),
+            Stmt::VariableTuple { .. } => todo!(),
 
 
-            Statement::UpdateValue { .. } => todo!(),
+            Stmt::UpdateValue { .. } => todo!(),
 
 
-            Statement::ForLoop { .. } => todo!(),
+            Stmt::ForLoop { .. } => todo!(),
         }
     }
 
 
-    pub fn expr(&mut self, builder: &mut Builder, path: StringIndex, scope: ScopeId, expr: ExpressionNode<'ast>) -> AnalysisResult {
-        let source = expr.range();
-        let expr = expr.kind();
-        match expr {
-            Expression::Unit => AnalysisResult::new(Type::UNIT, builder.unit(), true),
+    pub fn expr(&mut self, path: StringIndex, scope: ScopeId, id: ExprId) -> AnalysisResult {
+        let source = self.ast.range(id);
+        let expr = self.ast.expr(id);
+        let result = (|| match expr {
+            Expr::Unit => AnalysisResult::new(Type::UNIT, true),
 
 
-            Expression::Literal(lit) => {
+            Expr::Literal(lit) => {
                 match lit {
-                    lexer::Literal::Integer(int) => {
-                        let ty  = self.types.get_ty_val(Type::I64).llvm_ty();
-                        let int = builder.constant(ty.as_signed_int(), int);
-                        AnalysisResult::new(Type::I64, int.value(), true)
+                    lexer::Literal::Integer(_) => {
+                        AnalysisResult::new(Type::I64, true)
                     },
 
 
-                    lexer::Literal::Float(float) => {
-                        let ty    = self.types.get_ty_val(Type::F64).llvm_ty();
-                        let float = builder.constant(ty.as_f64(), float.inner());
-                        AnalysisResult::new(Type::F64, float.value(), true)
+                    lexer::Literal::Float(_) => {
+                        AnalysisResult::new(Type::F64, true)
                     },
 
 
@@ -349,373 +336,209 @@ impl<'me, 'out, 'ast, 'str> Analyzer<'me, 'out, 'ast, 'str> {
 
 
                     // assumes 1 is true and 0 is false
-                    lexer::Literal::Bool(b) => {
-                        let ty   = self.types.get_ty_val(Type::BOOL).llvm_ty();
-                        let bool = builder.constant(ty.as_signed_int(), if b { 1 } else { 0 });
-                        AnalysisResult::new(Type::BOOL, bool.value(), true)
+                    lexer::Literal::Bool(_) => {
+                        AnalysisResult::new(Type::BOOL, true)
                     },
                 }
             },
 
 
-            Expression::Identifier(ident) => {
+            Expr::Identifier(ident) => {
                 let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes)
-                else { return self.error(builder, Error::VariableNotFound { name: ident, source }) };
+                else { return self.error(id, Error::VariableNotFound { name: ident, source }) };
 
-                if variable.ty().eq(Type::ERROR, &self.types) { return self.empty_error(builder) }
+                if variable.ty().eq(&mut self.types, Type::ERROR) { return self.empty_error() }
 
-                let local = variable.local();
-                let value = builder.local_get(local);
-
-                AnalysisResult::new(variable.ty(), value, variable.is_mut())
+                AnalysisResult::new(variable.ty(), variable.is_mut())
             },
 
 
-            Expression::Deref(_) => todo!(),
+            Expr::Deref(_) => todo!(),
 
 
-            Expression::Range { .. } => todo!(),
+            Expr::Range { .. } => todo!(),
 
 
-            Expression::BinaryOp { operator, lhs, rhs } => {
-                let lhs_anal = self.expr(builder, path, scope, *lhs);
-                let rhs_anal = self.expr(builder, path, scope, *rhs);
+            Expr::BinaryOp { operator, lhs, rhs } => {
+                let lhs_anal = self.expr(path, scope, lhs);
+                let rhs_anal = self.expr(path, scope, rhs);
 
-                if lhs_anal.ty.eq(Type::ERROR, &self.types) { return self.empty_error(builder) }
-                if lhs_anal.ty.eq(Type::NEVER, &self.types) { return self.never(builder) }
-                if rhs_anal.ty.eq(Type::ERROR, &self.types) { return self.empty_error(builder) }
-                if rhs_anal.ty.eq(Type::NEVER, &self.types) { return self.never(builder) }
+                if lhs_anal.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
+                if lhs_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
+                if rhs_anal.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
+                if rhs_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
 
-                let validate = || {
-                    lhs_anal.ty.eq(rhs_anal.ty, &self.types)
-                    && if operator.is_arith() { lhs_anal.ty.supports_arith() } else { true }
-                    && if operator.is_bw() { lhs_anal.ty.supports_bw() } else { true }
-                    && if operator.is_ocomp() { lhs_anal.ty.supports_ord() } else { true }
-                    && if operator.is_ecomp() { lhs_anal.ty.supports_eq() } else { true }
+                let mut validate = || {
+                    lhs_anal.ty.eq(&mut self.types, rhs_anal.ty)
+                    && if operator.is_arith() { lhs_anal.ty.supports_arith(&self.types) } else { true }
+                    && if operator.is_bw() { lhs_anal.ty.supports_bw(&self.types) } else { true }
+                    && if operator.is_ocomp() { lhs_anal.ty.supports_ord(&self.types) } else { true }
+                    && if operator.is_ecomp() { lhs_anal.ty.supports_eq(&self.types) } else { true }
                 };
 
 
                 if !validate() {
-                    return self.error(builder, Error::InvalidBinaryOp {
+                    return self.error(id, Error::InvalidBinaryOp {
                         operator, lhs: lhs_anal.ty, rhs: rhs_anal.ty, source });
                 }
 
-                macro_rules! op {
-                    ($f: ident, $as: ident) => {
-                        builder.$f(lhs_anal.value.$as(), rhs_anal.value.$as()).value()
-                    };
-                }
+                let result = match operator {
+                      BinaryOperator::Add 
+                    | BinaryOperator::Sub
+                    | BinaryOperator::Mul
+                    | BinaryOperator::Div
+                    | BinaryOperator::Rem
+                    | BinaryOperator::BitshiftLeft
+                    | BinaryOperator::BitshiftRight
+                    | BinaryOperator::BitwiseAnd 
+                    | BinaryOperator::BitwiseOr 
+                    | BinaryOperator::BitwiseXor => lhs_anal.ty,
 
-                let value = match operator {
-                    BinaryOperator::Add if lhs_anal.ty.is_sint() => op!(add, as_signed_int),
-                    BinaryOperator::Add if lhs_anal.ty.is_uint() => op!(add, as_unsigned_int),
-                    BinaryOperator::Add if lhs_anal.ty.is_f32()  => op!(add, as_f32),
-                    BinaryOperator::Add if lhs_anal.ty.is_f64()  => op!(add, as_f64),
-
-                    BinaryOperator::Sub if lhs_anal.ty.is_sint() => op!(sub, as_signed_int),
-                    BinaryOperator::Sub if lhs_anal.ty.is_uint() => op!(sub, as_unsigned_int),
-                    BinaryOperator::Sub if lhs_anal.ty.is_f32()  => op!(sub, as_f32),
-                    BinaryOperator::Sub if lhs_anal.ty.is_f64()  => op!(sub, as_f64),
-
-                    BinaryOperator::Mul if lhs_anal.ty.is_sint() => op!(mul, as_signed_int),
-                    BinaryOperator::Mul if lhs_anal.ty.is_uint() => op!(mul, as_unsigned_int),
-                    BinaryOperator::Mul if lhs_anal.ty.is_f32()  => op!(mul, as_f32),
-                    BinaryOperator::Mul if lhs_anal.ty.is_f64()  => op!(mul, as_f64),
-
-                    BinaryOperator::Div if lhs_anal.ty.is_sint() => op!(div, as_signed_int),
-                    BinaryOperator::Div if lhs_anal.ty.is_uint() => op!(div, as_unsigned_int),
-                    BinaryOperator::Div if lhs_anal.ty.is_f32()  => op!(div, as_f32),
-                    BinaryOperator::Div if lhs_anal.ty.is_f64()  => op!(div, as_f64),
-
-                    BinaryOperator::Rem if lhs_anal.ty.is_sint() => op!(rem, as_signed_int),
-                    BinaryOperator::Rem if lhs_anal.ty.is_uint() => op!(rem, as_unsigned_int),
-                    BinaryOperator::Rem if lhs_anal.ty.is_f32()  => op!(rem, as_f32),
-                    BinaryOperator::Rem if lhs_anal.ty.is_f64()  => op!(rem, as_f64),
-
-                    BinaryOperator::BitwiseAnd if lhs_anal.ty.is_sint() => op!(and, as_signed_int),
-                    BinaryOperator::BitwiseAnd if lhs_anal.ty.is_uint() => op!(and, as_signed_int),
-
-                    BinaryOperator::BitwiseOr if lhs_anal.ty.is_sint() => op!(or, as_signed_int),
-                    BinaryOperator::BitwiseOr if lhs_anal.ty.is_uint() => op!(or, as_signed_int),
-
-                    BinaryOperator::BitwiseXor if lhs_anal.ty.is_sint() => op!(xor, as_signed_int),
-                    BinaryOperator::BitwiseXor if lhs_anal.ty.is_uint() => op!(xor, as_signed_int),
-
-                    BinaryOperator::BitshiftLeft if lhs_anal.ty.is_sint() => op!(shl, as_signed_int),
-                    BinaryOperator::BitshiftLeft if lhs_anal.ty.is_uint() => op!(shl, as_signed_int),
-
-                    BinaryOperator::BitshiftRight if lhs_anal.ty.is_sint() => op!(shr, as_signed_int),
-                    BinaryOperator::BitshiftRight if lhs_anal.ty.is_uint() => op!(shr, as_signed_int),
-
-                    BinaryOperator::Eq if lhs_anal.ty.is_sint() => op!(eq, as_signed_int),
-                    BinaryOperator::Eq if lhs_anal.ty.is_uint() => op!(eq, as_unsigned_int),
-                    BinaryOperator::Eq if lhs_anal.ty.is_f32()  => op!(eq, as_f32),
-                    BinaryOperator::Eq if lhs_anal.ty.is_f64()  => op!(eq, as_f64),
-
-                    BinaryOperator::Ne if lhs_anal.ty.is_sint() => op!(ne, as_signed_int),
-                    BinaryOperator::Ne if lhs_anal.ty.is_uint() => op!(ne, as_unsigned_int),
-                    BinaryOperator::Ne if lhs_anal.ty.is_f32()  => op!(ne, as_f32),
-                    BinaryOperator::Ne if lhs_anal.ty.is_f64()  => op!(ne, as_f64),
-
-                    BinaryOperator::Gt if lhs_anal.ty.is_sint() => op!(gt, as_signed_int),
-                    BinaryOperator::Gt if lhs_anal.ty.is_uint() => op!(gt, as_unsigned_int),
-                    BinaryOperator::Gt if lhs_anal.ty.is_f32()  => op!(gt, as_f32),
-                    BinaryOperator::Gt if lhs_anal.ty.is_f64()  => op!(gt, as_f64),
-
-                    BinaryOperator::Ge if lhs_anal.ty.is_sint() => op!(eq, as_signed_int),
-                    BinaryOperator::Ge if lhs_anal.ty.is_uint() => op!(eq, as_unsigned_int),
-                    BinaryOperator::Ge if lhs_anal.ty.is_f32()  => op!(eq, as_f32),
-                    BinaryOperator::Ge if lhs_anal.ty.is_f64()  => op!(eq, as_f64),
-
-                    BinaryOperator::Lt if lhs_anal.ty.is_sint() => op!(lt, as_signed_int),
-                    BinaryOperator::Lt if lhs_anal.ty.is_uint() => op!(lt, as_unsigned_int),
-                    BinaryOperator::Lt if lhs_anal.ty.is_f32()  => op!(lt, as_f32),
-                    BinaryOperator::Lt if lhs_anal.ty.is_f64()  => op!(lt, as_f64),
-
-                    BinaryOperator::Le if lhs_anal.ty.is_sint() => op!(le, as_signed_int),
-                    BinaryOperator::Le if lhs_anal.ty.is_uint() => op!(le, as_unsigned_int),
-                    BinaryOperator::Le if lhs_anal.ty.is_f32()  => op!(le, as_f32),
-                    BinaryOperator::Le if lhs_anal.ty.is_f64()  => op!(le, as_f64),
-
-                    _ => unreachable!(),
+                      BinaryOperator::Eq 
+                    | BinaryOperator::Ne 
+                    | BinaryOperator::Gt 
+                    | BinaryOperator::Ge 
+                    | BinaryOperator::Lt 
+                    | BinaryOperator::Le => Type::BOOL
                 };
 
-                
-                AnalysisResult::new(lhs_anal.ty, value, true)
+                AnalysisResult::new(result, true)
             },
 
 
-            Expression::UnaryOp { operator, rhs } => {
-                let rhs_anal = self.expr(builder, path, scope, *rhs);
-                if rhs_anal.ty.eq(Type::ERROR, &self.types) { return self.empty_error(builder) }
-                if rhs_anal.ty.eq(Type::NEVER, &self.types) { return self.never(builder) }
+            Expr::UnaryOp { operator, rhs } => {
+                let rhs_anal = self.expr(path, scope, rhs);
+                if rhs_anal.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
+                if rhs_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
 
-                let value = match operator {
-                    UnaryOperator::Not if rhs_anal.ty.eq(Type::BOOL, &self.types) => builder.bool_not(rhs_anal.value.as_bool()).value(),
-                    UnaryOperator::Neg if rhs_anal.ty.is_sint() => {
-                        let ty = rhs_anal.value.ty();
-                        let neg_one = builder.constant(ty.as_signed_int(), -1);
-                        builder.mul(rhs_anal.value.as_signed_int(), neg_one).value()
-                    },
-
-                    _ => return self.error(builder,
+                match operator {
+                    UnaryOperator::Not if rhs_anal.ty.eq(&mut self.types, Type::BOOL) => (),
+                    UnaryOperator::Neg if rhs_anal.ty.is_sint(&mut self.types) => (),
+                    
+                    _ => return self.error(id,
                                            Error::InvalidUnaryOp { operator, rhs: rhs_anal.ty, source })
-                };
+                }
 
-                AnalysisResult::new(rhs_anal.ty, value, true)
+                AnalysisResult::new(rhs_anal.ty, true)
             },
 
 
-            Expression::If { condition, body, else_block } => {
-                let mut cond = self.expr(builder, path, scope, *condition);
-                if cond.ty.eq(Type::ERROR, &self.types) { return self.empty_error(builder) }
-                if cond.ty.eq(Type::NEVER, &self.types) {
-                    let bool = builder.ctx().bool();
-                    cond.value = builder.constant(bool, false).value();
-
-                } else if cond.ty.eq(Type::BOOL, &self.types) {
-                    return self.error(builder, Error::InvalidType {
-                        source: condition.range(), found: cond.ty, expected: Type::BOOL })
+            Expr::If { condition, body, else_block } => {
+                let cond = self.expr(path, scope, condition);
+                if cond.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
+                if !cond.ty.eq(&mut self.types, Type::NEVER) 
+                   && !cond.ty.eq(&mut self.types, Type::BOOL) {
+                    let range = self.ast.range(condition);
+                    return self.error(id, Error::InvalidType {
+                        source: range, found: cond.ty, expected: Type::BOOL })
                 }
 
-                let mut value = None;
+                let body_anal = self.expr(path, scope, body);
+                let mut value = body_anal.ty;
 
-                builder.ite(&mut (&mut *self, &mut value), cond.value.as_bool(),
-                |builder, (slf, value)| {
-                    let anal = slf.expr(builder, path, scope, *body);
-                    if anal.ty.eq(Type::ERROR, &slf.types) { return }
-
-                    let ty = slf.types.get_ty_val(anal.ty);
-                    let local = builder.local(ty.llvm_ty());
-                    **value = Some((anal.ty, local));
-
-                    builder.local_set(local, anal.value);
-                },
-
-
-                |builder, (slf, value)| {
+                (|| {
                     let Some(el) = else_block
                     else { return };
 
-                    let el_anal = slf.expr(builder, path, scope, *el);
-                    let Some((anal, local)) = value
-                    else {
-                        if el_anal.ty.eq(Type::ERROR, &slf.types) { return }
+                    let el_anal = self.expr(path, scope, el);
 
-                        let ty = slf.types.get_ty_val(el_anal.ty);
-                        let local = builder.local(ty.llvm_ty());                   
-                        **value = Some((el_anal.ty, local));
-
-                        builder.local_set(local, el_anal.value);
-                        return
-                    };
-
-                    if el_anal.ty.ne(*anal, &slf.types) {
-                        slf.error(builder, Error::IfBodyAndElseMismatch {
-                            body: (body.range(), *anal), else_block: (el.range(), el_anal.ty) });
+                    if value .eq(&mut self.types, Type::ERROR) {
+                        value = el_anal.ty
+                    } else if el_anal.ty.ne(&mut self.types, value) {
+                        let body = self.ast.range(body);
+                        let else_block = self.ast.range(el);
+                        self.error(el, Error::IfBodyAndElseMismatch {
+                            body: (body, value), else_block: (else_block, el_anal.ty) });
                         return
                     }
+                })();
 
-                    builder.local_set(*local, el_anal.value);
-                });
-
-
-                let Some(value) = value
-                else { return self.empty_error(builder) };
-
-                if value.0.ne(Type::UNIT, &self.types) && else_block.is_none() {
-                    return self.error(builder, Error::IfMissingElse {
-                        body: (body.range(), value.0) })
+                if value.ne(&mut self.types, Type::UNIT) && else_block.is_none() {
+                    let body = self.ast.range(body);
+                    return self.error(id, Error::IfMissingElse {
+                        body: (body, value) })
                 }
 
-                let val = builder.local_get(value.1);
-                AnalysisResult::new(value.0, val, true)
+                AnalysisResult::new(value, true)
             },
 
 
-            Expression::Match { .. } => todo!(),
+            Expr::Match { .. } => todo!(),
 
 
-            Expression::Block { block } => self.block(builder, path, scope, &*block),
+            Expr::Block { block } => self.block(path, scope, &*block),
 
 
-            Expression::CreateStruct { data_type, fields  } => {
+            Expr::CreateStruct { .. } => {
                 todo!()
             },
 
 
-            Expression::AccessField { val, field_name } => {
-                let ty = self.expr(builder, path, scope, *val);
-                if ty.ty.eq(Type::ERROR, &self.types) { return self.empty_error(builder) }
-                if ty.ty.eq(Type::NEVER, &self.types) { return self.never(builder) }
-
-                let ty_val = self.types.get_ty_val(ty.ty);
-                let sym = self.types.get_sym(ty_val.symbol());
-
-                match sym.kind() {
-                    TypeSymbolKind::Structure(strct) => {
-                        let Some(field) = strct.fields.iter().find(|x| x.name == field_name.some())
-                        else { return self.error(builder, Error::FieldDoesntExist 
-                                                    { source, field: field_name, typ: ty.ty }) };
-
-
-                        todo!()
-                    },
-                    TypeSymbolKind::Enum(_) => todo!(),
-
-                    _ => self.error(builder, Error::FieldAccessOnNonEnumOrStruct 
-                                                    { source, typ: ty.ty })
-                };
-
+            Expr::AccessField { .. } => {
                 todo!()
             },
 
 
-            Expression::CallFunction { name, is_accessor, args } => todo!(),
-            Expression::WithinNamespace { namespace, namespace_source, action } => todo!(),
-            Expression::WithinTypeNamespace { namespace, action } => todo!(),
+            Expr::CallFunction { .. } => todo!(),
+            Expr::WithinNamespace { .. } => todo!(),
+            Expr::WithinTypeNamespace { .. } => todo!(),
 
 
-            Expression::Loop { body } => {
-                builder.loop_indefinitely(
-                |builder, l| {
-                    let scope = Scope::new(scope.some(), ScopeKind::Loop(l));
-                    let scope = self.scopes.push(scope);
-                    self.block(builder, path, scope, &*body);
-                });
+            Expr::Loop { body } => {
+                self.block(path, scope, &*body);
 
-                AnalysisResult::new(Type::UNIT, builder.unit(), true)
+                AnalysisResult::new(Type::UNIT, true)
             },
 
 
-            Expression::Return(ret) => {
+            Expr::Return(ret) => {
                 let Some(func) = self.scopes.get(scope).find_curr_func(&self.scopes)
-                else { return self.error(builder, Error::ReturnOutsideOfAFunction { source }) };
+                else { return self.error(id, Error::ReturnOutsideOfAFunction { source }) };
 
-                let ret_anal = self.expr(builder, path, scope, *ret);
-                if ret_anal.ty.eq(Type::ERROR, &self.types) { return self.empty_error(builder) }
-                if ret_anal.ty.eq(Type::NEVER, &self.types) { return self.never(builder) }
+                let ret_anal = self.expr(path, scope, ret);
+                if ret_anal.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
+                if ret_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
 
-                if ret_anal.ty.ne(func.ret, &self.types) {
-                    return self.error(builder, Error::ReturnAndFuncTypDiffer {
+                if ret_anal.ty.ne(&mut self.types, func.ret) {
+                    return self.error(id, Error::ReturnAndFuncTypDiffer {
                         source, func_source: func.ret_source,
                         typ: ret_anal.ty, func_typ: func.ret })
                 }
 
-                AnalysisResult::new(Type::NEVER, builder.unit(), true)
+                AnalysisResult::new(Type::NEVER, true)
             },
 
 
-            Expression::Continue => {
-                let Some(l) = self.scopes.get(scope).find_loop(&self.scopes)
-                else { return self.error(builder, Error::ContinueOutsideOfLoop(source)) };
+            Expr::Continue => {
+                if self.scopes.get(scope).find_loop(&self.scopes).is_none() { 
+                    return self.error(id, Error::ContinueOutsideOfLoop(source)) 
+                }
 
-                builder.loop_continue(l);
-                AnalysisResult::new(Type::NEVER, builder.unit(), true)
+                AnalysisResult::new(Type::NEVER, true)
             },
 
 
-            Expression::Break => {
-                let Some(l) = self.scopes.get(scope).find_loop(&self.scopes)
-                else { return self.error(builder, Error::ContinueOutsideOfLoop(source)) };
+            Expr::Break => {
+                if self.scopes.get(scope).find_loop(&self.scopes).is_none() { 
+                    return self.error(id, Error::ContinueOutsideOfLoop(source)) 
+                }
 
-                builder.loop_break(l);
-                AnalysisResult::new(Type::NEVER, builder.unit(), true)
+                AnalysisResult::new(Type::NEVER, true)
             },
 
 
-            Expression::Tuple(v) => {
+            Expr::Tuple(_) => {
                 todo!();
             },
 
 
-            Expression::AsCast { lhs, data_type } => todo!(),
-            Expression::Unwrap(_) => todo!(),
-            Expression::OrReturn(_) => todo!(),
-        }
-    }
+            Expr::AsCast { .. } => todo!(),
+            Expr::Unwrap(_) => todo!(),
+            Expr::OrReturn(_) => todo!(),
+        })();
 
+        self.type_info.set_expr(id, result);
 
-    fn infer(&mut self, ty: TypeSymbolId, fields: &[Type]) -> HashMap<StringIndex, Option<Type>> {
-        let sym = self.types.get_sym(ty);
-        let mut generics : HashMap<StringIndex, Option<Type>> = HashMap::with_capacity(sym.generics().len());
-        for g in sym.generics() {
-            generics.insert(*g, None);
-        }
-
-        match sym.kind() {
-            TypeSymbolKind::Structure(s) => {
-                fn i(slf: &mut Analyzer<'_, '_, '_, '_>,
-                     map: &mut HashMap<StringIndex, Option<Type>>,
-                     generics: &[Generic], tys: &[Type]) {
-                    for (g, f) in generics.iter().zip(tys.iter()) {
-                        match g.kind {
-                            GenericKind::Generic(v) => {
-                                let Entry::Occupied(mut value) = map.entry(v)
-                                else { return todo!() };
-
-                                let ty = value.get_mut();
-                                if ty.is_none() { *ty = Some(*f) }
-                                else if let Some(ty) = ty {
-                                    if ty.ne(*f, &slf.types) {
-                                        todo!()
-                                    }
-                                }
-                            },
-
-
-                            GenericKind::Symbol { symbol, generics } => {
-                                let ty_val = slf.types.get_ty_val(*f);
-                                i(slf, map, generics, tys)
-                            },
-                        }
-                    }
-                }
-            },
-            TypeSymbolKind::Enum(_) => todo!(),
-            TypeSymbolKind::BuiltIn => todo!(),
-        };
-
-        generics
+        result
     }
 }

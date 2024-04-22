@@ -1,64 +1,39 @@
 use common::{source::SourceRange, string_map::StringIndex};
+use sti::define_key;
 
 use crate::{DataType, Block};
 
-use super::expr::ExpressionNode;
+use super::expr::ExprId;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub struct StatementNode<'a> {
-    kind: Statement<'a>,
-    pub(crate) source_range: SourceRange,
-}
-
-
-impl<'arena> StatementNode<'arena> {
-    pub fn new(kind: Statement<'arena>, source_range: SourceRange) -> Self { 
-        Self {
-            kind, 
-            source_range,
-        } 
-    }
-
-
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange {
-        self.source_range
-    }
-
-
-    #[inline(always)]
-    pub fn kind(&self) -> Statement<'arena> {
-        self.kind
-    }
-}
+define_key!(u32, pub StmtId);
 
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Statement<'a> {
+pub enum Stmt<'a> {
     Variable {
         name: StringIndex,
         hint: Option<DataType<'a>>,
         is_mut: bool,
-        rhs: ExpressionNode<'a>,
+        rhs: ExprId,
     },
 
 
     VariableTuple {
         names: &'a [(StringIndex, bool)],
         hint: Option<DataType<'a>>,
-        rhs: ExpressionNode<'a>,
+        rhs: ExprId,
     },
 
 
     UpdateValue {
-        lhs: ExpressionNode<'a>,
-        rhs: ExpressionNode<'a>,
+        lhs: ExprId,
+        rhs: ExprId,
     },
 
 
     ForLoop {
         binding: (bool, StringIndex, SourceRange),
-        expr: (bool, ExpressionNode<'a>),
+        expr: (bool, ExprId),
         body: Block<'a>,
     }
 }

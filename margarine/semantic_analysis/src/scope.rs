@@ -1,10 +1,10 @@
-use std::{collections::HashMap, thread::scope};
+use std::collections::HashMap;
 
 use common::{source::SourceRange, string_map::StringIndex};
-use llvm_api::builder::{Local, Loop};
+use llvm_api::builder::Loop;
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
-use crate::{funcs::FunctionSymbolId, namespace::{Namespace, NamespaceId, NamespaceMap}, types::{SymbolMap, Type, TypeSymbolId}};
+use crate::{funcs::FunctionSymbolId, namespace::{NamespaceId, NamespaceMap}, types::{SymbolMap, Type, TypeSymbolId}};
 
 define_key!(u32, pub ScopeId);
 
@@ -78,7 +78,7 @@ impl<'me> Scope<'me> {
 
             if let ScopeKind::Generics(generics_scope) = scope.kind {
                 if let Some(ty) = generics_scope.generics.get(&name) {
-                    return Some(symbols.get_ty_val(*ty).symbol())
+                    return Some(symbols.get_ty_val(ty.tyid(symbols).expect("please work")).symbol())
                 }
             }
 
@@ -151,11 +151,10 @@ pub struct VariableScope {
     name  : StringIndex,
     ty    : Type,
     is_mut: bool, 
-    local : Local,
 }
 
 impl VariableScope {
-    pub fn new(name: StringIndex, ty: Type, is_mut: bool, local: Local) -> Self { Self { name, ty, is_mut, local } }
+    pub fn new(name: StringIndex, ty: Type, is_mut: bool) -> Self { Self { name, ty, is_mut } }
 
     #[inline(always)]
     pub fn is_mut(&self) -> bool { self.is_mut }
@@ -165,9 +164,6 @@ impl VariableScope {
 
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
-
-    #[inline(always)]
-    pub fn local(&self) -> Local { self.local }
 }
 
 
