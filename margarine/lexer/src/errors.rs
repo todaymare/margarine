@@ -21,7 +21,7 @@ pub enum Error {
 
 
 impl ErrorType<()> for Error {
-    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, _: &()) {
+    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, _: &mut ()) {
         match self {
             Error::InvalidCharacter { character, position } => {
                 fmt.error("invalid character")

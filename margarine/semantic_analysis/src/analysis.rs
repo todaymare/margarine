@@ -1,8 +1,9 @@
 use common::{copy_slice_in, string_map::StringIndex};
+use llvm_api::values;
 use parser::nodes::{decl::{Decl, DeclId}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
 use sti::arena::Arena;
 
-use crate::{errors::Error, funcs::{FunctionArgument, FunctionSymbol}, namespace::{Namespace, NamespaceId}, scope::{Scope, ScopeId, ScopeKind, VariableScope}, types::{Generic, GenericKind, Structure, StructureField, Type, TypeSymbol, TypeSymbolId, TypeSymbolKind}, AnalysisResult, TyChecker};
+use crate::{errors::Error, funcs::{FunctionArgument, FunctionSymbol}, namespace::{Namespace, NamespaceId}, scope::{GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, types::{Generic, GenericKind, Symbol, SymbolId, SymbolKind, Type}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
@@ -98,21 +99,19 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                             Ok(v) => v,
                             Err(v) => {
                                 self.error(*n, v);
-                                Generic::new(f.1.range(), GenericKind::Symbol {
-                                    symbol: TypeSymbolId::ERROR, generics: &[] })
+                                Generic::new(f.1.range(), GenericKind::ERROR)
                             },
                         };
 
-                        let field = StructureField::new(f.0.some(), sym);
+                        let field = (f.0.some(), sym);
                         structure_fields.push(field);
                     }
 
                     // finalise
                     let generics = copy_slice_in(self.output, generics);
-                    let structure = Structure::new(false, structure_fields.leak());
-                    let tsk = TypeSymbolKind::Structure(structure);
                     let sym_name = self.string_map.concat(path, name);
-                    let sym = TypeSymbol::new(sym_name, generics, tsk);
+                    let sym = Symbol::new(sym_name, generics,
+                                          structure_fields.leak(), SymbolKind::Struct);
                     self.types.add_sym(tsi, sym);
                 },
 
@@ -129,8 +128,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                             Ok(v) => v,
                             Err(v) => {
                                 self.error(*n, v);
-                                Generic::new(a.data_type().range(), GenericKind::Symbol {
-                                    symbol: TypeSymbolId::ERROR, generics: &[] })
+                                Generic::new(a.data_type().range(), GenericKind::ERROR)
                             },
                         };
 
@@ -144,8 +142,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         Ok(v) => v,
                         Err(v) => {
                             self.error(*n, v);
-                            Generic::new(sig.return_type.range(), GenericKind::Symbol {
-                                symbol: TypeSymbolId::ERROR, generics: &[] })
+                            Generic::new(sig.return_type.range(), GenericKind::ERROR)
                         },
                     };
 
@@ -157,7 +154,6 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let id = self.funcs.push(func);
                     let ns = self.namespaces.get_ns_mut(ns);
                     ns.add_func(sig.name, id);
-
                 }
 
 
@@ -203,35 +199,84 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     }
 
 
-    pub fn decl(&mut self, scope: &mut ScopeId, ns: NamespaceId, decl: DeclId) {
-        let decl = self.ast.decl(decl);
+    pub fn decl(&mut self, scope: &mut ScopeId, ns: NamespaceId, id: DeclId) {
+        let decl = self.ast.decl(id);
         match decl {
             Decl::Struct { .. } => (),
             Decl::Enum { .. } => (),
 
             
-            Decl::Function { sig, .. } => {
+            Decl::Function { sig, body, .. } => {
                 let ns = self.namespaces.get_ns(ns);
                 let Some(func) = ns.get_func(sig.name)
                 else { return };
 
-                let pool = Arena::tls_get_rec();
-
                 // we need a scope that'd fake the generics
                 let generics = self.funcs.get_sym(func).generics();
                 let generics = {
-                    let mut vec = sti::vec::Vec::new_in(&*pool);
+                    let mut vec = sti::vec::Vec::new_in(&*self.output);
                     for gen in generics {
                         let ty = self.types.pending();
-                        self.types.add_sym(ty, TypeSymbol::new(*gen, &[], TypeSymbolKind::Structure(Structure::new(false, &[]))));
-                        vec.push(self.get_ty(ty, &[]));
+                        self.types.add_sym(ty, Symbol::new(*gen, &[], &[], SymbolKind::Struct));
+                        vec.push((*gen, self.get_ty(ty, &[])));
                     }
 
                     vec
                 };
                 
-                // this function will automatically generate & tyck the function
-                self.get_func(false, *scope, func, &*generics);
+                // fake args
+                let generics = generics.leak();
+                let gscope = GenericsScope::new(generics);
+                let mut scope = Scope::new(scope.some(), ScopeKind::Generics(gscope));
+
+                for a in self.funcs.get_sym(func).args() {
+                    let ty = self.gen_to_ty(a.symbol, &generics);
+                    let ty = match ty {
+                        Ok(v) => v,
+                        Err(v) => {
+                            self.error(id, v);
+                            Type::ERROR
+                        }
+                    };
+
+                    let vs = VariableScope::new(a.name, ty, a.inout);
+                    scope = Scope::new(self.scopes.push(scope).some(), ScopeKind::VariableScope(vs))
+                }
+
+                let ret = self.gen_to_ty(self.funcs.get_sym(func).ret(), &generics);
+                let ret = match ret {
+                    Ok(v) => v,
+                    Err(v) => {
+                        self.error(id, v);
+                        Type::ERROR
+                    }
+                };
+
+                let scope = self.scopes.push(scope);
+
+                let anal = self.block(self.funcs.get_sym(func).name, scope, &*body);
+
+                let anal_sym = match anal.ty.sym(&mut self.types) {
+                    Ok(v) => v,
+                    Err(v) => {
+                        self.error(id, v);
+                        return;
+                    },
+                };
+
+                let ret_sym = match ret.sym(&mut self.types) {
+                    Ok(v) => v,
+                    Err(v) => {
+                        self.error(id, v);
+                        return;
+                    },
+                };
+
+                if anal_sym != ret_sym {
+                    self.error(id, Error::FunctionBodyAndReturnMismatch {
+                        header: sig.source, item: body.range(),
+                        return_type: ret, body_type: anal.ty });
+                }
             },
 
 
@@ -369,15 +414,26 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 if rhs_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
 
                 let mut validate = || {
-                    lhs_anal.ty.eq(&mut self.types, rhs_anal.ty)
-                    && if operator.is_arith() { lhs_anal.ty.supports_arith(&self.types) } else { true }
-                    && if operator.is_bw() { lhs_anal.ty.supports_bw(&self.types) } else { true }
-                    && if operator.is_ocomp() { lhs_anal.ty.supports_ord(&self.types) } else { true }
-                    && if operator.is_ecomp() { lhs_anal.ty.supports_eq(&self.types) } else { true }
+                    if !lhs_anal.ty.eq(&mut self.types, rhs_anal.ty) { return Ok(false) }
+                    let sym = match lhs_anal.ty.sym(&mut self.types) {
+                        Ok(v) => v,
+                        Err(v) => return Err(v),
+                    };
+
+                    Ok(if operator.is_arith() { sym.supports_arith() } else { true }
+                    && if operator.is_bw() { sym.supports_bw() } else { true }
+                    && if operator.is_ocomp() { sym.supports_ord() } else { true }
+                    && if operator.is_ecomp() { sym.supports_eq() } else { true })
                 };
 
 
-                if !validate() {
+                let validate = validate();
+                let validate = match validate {
+                    Ok(v) => v,
+                    Err(v) => return self.error(id, v),
+                };
+
+                if !validate {
                     return self.error(id, Error::InvalidBinaryOp {
                         operator, lhs: lhs_anal.ty, rhs: rhs_anal.ty, source });
                 }
@@ -408,12 +464,17 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::UnaryOp { operator, rhs } => {
                 let rhs_anal = self.expr(path, scope, rhs);
-                if rhs_anal.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
-                if rhs_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
+                let sym = rhs_anal.ty.sym(&mut self.types);
+                let sym = match sym {
+                    Ok(v) => v,
+                    Err(v) => return self.error(id, v),
+                };
+                if sym == SymbolId::ERROR { return self.empty_error() }
+                if sym == SymbolId::NEVER { return self.never() }
 
                 match operator {
-                    UnaryOperator::Not if rhs_anal.ty.eq(&mut self.types, Type::BOOL) => (),
-                    UnaryOperator::Neg if rhs_anal.ty.is_sint(&mut self.types) => (),
+                    UnaryOperator::Not if sym == SymbolId::BOOL => (),
+                    UnaryOperator::Neg if sym.is_sint() => (),
                     
                     _ => return self.error(id,
                                            Error::InvalidUnaryOp { operator, rhs: rhs_anal.ty, source })
@@ -442,7 +503,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                     let el_anal = self.expr(path, scope, el);
 
-                    if value .eq(&mut self.types, Type::ERROR) {
+                    if value.eq(&mut self.types, Type::ERROR) {
                         value = el_anal.ty
                     } else if el_anal.ty.ne(&mut self.types, value) {
                         let body = self.ast.range(body);
@@ -542,3 +603,4 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         result
     }
 }
+

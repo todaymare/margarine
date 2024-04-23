@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use common::source::SourceRange;
-use errors::{ErrorType};
+use errors::ErrorType;
 use lexer::TokenKind;
 
 #[derive(Clone, Debug)]
@@ -42,7 +42,7 @@ pub enum Error {
 
 
 impl ErrorType<()> for Error {
-    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, _: &()) {
+    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, _: &mut ()) {
         match self {
             Error::ExpectedLiteralString { source, token } => {
                 fmt.error("expected literal")

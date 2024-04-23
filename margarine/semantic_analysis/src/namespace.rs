@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use common::string_map::StringIndex;
 use sti::{define_key, keyed::KVec};
 
-use crate::{funcs::FunctionSymbolId, types::TypeSymbolId};
+use crate::{funcs::FunctionSymbolId, types::SymbolId};
 
 define_key!(u32, pub NamespaceId);
 
 
 #[derive(Debug)]
 pub struct Namespace {
-    ty_symbols  : HashMap<StringIndex, TypeSymbolId>,
+    ty_symbols  : HashMap<StringIndex, SymbolId>,
     func_symbols: HashMap<StringIndex, FunctionSymbolId>,
     namespaces  : HashMap<StringIndex, NamespaceId>,
     pub path: StringIndex,
@@ -51,7 +51,7 @@ impl Namespace {
             path,
         }
     }
-    pub fn add_sym(&mut self, name: StringIndex, sym: TypeSymbolId) {
+    pub fn add_sym(&mut self, name: StringIndex, sym: SymbolId) {
         let old_sym = self.ty_symbols.insert(name, sym);
         assert!(old_sym.is_none());
     }
@@ -69,7 +69,7 @@ impl Namespace {
     }
 
 
-    pub fn get_ty_sym(&self, name: StringIndex) -> Option<TypeSymbolId> {
+    pub fn get_ty_sym(&self, name: StringIndex) -> Option<SymbolId> {
         self.ty_symbols.get(&name).copied()
     }
 

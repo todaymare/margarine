@@ -4,7 +4,7 @@ use common::{source::SourceRange, string_map::StringIndex};
 use llvm_api::builder::Loop;
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
-use crate::{funcs::FunctionSymbolId, namespace::{NamespaceId, NamespaceMap}, types::{SymbolMap, Type, TypeSymbolId}};
+use crate::{funcs::FunctionSymbolId, namespace::{NamespaceId, NamespaceMap}, types::{SymbolMap, Type, SymbolId}};
 
 define_key!(u32, pub ScopeId);
 
@@ -66,7 +66,7 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_ty(self, name: StringIndex, scope_map: &ScopeMap, symbols: &SymbolMap, namespaces: &NamespaceMap) -> Option<TypeSymbolId> {
+    pub fn find_ty(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<SymbolId> {
         self.over(scope_map, |scope| {
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
                 let ns = namespaces.get_ns(ns);
@@ -77,8 +77,8 @@ impl<'me> Scope<'me> {
 
 
             if let ScopeKind::Generics(generics_scope) = scope.kind {
-                if let Some(ty) = generics_scope.generics.get(&name) {
-                    return Some(symbols.get_ty_val(ty.tyid(symbols).expect("please work")).symbol())
+                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0 == name) {
+                    return Some(ty.1.sym(symbols).expect("please work"))
                 }
             }
 
@@ -123,7 +123,7 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_curr_func(self, scope_map: &ScopeMap) -> Option<FunctionScope> {
+    pub fn find_curr_func(self, scope_map: &ScopeMap<'me>) -> Option<FunctionScope> {
         self.over(scope_map, |scope| {
             if let ScopeKind::Function(l) = scope.kind {
                 return Some(l)
@@ -133,7 +133,7 @@ impl<'me> Scope<'me> {
         })
     }
 
-    fn over<T>(self, scope_map: &ScopeMap, mut func: impl FnMut(Scope) -> Option<T>) -> Option<T> {
+    fn over<T>(self, scope_map: &ScopeMap<'me>, mut func: impl FnMut(Scope<'me>) -> Option<T>) -> Option<T> {
         let mut this = Some(self);
         while let Some(scope) = this {
             if let Some(val) = func(scope) { return Some(val) }
@@ -169,12 +169,12 @@ impl VariableScope {
 
 #[derive(Debug, Clone, Copy)]
 pub struct GenericsScope<'me> {
-    generics: &'me HashMap<StringIndex, Type>,
+    generics: &'me [(StringIndex, Type)],
 }
 
 
 impl<'me> GenericsScope<'me> {
-    pub fn new(generics: &'me HashMap<StringIndex, Type>) -> Self { Self { generics } }
+    pub fn new(generics: &'me [(StringIndex, Type)]) -> Self { Self { generics } }
 }
 
 

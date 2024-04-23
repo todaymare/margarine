@@ -41,7 +41,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
 
     let sema_arena = Arena::new();
     let _scopes = Arena::new();
-    let sema = {
+    let mut sema = {
         let _1 = DropTimer::new("semantic analysis");
         margarine::TyChecker::run(&sema_arena, &mut global, &*modules, string_map)
     };
@@ -51,7 +51,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
     for l in lex_errors {
         let mut file = Vec::with_capacity(l.len());
         for e in l.iter() {
-            let report = margarine::display(e.1, &sema.string_map, &files, &());
+            let report = margarine::display(e.1, &sema.string_map, &files, &mut ());
             #[cfg(not(feature = "fuzzer"))]
             println!("{report}");
             file.push(report);
@@ -64,7 +64,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
     for l in parse_errors {
         let mut file = Vec::with_capacity(l.len());
         for e in l.iter() {
-            let report = margarine::display(e.1, &sema.string_map, &files, &());
+            let report = margarine::display(e.1, &sema.string_map, &files, &mut ());
             #[cfg(not(feature = "fuzzer"))]
             println!("{report}");
             file.push(report);
@@ -75,7 +75,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
 
     let mut sema_errors = Vec::with_capacity(sema.errors.len());
     for s in sema.errors.iter() {
-        let report = margarine::display(s.1, &sema.string_map, &files, &sema.types);
+        let report = margarine::display(s.1, &sema.string_map, &files, &mut sema.types);
         #[cfg(not(feature = "fuzzer"))]
         println!("{report}");
         sema_errors.push(report);

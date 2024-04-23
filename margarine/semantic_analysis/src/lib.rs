@@ -8,7 +8,7 @@ use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
 use sti::{arena::Arena, keyed::KVec};
-use types::{Generic, GenericKind, SymbolMap, Type, TypeSymbolId};
+use types::{Generic, GenericKind, SymbolMap, Type, SymbolId};
 
 use crate::scope::ScopeKind;
 
@@ -96,7 +96,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             macro_rules! add_sym {
                 ($n: ident) => {
-                    namespace.add_sym(StringMap::$n, TypeSymbolId::$n);
+                    namespace.add_sym(StringMap::$n, SymbolId::$n);
                 };
             }
 
@@ -158,13 +158,15 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     }
 
     
-    fn gen_to_ty(&mut self, gen: Generic, gens: &HashMap<StringIndex, Type>) -> Result<Type, Error> {
+    fn gen_to_ty(&mut self, gen: Generic, gens: &[(StringIndex, Type)]) -> Result<Type, Error> {
         match gen.kind {
-            GenericKind::Generic(v) => gens.get(&v)
+            GenericKind::Generic(v) => gens.iter()
+                                        .find(|x| x.0 == v)
                                         .copied()
+                                        .map(|x| x.1)
                                         .ok_or(Error::UnknownType(v, gen.range)),
 
-            GenericKind::Symbol { symbol, generics } => {
+            GenericKind::Sym(symbol, generics) => {
                 let pool = Arena::tls_get_rec();
                 let generics = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, generics.len());
@@ -183,36 +185,13 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     fn dt_to_gen(&mut self, scope: Scope, dt: DataType,
                  gens: &[StringIndex]) -> Result<Generic<'out>, Error> {
         match dt.kind() {
-            DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Symbol {
-                                        symbol: TypeSymbolId::UNIT, generics: &[] })),
+            DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::UNIT, &[]))),
 
 
-            DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Symbol {
-                                        symbol: TypeSymbolId::NEVER, generics: &[] })),
+            DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]))),
 
 
-            DataTypeKind::Tuple(v) => {
-                let pool = Arena::tls_get_rec();
-                let names = {
-                    let mut vec = sti::vec::Vec::with_cap_in(&*pool, v.len());
-                    for i in v { vec.push(i.0) }
-                    vec.leak()
-                };
-
-                let tuple = self.tuple_sym(names);
-
-                let generics = {
-                    let mut vec = sti::vec::Vec::with_cap_in(&*self.output, v.len());
-
-                    for g in v {
-                        vec.push(self.dt_to_gen(scope, g.1, gens)?);
-                    }
-                    vec
-                };
-
-                Ok(Generic::new(dt.range(),
-                                GenericKind::Symbol { symbol: tuple, generics: generics.leak() }))
-            },
+            DataTypeKind::Tuple(v) => todo!(),
 
 
             DataTypeKind::Within(ns, dt) => {
@@ -228,7 +207,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 if gens.contains(&name) { return Ok(Generic::new(dt.range(),
                                                     GenericKind::Generic(name))) }
 
-                let Some(base) = scope.find_ty(name, &self.scopes, &self.types, &self.namespaces)
+                let Some(base) = scope.find_ty(name, &self.scopes, &mut self.types, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
 
                 let generics = {
@@ -241,7 +220,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 };
 
                 Ok(Generic::new(dt.range(),
-                                GenericKind::Symbol { symbol: base, generics: generics.leak() }))
+                                GenericKind::Sym(base, generics.leak())))
             },
         }
     }
@@ -267,7 +246,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             DataTypeKind::CustomType(name, generics) => {
                 let scope = self.scopes.get(scope_id);
-                let Some(base) = scope.find_ty(name, &self.scopes, &self.types, &self.namespaces)
+                let Some(base) = scope.find_ty(name, &self.scopes, &mut self.types, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
 
                 let pool = Arena::tls_get_temp();
@@ -285,16 +264,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             },
 
 
-            DataTypeKind::Tuple(v) => {
-                let pool = Arena::tls_get_rec();
-                let mut vec = sti::vec::Vec::with_cap_in(&*pool, v.len());
-                for i in v {
-                    let ty = self.dt_to_ty(scope_id, i.1)?;
-                    vec.push((i.0, ty));
-                }
-
-                Ok(self.tuple(&*vec))
-            },
+            DataTypeKind::Tuple(_) => todo!(),
         }
     }
 }

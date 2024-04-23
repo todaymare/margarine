@@ -230,17 +230,18 @@ pub enum Error {
         name: StringIndex,
     },
 
-
     AssignIsNotLHSValue {
         source: SourceRange,
     },
+
+    UnableToInfer(SourceRange),
     
     Bypass,
 }
 
 
 impl<'a> ErrorType<SymbolMap<'_>> for Error {
-    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, types: &SymbolMap) {
+    fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, types: &mut SymbolMap) {
         match self {
             Error::NameIsAlreadyDefined { source, name } => {
                 let name = fmt.string(*name).to_string();
@@ -723,6 +724,8 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 fmt.error("deref on non pointer")
                     .highlight(*v);
             },
+
+            Error::UnableToInfer(_) => todo!(),
 
             Error::Bypass => (),
         }

@@ -19,11 +19,11 @@ define_key!(u32, pub ParserError);
 define_key!(u32, pub SemaError);
 
 pub trait ErrorType<T> {
-    fn display(&self, fmt: &mut ErrorFormatter, data: &T);
+    fn display(&self, fmt: &mut ErrorFormatter, data: &mut T);
 }
 
 
-pub fn display<T>(e: &impl ErrorType<T>, string_map: &StringMap, file: &[FileData], data: &T) -> String {
+pub fn display<T>(e: &impl ErrorType<T>, string_map: &StringMap, file: &[FileData], data: &mut T) -> String {
     let mut string = String::new();
     if !string.is_empty() {
         let _ = writeln!(string);
