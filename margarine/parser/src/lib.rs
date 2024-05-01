@@ -530,9 +530,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let name = self.expect_identifier()?;
+        self.advance();
+
+        let generics = self.generic_decl()?;
 
         let header = SourceRange::new(start, self.current_range().end());
-        self.advance();
 
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
@@ -557,7 +559,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::RightBracket)?;
         let end = self.current_range().end();
 
-        let node = Decl::Struct { kind, name, header, fields, generics: &[] };
+        let node = Decl::Struct { kind, name, header, fields, generics };
 
         Ok(self.ast.add_decl(node, SourceRange::new(start, end)))
     }

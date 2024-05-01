@@ -1,36 +1,5 @@
-fn speedtest(num: int) {
-    let mut num = num
-    let v, mut i, mut j, mut sum = (num, 1, 1, 0)
+struct Hello<T> { val: T, oth: T }
 
-    while i < v {
-        j = 1
-        while j < num - 1 {
-            if num % j == 0 {
-                sum += j
-            }
-            j += 1
-        }
-        
-        if num == sum {
-            println(sum.to_string())
-        }
-
-        sum = 0
-        num -= 1
-        i += 1
-    }
-}
-
-@startup
-system fn main() {
-    speedtest(20000)
-
-    for SomeStruct { a: (a, &b), &c } in &vec {}
-
-}
-
-
-extern "libstdlib" {
-    fn println(str: str)
-    fn to_string(i: int): str
+fn hi(): Hello {
+    Hello { val: 69, oth: true }
 }

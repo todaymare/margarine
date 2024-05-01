@@ -391,9 +391,6 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             Expr::Identifier(ident) => {
                 let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes)
                 else { return self.error(id, Error::VariableNotFound { name: ident, source }) };
-
-                if variable.ty().eq(&mut self.types, Type::ERROR) { return self.empty_error() }
-
                 AnalysisResult::new(variable.ty(), variable.is_mut())
             },
 
@@ -408,10 +405,21 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let lhs_anal = self.expr(path, scope, lhs);
                 let rhs_anal = self.expr(path, scope, rhs);
 
-                if lhs_anal.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
-                if lhs_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
-                if rhs_anal.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
-                if rhs_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
+                let lhs_sym = match lhs_anal.ty.sym(&mut self.types) {
+                    Ok(v) => v,
+                    Err(e) => return self.error(id, e),
+                };
+
+                if lhs_sym == SymbolId::ERROR { return self.empty_error() }
+                if lhs_sym == SymbolId::NEVER { return self.never() }
+
+                let rhs_sym = match rhs_anal.ty.sym(&mut self.types) {
+                    Ok(v) => v,
+                    Err(e) => return self.error(id, e),
+                };
+
+                if rhs_sym == SymbolId::ERROR { return self.empty_error() }
+                if rhs_sym == SymbolId::NEVER { return self.never() }
 
                 let mut validate = || {
                     if !lhs_anal.ty.eq(&mut self.types, rhs_anal.ty) { return Ok(false) }
@@ -530,14 +538,48 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             Expr::Block { block } => self.block(path, scope, &*block),
 
 
-            Expr::CreateStruct { .. } => {
-                todo!()
+            Expr::CreateStruct { data_type, fields  } => {
+                let ty = match self.dt_to_ty(scope, data_type) {
+                    Ok(v) => v,
+                    Err(v) => return self.error(id, v),
+                };
+
+                let sym = match ty.sym(&mut self.types) {
+                    Ok(v) => v,
+                    Err(v) => return self.error(id, v),
+                };
+
+                let sym = self.types.sym(sym);
+
+                let sym_fields = {
+                    let mut vec = Vec::new();
+                    let gens = ty.gens(&mut self.types);
+                    for f in sym.fields {
+                        let ty = match self.gen_to_ty(f.1, gens) {
+                            Ok(v) => v,
+                            Err(v) => return self.error(id, v),
+                        };
+
+                        vec.push(ty)
+                    }
+
+                    vec
+                };
+
+                for (f, g) in fields.iter().zip(sym_fields) {
+                    let expr = self.expr(path, scope, f.2);
+
+                    if !expr.ty.eq(&mut self.types, g) {
+                        self.error(id, Error::InvalidType {
+                            source: f.1, found: expr.ty, expected: g });
+                    }
+                }
+
+                AnalysisResult::new(ty, true)
             },
 
 
-            Expr::AccessField { .. } => {
-                todo!()
-            },
+            Expr::AccessField { val, field_name  } => todo!(),
 
 
             Expr::CallFunction { .. } => todo!(),

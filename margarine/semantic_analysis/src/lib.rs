@@ -230,7 +230,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 dt: DataType) -> Result<Type, Error> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Type::UNIT),
-            DataTypeKind::Never => todo!(),
+            DataTypeKind::Never => Ok(Type::UNIT),
 
 
             DataTypeKind::Within(ns, dt) => {
@@ -244,19 +244,34 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             },
 
 
-            DataTypeKind::CustomType(name, generics) => {
+            DataTypeKind::CustomType(name, generics_list) => {
                 let scope = self.scopes.get(scope_id);
+                if let Some(gen) = scope.find_gen(name, &self.scopes) {
+                    // TODO: error
+                    assert!(generics_list.is_empty());
+                    return Ok(gen);
+                }
+
+
                 let Some(base) = scope.find_ty(name, &self.scopes, &mut self.types, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
 
-                let pool = Arena::tls_get_temp();
-                let generics = {
-                    let mut vec = sti::vec::Vec::with_cap_in(&*pool, generics.len());
+                let base_sym = self.types.sym(base);
 
-                    for g in generics {
-                        vec.push(self.dt_to_ty(scope_id, *g)?);
+                let pool = Arena::tls_get_temp();
+                let mut generics = sti::vec::Vec::with_cap_in(&*pool, base_sym.generics.len());
+                if generics_list.is_empty() {
+                    for _ in base_sym.generics {
+                        generics.push(self.types.new_var(dt.range()))
                     }
-                    vec
+                } else {
+                    for g in generics_list {
+                        generics.push(self.dt_to_ty(scope_id, *g)?);
+                    }
+
+                    if generics.len() != base_sym.generics.len() {
+                        panic!("todo: add error");
+                    }
                 };
 
                 let ty = self.get_ty(base, &*generics);

@@ -87,6 +87,19 @@ impl<'me> Scope<'me> {
     }
 
 
+    pub fn find_gen(self, name: StringIndex, scope_map: &ScopeMap) -> Option<Type> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::Generics(generics_scope) = scope.kind {
+                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0 == name) {
+                    return Some(ty.1)
+                }
+            }
+
+            None
+        })
+    }
+
+
     pub fn find_ns(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap) -> Option<NamespaceId> {
         self.over(scope_map, |scope| {
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {

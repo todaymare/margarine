@@ -46,6 +46,8 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
         margarine::TyChecker::run(&sema_arena, &mut global, &*modules, string_map)
     };
 
+    dbg!(&sema);
+
     // todo: find a way to comrpess these errors into vecs
     let mut lex_error_files = Vec::with_capacity(lex_errors.len());
     for l in lex_errors {

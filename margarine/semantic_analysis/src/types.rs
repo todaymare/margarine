@@ -1,5 +1,5 @@
 use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
-use sti::{arena::Arena, define_key, keyed::KVec};
+use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
 
 use crate::{errors::Error, TyChecker};
 
@@ -10,23 +10,23 @@ define_key!(u32, pub VarId);
 #[derive(Debug)]
 pub struct SymbolMap<'me> {
     syms : KVec<SymbolId, Option<Symbol<'me>>>,
-    tys  : KVec<GenListId, &'me [Type]>,
+    tys  : KVec<GenListId, &'me [(StringIndex, Type)]>,
     vars : KVec<VarId, Var>,
     arena: &'me Arena,
     
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Symbol<'me> {
-    name    : StringIndex,
-    generics: &'me [StringIndex],
-    fields  : &'me [(OptStringIndex, Generic<'me>)],
-    kind    : SymbolKind,
+    pub name    : StringIndex,
+    pub generics: &'me [StringIndex],
+    pub fields  : &'me [(OptStringIndex, Generic<'me>)],
+    pub kind    : SymbolKind,
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum SymbolKind {
     Struct,
     Tuple,
@@ -93,6 +93,8 @@ impl<'me> SymbolMap<'me> {
         init!(ERROR);
         init!(NEVER);
 
+        assert_eq!(slf.tys.push(&[]), GenListId::EMPTY);
+
         slf
     }
 
@@ -102,6 +104,14 @@ impl<'me> SymbolMap<'me> {
     pub fn add_sym(&mut self, id: SymbolId, sym: Symbol<'me>) { 
         debug_assert!(self.syms[id].is_none());
         self.syms[id] = Some(sym)
+    }
+
+    pub fn sym(&mut self, id: SymbolId) -> Symbol<'me> { 
+        self.syms[id].unwrap()
+    }
+
+    pub fn new_var(&mut self, range: SourceRange) -> Type {
+        Type::Var(self.vars.push(Var { sub: None, range }))
     }
 }
 
@@ -130,24 +140,26 @@ impl Type {
     }
 
     pub fn eq(self, map: &mut SymbolMap, oth: Type) -> bool {
-        let a = self.instantiate(map);
-        let b = oth.instantiate(map);
+        let a = self.instantiate_shallow(map);
+        let b = oth.instantiate_shallow(map);
         match (a, b) {
             (Type::Ty(syma, gena), Type::Ty(symb, genb)) => {
                 // NON TUPLE
                 if syma == symb { 
+                    let gena = instantiate_gens(map, gena);
                     let gena = map.tys[gena];
+                    let genb = instantiate_gens(map, genb);
                     let genb = map.tys[genb];
 
                     debug_assert_eq!(gena.len(), genb.len());
-                    if !gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.eq(map, *tb)) {
+                    if !gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1)) {
                         return false;
                     }
                     return true
                 }
 
 
-                true
+                false
             },
 
             (Type::Var(ida), Type::Var(idb)) if ida == idb => { return true }
@@ -187,7 +199,7 @@ impl Type {
 
 
     pub fn sym(self, map: &mut SymbolMap) -> Result<SymbolId, Error> {
-        match self.instantiate(map) {
+        match self.instantiate_shallow(map) {
             Type::Ty(sym, _) => Ok(sym),
             Type::Var(id) => {
                 let var = &map.vars[id];
@@ -197,14 +209,20 @@ impl Type {
     }
 
 
+    pub fn gens<'a>(self, map: &SymbolMap<'a>) -> &'a [(StringIndex, Type)] {
+        match self.instantiate_shallow(map) {
+            Type::Ty(_, v) => {
+                map.tys[v]
+            },
+            Type::Var(_) => &[],
+        }
+    }
+
+
     pub fn instantiate(self, map: &mut SymbolMap) -> Type {
         match self {
             Type::Ty(sym, gens) => {
-                let gens = map.tys[gens];
-                let mut vec = sti::vec::Vec::with_cap_in(map.arena, gens.len());
-                gens.iter().for_each(|g| vec.push(g.instantiate(map)));
-
-                Type::Ty(sym, map.tys.push(vec.leak()))
+                Type::Ty(sym, instantiate_gens(map, gens))
             },
 
 
@@ -216,13 +234,34 @@ impl Type {
             },
         }
     }
+
+
+    pub fn instantiate_shallow(self, map: &SymbolMap) -> Type {
+        match self {
+            Type::Ty(_, _) => self,
+
+            Type::Var(v) => {
+                match map.vars[v].sub {
+                    Some(v) => v.instantiate_shallow(map),
+                    None => self,
+                }
+            },
+        }
+    }
+}
+
+
+fn instantiate_gens(map: &mut SymbolMap, gen: GenListId) -> GenListId {
+    let gens = map.tys[gen];
+    let vec = sti::vec::Vec::from_in(map.arena, gens.iter().map(|g| (g.0, g.1.instantiate(map))));
+    map.tys.push(vec.leak())
 }
 
 
 impl VarId {
     fn occurs_in(self, map: &SymbolMap, ty: Type) -> bool {
         match ty {
-            Type::Ty(_, gens) => map.tys[gens].iter().any(|x| self.occurs_in(map, *x)),
+            Type::Ty(_, gens) => map.tys[gens].iter().any(|x| self.occurs_in(map, x.1)),
             Type::Var(v) => {
                 if self == v { return true }
                 let sub = map.vars[v].sub;
@@ -238,8 +277,11 @@ impl VarId {
 
 impl<'out> TyChecker<'_, 'out, '_, '_> {
     pub fn get_ty(&mut self, ty: SymbolId, generics: &[Type]) -> Type {
-        let generics = copy_slice_in(self.output, generics);
-        Type::Ty(ty, self.types.tys.push(generics))
+        let sym = self.types.sym(ty);
+        let vec = sti::vec::Vec::from_in(self.types.arena, sym.generics.iter().copied().zip(generics.iter().copied()));
+        let generics = if generics.is_empty() { GenListId::EMPTY }
+                       else { self.types.tys.push(copy_slice_in(self.types.arena, vec.leak())) };
+        Type::Ty(ty, generics)
     }
 }
 
