@@ -61,6 +61,8 @@ pub struct AnalysisResult {
 
 impl AnalysisResult {
     pub fn new(ty: Type, is_mut: bool) -> Self { Self { ty, is_mut } }
+    pub fn error() -> Self { Self::new(Type::ERROR, true) }
+    pub fn never() -> Self { Self::new(Type::NEVER, true) }
 }
 
 
@@ -124,7 +126,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     }
 
 
-    fn error(&mut self, node: impl Into<NodeId>, error: Error) -> AnalysisResult {
+    fn error(&mut self, node: impl Into<NodeId>, error: Error) {
         let error = self.errors.push(error);
         let error = ErrorId::Sema(error);
         match node.into() {
@@ -143,18 +145,6 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             NodeId::Stmt(v) => self.type_info.set_stmt(v, error),
             NodeId::Err(_) => (),
         }
-
-        AnalysisResult::new(Type::ERROR, true)
-    }
-
-
-    fn empty_error(&mut self) -> AnalysisResult {
-        AnalysisResult::new(Type::ERROR, true)
-    }
-
-
-    fn never(&mut self) -> AnalysisResult {
-        AnalysisResult::new(Type::NEVER, true)
     }
 
     

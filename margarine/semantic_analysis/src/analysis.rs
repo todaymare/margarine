@@ -360,7 +360,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     pub fn expr(&mut self, path: StringIndex, scope: ScopeId, id: ExprId) -> AnalysisResult {
         let source = self.ast.range(id);
         let expr = self.ast.expr(id);
-        let result = (|| match expr {
+        let result = (|| Ok(match expr {
             Expr::Unit => AnalysisResult::new(Type::UNIT, true),
 
 
@@ -390,7 +390,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::Identifier(ident) => {
                 let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes)
-                else { return self.error(id, Error::VariableNotFound { name: ident, source }) };
+                else { return Err(Error::VariableNotFound { name: ident, source }) };
                 AnalysisResult::new(variable.ty(), variable.is_mut())
             },
 
@@ -405,21 +405,15 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let lhs_anal = self.expr(path, scope, lhs);
                 let rhs_anal = self.expr(path, scope, rhs);
 
-                let lhs_sym = match lhs_anal.ty.sym(&mut self.types) {
-                    Ok(v) => v,
-                    Err(e) => return self.error(id, e),
-                };
+                let lhs_sym = lhs_anal.ty.sym(&mut self.types)?;
 
-                if lhs_sym == SymbolId::ERROR { return self.empty_error() }
-                if lhs_sym == SymbolId::NEVER { return self.never() }
+                if lhs_sym == SymbolId::ERROR { return Ok(AnalysisResult::error()) }
+                if lhs_sym == SymbolId::NEVER { return Ok(AnalysisResult::never()) }
 
-                let rhs_sym = match rhs_anal.ty.sym(&mut self.types) {
-                    Ok(v) => v,
-                    Err(e) => return self.error(id, e),
-                };
+                let rhs_sym = rhs_anal.ty.sym(&mut self.types)?;
 
-                if rhs_sym == SymbolId::ERROR { return self.empty_error() }
-                if rhs_sym == SymbolId::NEVER { return self.never() }
+                if rhs_sym == SymbolId::ERROR { return Ok(AnalysisResult::error()) }
+                if rhs_sym == SymbolId::NEVER { return Ok(AnalysisResult::never()) }
 
                 let mut validate = || {
                     if !lhs_anal.ty.eq(&mut self.types, rhs_anal.ty) { return Ok(false) }
@@ -435,14 +429,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 };
 
 
-                let validate = validate();
-                let validate = match validate {
-                    Ok(v) => v,
-                    Err(v) => return self.error(id, v),
-                };
+                let validate = validate()?;
 
                 if !validate {
-                    return self.error(id, Error::InvalidBinaryOp {
+                    return Err(Error::InvalidBinaryOp {
                         operator, lhs: lhs_anal.ty, rhs: rhs_anal.ty, source });
                 }
 
@@ -472,20 +462,16 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::UnaryOp { operator, rhs } => {
                 let rhs_anal = self.expr(path, scope, rhs);
-                let sym = rhs_anal.ty.sym(&mut self.types);
-                let sym = match sym {
-                    Ok(v) => v,
-                    Err(v) => return self.error(id, v),
-                };
-                if sym == SymbolId::ERROR { return self.empty_error() }
-                if sym == SymbolId::NEVER { return self.never() }
+                let sym = rhs_anal.ty.sym(&mut self.types)?;
+
+                if sym == SymbolId::ERROR { return Ok(AnalysisResult::error()) }
+                if sym == SymbolId::NEVER { return Ok(AnalysisResult::never()) }
 
                 match operator {
                     UnaryOperator::Not if sym == SymbolId::BOOL => (),
                     UnaryOperator::Neg if sym.is_sint() => (),
                     
-                    _ => return self.error(id,
-                                           Error::InvalidUnaryOp { operator, rhs: rhs_anal.ty, source })
+                    _ => return Err(Error::InvalidUnaryOp { operator, rhs: rhs_anal.ty, source })
                 }
 
                 AnalysisResult::new(rhs_anal.ty, true)
@@ -494,11 +480,11 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::If { condition, body, else_block } => {
                 let cond = self.expr(path, scope, condition);
-                if cond.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
+                if cond.ty.eq(&mut self.types, Type::ERROR) { return Ok(AnalysisResult::error()) }
                 if !cond.ty.eq(&mut self.types, Type::NEVER) 
                    && !cond.ty.eq(&mut self.types, Type::BOOL) {
                     let range = self.ast.range(condition);
-                    return self.error(id, Error::InvalidType {
+                    return Err(Error::InvalidType {
                         source: range, found: cond.ty, expected: Type::BOOL })
                 }
 
@@ -524,8 +510,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 if value.ne(&mut self.types, Type::UNIT) && else_block.is_none() {
                     let body = self.ast.range(body);
-                    return self.error(id, Error::IfMissingElse {
-                        body: (body, value) })
+                    return Err(Error::IfMissingElse { body: (body, value) })
                 }
 
                 AnalysisResult::new(value, true)
@@ -539,15 +524,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
 
             Expr::CreateStruct { data_type, fields  } => {
-                let ty = match self.dt_to_ty(scope, data_type) {
-                    Ok(v) => v,
-                    Err(v) => return self.error(id, v),
-                };
+                let ty = self.dt_to_ty(scope, data_type)?;
 
-                let sym = match ty.sym(&mut self.types) {
-                    Ok(v) => v,
-                    Err(v) => return self.error(id, v),
-                };
+                let sym = ty.sym(&mut self.types)?;
 
                 let sym = self.types.sym(sym);
 
@@ -555,12 +534,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let mut vec = Vec::new();
                     let gens = ty.gens(&mut self.types);
                     for f in sym.fields {
-                        let ty = match self.gen_to_ty(f.1, gens) {
-                            Ok(v) => v,
-                            Err(v) => return self.error(id, v),
-                        };
-
-                        vec.push(ty)
+                        vec.push(self.gen_to_ty(f.1, gens)?)
                     }
 
                     vec
@@ -596,14 +570,14 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::Return(ret) => {
                 let Some(func) = self.scopes.get(scope).find_curr_func(&self.scopes)
-                else { return self.error(id, Error::ReturnOutsideOfAFunction { source }) };
+                else { return Err(Error::ReturnOutsideOfAFunction { source }) };
 
                 let ret_anal = self.expr(path, scope, ret);
-                if ret_anal.ty.eq(&mut self.types, Type::ERROR) { return self.empty_error() }
-                if ret_anal.ty.eq(&mut self.types, Type::NEVER) { return self.never() }
+                if ret_anal.ty.eq(&mut self.types, Type::ERROR) { return Ok(AnalysisResult::error()) }
+                if ret_anal.ty.eq(&mut self.types, Type::NEVER) { return Ok(AnalysisResult::never()) }
 
                 if ret_anal.ty.ne(&mut self.types, func.ret) {
-                    return self.error(id, Error::ReturnAndFuncTypDiffer {
+                    return Err(Error::ReturnAndFuncTypDiffer {
                         source, func_source: func.ret_source,
                         typ: ret_anal.ty, func_typ: func.ret })
                 }
@@ -614,7 +588,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::Continue => {
                 if self.scopes.get(scope).find_loop(&self.scopes).is_none() { 
-                    return self.error(id, Error::ContinueOutsideOfLoop(source)) 
+                    return Err(Error::ContinueOutsideOfLoop(source)) 
                 }
 
                 AnalysisResult::new(Type::NEVER, true)
@@ -623,7 +597,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::Break => {
                 if self.scopes.get(scope).find_loop(&self.scopes).is_none() { 
-                    return self.error(id, Error::ContinueOutsideOfLoop(source)) 
+                    return Err(Error::ContinueOutsideOfLoop(source)) 
                 }
 
                 AnalysisResult::new(Type::NEVER, true)
@@ -638,11 +612,19 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             Expr::AsCast { .. } => todo!(),
             Expr::Unwrap(_) => todo!(),
             Expr::OrReturn(_) => todo!(),
-        })();
+        }))();
 
-        self.type_info.set_expr(id, result);
+        match result {
+            Ok(v) => {
+                self.type_info.set_expr(id, v);
+                v
+            },
 
-        result
+            Err(v) => {
+                self.error(id, v);
+                AnalysisResult::error()
+            },
+        }
     }
 }
 
