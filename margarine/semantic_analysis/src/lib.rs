@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use common::string_map::{StringIndex, StringMap};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
-use funcs::FunctionMap;
+use funcs::{FunctionMap, FunctionSymbolId};
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
@@ -49,6 +49,7 @@ pub enum ExprInfo {
         ty    : Type,
         is_mut: bool,
     },
+
     Errored(ErrorId),
 }
 
@@ -71,12 +72,13 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                ast: &'me mut AST<'ast>,
                block: &[NodeId],
                string_map: &'me mut StringMap<'str>) -> Self {
+        let mut ns = NamespaceMap::new();
         let mut analyzer = TyChecker {
             output: out,
             string_map,
             scopes: ScopeMap::new(),
-            namespaces: NamespaceMap::new(),
-            types: SymbolMap::new(out),
+            types: SymbolMap::new(out, &mut ns),
+            namespaces: ns,
             funcs: FunctionMap::new(out),
             errors: KVec::new(),
             type_info: TyInfo {

@@ -3,7 +3,7 @@ use llvm_api::values;
 use parser::nodes::{decl::{Decl, DeclId}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
 use sti::arena::Arena;
 
-use crate::{errors::Error, funcs::{FunctionArgument, FunctionSymbol}, namespace::{Namespace, NamespaceId}, scope::{GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, types::{Generic, GenericKind, Symbol, SymbolId, SymbolKind, Type}, AnalysisResult, TyChecker};
+use crate::{errors::Error, funcs::{FunctionArgument, FunctionSymbol}, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, types::{Generic, GenericKind, Symbol, SymbolId, SymbolKind, Type}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
@@ -112,11 +112,36 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let sym_name = self.string_map.concat(path, name);
                     let sym = Symbol::new(sym_name, generics,
                                           structure_fields.leak(), SymbolKind::Struct);
-                    self.types.add_sym(tsi, sym);
+                    self.types.add_sym(&mut self.namespaces, tsi, sym);
                 },
 
 
-                Decl::Enum { .. } => todo!(),
+                Decl::Enum { name, header, mappings, generics } => {
+                    let ns = self.namespaces.get_ns(ns);
+                    let mut enum_mappings = sti::vec::Vec::with_cap_in(self.output, mappings.len());
+                    let tsi = ns.get_ty_sym(name).unwrap();
+
+                    for f in mappings {
+                        let sym = self.dt_to_gen(self.scopes.get(scope), *f.data_type(), generics);
+                        let sym = match sym {
+                            Ok(v) => v,
+                            Err(v) => {
+                                self.error(*n, v);
+                                Generic::new(f.data_type().range(), GenericKind::ERROR)
+                            },
+                        };
+
+                        let mapping = (f.name().some(), sym);
+                        enum_mappings.push(mapping);
+                    }
+
+                    // finalise
+                    let generics = copy_slice_in(self.output, generics);
+                    let sym_name = self.string_map.concat(path, name);
+                    let sym = Symbol::new(sym_name, generics,
+                                          enum_mappings.leak(), SymbolKind::Enum);
+                    self.types.add_sym(&mut self.namespaces, tsi, sym);
+                },
 
 
                 Decl::Function { sig, body, .. } => {
@@ -217,7 +242,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let mut vec = sti::vec::Vec::new_in(&*self.output);
                     for gen in generics {
                         let ty = self.types.pending();
-                        self.types.add_sym(ty, Symbol::new(*gen, &[], &[], SymbolKind::Struct));
+                        self.types.add_sym(&mut self.namespaces, ty, Symbol::new(*gen, &[], &[], SymbolKind::Struct));
                         vec.push((*gen, self.get_ty(ty, &[])));
                     }
 
@@ -252,8 +277,13 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     }
                 };
 
+                // func scope
+                let fs = FunctionScope::new(ret, sig.return_type.range());
+                scope = Scope::new(self.scopes.push(scope).some(), ScopeKind::Function(fs));
+
                 let scope = self.scopes.push(scope);
 
+                // GO GO GO
                 let anal = self.block(self.funcs.get_sym(func).name, scope, &*body);
 
                 let anal_sym = match anal.ty.sym(&mut self.types) {
@@ -517,7 +547,84 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             },
 
 
-            Expr::Match { .. } => todo!(),
+            Expr::Match { value, taken_as_inout, mappings  } => {
+                let anal = self.expr(path, scope, value);
+
+                let sym = anal.ty.sym(&mut self.types)?;
+                let sym = self.types.sym(sym);
+
+                // check if the value is an enum
+                if !matches!(sym.kind, SymbolKind::Enum) {
+                    let range = self.ast.range(value);
+                    return Err(Error::MatchValueIsntEnum { source: range, typ: anal.ty });
+                }
+
+                // asserts assumptions on struct
+                debug_assert!(sym.fields.iter().all(|x| x.0.is_some()));
+
+                // check the mapping names
+                for (i, m) in mappings.iter().enumerate() {
+                    let exists = sym.fields.iter().any(|x| {
+                        let Some(name) = x.0.to_option()
+                        else { unreachable!() };
+
+                        m.name() == name
+                    });
+
+                    if !exists {
+                        return Err(Error::InvalidMatch {
+                            name: m.name(), range: m.range(), value: anal.ty });
+                    }
+
+                    for o in mappings.iter().skip(i+1) {
+                        if o.name() == m.name() {
+                            return Err(Error::DuplicateMatch {
+                                declared_at: m.range(), error_point: o.range() });
+                        }
+                    }
+                }
+
+                
+                let mut missings = sti::vec::Vec::new();
+                for sm in sym.fields.iter() {
+                    let Some(name) = sm.0.to_option()
+                    else { unreachable!() };
+
+                    if !mappings.iter().any(|x| x.name() == name) {
+                        missings.push(name);
+                    }
+                }
+
+                if !missings.is_empty() {
+                    return Err(Error::MissingMatch { name: missings, range: source });
+                }
+
+
+                // ty chck
+                let ret_ty = self.types.new_var(source);
+                for m in mappings {
+                    if m.is_inout() && !taken_as_inout {
+                        self.error(m.expr(), Error::InOutValueWithoutInOutBinding { value_range: m.range() });
+                    }
+
+
+                    let vs = VariableScope::new(m.name(), anal.ty, m.is_inout());
+
+                    let scope = Scope::new(scope.some(), ScopeKind::VariableScope(vs));
+                    let scope = self.scopes.push(scope);
+
+                    let anal = self.expr(path, scope, m.expr());
+
+                    if !anal.ty.eq(&mut self.types, ret_ty) {
+                        let range = self.ast.range(m.expr());
+                        self.error(m.expr(), Error::InvalidType {
+                            source: range, found: anal.ty, expected: ret_ty });
+                    }
+                }
+                
+
+                AnalysisResult::new(ret_ty, true)
+            },
 
 
             Expr::Block { block } => self.block(path, scope, &*block),
@@ -527,25 +634,67 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let ty = self.dt_to_ty(scope, data_type)?;
 
                 let sym = ty.sym(&mut self.types)?;
-
                 let sym = self.types.sym(sym);
 
+                // check if the sym is a struct
+                if !matches!(sym.kind, SymbolKind::Struct) {
+                    return Err(Error::StructCreationOnNonStruct { source, typ: ty });
+                }
+
+                // asserts assumptions on struct
+                debug_assert!(sym.fields.iter().all(|x| x.0.is_some()));
+
+
+                // check if the fields are valid
+                for f in fields.iter() {
+                    let exists = sym.fields.iter().any(|x| {
+                        let Some(name) = x.0.to_option()
+                        else { unreachable!() };
+
+                        name == f.0
+                    });
+
+                    if !exists {
+                        return Err(Error::FieldDoesntExist {
+                            source: f.1, field: f.0, typ: ty });
+                    }
+                }
+
+
+                // check missing fields
+                let mut missing_fields = sti::vec::Vec::new();
+                for f in sym.fields.iter() {
+                    let Some(name) = f.0.to_option()
+                    else { unreachable!() };
+
+                    if !fields.iter().any(|x| x.0 == name) {
+                        missing_fields.push(name);
+                    }
+                }
+
+                if !missing_fields.is_empty() {
+                    return Err(Error::MissingFields { source, fields: missing_fields });
+                }
+
+
+                // type check the fields
                 let sym_fields = {
                     let mut vec = Vec::new();
                     let gens = ty.gens(&mut self.types);
                     for f in sym.fields {
-                        vec.push(self.gen_to_ty(f.1, gens)?)
+                        vec.push((f.0, self.gen_to_ty(f.1, gens)?))
                     }
 
                     vec
                 };
 
-                for (f, g) in fields.iter().zip(sym_fields) {
+                for f in fields.iter() {
                     let expr = self.expr(path, scope, f.2);
+                    let g = sym_fields.iter().find(|x| x.0.unwrap() == f.0).unwrap();
 
-                    if !expr.ty.eq(&mut self.types, g) {
+                    if !expr.ty.eq(&mut self.types, g.1) {
                         self.error(id, Error::InvalidType {
-                            source: f.1, found: expr.ty, expected: g });
+                            source: f.1, found: expr.ty, expected: g.1 });
                     }
                 }
 
@@ -553,10 +702,116 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             },
 
 
-            Expr::AccessField { val, field_name  } => todo!(),
+            Expr::AccessField { val, field_name  } => {
+                let expr = self.expr(path, scope, val);
+
+                let sym = expr.ty.sym(&mut self.types)?;
+                let sym = self.types.sym(sym);
+
+                let field = sym.fields.iter().find(|f| {
+                    let Some(name) = f.0.to_option()
+                    else { return false };
+
+                    field_name == name
+                });
+
+                let Some(field) = field
+                else { return Err(Error::FieldDoesntExist {
+                    source, field: field_name, typ: expr.ty }) };
+
+                let gens = expr.ty.gens(&self.types);
+                let field_ty = self.gen_to_ty(field.1, gens)?;
+
+                AnalysisResult::new(field_ty, true)
+            },
 
 
-            Expr::CallFunction { .. } => todo!(),
+            Expr::CallFunction { name, is_accessor, args } => {
+                let pool = Arena::tls_get_rec();
+                let args_anals = {
+                    let mut vec = sti::vec::Vec::with_cap_in(&*pool, args.len());
+
+                    for a in args {
+                        let range = self.ast.range(a.0);
+                        vec.push((range, self.expr(path, scope, a.0), a.1))
+                    }
+
+                    vec.leak()
+                };
+
+
+                let func = {
+                    if is_accessor {
+                        let sym = args_anals[0].1.ty.sym(&mut self.types)?;
+                        let ns = self.types.sym_ns(sym);
+                        let ns = self.namespaces.get_ns(ns);
+                        ns.get_func(name)
+                    } else {
+                        self.scopes.get(scope).find_func(name, &self.scopes, &self.namespaces)
+                    }
+                };
+
+
+                let Some(func) = func
+                else { return Err(Error::FunctionNotFound { source, name }) };
+
+                let func = self.funcs.get_sym(func);
+
+                // check arg len
+                if func.args().len() != args.len() {
+                    return Err(Error::FunctionArgsMismatch {
+                        source, sig_len: func.args().len(), call_len: args.len() });
+                }
+
+
+                // create gens
+                let func_generics = {
+                    let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.generics().len());
+                    for g in func.generics() {
+                        vec.push((*g, self.types.new_var(source)));
+                    }
+
+                    vec.leak()
+                };
+
+
+                // find out the args
+                let func_args = {
+                    let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.args().len());
+                    for g in func.args() {
+                        vec.push((self.gen_to_ty(g.symbol, func_generics)?, g.inout));
+                    }
+
+                    vec
+                };
+
+                let ret = self.gen_to_ty(func.ret(), func_generics)?;
+
+                // ty & inout check args
+                for (a, fa) in args_anals.iter().zip(func_args.iter()) {
+                    if !a.1.ty.eq(&mut self.types, fa.0) {
+                        self.error(id, Error::InvalidType {
+                            source: a.0, found: a.1.ty, expected: fa.0 })
+                    }
+                    
+                    // check inoutness
+                    if a.2 && !fa.1 {
+                        self.error(id, Error::InOutValueWithoutInOutBinding { value_range: a.0 });
+                    } else if a.2 && !a.1.is_mut {
+                        self.error(id, Error::InOutValueIsntMut(a.0));
+                    }
+
+                    if !a.2 && fa.1 {
+                        self.error(id, Error::InOutBindingWithoutInOutValue { value_range: a.0 });
+                    }
+                }
+
+
+
+                AnalysisResult::new(ret, true)
+            },
+
+
             Expr::WithinNamespace { .. } => todo!(),
             Expr::WithinTypeNamespace { .. } => todo!(),
 

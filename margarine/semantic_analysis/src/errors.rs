@@ -400,7 +400,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 let msg = format!("is of type '{}'", 
                     typ.display(fmt.string_map(), types));
 
-                fmt.error("struct creation on a type which is not an enum")
+                fmt.error("struct creation on a type which is not a struct")
                     .highlight_with_note(*source, &msg);
             }
             

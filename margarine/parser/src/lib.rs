@@ -252,8 +252,36 @@ impl<'out> Parser<'_, 'out, '_> {
                 self.advance();
                 self.advance();
                 DataTypeKind::Within(identifier, self.arena.alloc_new(self.expect_type()?))
+
             } else {
-                DataTypeKind::CustomType(identifier, &[])
+                let mut vec = Vec::new_in(self.arena);
+                if self.peek_is(TokenKind::LeftAngle) {
+                    self.advance();
+                    self.advance();
+                    loop {
+                        if self.current_is(TokenKind::RightAngle) {
+                            break
+                        }
+
+                        if !vec.is_empty() {
+                            self.expect(TokenKind::Comma)?;
+                            self.advance();
+                        }
+
+                        
+                        if self.current_is(TokenKind::RightParenthesis) {
+                            break
+                        }
+
+                        let typ = self.expect_type()?;
+                        vec.push(typ);
+                        self.advance();
+                    }
+
+                    self.expect(TokenKind::RightAngle)?;
+                }
+
+                DataTypeKind::CustomType(identifier, vec.leak())
             };
             
             DataType::new(
@@ -835,8 +863,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let name = self.expect_identifier()?;
-        let header = SourceRange::new(start, self.current_range().end());
         self.advance();
+            
+        let generics = self.generic_decl()?;
+
+        let header = SourceRange::new(start, self.current_range().end());
 
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
@@ -880,7 +911,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(self.ast.add_decl(
-            Decl::Enum { name, mappings, header, generics: &[] },
+            Decl::Enum { name, mappings, header, generics },
             SourceRange::new(start, end)
         ))
     }

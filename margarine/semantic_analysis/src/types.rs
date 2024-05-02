@@ -1,7 +1,9 @@
-use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
-use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
+use std::str;
 
-use crate::{errors::Error, TyChecker};
+use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
+use sti::{arena::Arena, define_key, format_in, keyed::KVec, string::String, traits::FromIn};
+
+use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, TyChecker};
 
 define_key!(u32, pub SymbolId);
 define_key!(u32, pub GenListId);
@@ -9,7 +11,7 @@ define_key!(u32, pub VarId);
 
 #[derive(Debug)]
 pub struct SymbolMap<'me> {
-    syms : KVec<SymbolId, Option<Symbol<'me>>>,
+    syms : KVec<SymbolId, Option<(Symbol<'me>, NamespaceId)>>,
     tys  : KVec<GenListId, &'me [(StringIndex, Type)]>,
     vars : KVec<VarId, Var>,
     arena: &'me Arena,
@@ -28,9 +30,13 @@ pub struct Symbol<'me> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum SymbolKind {
+    /// Assumptions
+    /// * All fields are named
     Struct,
-    Tuple,
+    /// Assumptions
+    /// * All fields are named
     Enum,
+    Tuple,
 }
 
 
@@ -63,12 +69,13 @@ pub enum GenericKind<'me> {
 
 
 impl<'me> SymbolMap<'me> {
-    pub fn new(arena: &'me Arena) -> Self {
+    pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap) -> Self {
         let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, tys: KVec::new() };
         macro_rules! init {
             ($name: ident) => {
                 let pending = slf.pending();
-                slf.add_sym(pending, Symbol::new(StringMap::$name, &[], &[], SymbolKind::Struct));
+                assert_eq!(pending, SymbolId::$name);
+                slf.add_sym(ns_map, pending, Symbol::new(StringMap::$name, &[], &[], SymbolKind::Struct));
             };
         }
 
@@ -87,7 +94,13 @@ impl<'me> SymbolMap<'me> {
         // bool
         {
             let pending = slf.pending();
-            slf.add_sym(pending,Symbol::new(StringMap::BOOL, &[], &[],SymbolKind::Struct));
+            assert_eq!(pending, SymbolId::BOOL);
+            let fields = [
+                (StringMap::TRUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
+                (StringMap::FALSE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
+            ];
+
+            slf.add_sym(ns_map, pending, Symbol::new(StringMap::BOOL, &[], arena.alloc_new(fields), SymbolKind::Enum));
         }
 
         init!(ERROR);
@@ -99,15 +112,26 @@ impl<'me> SymbolMap<'me> {
     }
 
     #[inline(always)]
-    pub fn pending(&mut self) -> SymbolId { self.syms.push(None) }
-
-    pub fn add_sym(&mut self, id: SymbolId, sym: Symbol<'me>) { 
-        debug_assert!(self.syms[id].is_none());
-        self.syms[id] = Some(sym)
+    pub fn pending(&mut self) -> SymbolId {
+        self.syms.push(None)
     }
 
+
+    pub fn add_sym(&mut self, ns_map: &mut NamespaceMap, id: SymbolId, sym: Symbol<'me>) { 
+        debug_assert!(self.syms[id].is_none());
+        let ns = Namespace::new(sym.name);
+        let ns = ns_map.push(ns);
+        self.syms[id] = Some((sym, ns))
+    }
+
+
     pub fn sym(&mut self, id: SymbolId) -> Symbol<'me> { 
-        self.syms[id].unwrap()
+        self.syms[id].unwrap().0
+    }
+
+
+    pub fn sym_ns(&mut self, id: SymbolId) -> NamespaceId { 
+        self.syms[id].unwrap().1
     }
 
     pub fn new_var(&mut self, range: SourceRange) -> Type {
@@ -131,12 +155,42 @@ impl<'me> Generic<'me> {
 
 impl Type {
     pub fn display<'str>(self, string_map: &StringMap<'str>, map: &mut SymbolMap) -> &'str str {
-        let sym = match self.sym(map) {
-            Ok(v) => v,
-            Err(_) => unreachable!(),
-        };
+        self.display_ex(string_map, map, None)
+    }
+    
 
-        string_map.get(map.syms[sym].as_ref().unwrap().name)
+    fn display_ex<'str>(self, string_map: &StringMap<'str>,
+                            map: &mut SymbolMap, def: Option<StringIndex>) -> &'str str {
+        match self.instantiate_shallow(map) {
+            Type::Ty(sym, gens) => {
+                let mut str = String::new_in(string_map.arena());
+                str.push(string_map.get(map.sym(sym).name));
+
+                let gens = map.tys[gens];
+                if !gens.is_empty() {
+                    str.push_char('<');
+
+                    for (i, g) in gens.iter().enumerate() {
+                        if i != 0 { str.push(", ") }
+
+                        str.push(g.1.display_ex(string_map, map, Some(g.0)));
+                    }
+
+                    str.push_char('>');
+                }
+
+                str.leak()
+            },
+
+
+            Type::Var(v) => {
+                if let Some(def) = def {
+                    return string_map.get(def)
+                }
+
+                format_in!(string_map.arena(), "{}", v.0).leak()
+            },
+        }
     }
 
     pub fn eq(self, map: &mut SymbolMap, oth: Type) -> bool {
@@ -144,6 +198,9 @@ impl Type {
         let b = oth.instantiate_shallow(map);
         match (a, b) {
             (Type::Ty(syma, gena), Type::Ty(symb, genb)) => {
+                if matches!(syma, SymbolId::ERROR | SymbolId::NEVER) { return true; }
+                if matches!(symb, SymbolId::ERROR | SymbolId::NEVER) { return true; }
+
                 // NON TUPLE
                 if syma == symb { 
                     let gena = instantiate_gens(map, gena);
@@ -169,8 +226,8 @@ impl Type {
 
                 let var = &mut map.vars[ida].sub;
                 match *var {
-                    Some(ta) => b.eq(map, ta),
-                    None => {
+                    Some(ta) if !matches!(ta, Type::Ty(SymbolId::ERROR | SymbolId::NEVER, _)) => b.eq(map, ta),
+                    _ => {
                         *var = Some(b);
                         true
                     },
@@ -182,8 +239,8 @@ impl Type {
 
                 let var = &mut map.vars[idb].sub;
                 match *var {
-                    Some(tb) => a.eq(map, tb),
-                    None => {
+                    Some(tb) if !matches!(tb, Type::Ty(SymbolId::ERROR | SymbolId::NEVER, _)) => a.eq(map, tb),
+                    _ => {
                         *var = Some(a);
                         true
                     },
