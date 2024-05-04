@@ -59,6 +59,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     ns.add_sym(name, pend);
                 },
 
+
                 Decl::Module { name, header, body } => {
                     if ns.get_ns(name).is_some() {
                         self.error(*n, Error::NameIsAlreadyDefined {
@@ -82,8 +83,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     // `Self::collect_names` must be ran before this
     pub fn compute_types(&mut self, path: StringIndex, scope: ScopeId,
                          ns: NamespaceId, nodes: &[NodeId]) {
-        for n in nodes {
-            let NodeId::Decl(decl) = n
+        for id in nodes {
+            let NodeId::Decl(decl) = id
             else { continue };
 
             let decl = self.ast.decl(*decl);
@@ -98,7 +99,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         let sym = match sym {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(*n, v);
+                                self.error(*id, v);
                                 Generic::new(f.1.range(), GenericKind::ERROR)
                             },
                         };
@@ -126,7 +127,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         let sym = match sym {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(*n, v);
+                                self.error(*id, v);
                                 Generic::new(f.data_type().range(), GenericKind::ERROR)
                             },
                         };
@@ -152,7 +153,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         let sym = match sym {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(*n, v);
+                                self.error(*id, v);
                                 Generic::new(a.data_type().range(), GenericKind::ERROR)
                             },
                         };
@@ -166,7 +167,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let ret = match ret{
                         Ok(v) => v,
                         Err(v) => {
-                            self.error(*n, v);
+                            self.error(*id, v);
                             Generic::new(sig.return_type.range(), GenericKind::ERROR)
                         },
                     };
@@ -193,7 +194,6 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                     let path = self.namespaces.get_ns(module_ns).path;
                     self.compute_types(path, scope, module_ns, &*body);
-
                 }
 
                 _ => (),
@@ -425,10 +425,40 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             },
 
 
-            Expr::Deref(_) => todo!(),
+            Expr::Deref(e) => {
+                let expr = self.expr(path, scope, e);
+                let sym = expr.ty.sym(&mut self.types)?;
+                
+                if sym != SymbolId::PTR {
+                    let range = self.ast.range(e);
+                    return Err(Error::DerefOnNonPtr(range));
+                }
+
+                let gens = expr.ty.gens(&self.types);
+                debug_assert_eq!(gens.len(), 1);
+
+                AnalysisResult::new(gens[0].1, true)
+            },
 
 
-            Expr::Range { .. } => todo!(),
+            Expr::Range { lhs, rhs  } => {
+                let lhs_anal = self.expr(path, scope, lhs);
+                let rhs_anal = self.expr(path, scope, rhs);
+
+                let lhs_sym = lhs_anal.ty.sym(&mut self.types)?;
+                if !lhs_sym.is_int() {
+                    let range = self.ast.range(lhs);
+                    return Err(Error::InvalidRange { source: range, ty: lhs_anal.ty });
+                }
+
+                let rhs_sym = rhs_anal.ty.sym(&mut self.types)?;
+                if !rhs_sym.is_int() {
+                    let range = self.ast.range(rhs);
+                    return Err(Error::InvalidRange { source: range, ty: rhs_anal.ty });
+                }
+
+                AnalysisResult::new(Type::RANGE, true)
+            },
 
 
             Expr::BinaryOp { operator, lhs, rhs } => {
@@ -510,9 +540,11 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::If { condition, body, else_block } => {
                 let cond = self.expr(path, scope, condition);
+
                 if cond.ty.eq(&mut self.types, Type::ERROR) { return Ok(AnalysisResult::error()) }
-                if !cond.ty.eq(&mut self.types, Type::NEVER) 
-                   && !cond.ty.eq(&mut self.types, Type::BOOL) {
+                if cond.ty.eq(&mut self.types, Type::NEVER) { return Ok(AnalysisResult::error()) }
+
+                if !cond.ty.eq(&mut self.types, Type::BOOL) {
                     let range = self.ast.range(condition);
                     return Err(Error::InvalidType {
                         source: range, found: cond.ty, expected: Type::BOOL })
@@ -807,13 +839,32 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 }
 
 
-
                 AnalysisResult::new(ret, true)
             },
 
 
-            Expr::WithinNamespace { .. } => todo!(),
-            Expr::WithinTypeNamespace { .. } => todo!(),
+            Expr::WithinNamespace { namespace, namespace_source, action  } => {
+                let ns = self.scopes.get(scope).find_ns(namespace, &self.scopes, &self.namespaces);
+                let Some(ns) = ns
+                else { return Err(Error::NamespaceNotFound { source: namespace_source, namespace }) };
+
+                let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(ns));
+                let scope = self.scopes.push(scope);
+
+                self.expr(path, scope, action)
+            },
+
+
+            Expr::WithinTypeNamespace { namespace, action  } => {
+                let ty = self.dt_to_ty(scope, namespace)?;
+                let sym = ty.sym(&mut self.types)?;
+                let ns = self.types.sym_ns(sym);
+
+                let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(ns));
+                let scope = self.scopes.push(scope);
+
+                self.expr(path, scope, action)
+            },
 
 
             Expr::Loop { body } => {
@@ -825,7 +876,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             Expr::Return(ret) => {
                 let Some(func) = self.scopes.get(scope).find_curr_func(&self.scopes)
-                else { return Err(Error::ReturnOutsideOfAFunction { source }) };
+                else { return Err(Error::OutsideOfAFunction { source }) };
 
                 let ret_anal = self.expr(path, scope, ret);
                 if ret_anal.ty.eq(&mut self.types, Type::ERROR) { return Ok(AnalysisResult::error()) }
@@ -865,8 +916,67 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
 
             Expr::AsCast { .. } => todo!(),
-            Expr::Unwrap(_) => todo!(),
-            Expr::OrReturn(_) => todo!(),
+
+
+            Expr::Unwrap(val) => {
+                let expr = self.expr(path, scope, val);
+                let sym = expr.ty.sym(&mut self.types)?;
+
+                if sym != SymbolId::OPTION
+                   || sym != SymbolId::RESULT {
+                    return Err(Error::CantUnwrapOnGivenType(source, expr.ty));
+                }
+
+                let gens = expr.ty.gens(&self.types);
+                AnalysisResult::new(gens[0].1, true)
+            },
+
+
+            Expr::OrReturn(val) => {
+                let expr = self.expr(path, scope, val);
+                let sym = expr.ty.sym(&mut self.types)?;
+                let Some(func) = self.scopes.get(scope).find_curr_func(&self.scopes)
+                else { return Err(Error::OutsideOfAFunction { source }) };
+
+                if sym == SymbolId::OPTION {
+                    let func_sym = func.ret.sym(&mut self.types)?;
+
+                    if func_sym != SymbolId::OPTION {
+                        return Err(Error::FunctionDoesntReturnAnOption { source, func_typ: func.ret });
+                    }
+
+                    let gens = expr.ty.gens(&self.types);
+                    return Ok(AnalysisResult::new(gens[0].1, true));
+                }
+
+                
+                if sym == SymbolId::RESULT {
+                    let func_sym = func.ret.sym(&mut self.types)?;
+
+                    if func_sym != SymbolId::RESULT {
+                        return Err(Error::FunctionDoesntReturnAResult { source, func_typ: func.ret });
+                    }
+
+                    let func_gens = func.ret.gens(&self.types);
+                    let gens = expr.ty.gens(&self.types);
+
+                    debug_assert_eq!(func_gens.len(), 2);
+                    debug_assert_eq!(gens.len(), 2);
+
+                    if !func_gens[1].1.eq(&mut self.types, gens[1].1) {
+                        return Err(Error::FunctionReturnsAResultButTheErrIsntTheSame {
+                            source, func_source: func.ret_source,
+                            func_err_typ: func_gens[1].1, err_typ: gens[1].1 });
+                    }
+
+                    return Ok(AnalysisResult::new(gens[0].1, true));
+                }
+
+
+                return Err(Error::CantTryOnGivenType(source, expr.ty));
+            },
+
+
         }))();
 
         match result {

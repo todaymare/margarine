@@ -41,7 +41,7 @@ pub enum Error {
         body_type: Type,
     },
 
-    ReturnOutsideOfAFunction {
+    OutsideOfAFunction {
         source: SourceRange,
     },
 
@@ -235,6 +235,11 @@ pub enum Error {
     },
 
     UnableToInfer(SourceRange),
+
+    InvalidRange {
+        source: SourceRange,
+        ty: Type,
+    },
     
     Bypass,
 }
@@ -292,8 +297,8 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             },
 
             
-            Error::ReturnOutsideOfAFunction { source } => {
-                fmt.error("return outside of a function")
+            Error::OutsideOfAFunction { source } => {
+                fmt.error("this operation can't be performed outside of a function")
                     .highlight(*source);
             },
 
@@ -726,6 +731,8 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             },
 
             Error::UnableToInfer(_) => todo!(),
+
+            Error::InvalidRange { source, ty } => todo!(),
 
             Error::Bypass => (),
         }

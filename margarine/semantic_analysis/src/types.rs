@@ -106,7 +106,58 @@ impl<'me> SymbolMap<'me> {
         init!(ERROR);
         init!(NEVER);
 
+        // rc 
+        {
+            let pending = slf.pending();
+            assert_eq!(pending, SymbolId::PTR);
+            let fields = [
+                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U64, &[]))),
+                (StringMap::VALUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
+            ];
+
+            slf.add_sym(ns_map, pending, Symbol::new(StringMap::PTR, &[StringMap::T], arena.alloc_new(fields), SymbolKind::Struct));
+        }
+
+        // range
+        {
+            let pending = slf.pending();
+            assert_eq!(pending, SymbolId::RANGE);
+            let fields = [
+                (StringMap::LOW.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
+                (StringMap::HIGH.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::I64))),
+            ];
+
+            slf.add_sym(ns_map, pending, Symbol::new(StringMap::RANGE, &[], arena.alloc_new(fields), SymbolKind::Struct));
+        }
+
+
+        // option 
+        {
+            let pending = slf.pending();
+            assert_eq!(pending, SymbolId::OPTION);
+            let fields = [
+                (StringMap::SOME.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
+                (StringMap::NONE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
+            ];
+
+            slf.add_sym(ns_map, pending, Symbol::new(StringMap::OPTION, &[StringMap::T], arena.alloc_new(fields), SymbolKind::Enum));
+        }
+
+
+        // result 
+        {
+            let pending = slf.pending();
+            assert_eq!(pending, SymbolId::RESULT);
+            let fields = [
+                (StringMap::OK.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
+                (StringMap::ERROR.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A))),
+            ];
+
+            slf.add_sym(ns_map, pending, Symbol::new(StringMap::OPTION, &[StringMap::T, StringMap::A], arena.alloc_new(fields), SymbolKind::Enum));
+        }
+
         assert_eq!(slf.tys.push(&[]), GenListId::EMPTY);
+
 
         slf
     }
@@ -358,6 +409,10 @@ impl SymbolId {
     pub const BOOL : Self = Self(11);
     pub const ERROR: Self = Self(12);
     pub const NEVER: Self = Self(13);
+    pub const PTR  : Self = Self(14);
+    pub const RANGE: Self = Self(15);
+    pub const OPTION: Self = Self(16);
+    pub const RESULT: Self = Self(17);
 
 
     pub fn supports_arith(self) -> bool {
@@ -423,6 +478,19 @@ impl SymbolId {
     }
 
 
+    pub fn is_int(self) -> bool {
+        matches!(self,
+              Self::I8
+            | Self::I16
+            | Self::I32
+            | Self::I64
+            | Self::U8
+            | Self::U16
+            | Self::U32
+            | Self::U64
+        )
+    }
+
     pub fn is_sint(self) -> bool {
         matches!(self,
               Self::I8
@@ -449,6 +517,7 @@ impl Type {
     pub const BOOL : Self = Self::Ty(SymbolId::BOOL , GenListId::EMPTY);
     pub const ERROR: Self = Self::Ty(SymbolId::ERROR, GenListId::EMPTY);
     pub const NEVER: Self = Self::Ty(SymbolId::NEVER, GenListId::EMPTY);
+    pub const RANGE: Self = Self::Ty(SymbolId::RANGE, GenListId::EMPTY);
 }
 
 

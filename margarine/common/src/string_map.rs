@@ -42,8 +42,13 @@ impl<'str> StringMap<'str> {
     pub const HIGH  : StringIndex = StringIndex(27);
     pub const COUNT : StringIndex = StringIndex(28);
     pub const TUPLE : StringIndex = StringIndex(29);
+    pub const PTR : StringIndex = StringIndex(30);
+    pub const RESULT: StringIndex = StringIndex(31);
+    pub const OPTION: StringIndex = StringIndex(32);
+    pub const T: StringIndex = StringIndex(33);
+    pub const A: StringIndex = StringIndex(34);
 
-    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(30);
+    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(35);
 
  
     #[inline(always)]
@@ -92,6 +97,12 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("high"), Self::HIGH);
         assert_eq!(s.insert("count"), Self::COUNT);
         assert_eq!(s.insert("tuple"), Self::TUPLE);
+
+        assert_eq!(s.insert("Ptr"), Self::PTR);
+        assert_eq!(s.insert("Result"), Self::RESULT);
+        assert_eq!(s.insert("Option"), Self::OPTION);
+        assert_eq!(s.insert("T"), Self::T);
+        assert_eq!(s.insert("A"), Self::A);
 
         assert_eq!(s.insert("__next__"), Self::ITER_NEXT_FUNC);
         s

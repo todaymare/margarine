@@ -37,9 +37,6 @@ pub struct FunctionMap<'me, 'ast> {
 }
 
 
-pub struct Function<'me>(FunctionSymbolId, &'me [Type]);
-
-
 impl<'me, 'ast> FunctionMap<'me, 'ast> {
     pub fn new(arena: &'me Arena) -> Self {
         Self { symbols: KVec::new(), arena } }
@@ -77,8 +74,4 @@ impl<'me> FunctionArgument<'me> {
 
 
 impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
-    pub fn get_func(&mut self, sym: FunctionSymbolId, gens: &[Type]) -> Function<'out> {
-        let gens = copy_slice_in(self.output, gens);
-        Function(sym, gens)
-    }
 }
