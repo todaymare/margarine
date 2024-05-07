@@ -8,7 +8,7 @@ use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
 use sti::{arena::Arena, keyed::KVec};
-use types::{Generic, GenericKind, SymbolMap, Type, SymbolId};
+use types::{GenListId, Generic, GenericKind, SymbolId, SymbolMap, Type};
 
 use crate::scope::ScopeKind;
 
@@ -115,6 +115,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             add_sym!(F32);
             add_sym!(F64);
             add_sym!(BOOL);
+            add_sym!(PTR);
+            add_sym!(OPTION);
+            add_sym!(RESULT);
 
             analyzer.namespaces.push(namespace)
         };
@@ -202,6 +205,13 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let Some(base) = scope.find_ty(name, &self.scopes, &mut self.types, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
 
+                let sym = self.types.sym(base);
+
+                if sym.generics.len() != generics.len() {
+                    return Err(Error::GenericLenMismatch {
+                        source: dt.range(), found: generics.len(), expected: sym.generics.len() });
+                }
+
                 let generics = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*self.output, generics.len());
 
@@ -287,7 +297,7 @@ impl TyInfo {
     
     pub fn set_expr(&mut self, expr: ExprId, info: AnalysisResult) {
         let val = &mut self.exprs[expr];
-        if val.is_none() {
+        if val.is_none() || !matches!(info.ty, Type::Ty(SymbolId::ERROR, GenListId::EMPTY)) {
             *val = Some(ExprInfo::Result { ty: info.ty, is_mut: info.is_mut })
         }
     }

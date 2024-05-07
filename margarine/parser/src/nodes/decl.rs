@@ -30,6 +30,7 @@ pub enum Decl<'a> {
     
     Impl {
         data_type: DataType<'a>,
+        gens: &'a [StringIndex],
         body: Block<'a>,
     },
 
@@ -44,7 +45,6 @@ pub enum Decl<'a> {
     },
 
     Extern {
-        file: StringIndex,
         functions: &'a [ExternFunction<'a>],
     },
 }

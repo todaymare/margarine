@@ -15,10 +15,19 @@ pub struct FunctionSymbol<'me, 'ast> {
     pub name    : StringIndex,
     args    : &'me [FunctionArgument<'me>],
     ret     : Generic<'me>,
-    generics: &'me [StringIndex],
-    body    : Block<'ast>, 
+    pub generics: &'me [StringIndex],
 
     header  : SourceRange,
+    kind: FunctionType<'ast>,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum FunctionType<'ast> {
+    Extern,
+    UserDefined {
+        body: Block<'ast>,
+    }
 }
 
 
@@ -48,6 +57,12 @@ impl<'me, 'ast> FunctionMap<'me, 'ast> {
     }
 
 
+    #[inline(always)]
+    pub fn mut_sym(&mut self, sym: FunctionSymbolId) -> &mut FunctionSymbol<'me, 'ast> {
+        &mut self.symbols[sym]
+    }
+
+
     pub fn push(&mut self, sym: FunctionSymbol<'me, 'ast>) -> FunctionSymbolId {
         self.symbols.push(sym)
     }
@@ -55,7 +70,7 @@ impl<'me, 'ast> FunctionMap<'me, 'ast> {
 
 
 impl<'me, 'ast> FunctionSymbol<'me, 'ast> {
-    pub fn new(name: StringIndex, ret: Generic<'me>, args: &'me [FunctionArgument<'me>], generics: &'me [StringIndex], body: Block<'ast>, header: SourceRange) -> Self { Self { name, args, generics, ret, body, header } }
+    pub fn new(name: StringIndex, ret: Generic<'me>, args: &'me [FunctionArgument<'me>], generics: &'me [StringIndex], kind: FunctionType<'ast>, header: SourceRange) -> Self { Self { name, args, generics, ret, kind, header } }
 
     #[inline(always)]
     pub fn generics(&self) -> &'me [StringIndex] { self.generics }

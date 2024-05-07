@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::fmt::{format, Write};
 
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
@@ -240,6 +240,10 @@ pub enum Error {
         source: SourceRange,
         ty: Type,
     },
+
+    ImplOnGeneric(SourceRange),
+
+    GenericLenMismatch { source: SourceRange, found: usize, expected: usize },
     
     Bypass,
 }
@@ -722,7 +726,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
 
             Error::IteratorFunctionInvalidSig(v) => {
                 fmt.error("invalid iterator function signature")
-                    .highlight_with_note(*v, "signature must match 'fn __next__(&self): <type>?`");
+                    .highlight_with_note(*v, "signature must match 'fn __next__(&self): Option<[type]>`");
             },
 
             Error::DerefOnNonPtr(v) => {
@@ -730,9 +734,28 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight(*v);
             },
 
-            Error::UnableToInfer(_) => todo!(),
+            Error::UnableToInfer(v) => {
+                fmt.error("unable to infer type")
+                    .highlight_with_note(*v, "try specifying it's generics");
+            },
 
-            Error::InvalidRange { source, ty } => todo!(),
+            Error::InvalidRange { source, ty } => {
+                let msg = format!("range bounds can only be integers but you provided '{}'", ty.display(fmt.string_map(), types));
+
+                fmt.error("invalid range bound")
+                    .highlight_with_note(*source, &*msg);
+            },
+
+            Error::ImplOnGeneric(s) => {
+                fmt.error("can't impl on a generic")
+                    .highlight(*s)
+            },
+
+            Error::GenericLenMismatch { source, found, expected } => {
+                let msg = format!("the type has {} generics but you've provided {}", expected, found);
+                fmt.error("generic length mismatch")
+                    .highlight_with_note(*source, &msg)
+            },
 
             Error::Bypass => (),
         }

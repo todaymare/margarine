@@ -701,6 +701,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Impl))?;
         self.advance();
 
+        let gens = self.generic_decl()?;
+
         let data_type = self.expect_type()?;
         self.advance();
 
@@ -718,7 +720,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(self.ast.add_decl(
             Decl::Impl { 
-                data_type, body
+                data_type, body,
+                gens,
             },
 
             SourceRange::new(start, end),
@@ -752,9 +755,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn extern_declaration(&mut self, settings: &ParserSettings<'ta>) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
-        self.advance();
-
-        let file = self.expect_literal_str()?;
         self.advance();
 
         self.expect(TokenKind::LeftBracket)?;
@@ -851,7 +851,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(self.ast.add_decl(
-            Decl::Extern { file, functions },
+            Decl::Extern { functions },
             SourceRange::new(start, end)
         ))
     }

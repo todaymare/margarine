@@ -201,6 +201,13 @@ impl<'me> Symbol<'me> {
 
 impl<'me> Generic<'me> {
     pub fn new(range: SourceRange, kind: GenericKind<'me>) -> Self { Self { range, kind } }
+
+    pub fn sym(self) -> Option<SymbolId> {
+        match self.kind {
+            GenericKind::Generic(_) => None,
+            GenericKind::Sym(v, _) => Some(v),
+        }
+    }
 }
 
 
@@ -474,6 +481,22 @@ impl SymbolId {
             | Self::F64
             | Self::BOOL
             | Self::UNIT
+        )
+    }
+
+
+    pub fn is_num(self) -> bool {
+        matches!(self,
+              Self::I8
+            | Self::I16
+            | Self::I32
+            | Self::I64
+            | Self::U8
+            | Self::U16
+            | Self::U32
+            | Self::U64
+            | Self::F32
+            | Self::F64
         )
     }
 
