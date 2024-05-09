@@ -1,11 +1,11 @@
-use std::fmt::{format, Write};
+use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
 use parser::nodes::expr::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
-use crate::types::{Type, SymbolMap};
+use crate::types::{ty::Type, SymbolMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {

@@ -3,15 +3,14 @@ use std::collections::HashMap;
 use common::string_map::StringIndex;
 use sti::{define_key, keyed::KVec};
 
-use crate::{funcs::FunctionSymbolId, types::SymbolId};
+use crate::types::SymbolId;
 
 define_key!(u32, pub NamespaceId);
 
 
 #[derive(Debug)]
 pub struct Namespace {
-    ty_symbols  : HashMap<StringIndex, SymbolId>,
-    func_symbols: HashMap<StringIndex, FunctionSymbolId>,
+    symbols  : HashMap<StringIndex, SymbolId>,
     namespaces  : HashMap<StringIndex, NamespaceId>,
     pub path: StringIndex,
 }
@@ -45,20 +44,13 @@ impl NamespaceMap {
 impl Namespace {
     pub fn new(path: StringIndex) -> Self {
         Self {
-            ty_symbols: HashMap::new(),
-            func_symbols: HashMap::new(),
+            symbols: HashMap::new(),
             namespaces: HashMap::new(),
             path,
         }
     }
     pub fn add_sym(&mut self, name: StringIndex, sym: SymbolId) {
-        let old_sym = self.ty_symbols.insert(name, sym);
-        assert!(old_sym.is_none());
-    }
-
-
-    pub fn add_func(&mut self, name: StringIndex, sym: FunctionSymbolId) {
-        let old_sym = self.func_symbols.insert(name, sym);
+        let old_sym = self.symbols.insert(name, sym);
         assert!(old_sym.is_none());
     }
 
@@ -69,13 +61,8 @@ impl Namespace {
     }
 
 
-    pub fn get_ty_sym(&self, name: StringIndex) -> Option<SymbolId> {
-        self.ty_symbols.get(&name).copied()
-    }
-
-
-    pub fn get_func(&self, name: StringIndex) -> Option<FunctionSymbolId> {
-        self.func_symbols.get(&name).copied()
+    pub fn get_sym(&self, name: StringIndex) -> Option<SymbolId> {
+        self.symbols.get(&name).copied()
     }
 
 

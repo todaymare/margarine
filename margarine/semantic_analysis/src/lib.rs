@@ -3,18 +3,16 @@ use std::collections::HashMap;
 use common::string_map::{StringIndex, StringMap};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
-use funcs::{FunctionMap, FunctionSymbolId};
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
 use sti::{arena::Arena, keyed::KVec};
-use types::{GenListId, Generic, GenericKind, SymbolId, SymbolMap, Type};
+use types::{GenListId, Generic, GenericKind, SymbolId, SymbolMap, ty::Type};
 
 use crate::scope::ScopeKind;
 
 pub mod scope;
 pub mod namespace;
-pub mod funcs;
 pub mod types;
 pub mod errors;
 pub mod analysis;
@@ -27,8 +25,7 @@ pub struct TyChecker<'me, 'out, 'ast, 'str> {
 
     scopes    : ScopeMap<'out>,
     namespaces: NamespaceMap,
-    pub types : SymbolMap<'out>,
-    funcs     : FunctionMap<'out, 'ast>,
+    pub syms : SymbolMap<'out>,
     type_info : TyInfo,
 
     pub errors    : KVec<SemaError, Error>,
@@ -75,11 +72,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         let mut ns = NamespaceMap::new();
         let mut analyzer = TyChecker {
             output: out,
-            string_map,
             scopes: ScopeMap::new(),
-            types: SymbolMap::new(out, &mut ns),
+            syms: SymbolMap::new(out, &mut ns, string_map),
+            string_map,
             namespaces: ns,
-            funcs: FunctionMap::new(out),
             errors: KVec::new(),
             type_info: TyInfo {
                 exprs: KVec::new(),
@@ -190,7 +186,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
 
             DataTypeKind::Within(ns, dt) => {
-                let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces)
+                let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces, &self.syms)
                 else { return Err(Error::NamespaceNotFound { namespace: ns, source: dt.range() }) };
 
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
@@ -202,10 +198,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 if gens.contains(&name) { return Ok(Generic::new(dt.range(),
                                                     GenericKind::Generic(name))) }
 
-                let Some(base) = scope.find_ty(name, &self.scopes, &mut self.types, &self.namespaces)
+                let Some(base) = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
 
-                let sym = self.types.sym(base);
+                let sym = self.syms.sym(base);
 
                 if sym.generics.len() != generics.len() {
                     return Err(Error::GenericLenMismatch {
@@ -237,7 +233,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             DataTypeKind::Within(ns, dt) => {
                 let scope = self.scopes.get(scope_id);
-                let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces)
+                let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces, &self.syms)
                 else { return Err(Error::NamespaceNotFound { namespace: ns, source: dt.range() }) };
 
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
@@ -255,16 +251,16 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 }
 
 
-                let Some(base) = scope.find_ty(name, &self.scopes, &mut self.types, &self.namespaces)
+                let Some(base) = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
 
-                let base_sym = self.types.sym(base);
+                let base_sym = self.syms.sym(base);
 
                 let pool = Arena::tls_get_temp();
                 let mut generics = sti::vec::Vec::with_cap_in(&*pool, base_sym.generics.len());
                 if generics_list.is_empty() {
                     for _ in base_sym.generics {
-                        generics.push(self.types.new_var(dt.range()))
+                        generics.push(self.syms.new_var(dt.range()))
                     }
                 } else {
                     for g in generics_list {
@@ -272,7 +268,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     }
 
                     if generics.len() != base_sym.generics.len() {
-                        panic!("todo: add error");
+                        return Err(Error::GenericLenMismatch {
+                            source: dt.range(), found: generics.len(), expected: base_sym.generics.len() });
                     }
                 };
 

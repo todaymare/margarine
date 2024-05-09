@@ -4,7 +4,7 @@ use common::{source::SourceRange, string_map::StringIndex};
 use llvm_api::builder::Loop;
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
-use crate::{funcs::FunctionSymbolId, namespace::{NamespaceId, NamespaceMap}, types::{SymbolMap, Type, SymbolId}};
+use crate::{namespace::{NamespaceId, NamespaceMap}, types::{SymbolMap, ty::Type, SymbolId}};
 
 define_key!(u32, pub ScopeId);
 
@@ -52,25 +52,11 @@ impl<'me> ScopeMap<'me> {
 impl<'me> Scope<'me> {
     pub fn new(parent: impl Into<PackedOption<ScopeId>>, kind: ScopeKind<'me>) -> Self { Self { parent: parent.into(), kind } }
 
-    pub fn find_func(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap) -> Option<FunctionSymbolId> {
+    pub fn find_sym(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<SymbolId> {
         self.over(scope_map, |scope| {
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
                 let ns = namespaces.get_ns(ns);
-                if let Some(ty) = ns.get_func(name) {
-                    return Some(ty)
-                }
-            }
-
-            None
-        })
-    }
-
-
-    pub fn find_ty(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<SymbolId> {
-        self.over(scope_map, |scope| {
-            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
-                let ns = namespaces.get_ns(ns);
-                if let Some(ty) = ns.get_ty_sym(name) {
+                if let Some(ty) = ns.get_sym(name) {
                     return Some(ty)
                 }
             }
@@ -100,12 +86,16 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_ns(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap) -> Option<NamespaceId> {
+    pub fn find_ns(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap, symbols: &SymbolMap) -> Option<NamespaceId> {
         self.over(scope_map, |scope| {
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
                 let ns = namespaces.get_ns(ns);
                 if let Some(ns) = ns.get_ns(name) {
                     return Some(ns)
+                }
+
+                if let Some(ty) = ns.get_sym(name) {
+                    return Some(symbols.sym_ns(ty))
                 }
             }
 

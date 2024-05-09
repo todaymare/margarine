@@ -140,19 +140,6 @@ impl<'out> Parser<'_, 'out, '_> {
 
 
     #[inline(always)]
-    fn expect_literal_str(&mut self) -> Result<StringIndex, ErrorId> {
-        self.is_error_token()?;
-        match self.current_kind() {
-            TokenKind::Literal(Literal::String(v)) => Ok(v),
-            _ => Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedLiteralString { 
-                    source: self.current_range(), 
-                    token: self.current_kind()
-                }))))
-        }
-    }
-
-
-    #[inline(always)]
     fn expect_identifier(&mut self) -> Result<StringIndex, ErrorId> {
         self.is_error_token()?;
         match self.current_kind() {

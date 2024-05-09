@@ -1,9 +1,13 @@
-use std::str;
+pub mod containers;
+pub mod ty;
+pub mod func;
 
 use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
-use sti::{arena::Arena, define_key, format_in, keyed::KVec, string::String, traits::FromIn};
+use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, TyChecker};
+use crate::{namespace::{Namespace, NamespaceId, NamespaceMap}, types::func::{FunctionArgument, FunctionKind}, TyChecker};
+
+use self::{containers::{Container, ContainerKind}, func::FunctionTy, ty::Type};
 
 define_key!(u32, pub SymbolId);
 define_key!(u32, pub GenListId);
@@ -23,20 +27,14 @@ pub struct SymbolMap<'me> {
 pub struct Symbol<'me> {
     pub name    : StringIndex,
     pub generics: &'me [StringIndex],
-    pub fields  : &'me [(OptStringIndex, Generic<'me>)],
-    pub kind    : SymbolKind,
+    pub kind    : SymbolKind<'me>,
 }
 
 
 #[derive(Debug, Clone, Copy)]
-pub enum SymbolKind {
-    /// Assumptions
-    /// * All fields are named
-    Struct,
-    /// Assumptions
-    /// * All fields are named
-    Enum,
-    Tuple,
+pub enum SymbolKind<'me> {
+    Function(FunctionTy<'me>),
+    Container(Container<'me>),
 }
 
 
@@ -44,13 +42,6 @@ pub enum SymbolKind {
 pub struct Var {
     sub: Option<Type>,
     range: SourceRange,
-}
-
-
-#[derive(Clone, Copy, Debug)]
-pub enum Type {
-    Ty (SymbolId, GenListId),
-    Var(VarId),
 }
 
 
@@ -69,13 +60,14 @@ pub enum GenericKind<'me> {
 
 
 impl<'me> SymbolMap<'me> {
-    pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap) -> Self {
+    pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap, string_map: &mut StringMap) -> Self {
         let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, tys: KVec::new() };
         macro_rules! init {
             ($name: ident) => {
                 let pending = slf.pending();
                 assert_eq!(pending, SymbolId::$name);
-                slf.add_sym(ns_map, pending, Symbol::new(StringMap::$name, &[], &[], SymbolKind::Struct));
+                let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Struct));
+                slf.add_sym(ns_map, pending, Symbol::new(StringMap::$name, &[], kind));
             };
         }
 
@@ -100,7 +92,8 @@ impl<'me> SymbolMap<'me> {
                 (StringMap::FALSE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
             ];
 
-            slf.add_sym(ns_map, pending, Symbol::new(StringMap::BOOL, &[], arena.alloc_new(fields), SymbolKind::Enum));
+            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO,
+                         StringMap::BOOL, slf.arena.alloc_new(fields), &[]);
         }
 
         init!(ERROR);
@@ -115,7 +108,10 @@ impl<'me> SymbolMap<'me> {
                 (StringMap::VALUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
             ];
 
-            slf.add_sym(ns_map, pending, Symbol::new(StringMap::PTR, &[StringMap::T], arena.alloc_new(fields), SymbolKind::Struct));
+            let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
+            let kind = SymbolKind::Container(cont);
+
+            slf.add_sym(ns_map, pending, Symbol::new(StringMap::PTR, &[StringMap::T], kind));
         }
 
         // range
@@ -127,7 +123,10 @@ impl<'me> SymbolMap<'me> {
                 (StringMap::HIGH.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::I64))),
             ];
 
-            slf.add_sym(ns_map, pending, Symbol::new(StringMap::RANGE, &[], arena.alloc_new(fields), SymbolKind::Struct));
+            let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
+            let kind = SymbolKind::Container(cont);
+
+            slf.add_sym(ns_map, pending, Symbol::new(StringMap::RANGE, &[], kind));
         }
 
 
@@ -140,7 +139,10 @@ impl<'me> SymbolMap<'me> {
                 (StringMap::NONE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
             ];
 
-            slf.add_sym(ns_map, pending, Symbol::new(StringMap::OPTION, &[StringMap::T], arena.alloc_new(fields), SymbolKind::Enum));
+            let gens = slf.arena.alloc_new([StringMap::T]);
+
+            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
+                         StringMap::OPTION, slf.arena.alloc_new(fields), gens);
         }
 
 
@@ -153,7 +155,11 @@ impl<'me> SymbolMap<'me> {
                 (StringMap::ERROR.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A))),
             ];
 
-            slf.add_sym(ns_map, pending, Symbol::new(StringMap::OPTION, &[StringMap::T, StringMap::A], arena.alloc_new(fields), SymbolKind::Enum));
+            let gens = slf.arena.alloc_new([StringMap::T, StringMap::A]);
+
+            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
+                         StringMap::RESULT, slf.arena.alloc_new(fields), gens);
+
         }
 
         assert_eq!(slf.tys.push(&[]), GenListId::EMPTY);
@@ -163,8 +169,45 @@ impl<'me> SymbolMap<'me> {
     }
 
     #[inline(always)]
-    pub fn pending(&mut self) -> SymbolId {
-        self.syms.push(None)
+    pub fn pending(&mut self) -> SymbolId { self.syms.push(None) }
+
+
+    pub fn add_enum(&mut self, id: SymbolId, ns_map: &mut NamespaceMap,
+                    string_map: &mut StringMap, range: SourceRange,
+                    name: StringIndex, mappings: &'me [(OptStringIndex, Generic<'me>)],
+                    generics: &'me [StringIndex]) {
+
+        assert!(mappings.iter().all(|x| x.0.is_some()));
+
+        let sk = SymbolKind::Container(Container::new(mappings, ContainerKind::Enum));
+        let sym = Symbol::new(name, generics, sk);
+        self.add_sym(ns_map, id, sym);
+
+        let ns = self.sym_ns(id);
+
+        let ret = {
+            let mut vec = sti::vec::Vec::with_cap_in(self.arena, generics.len());
+            for g in generics {
+                vec.push(Generic::new(range, GenericKind::Generic(*g)));
+            }
+
+            let gens = vec.leak();
+            Generic::new(range, GenericKind::Sym(id, gens))
+        };
+
+        for i in mappings {
+            let mapping_name = i.0.unwrap();
+            let func_name = string_map.concat(name, mapping_name);
+
+            let args = self.arena.alloc_new([FunctionArgument::new(StringMap::VALUE, i.1, false)]);
+            let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id });
+            let sym = Symbol::new(func_name, generics, SymbolKind::Function(sym));
+            let id = self.pending();
+            self.add_sym(ns_map, id, sym);
+
+            let ns = ns_map.get_ns_mut(ns);
+            ns.add_sym(mapping_name, id);
+        }
     }
 
 
@@ -181,7 +224,7 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn sym_ns(&mut self, id: SymbolId) -> NamespaceId { 
+    pub fn sym_ns(&self, id: SymbolId) -> NamespaceId { 
         self.syms[id].unwrap().1
     }
 
@@ -192,9 +235,8 @@ impl<'me> SymbolMap<'me> {
 
 
 impl<'me> Symbol<'me> {
-    pub fn new(name: StringIndex, generics: &'me [StringIndex],
-               fields: &'me [(OptStringIndex, Generic<'me>)], kind: SymbolKind) -> Self {
-        Self { name, generics, kind, fields }
+    pub fn new(name: StringIndex, generics: &'me [StringIndex], kind: SymbolKind<'me>) -> Self {
+        Self { name, generics, kind }
     }
 }
 
@@ -210,167 +252,6 @@ impl<'me> Generic<'me> {
     }
 }
 
-
-impl Type {
-    pub fn display<'str>(self, string_map: &StringMap<'str>, map: &mut SymbolMap) -> &'str str {
-        self.display_ex(string_map, map, None)
-    }
-    
-
-    fn display_ex<'str>(self, string_map: &StringMap<'str>,
-                            map: &mut SymbolMap, def: Option<StringIndex>) -> &'str str {
-        match self.instantiate_shallow(map) {
-            Type::Ty(sym, gens) => {
-                let mut str = String::new_in(string_map.arena());
-                str.push(string_map.get(map.sym(sym).name));
-
-                let gens = map.tys[gens];
-                if !gens.is_empty() {
-                    str.push_char('<');
-
-                    for (i, g) in gens.iter().enumerate() {
-                        if i != 0 { str.push(", ") }
-
-                        str.push(g.1.display_ex(string_map, map, Some(g.0)));
-                    }
-
-                    str.push_char('>');
-                }
-
-                str.leak()
-            },
-
-
-            Type::Var(v) => {
-                if let Some(def) = def {
-                    return string_map.get(def)
-                }
-
-                format_in!(string_map.arena(), "{}", v.0).leak()
-            },
-        }
-    }
-
-    pub fn eq(self, map: &mut SymbolMap, oth: Type) -> bool {
-        let a = self.instantiate_shallow(map);
-        let b = oth.instantiate_shallow(map);
-        match (a, b) {
-            (Type::Ty(syma, gena), Type::Ty(symb, genb)) => {
-                if matches!(syma, SymbolId::ERROR | SymbolId::NEVER) { return true; }
-                if matches!(symb, SymbolId::ERROR | SymbolId::NEVER) { return true; }
-
-                // NON TUPLE
-                if syma == symb { 
-                    let gena = instantiate_gens(map, gena);
-                    let gena = map.tys[gena];
-                    let genb = instantiate_gens(map, genb);
-                    let genb = map.tys[genb];
-
-                    debug_assert_eq!(gena.len(), genb.len());
-                    if !gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1)) {
-                        return false;
-                    }
-                    return true
-                }
-
-
-                false
-            },
-
-            (Type::Var(ida), Type::Var(idb)) if ida == idb => { return true }
-
-            (Type::Var(ida), _) => {
-                if ida.occurs_in(map, b) { return false }
-
-                let var = &mut map.vars[ida].sub;
-                match *var {
-                    Some(ta) if !matches!(ta, Type::Ty(SymbolId::ERROR | SymbolId::NEVER, _)) => b.eq(map, ta),
-                    _ => {
-                        *var = Some(b);
-                        true
-                    },
-                }
-            },
-
-            (_, Type::Var(idb)) => {
-                if idb.occurs_in(map, a) { return false }
-
-                let var = &mut map.vars[idb].sub;
-                match *var {
-                    Some(tb) if !matches!(tb, Type::Ty(SymbolId::ERROR | SymbolId::NEVER, _)) => a.eq(map, tb),
-                    _ => {
-                        *var = Some(a);
-                        true
-                    },
-                }
-            },
-        }
-    }
-
-
-    pub fn ne(self, map: &mut SymbolMap, oth: Type) -> bool {
-        !self.eq(map, oth)
-    }
-
-
-    pub fn sym(self, map: &mut SymbolMap) -> Result<SymbolId, Error> {
-        match self.instantiate_shallow(map) {
-            Type::Ty(sym, _) => Ok(sym),
-            Type::Var(id) => {
-                let var = &map.vars[id];
-                Err(Error::UnableToInfer(var.range))
-            },
-        }
-    }
-
-
-    pub fn gens<'a>(self, map: &SymbolMap<'a>) -> &'a [(StringIndex, Type)] {
-        match self.instantiate_shallow(map) {
-            Type::Ty(_, v) => {
-                map.tys[v]
-            },
-            Type::Var(_) => &[],
-        }
-    }
-
-
-    pub fn instantiate(self, map: &mut SymbolMap) -> Type {
-        match self {
-            Type::Ty(sym, gens) => {
-                Type::Ty(sym, instantiate_gens(map, gens))
-            },
-
-
-            Type::Var(v) => {
-                match map.vars[v].sub {
-                    Some(v) => v.instantiate(map),
-                    None => self,
-                }
-            },
-        }
-    }
-
-
-    pub fn instantiate_shallow(self, map: &SymbolMap) -> Type {
-        match self {
-            Type::Ty(_, _) => self,
-
-            Type::Var(v) => {
-                match map.vars[v].sub {
-                    Some(v) => v.instantiate_shallow(map),
-                    None => self,
-                }
-            },
-        }
-    }
-}
-
-
-fn instantiate_gens(map: &mut SymbolMap, gen: GenListId) -> GenListId {
-    let gens = map.tys[gen];
-    let vec = sti::vec::Vec::from_in(map.arena, gens.iter().map(|g| (g.0, g.1.instantiate(map))));
-    map.tys.push(vec.leak())
-}
 
 
 impl VarId {
@@ -392,10 +273,10 @@ impl VarId {
 
 impl<'out> TyChecker<'_, 'out, '_, '_> {
     pub fn get_ty(&mut self, ty: SymbolId, generics: &[Type]) -> Type {
-        let sym = self.types.sym(ty);
-        let vec = sti::vec::Vec::from_in(self.types.arena, sym.generics.iter().copied().zip(generics.iter().copied()));
+        let sym = self.syms.sym(ty);
+        let vec = sti::vec::Vec::from_in(self.syms.arena, sym.generics.iter().copied().zip(generics.iter().copied()));
         let generics = if generics.is_empty() { GenListId::EMPTY }
-                       else { self.types.tys.push(copy_slice_in(self.types.arena, vec.leak())) };
+                       else { self.syms.tys.push(copy_slice_in(self.syms.arena, vec.leak())) };
         Type::Ty(ty, generics)
     }
 }
@@ -413,13 +294,13 @@ impl SymbolId {
     pub const U64  : Self = Self(8);
     pub const F32  : Self = Self(9);
     pub const F64  : Self = Self(10);
-    pub const BOOL : Self = Self(11);
-    pub const ERROR: Self = Self(12);
-    pub const NEVER: Self = Self(13);
-    pub const PTR  : Self = Self(14);
-    pub const RANGE: Self = Self(15);
-    pub const OPTION: Self = Self(16);
-    pub const RESULT: Self = Self(17);
+    pub const BOOL : Self = Self(11); // +2 for variants
+    pub const ERROR: Self = Self(14);
+    pub const NEVER: Self = Self(15);
+    pub const PTR  : Self = Self(16);
+    pub const RANGE: Self = Self(17);
+    pub const OPTION: Self = Self(18); // +2 for variants
+    pub const RESULT: Self = Self(21); // +2 for variants
 
 
     pub fn supports_arith(self) -> bool {
@@ -522,25 +403,6 @@ impl SymbolId {
             | Self::I64
         )
     }
-}
-
-
-impl Type {
-    pub const UNIT : Self = Self::Ty(SymbolId::UNIT , GenListId::EMPTY);
-    pub const I8   : Self = Self::Ty(SymbolId::I8   , GenListId::EMPTY);
-    pub const I16  : Self = Self::Ty(SymbolId::I16  , GenListId::EMPTY);
-    pub const I32  : Self = Self::Ty(SymbolId::I32  , GenListId::EMPTY);
-    pub const I64  : Self = Self::Ty(SymbolId::I64  , GenListId::EMPTY);
-    pub const U8   : Self = Self::Ty(SymbolId::U8   , GenListId::EMPTY);
-    pub const U16  : Self = Self::Ty(SymbolId::U16  , GenListId::EMPTY);
-    pub const U32  : Self = Self::Ty(SymbolId::U32  , GenListId::EMPTY);
-    pub const U64  : Self = Self::Ty(SymbolId::U64  , GenListId::EMPTY);
-    pub const F32  : Self = Self::Ty(SymbolId::F32  , GenListId::EMPTY);
-    pub const F64  : Self = Self::Ty(SymbolId::F64  , GenListId::EMPTY);
-    pub const BOOL : Self = Self::Ty(SymbolId::BOOL , GenListId::EMPTY);
-    pub const ERROR: Self = Self::Ty(SymbolId::ERROR, GenListId::EMPTY);
-    pub const NEVER: Self = Self::Ty(SymbolId::NEVER, GenListId::EMPTY);
-    pub const RANGE: Self = Self::Ty(SymbolId::RANGE, GenListId::EMPTY);
 }
 
 
