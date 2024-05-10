@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use common::string_map::StringIndex;
-use sti::{define_key, keyed::KVec};
+use sti::{define_key, keyed::{KVec, Key}};
 
 use crate::types::SymbolId;
 
@@ -32,6 +32,14 @@ impl NamespaceMap {
 
     pub fn get_ns(&self, ns: NamespaceId) -> &Namespace {
         &self.map[ns]
+    }
+
+
+    pub fn get_double(&mut self, ns1: NamespaceId, ns2: NamespaceId) -> (&mut Namespace, &mut Namespace) {
+        assert_ne!(ns1, ns2);
+        let arr = self.map.inner_mut().get_many_mut([ns1.usize(), ns2.usize()]).unwrap();
+        let ptr = arr.as_ptr();
+        unsafe { (ptr.read(), ptr.add(1).read()) }
     }
 
 
@@ -68,5 +76,13 @@ impl Namespace {
 
     pub fn get_ns(&self, name: StringIndex) -> Option<NamespaceId> {
         self.namespaces.get(&name).copied()
+    }
+
+    pub fn syms(&self) -> &HashMap<StringIndex, SymbolId> {
+        &self.symbols
+    }
+
+    pub fn nss(&self) -> &HashMap<StringIndex, NamespaceId> {
+        &self.namespaces
     }
 }

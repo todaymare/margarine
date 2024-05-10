@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use common::{source::SourceRange, string_map::StringIndex};
 use llvm_api::builder::Loop;
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};

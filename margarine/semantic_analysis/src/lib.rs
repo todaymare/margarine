@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+#![feature(get_many_mut)]
 use common::string_map::{StringIndex, StringMap};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
@@ -69,6 +68,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                ast: &'me mut AST<'ast>,
                block: &[NodeId],
                string_map: &'me mut StringMap<'str>) -> Self {
+
         let mut ns = NamespaceMap::new();
         let mut analyzer = TyChecker {
             output: out,
@@ -114,6 +114,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             add_sym!(PTR);
             add_sym!(OPTION);
             add_sym!(RESULT);
+            add_sym!(STR);
 
             analyzer.namespaces.push(namespace)
         };
@@ -128,11 +129,16 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
 
     fn error(&mut self, node: impl Into<NodeId>, error: Error) {
-        let error = self.errors.push(error);
+        Self::error_ex(&mut self.errors, &mut self.type_info, node, error)
+    }
+
+
+    fn error_ex(errors: &mut KVec<SemaError, Error>, ty_info: &mut TyInfo, node: impl Into<NodeId>, error: Error) {
+        let error = errors.push(error);
         let error = ErrorId::Sema(error);
         match node.into() {
             NodeId::Expr(id) => {
-                let val = &mut self.type_info.exprs[id];
+                let val = &mut ty_info.exprs[id];
                 match val {
                     Some(v) => match v {
                         ExprInfo::Result { .. } => *val = Some(ExprInfo::Errored(error)),
@@ -142,36 +148,12 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 };
             },
 
-            NodeId::Decl(v) => self.type_info.set_decl(v, error),
-            NodeId::Stmt(v) => self.type_info.set_stmt(v, error),
+            NodeId::Decl(v) => ty_info.set_decl(v, error),
+            NodeId::Stmt(v) => ty_info.set_stmt(v, error),
             NodeId::Err(_) => (),
         }
     }
-
     
-    fn gen_to_ty(&mut self, gen: Generic, gens: &[(StringIndex, Type)]) -> Result<Type, Error> {
-        match gen.kind {
-            GenericKind::Generic(v) => gens.iter()
-                                        .find(|x| x.0 == v)
-                                        .copied()
-                                        .map(|x| x.1)
-                                        .ok_or(Error::UnknownType(v, gen.range)),
-
-            GenericKind::Sym(symbol, generics) => {
-                let pool = Arena::tls_get_rec();
-                let generics = {
-                    let mut vec = sti::vec::Vec::with_cap_in(&*pool, generics.len());
-                    for g in generics {
-                        vec.push(self.gen_to_ty(*g, gens).unwrap_or(Type::ERROR));
-                    }
-                    vec
-                };
-                
-                Ok(self.get_ty(symbol, &generics))
-            },
-        }
-    }
-
 
     fn dt_to_gen(&mut self, scope: Scope, dt: DataType,
                  gens: &[StringIndex]) -> Result<Generic<'out>, Error> {
@@ -182,7 +164,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]))),
 
 
-            DataTypeKind::Tuple(v) => todo!(),
+            DataTypeKind::Tuple(_) => todo!(),
 
 
             DataTypeKind::Within(ns, dt) => {
@@ -228,7 +210,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 dt: DataType) -> Result<Type, Error> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Type::UNIT),
-            DataTypeKind::Never => Ok(Type::UNIT),
+            DataTypeKind::Never => Ok(Type::NEVER),
 
 
             DataTypeKind::Within(ns, dt) => {
@@ -244,10 +226,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             DataTypeKind::CustomType(name, generics_list) => {
                 let scope = self.scopes.get(scope_id);
-                if let Some(gen) = scope.find_gen(name, &self.scopes) {
-                    // TODO: error
-                    assert!(generics_list.is_empty());
-                    return Ok(gen);
+                if scope.find_gen(name, &self.scopes).is_some() {
+                    return Err(Error::GenericOnGeneric { source: dt.range() });
                 }
 
 
@@ -273,7 +253,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     }
                 };
 
-                let ty = self.get_ty(base, &*generics);
+                let ty = self.syms.get_ty(base, &*generics);
                 Ok(ty)
             },
 

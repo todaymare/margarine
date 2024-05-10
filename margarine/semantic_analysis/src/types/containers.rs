@@ -1,6 +1,6 @@
 use common::string_map::OptStringIndex;
 
-use super::{Generic, Type};
+use super::Generic;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Container<'me> {
@@ -9,7 +9,7 @@ pub struct Container<'me> {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ContainerKind {
     /// Assumptions
     /// * All fields are named

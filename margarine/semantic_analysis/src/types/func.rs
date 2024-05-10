@@ -1,4 +1,4 @@
-use common::{source::SourceRange, string_map::StringIndex};
+use common::string_map::StringIndex;
 use parser::nodes::decl::DeclId;
 
 use super::{Generic, SymbolId};

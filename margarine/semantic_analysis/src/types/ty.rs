@@ -1,7 +1,7 @@
 use common::string_map::{StringIndex, StringMap};
 use sti::{format_in, traits::FromIn};
 
-use crate::errors::Error;
+use crate::{errors::Error, types::SymbolKind};
 
 use super::{GenListId, SymbolId, SymbolMap, VarId};
 
@@ -60,22 +60,50 @@ impl Type {
                 if matches!(syma, SymbolId::ERROR | SymbolId::NEVER) { return true; }
                 if matches!(symb, SymbolId::ERROR | SymbolId::NEVER) { return true; }
 
-                // NON TUPLE
-                if syma == symb { 
-                    let gena = instantiate_gens(map, gena);
-                    let gena = map.tys[gena];
-                    let genb = instantiate_gens(map, genb);
-                    let genb = map.tys[genb];
+                let syma = map.sym(syma);
+                let gena = instantiate_gens(map, gena);
+                let gena = map.tys[gena];
 
-                    debug_assert_eq!(gena.len(), genb.len());
-                    if !gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1)) {
-                        return false;
-                    }
-                    return true
+                let symb = map.sym(symb);
+                let genb = instantiate_gens(map, genb);
+                let genb = map.tys[genb];
+
+
+                match (syma.kind, symb.kind) {
+                    (SymbolKind::Function(fa), SymbolKind::Function(fb)) => {
+                        if fa.args.len() != fb.args.len() { return false; }
+
+                        let reta = fa.ret.to_ty(gena, map).unwrap_or(Type::ERROR);
+                        let retb = fb.ret.to_ty(genb, map).unwrap_or(Type::ERROR);
+
+                        if !reta.eq(map, retb) {
+                            return false;
+                        }
+
+                        for (aa, ab) in fa.args.iter().zip(fb.args.iter()) {
+                            let aa = aa.symbol.to_ty(gena, map).unwrap_or(Type::ERROR);
+                            let ab = ab.symbol.to_ty(genb, map).unwrap_or(Type::ERROR);
+
+                            if !aa.eq(map, ab) {
+                                return false;
+                            }
+                        }
+                    },
+
+
+                    (SymbolKind::Container(ca), SymbolKind::Container(cb)) => {
+                        if ca.kind != cb.kind { return false; }
+
+                        if !gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1)) {
+                            return false;
+                        }
+                    },
+
+                    _ => return false,
                 }
 
-
-                false
+                debug_assert_eq!(gena.len(), genb.len());
+                return true
             },
 
             (Type::Var(ida), Type::Var(idb)) if ida == idb => { return true }
@@ -170,7 +198,7 @@ impl Type {
 fn instantiate_gens(map: &mut SymbolMap, gen: GenListId) -> GenListId {
     let gens = map.tys[gen];
     let vec = sti::vec::Vec::from_in(map.arena, gens.iter().map(|g| (g.0, g.1.instantiate(map))));
-    map.tys.push(vec.leak())
+    map.add_gens(vec.leak())
 }
 
 
@@ -190,6 +218,7 @@ impl Type {
     pub const ERROR: Self = Self::Ty(SymbolId::ERROR, GenListId::EMPTY);
     pub const NEVER: Self = Self::Ty(SymbolId::NEVER, GenListId::EMPTY);
     pub const RANGE: Self = Self::Ty(SymbolId::RANGE, GenListId::EMPTY);
+    pub const STR  : Self = Self::Ty(SymbolId::STR  , GenListId::EMPTY);
 }
 
 

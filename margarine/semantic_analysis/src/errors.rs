@@ -244,7 +244,11 @@ pub enum Error {
     ImplOnGeneric(SourceRange),
 
     GenericLenMismatch { source: SourceRange, found: usize, expected: usize },
+
+    GenericOnGeneric { source: SourceRange },
     
+    NameIsReservedForFunctions { source: SourceRange },
+
     Bypass,
 }
 
@@ -755,6 +759,16 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 let msg = format!("the type has {} generics but you've provided {}", expected, found);
                 fmt.error("generic length mismatch")
                     .highlight_with_note(*source, &msg)
+            },
+
+            Error::GenericOnGeneric { source } => {
+                fmt.error("generics on a generic")
+                    .highlight(*source)
+            },
+
+            Error::NameIsReservedForFunctions { source } => {
+                fmt.error("this name is reserved for an overwritable function")
+                    .highlight(*source);
             },
 
             Error::Bypass => (),
