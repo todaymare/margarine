@@ -61,9 +61,9 @@ impl<'a> AST<'a> {
     }
 
 
-    pub fn stmt(&mut self, stmt: StmtId) -> Stmt<'a> { self.stmts[stmt].0 }
-    pub fn expr(&mut self, expr: ExprId) -> Expr<'a> { self.exprs[expr].0 }
-    pub fn decl(&mut self, decl: DeclId) -> Decl<'a> { self.decls[decl].0 }
+    pub fn stmt(&self, stmt: StmtId) -> Stmt<'a> { self.stmts[stmt].0 }
+    pub fn expr(&self, expr: ExprId) -> Expr<'a> { self.exprs[expr].0 }
+    pub fn decl(&self, decl: DeclId) -> Decl<'a> { self.decls[decl].0 }
 
 
     pub fn stmts(&self) -> &KSlice<StmtId, (Stmt<'a>, SourceRange)> {

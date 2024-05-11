@@ -249,6 +249,8 @@ pub enum Error {
     
     NameIsReservedForFunctions { source: SourceRange },
 
+    InvalidSystem(SourceRange),
+
     Bypass,
 }
 
@@ -769,6 +771,11 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::NameIsReservedForFunctions { source } => {
                 fmt.error("this name is reserved for an overwritable function")
                     .highlight(*source);
+            },
+
+            Error::InvalidSystem(v) => {
+                fmt.error("system functions must be outside of an impl block & not have any generics")
+                    .highlight(*v)
             },
 
             Error::Bypass => (),

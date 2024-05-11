@@ -7,8 +7,8 @@ use dt::{DataType, DataTypeKind};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, StructKind, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
-use sti::{arena::Arena, vec::Vec, keyed::KVec, format_in};
+use nodes::{decl::{Attribute, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, StructKind, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
+use sti::{arena::Arena, vec::Vec, keyed::KVec};
 
 use crate::nodes::expr::{BinaryOperator, ExprId};
 
@@ -282,63 +282,6 @@ impl<'out> Parser<'_, 'out, '_> {
     }
 
 
-    /*
-    fn parse_with_attr<T: Into<Node<'out>>>(
-        &mut self, 
-        settings: &ParserSettings<'out>,
-        func: fn(&mut Self, &ParserSettings<'out>) -> Result<T, ErrorId>,
-    ) -> Result<AttributeNode<'out>, ErrorId> {
-        self.expect(TokenKind::At)?;
-        self.advance();
-
-        let attr = self.parse_attribute()?;
-        self.advance();
-        let func = func(self, settings)?;
-
-        Ok(AttributeNode::new(attr, func.into()))
-    }
-
-
-    fn parse_attribute(&mut self) -> Result<Attribute<'out>, ErrorId> {
-        let start = self.current_range().start();
-        let ident = self.expect_identifier()?;
-
-        let mut func = || -> Result<&'out [Attribute<'out>], ErrorId> {
-            if self.peek_is(TokenKind::LeftParenthesis) {
-                self.advance();
-                self.advance();
-
-                let pool = Arena::tls_get_rec();
-                let mut vec = Vec::new_in(&*pool);
-
-                loop {
-                    if self.current_is(TokenKind::RightParenthesis) { break }
-
-                    if !vec.is_empty() {
-                        self.expect(TokenKind::Comma)?;
-                        self.advance();
-                    }
-
-                    if self.current_is(TokenKind::RightParenthesis) { break }
-
-                    let item = self.parse_attribute()?;
-                    vec.push(item);
-                    self.advance();
-                }
-
-                return Ok(vec.move_into(self.arena).leak())
-            }
-
-            Ok(&[])
-        };
-
-        let item = func()?;
-
-        Ok(Attribute::new(ident, item, SourceRange::new(start, self.current_range().end())))
-    }
-
-    */
-
     #[inline(always)]
     fn is_inout(&mut self) -> bool {
         if self.current_is(TokenKind::Ampersand) {
@@ -516,6 +459,23 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             TokenKind::Keyword(Keyword::Let) => self.let_statement()?.into(),
             TokenKind::Keyword(Keyword::For) => self.for_statement()?.into(),
+
+            TokenKind::At => {
+                let start = self.current_range().start();
+                self.advance();
+                let ident = self.expect_identifier()?;
+                let attr_range = SourceRange::new(start, self.current_range().end());
+                self.advance();
+
+                let stmt = self.statement(settings)?;
+
+                let NodeId::Decl(decl) = stmt
+                else { return Ok(stmt.into()) };
+
+
+                self.ast.add_decl(Decl::Attribute { attr: ident, decl, attr_range },
+                                SourceRange::new(start, self.current_range().end())).into()
+            },
 
 
             _ => self.assignment(&settings)?.into(),
@@ -1371,11 +1331,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             
             let start = self.current_range().start();
             let ident = match self.current_kind() {
-                TokenKind::Literal(Literal::Integer(int)) => {
-                    let pool = Arena::tls_get_temp();
-                    let string = format_in!(&*pool, "{}", int);
-                    self.string_map.insert(&string)
-                },
+                TokenKind::Literal(Literal::Integer(int)) => self.string_map.num(int as usize),
 
                 _ => self.expect_identifier()?,
             };

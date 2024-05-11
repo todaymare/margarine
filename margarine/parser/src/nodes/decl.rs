@@ -47,6 +47,12 @@ pub enum Decl<'a> {
     Extern {
         functions: &'a [ExternFunction<'a>],
     },
+
+    Attribute {
+        attr: StringIndex,
+        attr_range: SourceRange,
+        decl: DeclId,
+    }
 }
 
 
@@ -193,3 +199,7 @@ pub enum UseItemKind<'a> {
 }
 
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Attribute {
+    Startup,
+}

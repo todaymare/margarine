@@ -1,4 +1,6 @@
 #![feature(get_many_mut)]
+use std::collections::HashMap;
+
 use common::string_map::{StringIndex, StringMap};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
@@ -6,7 +8,7 @@ use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
 use sti::{arena::Arena, keyed::KVec};
-use types::{GenListId, Generic, GenericKind, SymbolId, SymbolMap, ty::Type};
+use types::{func::FunctionTy, ty::Type, GenListId, Generic, GenericKind, SymbolId, SymbolMap};
 
 use crate::scope::ScopeKind;
 
@@ -15,27 +17,30 @@ pub mod namespace;
 pub mod types;
 pub mod errors;
 pub mod analysis;
+pub mod codegen;
 
 #[derive(Debug)]
 pub struct TyChecker<'me, 'out, 'ast, 'str> {
-    output    : &'out Arena,
+    output      : &'out Arena,
     pub string_map: &'me mut StringMap<'str>,
-    ast       : &'me mut AST<'ast>,
+    ast         : &'me AST<'ast>,
 
-    scopes    : ScopeMap<'out>,
-    namespaces: NamespaceMap,
-    pub syms : SymbolMap<'out>,
-    type_info : TyInfo,
+    scopes      : ScopeMap<'out>,
+    namespaces  : NamespaceMap,
+    pub syms    : SymbolMap<'out>,
+    type_info   : TyInfo<'out>,
+    startups    : Vec<SymbolId>,
 
     pub errors    : KVec<SemaError, Error>,
 }
 
 
 #[derive(Debug)]
-pub struct TyInfo {
+pub struct TyInfo<'out> {
     exprs: KVec<ExprId, Option<ExprInfo>>,
     stmts: KVec<StmtId, Option<ErrorId>>,
     decls: KVec<DeclId, Option<ErrorId>>,
+    funcs: HashMap<ExprId, (SymbolId, &'out [(StringIndex, Type)])>,
 }
 
 
@@ -81,8 +86,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 exprs: KVec::new(),
                 stmts: KVec::new(),
                 decls: KVec::new(),
+                funcs: HashMap::new(),
             },
             ast,
+            startups: Vec::new(),
         };
 
         {
@@ -264,7 +271,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 }
 
 
-impl TyInfo {
+impl<'me> TyInfo<'me> {
     pub fn set_stmt(&mut self, stmt: StmtId, info: ErrorId) {
         let val = &mut self.stmts[stmt];
         if val.is_none() {
@@ -285,5 +292,28 @@ impl TyInfo {
         if val.is_none() {
             *val = Some(info)
         }
+    }
+
+
+    pub fn set_func_call(&mut self, expr: ExprId, call: (SymbolId, &'me [(StringIndex, Type)])) {
+        self.funcs.insert(expr, call);
+    }
+
+
+    pub fn expr(&self, expr: ExprId) -> Result<Type, ErrorId> {
+        match self.exprs[expr].unwrap() {
+            ExprInfo::Result { ty, .. } => return Ok(ty),
+            ExprInfo::Errored(e) => return Err(e),
+        }
+    }
+
+
+    pub fn stmt(&self, stmt: StmtId) -> Option<ErrorId> {
+        self.stmts[stmt]
+    }
+
+
+    pub fn decl(&self, decl: DeclId) -> Option<ErrorId> {
+        self.decls[decl]
     }
 }

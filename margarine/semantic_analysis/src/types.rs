@@ -266,7 +266,6 @@ impl<'me> SymbolMap<'me> {
                        else { self.add_gens(copy_slice_in(self.arena, vec.leak())) };
         Type::Ty(ty, generics)
     }
-
 }
 
 

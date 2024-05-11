@@ -22,7 +22,7 @@ pub struct FunctionArgument<'me> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum FunctionKind {
-    Extern,
+    Extern(StringIndex),
     
     UserDefined {
         decl: DeclId,

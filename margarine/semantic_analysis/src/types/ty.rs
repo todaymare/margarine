@@ -1,9 +1,11 @@
+use std::{hash::{Hash, Hasher}, ops::Deref};
+
 use common::string_map::{StringIndex, StringMap};
-use sti::{format_in, traits::FromIn};
+use sti::{format_in, hash::fxhash::FxHasher32, traits::FromIn};
 
-use crate::{errors::Error, types::SymbolKind};
+use crate::{errors::Error, types::{containers::ContainerKind, SymbolKind}};
 
-use super::{GenListId, SymbolId, SymbolMap, VarId};
+use super::{containers::Container, GenListId, SymbolId, SymbolMap, VarId};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Type {
@@ -23,19 +25,39 @@ impl Type {
         match self.instantiate_shallow(map) {
             Type::Ty(sym, gens) => {
                 let mut str = sti::string::String::new_in(string_map.arena());
-                str.push(string_map.get(map.sym(sym).name));
+                let sym = map.sym(sym);
 
                 let gens = map.tys[gens];
-                if !gens.is_empty() {
-                    str.push_char('<');
+                let is_tuple = matches!(sym.kind, SymbolKind::Container(Container { kind: ContainerKind::Tuple, .. }));
 
-                    for (i, g) in gens.iter().enumerate() {
+                if is_tuple {
+                    let SymbolKind::Container(cont) = sym.kind
+                    else { unreachable!() };
+
+                    str.push_char('(');
+                    
+                    for (i, f) in cont.fields.iter().enumerate() {
                         if i != 0 { str.push(", ") }
 
-                        str.push(g.1.display_ex(string_map, map, Some(g.0)));
+                        let ty = f.1.to_ty(gens, map).unwrap();
+                        str.push(ty.display(string_map, map))
                     }
 
-                    str.push_char('>');
+                    str.push_char(')');
+
+                } else {
+                    str.push(string_map.get(sym.name));
+                    if !gens.is_empty() {
+                        str.push_char('<');
+
+                        for (i, g) in gens.iter().enumerate() {
+                            if i != 0 { str.push(", ") }
+
+                            str.push(g.1.display_ex(string_map, map, Some(g.0)));
+                        }
+
+                        str.push_char('>');
+                    }
                 }
 
                 str.leak()
@@ -56,18 +78,22 @@ impl Type {
         let a = self.instantiate_shallow(map);
         let b = oth.instantiate_shallow(map);
         match (a, b) {
-            (Type::Ty(syma, gena), Type::Ty(symb, genb)) => {
-                if matches!(syma, SymbolId::ERROR | SymbolId::NEVER) { return true; }
-                if matches!(symb, SymbolId::ERROR | SymbolId::NEVER) { return true; }
+            (Type::Ty(symida, gena), Type::Ty(symidb, genb)) => {
+                if matches!(symida, SymbolId::ERROR | SymbolId::NEVER) { return true; }
+                if matches!(symidb, SymbolId::ERROR | SymbolId::NEVER) { return true; }
 
-                let syma = map.sym(syma);
                 let gena = instantiate_gens(map, gena);
                 let gena = map.tys[gena];
 
-                let symb = map.sym(symb);
                 let genb = instantiate_gens(map, genb);
                 let genb = map.tys[genb];
 
+                if symida == symidb {
+                    return gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1));
+                }
+
+                let syma = map.sym(symida);
+                let symb = map.sym(symidb);
 
                 match (syma.kind, symb.kind) {
                     (SymbolKind::Function(fa), SymbolKind::Function(fb)) => {
@@ -92,11 +118,20 @@ impl Type {
 
 
                     (SymbolKind::Container(ca), SymbolKind::Container(cb)) => {
-                        if ca.kind != cb.kind { return false; }
+                        // is a tuple
+                        if ca.kind != ContainerKind::Tuple
+                            || cb.kind != ContainerKind::Tuple { return false; }
 
-                        if !gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1)) {
-                            return false;
+                        if ca.fields.len() != cb.fields.len() { return false; }
+
+                        for (fa, fb) in ca.fields.iter().zip(cb.fields.iter()) {
+                            let tfa = fa.1.to_ty(gena, map).unwrap_or(Type::ERROR);
+                            let tfb = fb.1.to_ty(genb, map).unwrap_or(Type::ERROR);
+
+                            if !tfa.eq(map, tfb) { return false; }
                         }
+
+                        return true;
                     },
 
                     _ => return false,
@@ -192,7 +227,37 @@ impl Type {
             },
         }
     }
+
+
+    pub fn hash(self, map: &mut SymbolMap) -> TypeHash {
+        let mut hasher = FxHasher32::new();
+        self.hash_ex(map, &mut hasher);
+        TypeHash(hasher.hash)
+    }
+
+
+    fn hash_ex(self, map: &mut SymbolMap, hasher: &mut impl Hasher) {
+        let init = self.instantiate(map);
+        match init {
+            Type::Ty(v, g) => {
+                v.hash(hasher);
+
+                let arr = map.tys[g];
+                for g in arr.iter() {
+                    g.1.hash_ex(map, hasher)
+                }
+            },
+
+
+            Type::Var(_) => unreachable!(),
+        }
+
+    }
 }
+
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct TypeHash(u32);
 
 
 fn instantiate_gens(map: &mut SymbolMap, gen: GenListId) -> GenListId {

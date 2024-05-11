@@ -1,4 +1,7 @@
-use margarine::{nodes::{decl::Decl, AST}, DropTimer, FileData, SourceRange, StringMap};
+use std::{fs, process::Command};
+
+use colourful::ColourBrush;
+use margarine::{nodes::{decl::Decl, AST}, Codegen, DropTimer, FileData, SourceRange, StringMap};
 use sti::arena::Arena;
 
 pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &'static str> {
@@ -77,13 +80,33 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
 
     let mut sema_errors = Vec::with_capacity(sema.errors.len());
     for s in sema.errors.iter() {
-        let report = margarine::display(s.1, &sema.string_map, &files, &mut sema.types);
+        let report = margarine::display(s.1, &sema.string_map, &files, &mut sema.syms);
         #[cfg(not(feature = "fuzzer"))]
         println!("{report}");
         sema_errors.push(report);
     } 
 
-    // ctx.module(sema.module).dump();
+    let codegen = Codegen::run(&mut sema);
+    let module = codegen.0.module(codegen.1);
 
-     Ok(())
+    let str = module.dump_to_str();
+    fs::write("out.ll", str).unwrap();
+
+    if let Err(e) = module.validate() {
+        println!("COMPILER ERROR! {}", e.red().bold());
+        return Err("fatal compiler error");
+    }
+
+
+    Command::new("clang")
+        .arg("engine.c")
+        .arg("out.ll")
+        .arg("-o")
+        .arg("out")
+        .arg("-Wall")
+        .arg("-Wno-override-module")
+        .spawn().unwrap().wait().unwrap();
+
+
+    Ok(())
 }

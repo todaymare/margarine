@@ -126,6 +126,22 @@ impl<'str> StringMap<'str> {
 
 
     #[inline(always)]
+    pub fn num(&mut self, num: usize) -> StringIndex {
+        let value = format_in!(self.arena, "{num}").leak();
+
+        let key = HashStr::new(&value);
+        *self.map.get_or_insert_with_key(&key, |_| {
+            debug_assert!(self.vec.len() < u32::MAX as usize);
+
+            let index = StringIndex(self.vec.len() as u32);
+            self.vec.push(value);
+
+            (HashStr::with_hash(value, key.hash()), index)
+        })
+    }
+
+
+    #[inline(always)]
     pub fn get(&self, index: StringIndex) -> &'str str {
         &self.vec[index.0 as usize]
     }

@@ -1,5 +1,9 @@
-struct Hello<T> { val: T, oth: T }
-
-fn hi(): Hello {
-    Hello { val: 69, oth: true }
+extern {
+    fn print(str: str)
 }
+
+@startup
+system fn main() {
+    print("hello world")
+}
+
