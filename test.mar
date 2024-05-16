@@ -2,8 +2,11 @@ extern {
     fn print(str: str)
 }
 
+
+struct A { s: str }
+
+
 @startup
 system fn main() {
-    print("hello world")
+    print(A { s: "hello world" }.s)
 }
-

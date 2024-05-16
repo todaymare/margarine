@@ -2,20 +2,22 @@ use std::collections::HashMap;
 
 use common::string_map::{StringIndex, StringMap};
 use lexer::Literal;
-use llvm_api::{builder::{Builder, Local, Loop}, tys::IsType, values::{IsValue, PointerValue, Value}, Context, Function, Module};
+use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, Type as LLVMType}, values::{func::{FunctionPtr, Linkage}, int::Integer, ptr::Ptr, Value}};
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{arena::Arena, format_in, vec::Vec};
 
 use crate::{types::{containers::ContainerKind, func::FunctionKind, ty::{Type, TypeHash}, SymbolId, SymbolKind, SymbolMap}, TyChecker, TyInfo};
 
-pub struct Codegen<'me, 'out, 'ast, 'str> {
+pub struct Codegen<'me, 'out, 'ast, 'str, 'ctx> {
     string_map: &'me StringMap<'str>,
     syms: &'me mut SymbolMap<'out>,
     ast: &'me AST<'ast>,
-    module: Module,
+
+    ctx: ContextRef<'ctx>,
+    module: Module<'ctx>,
 
     ty_info: &'me TyInfo<'out>,
-    ty_mappings: HashMap<TypeHash, ConvertedTy>
+    ty_mappings: HashMap<TypeHash, LLVMType<'ctx>>
 }
 
 
@@ -25,10 +27,10 @@ pub struct Env<'me> {
 }
 
 
-impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
-    pub fn run(ty_checker: &mut TyChecker) -> (Context, Module) {
-        let mut ctx = Context::new();
-        let module = Module::new(&mut ctx, "margarine");
+impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
+    pub fn run(ty_checker: &mut TyChecker) -> (Context<'me>, Module<'me>) {
+        let ctx = Context::new();
+        let module = ctx.module("margarine");
 
         let mut codegen = Codegen {
             string_map: ty_checker.string_map,
@@ -37,36 +39,40 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
             module,
             ty_info: &ty_checker.type_info,
             ty_mappings: HashMap::new(),
+            ctx: ctx.as_ctx_ref(),
         };
 
         {
             macro_rules! register {
                 ($enum: ident, $call: expr) => {
-                    codegen.ty_mappings.insert(Type::$enum.hash(codegen.syms), ConvertedTy::Struct($call.ty()));
+                    codegen.ty_mappings.insert(Type::$enum.hash(codegen.syms), *$call);
                 };
             }
 
 
-            register!(I8 , ctx.signed_int(8 ));
-            register!(I16, ctx.signed_int(16));
-            register!(I32, ctx.signed_int(32));
-            register!(I64, ctx.signed_int(64));
-            register!(U8 , ctx.unsigned_int(8 ));
-            register!(U16, ctx.unsigned_int(16));
-            register!(U32, ctx.unsigned_int(32));
-            register!(U64, ctx.unsigned_int(64));
+            register!(I8 , ctx.integer(8 ));
+            register!(I16, ctx.integer(16));
+            register!(I32, ctx.integer(32));
+            register!(I64, ctx.integer(64));
+            register!(U8 , ctx.integer(8 ));
+            register!(U16, ctx.integer(16));
+            register!(U32, ctx.integer(32));
+            register!(U64, ctx.integer(64));
             register!(F32, ctx.f32());
             register!(F64, ctx.f64());
             register!(BOOL, ctx.bool());
-            register!(UNIT, ctx.zst());
+            register!(UNIT, ctx.unit());
         }
 
         let void = ctx.void();
-        let mut b = Function::new(&mut ctx, module, "__initStartupSystems__", void.ty(), &[]);
+        let func_ty = void.fn_ty(&[], false);
+        let func = module.function("__initStartupSystems__", func_ty);
+        func.set_linkage(Linkage::External);
+        let b = func.builder(codegen.ctx.as_ctx_ref(), func_ty);
 
         for sym in &ty_checker.startups {
-            let func = codegen.get_func(b.ctx(), *sym, &[]);
-            b.call(func, &[]);
+            let (func, func_ty) = codegen.get_func(*sym, &[]);
+            b.call(func, func_ty, &[]);
         }
 
 
@@ -77,22 +83,23 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
     }
 
 
-    fn ty_to_llvm(&mut self, ctx: &mut Context, ty: Type) -> ConvertedTy {
+    fn ty_to_llvm(&mut self, ty: Type) -> LLVMType<'ctx> {
         let hash = ty.hash(self.syms);
         if let Some(ty) = self.ty_mappings.get(&hash) { return *ty }
 
         let gens = ty.gens(self.syms);
 
         let sym_id = ty.sym(self.syms).unwrap();
+        debug_assert_ne!(sym_id, SymbolId::ERROR);
+
         let sym = self.syms.sym(sym_id);
 
         let name = ty.display(self.string_map, self.syms);
 
         if sym_id == SymbolId::PTR {
-            let ty = ctx.pointer(llvm_api::tys::AddressSpace::Program);
-            let ty = ConvertedTy::Struct(ty.ty());
-            self.ty_mappings.insert(hash, ty);
-            return ty;
+            let ty = self.ctx.ptr();
+            self.ty_mappings.insert(hash, *ty);
+            return *ty;
         }
 
         match sym.kind {
@@ -101,49 +108,44 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
             SymbolKind::Container(cont) => {
                 match cont.kind {
                     ContainerKind::Struct => {
-                        let strct = ctx.structure(name);
-                        self.ty_mappings.insert(hash, ConvertedTy::Struct(strct.ty()));
+                        let strct = self.ctx.structure(name);
+                        self.ty_mappings.insert(hash, *strct);
 
                         let pool = Arena::tls_get_rec();
                         let fields = {
                             let mut vec = Vec::with_cap_in(&*pool, cont.fields.len());
                             for i in cont.fields {
                                 let ty = i.1.to_ty(gens, self.syms).unwrap();
-                                vec.push(self.ty_to_llvm(ctx, ty).base());
+                                vec.push(self.ty_to_llvm(ty));
                             }
 
                             vec.leak()
                         };
 
-                        strct.set_fields(ctx, fields);
-                        ConvertedTy::Struct(strct.ty())
+                        strct.set_fields(fields);
+                        *strct
 
                     },
 
 
                     ContainerKind::Enum => {
                         let pool = Arena::tls_get_rec();
-                        let union = ctx.union(&*format_in!(&*pool, "{name}_union"));
-                        let strct = ctx.structure(name);
+                        let union = self.ctx.union(name);
 
-                        self.ty_mappings.insert(hash, ConvertedTy::Enum { base: strct.ty(), union: union.ty() });
+                        self.ty_mappings.insert(hash, *union);
 
                         let fields = {
                             let mut vec = Vec::with_cap_in(&*pool, cont.fields.len());
                             for i in cont.fields {
                                 let ty = i.1.to_ty(gens, self.syms).unwrap();
-                                vec.push(self.ty_to_llvm(ctx, ty).base());
+                                vec.push(self.ty_to_llvm(ty));
                             }
 
                             vec.leak()
                         };
 
-                        let index = (usize::BITS - fields.len().leading_zeros()).max(1);
-                        let index = ctx.unsigned_int(index);
-
-                        union.set_fields(ctx, self.module, fields);
-                        strct.set_fields(ctx, &[index.ty(), union.ty()]);
-                        ConvertedTy::Enum { base: strct.ty(), union: union.ty() }
+                        union.set_fields(self.ctx, self.module, fields);
+                        *union
                     },
 
                     ContainerKind::Tuple => todo!(),
@@ -153,14 +155,14 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
     }
 
 
-    pub fn block(&mut self, builder: &mut Builder, env: &mut Env, block: &[NodeId]) -> Result<(Value, Type), ()> {
+    pub fn block(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, block: &[NodeId]) -> Result<(Value<'ctx>, Type), ()> {
         for (i, n) in block.iter().enumerate() {
             let res = match *n {
-                NodeId::Decl(_) => (builder.unit(), Type::UNIT),
+                NodeId::Decl(_) => (*builder.const_unit(), Type::UNIT),
 
                 NodeId::Stmt(v) => {
                     self.stmt(builder, env, v);
-                    (builder.unit(), Type::UNIT)
+                    (*builder.const_unit(), Type::UNIT)
                 },
 
                 NodeId::Expr(v) => self.expr(builder, env, v)?,
@@ -176,11 +178,11 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
             }
         }
 
-        Ok((builder.unit(), Type::UNIT))
+        Ok((*builder.const_unit(), Type::UNIT))
     }
 
 
-    pub fn stmt(&mut self, builder: &mut Builder, env: &mut Env, stmt: StmtId) {
+    pub fn stmt(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, stmt: StmtId) {
         if let Some(e) = self.ty_info.stmt(stmt) {
             self.error(builder, e);
         };
@@ -190,8 +192,8 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
         match self.ast.stmt(stmt) {
             Stmt::Variable { name, rhs, .. } => {
                 let expr = self.expr(builder, env, rhs)?;
-                let ty = self.ty_to_llvm(builder.ctx(), expr.1);
-                let local = builder.local(ty.base());
+                let ty = self.ty_to_llvm(expr.1);
+                let local = builder.local(ty);
                 builder.local_set(local, expr.0);
 
                 env.vars.push((name, local));
@@ -214,14 +216,14 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
     }
 
 
-    pub fn assign(&mut self, builder: &mut Builder, env: &mut Env, expr: ExprId, value: Value) {
+    pub fn assign(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId, value: Value) {
         let ptr = self.assign_ptr(builder, env, expr);
-        builder.ptr_store(value, ptr);
+        builder.store(ptr, value);
     }
 
 
 
-    pub fn assign_ptr(&mut self, builder: &mut Builder, env: &mut Env, expr: ExprId) -> PointerValue {
+    pub fn assign_ptr(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId) -> Ptr<'ctx> {
         match self.ast.expr(expr) {
             Expr::Identifier(ident) => {
                 let local = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
@@ -233,7 +235,10 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
             Expr::Deref(v) => todo!(),
 
 
-            Expr::AccessField { val, field_name } => todo!(),
+            Expr::AccessField { val, field_name } => {
+                let ptr = self.assign_ptr(builder, env, val);
+                todo!()
+            },
 
             Expr::Unwrap(_) => todo!(),
             Expr::OrReturn(_) => todo!(),
@@ -243,7 +248,7 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
     }
 
 
-    pub fn expr(&mut self, builder: &mut Builder, env: &mut Env, expr: ExprId) -> Result<(Value, Type), ()> {
+    pub fn expr(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId) -> Result<(Value<'ctx>, Type), ()> {
         let ty = match self.ty_info.expr(expr) {
             Ok(e) => e,
             Err(e) => {
@@ -253,42 +258,40 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
         };
 
         Ok((match self.ast.expr(expr) {
-            Expr::Unit => builder.unit().value(),
+            Expr::Unit => *builder.const_unit(),
 
 
             Expr::Literal(v) => {
                 match v {
                     Literal::Integer(v) => {
-                        let ty = builder.ctx().signed_int(64);
-                        builder.constant(ty, v).value()
+                        let ty = self.ctx.integer(64);
+                        *builder.const_int(ty, v, true)
                     },
 
 
                     Literal::Float(v) => {
-                        let ty = builder.ctx().f64();
-                        builder.constant(ty, v.inner()).value()
+                        *builder.const_f64(v.inner())
                     },
 
 
                     Literal::String(v) => {
-                        let ty = self.ty_to_llvm(builder.ctx(), Type::STR).base().as_struct();
+                        let ty = self.ty_to_llvm(Type::STR).as_struct();
 
                         let string = self.string_map.get(v);
                         let str = format!("\x01\x00\x00\x00\x00\x00\x00\x00{}", string);
-                        let str = builder.string(&str, self.module);
+                        let str = self.ctx.const_str(&str);
+                        let ptr = self.module.add_global(*str.ty(), "str");
+                        ptr.set_initialiser(*str);
 
-                        let ptr = builder.str_to_ptr(str);
+                        let len_ty = self.ctx.integer(32);
+                        let len = builder.const_int(len_ty, string.len() as i64, false);
 
-                        let len_ty = builder.ctx().unsigned_int(32);
-                        let len = builder.constant(len_ty, string.len() as u64);
-
-                        builder.constant(ty, &[ptr.value(), len.value()]).value()
+                        *builder.const_struct(ty, &[*ptr, *len])
                     },
 
 
                     Literal::Bool(v) => {
-                        let ty = builder.ctx().bool();
-                        builder.constant(ty, v).value()
+                        *builder.const_bool(v)
                     },
                 }
             },
@@ -302,16 +305,13 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
 
             Expr::Deref(v) => {
                 let (value, value_ty) = self.expr(builder, env, v)?;
-                let value_ty = self.ty_to_llvm(builder.ctx(), value_ty).base();
+                let value_ty = self.ty_to_llvm(value_ty);
                 let value = value.as_ptr();
 
-                let strct = builder.ptr_load(value_ty, value);
-                let strct = strct.as_structure();
+                let strct = builder.load(value, value_ty);
+                let strct = strct.as_struct();
 
-                let ret_ty = self.ty_to_llvm(builder.ctx(), ty).base();
-
-                let ptr = builder.field_load(strct, ret_ty, 1);
-                builder.ptr_load(ret_ty, ptr)
+                builder.field_load(strct, 1)
             },
 
 
@@ -319,125 +319,83 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                 let lhs = self.expr(builder, env, lhs)?;
                 let rhs = self.expr(builder, env, rhs)?;
 
-                let ty = builder.ctx().signed_int(64);
-                let lhs = builder.cast_sint(lhs.0.as_signed_int(), ty);
-                let rhs = builder.cast_sint(rhs.0.as_signed_int(), ty);
+                let ty = self.ctx.integer(64);
+                let lhs = builder.int_cast(lhs.0.as_integer(), *ty, true);
+                let rhs = builder.int_cast(rhs.0.as_integer(), *ty, true);
 
-                let strct = self.ty_to_llvm(builder.ctx(), Type::RANGE).base().as_struct();
-                builder.constant(strct, &[lhs.value(), rhs.value()]).value()
+                let strct = self.ty_to_llvm(Type::RANGE).as_struct();
+                *builder.const_struct(strct, &[lhs, rhs])
             },
 
 
             Expr::BinaryOp { operator, lhs, rhs } => {
                 let lhs = self.expr(builder, env, lhs)?;
                 let rhs = self.expr(builder, env, rhs)?;
-
-                macro_rules! m {
-                    ($l: expr, $r: expr, $($variant: ident, $func: ident);*) => {
-                        match operator {
-                            $(BinaryOperator::$variant => builder.$func($l, $r).value(),)*
-
-                            #[allow(unreachable_patterns)]
-                            _ => unreachable!(),
-                        }
-                    };
-                }
-
                 let sym = lhs.1.sym(self.syms).unwrap();
-                if sym.is_sint() {
-                    let l = lhs.0.as_signed_int();
-                    let r = rhs.0.as_signed_int();
 
-                    m!(l, r,
-                        Add, add;
-                        Sub, sub;
-                        Mul, mul;
-                        Div, div;
-                        Rem, rem;
-                        BitshiftLeft, shl;
-                        BitshiftRight, shr;
-                        BitwiseAnd, and;
-                        BitwiseOr, or;
-                        BitwiseXor, xor;
-                        Eq, eq;
-                        Ne, ne;
-                        Gt, gt;
-                        Ge, ge;
-                        Lt, lt;
-                        Le, le
-                    )
-                } else if sym.is_int() { 
-                    let l = lhs.0.as_unsigned_int();
-                    let r = rhs.0.as_unsigned_int();
+                if sym.is_int() {
+                    let l = lhs.0.as_integer();
+                    let r = rhs.0.as_integer();
+                    let signed = sym.is_sint();
 
-                    m!(l, r,
-                        Add, add;
-                        Sub, sub;
-                        Mul, mul;
-                        Div, div;
-                        Rem, rem;
-                        BitshiftLeft, shl;
-                        BitshiftRight, shr;
-                        BitwiseAnd, and;
-                        BitwiseOr, or;
-                        BitwiseXor, xor;
-                        Eq, eq;
-                        Ne, ne;
-                        Gt, gt;
-                        Ge, ge;
-                        Lt, lt;
-                        Le, le
-                    )
-                } else if sym == SymbolId::F32 {
-                    let l = lhs.0.as_f32();
-                    let r = rhs.0.as_f32();
+                    match operator {
+                      BinaryOperator::Add => *builder.add_int(l, r),
+                      BinaryOperator::Sub => *builder.sub_int(l, r),
+                      BinaryOperator::Mul => *builder.mul_int(l, r),
+                      BinaryOperator::Div => *builder.div_int(l, r, signed),
+                      BinaryOperator::Rem => *builder.rem_int(l, r, signed),
+                      BinaryOperator::BitshiftLeft => *builder.shl(l, r),
+                      BinaryOperator::BitshiftRight => *builder.shr(l, r, signed),
+                      BinaryOperator::BitwiseAnd => *builder.and(l, r),
+                      BinaryOperator::BitwiseOr => *builder.or(l, r),
+                      BinaryOperator::BitwiseXor => *builder.xor(l, r),
+                      BinaryOperator::Eq => *builder.cmp_int(l, r, IntCmp::Eq),
+                      BinaryOperator::Ne => *builder.cmp_int(l, r, IntCmp::Ne),
+                      BinaryOperator::Gt => *builder.cmp_int(l, r, IntCmp::SignedGt),
+                      BinaryOperator::Ge => *builder.cmp_int(l, r, IntCmp::SignedGe),
+                      BinaryOperator::Lt => *builder.cmp_int(l, r, IntCmp::SignedLt),
+                      BinaryOperator::Le => *builder.cmp_int(l, r, IntCmp::SignedLe), 
+                    }
 
-                    m!(l, r,
-                        Add, add;
-                        Sub, sub;
-                        Mul, mul;
-                        Div, div;
-                        Rem, rem;
-                        Eq, eq;
-                        Ne, ne;
-                        Gt, gt;
-                        Ge, ge;
-                        Lt, lt;
-                        Le, le
-                    )
-                } else if sym == SymbolId::F64 {
-                    let l = lhs.0.as_f64();
-                    let r = rhs.0.as_f64();
+                } else if sym.is_num() {
+                    let l = lhs.0.as_fp();
+                    let r = rhs.0.as_fp();
 
-                    m!(l, r,
-                        Add, add;
-                        Sub, sub;
-                        Mul, mul;
-                        Div, div;
-                        Rem, rem;
-                        Eq, eq;
-                        Ne, ne;
-                        Gt, gt;
-                        Ge, ge;
-                        Lt, lt;
-                        Le, le
-                    )
+                    match operator {
+                      BinaryOperator::Add => *builder.add_fp(l, r),
+                      BinaryOperator::Sub => *builder.sub_fp(l, r),
+                      BinaryOperator::Mul => *builder.mul_fp(l, r),
+                      BinaryOperator::Div => *builder.div_fp(l, r),
+                      BinaryOperator::Rem => *builder.rem_fp(l, r),
+                      BinaryOperator::Eq => *builder.cmp_fp(l, r, FPCmp::Eq),
+                      BinaryOperator::Ne => *builder.cmp_fp(l, r, FPCmp::Ne),
+                      BinaryOperator::Gt => *builder.cmp_fp(l, r, FPCmp::Gt),
+                      BinaryOperator::Ge => *builder.cmp_fp(l, r, FPCmp::Ge),
+                      BinaryOperator::Lt => *builder.cmp_fp(l, r, FPCmp::Lt),
+                      BinaryOperator::Le => *builder.cmp_fp(l, r, FPCmp::Le), 
+
+                      _ => unreachable!(),
+                    }
+
                 } else if sym == SymbolId::BOOL {
                     let l = lhs.0.as_bool();
                     let r = rhs.0.as_bool();
 
-                    m!(l, r,
-                        Eq, eq;
-                        Ne, ne
-                    )
-                } else if sym == SymbolId::UNIT {
-                    let l = lhs.0.as_bool();
-                    let r = rhs.0.as_bool();
+                    match operator {
+                        BinaryOperator::Eq => *builder.bool_eq(l, r),
+                        BinaryOperator::Ne => *builder.bool_ne(l, r),
 
-                    m!(l, r,
-                        Eq, eq;
-                        Ne, ne
-                    )
+                        _ => unreachable!(),
+                    }
+                } else if sym == SymbolId::UNIT {
+
+                    match operator {
+                        BinaryOperator::Eq => *builder.const_bool(true),
+                        BinaryOperator::Ne => *builder.const_bool(false),
+
+                        _ => unreachable!(),
+                    }
+
                 } else { unreachable!() }
             },
 
@@ -446,10 +404,10 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                 let rhs = self.expr(builder, env, rhs)?;
                 
                 match operator {
-                    UnaryOperator::Not => builder.bool_not(rhs.0.as_bool()).value(),
+                    UnaryOperator::Not => *builder.bool_not(rhs.0.as_bool()),
                     UnaryOperator::Neg => {
-                        let c = builder.constant(rhs.0.ty().as_signed_int(), -1);
-                        builder.mul(rhs.0.as_signed_int(), c).value()
+                        let c = builder.const_int(rhs.0.ty().as_integer(), -1, true);
+                        *builder.mul_int(rhs.0.as_integer(), c)
                     },
                 }
             },
@@ -458,7 +416,7 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
             Expr::If { condition, body, else_block } => {
                 let cond = self.expr(builder, env, condition)?;
 
-                let ty = self.ty_to_llvm(builder.ctx(), ty).base();
+                let ty = self.ty_to_llvm(ty);
                 let local = builder.local(ty);
 
                 builder.ite(&mut (self, env), cond.0.as_bool(),
@@ -495,7 +453,7 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                 let pool = Arena::tls_get_rec();
                 let mut vec = sti::vec::Vec::with_cap_in(&*pool, fields.len());
 
-                let llvm_ty = self.ty_to_llvm(builder.ctx(), ty).base().as_struct();
+                let llvm_ty = self.ty_to_llvm(ty).as_struct();
                 let sym = ty.sym(self.syms).unwrap();
                 let SymbolKind::Container(cont) = self.syms.sym(sym).kind
                 else { unreachable!() };
@@ -507,7 +465,7 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                     vec.push(value.0);
                 }
 
-                builder.constant(llvm_ty, &*vec).value()
+                *builder.const_struct(llvm_ty, &*vec)
             },
 
 
@@ -518,16 +476,14 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                 else { unreachable!() };
 
                 let (i, _) = cont.fields.iter().enumerate().find(|x| x.1.0.unwrap() == field_name).unwrap();
-                let ret_ty = self.ty_to_llvm(builder.ctx(), ty).base();
                 
-                let ptr = builder.field_load(value.0.as_structure(), ret_ty, i as u32);
-                builder.ptr_load(ret_ty, ptr)
+                builder.field_load(value.0.as_struct(), i)
             },
 
 
             Expr::CallFunction { args, .. } => {
                 let (sym, gens) = self.ty_info.funcs.get(&expr).unwrap();
-                let func = self.get_func(builder.ctx(), *sym, gens);
+                let (func, func_ty) = self.get_func(*sym, gens);
 
                 let pool = Arena::tls_get_rec();
                 let mut inouts = sti::vec::Vec::with_cap_in(&*pool, args.len());
@@ -537,11 +493,10 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                         let (val, ty) = self.expr(builder, env, a.0)?;
 
                         if a.1 {
-                            let ty = self.ty_to_llvm(builder.ctx(), ty);
-                            let ptr = builder.as_ptr(val, ty.base());
+                            let ptr = builder.alloca_store(val);
 
-                            inouts.push((ptr, a.0));
-                            vec.push(ptr.value());
+                            inouts.push((ptr, a.0, ty));
+                            vec.push(*ptr);
                         } else {
                             vec.push(val)
                         }
@@ -550,10 +505,12 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                     vec
                 };
 
-                let ret = builder.call(func, &*args);
+                let ret = builder.call(func, func_ty, &*args);
 
                 for i in inouts {
-                    self.assign(builder, env, i.1, i.0.value())
+                    let ty = self.ty_to_llvm(i.2);
+                    let val = builder.load(i.0, ty);
+                    self.assign(builder, env, i.1, val)
                 }
 
                 ret
@@ -588,19 +545,19 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
             Expr::Return(v) => {
                 let val = self.expr(builder, env, v)?;
                 builder.ret(val.0);
-                builder.unit()
+                *builder.const_unit()
             },
 
 
             Expr::Continue => {
                 builder.loop_continue(env.loop_id.unwrap());
-                builder.unit()
+                *builder.const_unit()
             },
 
 
             Expr::Break => {
                 builder.loop_break(env.loop_id.unwrap());
-                builder.unit()
+                *builder.const_unit()
             },
 
 
@@ -610,15 +567,13 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
             Expr::AsCast { lhs, .. } => {
                 let lhs = self.expr(builder, env, lhs)?;
                 let lsym = lhs.1.sym(self.syms).unwrap();
-                let dest = self.ty_to_llvm(builder.ctx(), ty);
+                let dest = self.ty_to_llvm(ty);
 
 
-                if lsym.is_sint() {
-                    builder.sint_cast(lhs.0.as_signed_int(), dest.base())
-                } else if lsym.is_int() {
-                    builder.uint_cast(lhs.0.as_unsigned_int(), dest.base())
+                if lsym.is_int() {
+                    builder.int_cast(lhs.0.as_integer(), dest, lsym.is_sint())
                 } else {
-                    builder.float_cast(lhs.0, dest.base())
+                    builder.fp_cast(lhs.0.as_fp(), dest)
                 }
 
             },
@@ -636,31 +591,38 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
     }
 
 
-    fn get_func(&mut self, ctx: &mut Context, sym: SymbolId, gens: &[(StringIndex, Type)]) -> Function {
+    fn get_func(&mut self, sym: SymbolId, gens: &[(StringIndex, Type)]) -> (FunctionPtr<'ctx>, FunctionType<'ctx>) {
         let pool = Arena::tls_get_rec();
         let sym = self.syms.sym(sym);
         let SymbolKind::Function(sym_func) = sym.kind
         else { unreachable!() };
 
         let ret = sym_func.ret.to_ty(gens, self.syms).unwrap();
-        let ret = self.ty_to_llvm(ctx, ret);
-
+        let ret = self.ty_to_llvm(ret);
 
         match sym_func.kind {
             FunctionKind::Extern(path) => {
                 let args = {
                     let mut vec = Vec::with_cap_in(&*pool, sym_func.args.len());
                     for i in sym_func.args {
-                        let ty = i.symbol.to_ty(gens, self.syms).unwrap();
-                        let ty = self.ty_to_llvm(ctx, ty);
-                        vec.push(ty.base());
+                        if i.inout {
+                            let ptr = self.ctx.ptr();
+                            vec.push(*ptr);
+                        } else {
+                            let ty = i.symbol.to_ty(gens, self.syms).unwrap();
+                            let ty = self.ty_to_llvm(ty);
+                            vec.push(ty);
+                        }
                     }
 
                     vec.leak()
                 };
 
+                let func_ty = ret.fn_ty(args, false);
+                let func = self.module.function(self.string_map.get(path), func_ty);
+                func.set_linkage(Linkage::External);
 
-                return ctx.extern_function(self.module, self.string_map.get(path), &args, ret.base());
+                return (func, func_ty);
             },
 
 
@@ -669,16 +631,17 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                     let mut vec = Vec::with_cap_in(&*pool, sym_func.args.len());
                     for i in sym_func.args {
                         let ty = i.symbol.to_ty(gens, self.syms).unwrap();
-                        let ty = self.ty_to_llvm(ctx, ty);
-                        vec.push((self.string_map.get(i.name), ty.base(), i.inout));
+                        let ty = self.ty_to_llvm(ty);
+                        vec.push(ty);
                     }
 
                     vec.leak()
                 };
 
 
-                let mut func = Function::new(ctx, self.module, self.string_map.get(sym.name),
-                                        ret.base(), args);
+                let func_ty = ret.fn_ty(args, false);
+                let func = self.module.function(self.string_map.get(sym.name), func_ty);
+                let mut builder = func.builder(self.ctx, func_ty);
 
                 let Decl::Function { body, .. } = self.ast.decl(decl)
                 else { unreachable!() };
@@ -689,19 +652,19 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
                 };
 
                 for (i, a) in sym_func.args.iter().enumerate() {
-                    env.vars.push((a.name, func.arg(i.try_into().unwrap())));
+                    env.vars.push((a.name, builder.arg(i).unwrap()));
                 }
 
-                let result = self.block(&mut func, &mut env, &*body);
+                let result = self.block(&mut builder, &mut env, &*body);
 
                 if let Some(e) = self.ty_info.decl(decl) {
-                    self.error(&mut func, e);
+                    self.error(&mut builder, e);
                 } else if let Ok(val) = result {
-                    func.ret(val.0);
+                    builder.ret(val.0);
                 }
 
-                return func.build()
-
+                builder.build();
+                (func, func_ty)
             },
 
             FunctionKind::Enum { sym } => todo!(),
@@ -709,28 +672,3 @@ impl<'me, 'out, 'ast, 'str> Codegen<'me, 'out, 'ast, 'str> {
     }
 }
 
-
-#[derive(Clone, Copy, Debug)]
-enum ConvertedTy {
-    Struct(llvm_api::tys::Type),
-    Enum {
-        base: llvm_api::tys::Type,
-        union: llvm_api::tys::Type,
-    }
-}
-
-impl ConvertedTy {
-    fn base(self) -> llvm_api::tys::Type {
-        match self {
-            ConvertedTy::Struct(v) => v,
-            ConvertedTy::Enum { base, .. } => base,
-        }
-    }
-
-    fn union(self) -> llvm_api::tys::Type {
-        match self {
-            ConvertedTy::Struct(_) => unreachable!(),
-            ConvertedTy::Enum { union, .. } => union,
-        }
-    }
-}

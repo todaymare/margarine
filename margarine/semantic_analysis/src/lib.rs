@@ -18,6 +18,7 @@ pub mod types;
 pub mod errors;
 pub mod analysis;
 pub mod codegen;
+pub mod global;
 
 #[derive(Debug)]
 pub struct TyChecker<'me, 'out, 'ast, 'str> {

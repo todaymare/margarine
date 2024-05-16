@@ -655,9 +655,11 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 };
 
                 // Validation
-                if rhs_anal.ty.eq(&mut self.syms, Type::ERROR) {
-                    place_dummy(self, scope);
-                    return;
+                if let Ok(sym) = rhs_anal.ty.sym(&mut self.syms) {
+                    if sym == SymbolId::ERROR {
+                        place_dummy(self, scope);
+                        return;
+                    }
                 }
 
                 if let Some(hint) = hint {
@@ -1118,7 +1120,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                     for a in args {
                         let range = self.ast.range(a.0);
-                        vec.push((range, self.expr(path, scope, a.0), a.1))
+                        vec.push((range, self.expr(path, scope, a.0), a.1));
                     }
 
                     vec.leak()

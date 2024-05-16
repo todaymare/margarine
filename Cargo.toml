@@ -13,5 +13,7 @@ members = [
   "margarine/parser",
   "margarine/semantic_analysis",
   "margarine/errors",
+  "margarine/llvm-api",
+  "core",
 # "fuzz",
 ]

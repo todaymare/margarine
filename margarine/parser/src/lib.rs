@@ -7,7 +7,7 @@ use dt::{DataType, DataTypeKind};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{decl::{Attribute, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, StructKind, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
+use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, StructKind, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{arena::Arena, vec::Vec, keyed::KVec};
 
 use crate::nodes::expr::{BinaryOperator, ExprId};
@@ -725,11 +725,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let arguments = parser.list(TokenKind::RightParenthesis, Some(TokenKind::Comma),
             |parser, index| {
                 let start = parser.current_range().start();
-                let is_inout = if parser.current_is(TokenKind::Colon) {
-                    parser.advance();
-                    true
-                } else { false };
 
+                let is_inout = parser.is_inout();
                 let identifier = parser.expect_identifier()?;
 
                 if index == 0

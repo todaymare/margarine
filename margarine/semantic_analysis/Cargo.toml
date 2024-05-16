@@ -9,4 +9,4 @@ errors = { path = "../errors" }
 parser = { path = "../parser" }
 lexer  = { path = "../lexer" }
 sti = { git = "https://github.com/leddoo/sti" }
-llvm-api = { path = "../../../llvm-api" }
+llvm-api = { path = "../llvm-api" }

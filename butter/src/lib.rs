@@ -87,10 +87,10 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
     } 
 
     let codegen = Codegen::run(&mut sema);
-    let module = codegen.0.module(codegen.1);
+    let module = codegen.1;
 
     let str = module.dump_to_str();
-    fs::write("out.ll", str).unwrap();
+    fs::write("out.ll", str.as_str()).unwrap();
 
     if let Err(e) = module.validate() {
         println!("COMPILER ERROR! {}", e.red().bold());
@@ -99,7 +99,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
 
 
     Command::new("clang")
-        .arg("engine.c")
+        .arg("libcore.a")
         .arg("out.ll")
         .arg("-o")
         .arg("out")
