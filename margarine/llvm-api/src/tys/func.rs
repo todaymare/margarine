@@ -1,4 +1,4 @@
-use std::{ops::Deref, ptr::{null_mut, NonNull}};
+use std::{ops::Deref, ptr::NonNull};
 
 use llvm_sys::core::{LLVMCountParamTypes, LLVMGetParamTypes, LLVMGetReturnType};
 

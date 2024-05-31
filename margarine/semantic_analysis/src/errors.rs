@@ -128,6 +128,11 @@ pub enum Error {
         ty: Type,
         range: SourceRange,
     },
+
+    ValueIsntAMutableIterator {
+        ty: Type,
+        range: SourceRange,
+    },
      
     InOutValueWithoutInOutBinding {
         value_range: SourceRange,
@@ -777,6 +782,16 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 fmt.error("system functions must be outside of an impl block & not have any generics")
                     .highlight(*v)
             },
+
+
+            Error::ValueIsntAMutableIterator { ty, range } => {
+                let msg = format!("the type '{}' is an iterator but it does not support mutation",
+                                  ty.display(fmt.string_map(), types));
+
+                fmt.error("value isn't a mutable iterator")
+                    .highlight_with_note(*range, &msg)
+            },
+
 
             Error::Bypass => (),
         }

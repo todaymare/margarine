@@ -1,6 +1,8 @@
-use std::ops::Deref;
+use std::{ops::Deref, ptr::NonNull};
 
-use crate::tys::TypeKind;
+use llvm_sys::core::LLVMGetElementType;
+
+use crate::{module::Module, tys::TypeKind};
 
 use super::Type;
 
@@ -15,6 +17,21 @@ impl<'ctx> ArrayTy<'ctx> {
         debug_assert!(matches!(ty.kind(), TypeKind::Array));
 
         Self(ty)
+    }
+
+
+    pub fn element_ty(self) -> Type<'ctx> {
+        let ty = unsafe { LLVMGetElementType(self.llvm_ty().as_ptr()) };
+        Type::new(NonNull::new(ty).unwrap())
+    }
+
+
+    pub fn len(self, module: Module<'ctx>) -> usize {
+        let arr_size = self.size_of(module).unwrap();
+        let elem_size = self.element_ty().size_of(module).unwrap();
+
+        let len = arr_size / elem_size;
+        len as usize
     }
 }
 

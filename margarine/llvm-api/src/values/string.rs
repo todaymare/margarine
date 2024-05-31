@@ -1,8 +1,8 @@
 use std::ops::Deref;
 
-use crate::tys::{bool::BoolTy, string::StringTy, TypeKind};
+use crate::tys::{string::StringTy, TypeKind};
 
-use super::{global::GlobalPtr, Value};
+use super::Value;
 
 #[derive(Clone, Copy, Debug)]
 pub struct StringValue<'ctx>(Value<'ctx>);

@@ -29,7 +29,7 @@ pub struct TyChecker<'me, 'out, 'ast, 'str> {
     scopes      : ScopeMap<'out>,
     namespaces  : NamespaceMap,
     pub syms    : SymbolMap<'out>,
-    type_info   : TyInfo<'out>,
+    type_info   : TyInfo,
     startups    : Vec<SymbolId>,
 
     pub errors    : KVec<SemaError, Error>,
@@ -37,11 +37,11 @@ pub struct TyChecker<'me, 'out, 'ast, 'str> {
 
 
 #[derive(Debug)]
-pub struct TyInfo<'out> {
+pub struct TyInfo {
     exprs: KVec<ExprId, Option<ExprInfo>>,
     stmts: KVec<StmtId, Option<ErrorId>>,
     decls: KVec<DeclId, Option<ErrorId>>,
-    funcs: HashMap<ExprId, (SymbolId, &'out [(StringIndex, Type)])>,
+    funcs: HashMap<ExprId, (SymbolId, GenListId)>,
 }
 
 
@@ -123,6 +123,19 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             add_sym!(OPTION);
             add_sym!(RESULT);
             add_sym!(STR);
+            add_sym!(RANGE);
+
+            {
+                let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
+                namespace.add_sym(StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap());
+                namespace.add_sym(StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap());
+            }
+
+            {
+                let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::RESULT));
+                namespace.add_sym(StringMap::OK , ns.get_sym(StringMap::OK ).unwrap());
+                namespace.add_sym(StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap());
+            }
 
             analyzer.namespaces.push(namespace)
         };
@@ -131,6 +144,15 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         let scope = analyzer.scopes.push(scope);
         let empty = analyzer.string_map.insert("");
         analyzer.block(empty, scope, block);
+
+        for v in analyzer.syms.vars.iter() {
+            if v.1.sub.is_none() {
+                let error = Error::UnableToInfer(analyzer.ast.range(v.1.node));
+                Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.1.node, error)
+            }
+        }
+
+        dbg!(&analyzer.errors);
 
         analyzer
     }
@@ -214,7 +236,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     }
 
 
-    fn dt_to_ty(&mut self, scope_id: ScopeId,
+    fn dt_to_ty(&mut self, scope_id: ScopeId, id: impl Into<NodeId> + Copy,
                 dt: DataType) -> Result<Type, Error> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Type::UNIT),
@@ -228,7 +250,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
                 let scope = self.scopes.push(scope);
-                self.dt_to_ty(scope, *dt)
+                self.dt_to_ty(scope, id, *dt)
             },
 
 
@@ -248,11 +270,12 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let mut generics = sti::vec::Vec::with_cap_in(&*pool, base_sym.generics.len());
                 if generics_list.is_empty() {
                     for _ in base_sym.generics {
-                        generics.push(self.syms.new_var(dt.range()))
+                        generics.push(self.syms.new_var(id, dt.range()))
                     }
+
                 } else {
                     for g in generics_list {
-                        generics.push(self.dt_to_ty(scope_id, *g)?);
+                        generics.push(self.dt_to_ty(scope_id, id, *g)?);
                     }
 
                     if generics.len() != base_sym.generics.len() {
@@ -272,7 +295,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 }
 
 
-impl<'me> TyInfo<'me> {
+impl TyInfo {
     pub fn set_stmt(&mut self, stmt: StmtId, info: ErrorId) {
         let val = &mut self.stmts[stmt];
         if val.is_none() {
@@ -282,7 +305,7 @@ impl<'me> TyInfo<'me> {
     
     pub fn set_expr(&mut self, expr: ExprId, info: AnalysisResult) {
         let val = &mut self.exprs[expr];
-        if val.is_none() || !matches!(info.ty, Type::Ty(SymbolId::ERROR, GenListId::EMPTY)) {
+        if val.is_none() || !matches!(info.ty, Type::Ty(SymbolId::ERR, GenListId::EMPTY)) {
             *val = Some(ExprInfo::Result { ty: info.ty, is_mut: info.is_mut })
         }
     }
@@ -296,7 +319,7 @@ impl<'me> TyInfo<'me> {
     }
 
 
-    pub fn set_func_call(&mut self, expr: ExprId, call: (SymbolId, &'me [(StringIndex, Type)])) {
+    pub fn set_func_call(&mut self, expr: ExprId, call: (SymbolId, GenListId)) {
         self.funcs.insert(expr, call);
     }
 

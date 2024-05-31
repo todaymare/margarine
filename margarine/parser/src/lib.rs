@@ -918,7 +918,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let binding_start = self.current_range().start();
-        let is_inout = self.is_inout();
+
+        // todo: In-Out for for loops is unsupported rn
+        //let is_inout = self.is_inout();
+        let is_inout = false;
 
         let binding = self.expect_identifier()?;
         let binding_range = SourceRange::new(binding_start, self.current_range().end());
@@ -927,7 +930,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::In))?;
         self.advance();
 
-        let is_expr_inout = self.is_inout();
+        // let is_expr_inout = self.is_inout();
+        let is_expr_inout = false;
 
         let expr = self.expression(
             &ParserSettings { can_parse_struct_creation: false, ..Default::default() })?;

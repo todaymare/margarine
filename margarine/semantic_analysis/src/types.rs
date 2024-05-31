@@ -3,6 +3,7 @@ pub mod ty;
 pub mod func;
 
 use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
+use parser::nodes::{expr::ExprId, NodeId};
 use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, types::func::{FunctionArgument, FunctionKind}};
@@ -16,9 +17,9 @@ define_key!(u32, pub VarId);
 #[derive(Debug)]
 pub struct SymbolMap<'me> {
     syms : KVec<SymbolId, (Option<Symbol<'me>>, NamespaceId)>,
-    tys  : KVec<GenListId, &'me [(StringIndex, Type)]>,
-    vars : KVec<VarId, Var>,
-    arena: &'me Arena,
+    pub gens  : KVec<GenListId, &'me [(StringIndex, Type)]>,
+    pub vars : KVec<VarId, Var>,
+    pub arena: &'me Arena,
     
 }
 
@@ -40,8 +41,9 @@ pub enum SymbolKind<'me> {
 
 #[derive(Debug)]
 pub struct Var {
-    sub: Option<Type>,
-    range: SourceRange,
+    pub sub: Option<Type>,
+    pub node: NodeId,
+    pub range: SourceRange,
 }
 
 
@@ -61,7 +63,7 @@ pub enum GenericKind<'me> {
 
 impl<'me> SymbolMap<'me> {
     pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap, string_map: &mut StringMap) -> Self {
-        let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, tys: KVec::new() };
+        let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new() };
         macro_rules! init {
             ($name: ident) => {
                 let pending = slf.pending(ns_map, StringMap::$name);
@@ -96,7 +98,7 @@ impl<'me> SymbolMap<'me> {
                          StringMap::BOOL, slf.arena.alloc_new(fields), &[]);
         }
 
-        init!(ERROR);
+        init!(ERR);
         init!(NEVER);
 
         // rc 
@@ -119,8 +121,8 @@ impl<'me> SymbolMap<'me> {
             let pending = slf.pending(ns_map, StringMap::RANGE);
             assert_eq!(pending, SymbolId::RANGE);
             let fields = [
-                (StringMap::LOW.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
-                (StringMap::HIGH.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::I64))),
+                (StringMap::MIN.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
+                (StringMap::MAX.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
             ];
 
             let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
@@ -152,7 +154,7 @@ impl<'me> SymbolMap<'me> {
             assert_eq!(pending, SymbolId::RESULT);
             let fields = [
                 (StringMap::OK.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
-                (StringMap::ERROR.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A))),
+                (StringMap::ERR.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A))),
             ];
 
             let gens = slf.arena.alloc_new([StringMap::T, StringMap::A]);
@@ -181,7 +183,7 @@ impl<'me> SymbolMap<'me> {
             slf.add_sym(pending, sym);
         }
 
-        assert_eq!(slf.tys.push(&[]), GenListId::EMPTY);
+        assert_eq!(slf.gens.push(&[]), GenListId::EMPTY);
 
 
         slf
@@ -216,12 +218,15 @@ impl<'me> SymbolMap<'me> {
             Generic::new(range, GenericKind::Sym(id, gens))
         };
 
-        for i in mappings {
+        for (index, i) in mappings.iter().enumerate() {
             let mapping_name = i.0.unwrap();
             let func_name = string_map.concat(name, mapping_name);
 
-            let args = self.arena.alloc_new([FunctionArgument::new(StringMap::VALUE, i.1, false)]);
-            let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id });
+            let is_unit = i.1.sym().map(|x| x == SymbolId::UNIT).unwrap_or(false);
+
+            let args = if is_unit { [].as_slice() }
+                       else { &*self.arena.alloc_new([FunctionArgument::new(StringMap::VALUE, i.1, false)]) };
+            let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id, index });
             let sym = Symbol::new(func_name, generics, SymbolKind::Function(sym));
             let id = self.pending(ns_map, func_name);
             self.add_sym(id, sym);
@@ -248,14 +253,19 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn new_var(&mut self, range: SourceRange) -> Type {
-        Type::Var(self.vars.push(Var { sub: None, range }))
+    pub fn new_var(&mut self, node: impl Into<NodeId>, range: SourceRange) -> Type {
+        Type::Var(self.vars.push(Var { sub: None, node: node.into(), range }))
+    }
+
+
+    pub fn get_gens(&mut self, gen: GenListId) -> &'me [(StringIndex, Type)] {
+        self.gens[gen]
     }
 
 
     pub fn add_gens(&mut self, generics: &'me [(StringIndex, Type)]) -> GenListId {
         if generics.is_empty() { return GenListId::EMPTY }
-        self.tys.push(generics)
+        self.gens.push(generics)
     }
 
 
@@ -289,11 +299,12 @@ impl<'me> Generic<'me> {
 
     pub fn to_ty(self, gens: &[(StringIndex, Type)], map: &mut SymbolMap) -> Result<Type, Error> {
         match self.kind {
-            GenericKind::Generic(v) => gens.iter()
+            GenericKind::Generic(v) => Ok(gens.iter()
                                         .find(|x| x.0 == v)
                                         .copied()
                                         .map(|x| x.1)
-                                        .ok_or(Error::UnknownType(v, self.range)),
+                                        .expect("COMPILER ERROR: a generic name can't be missing as \
+                                                if it was the case it would've been a custom type")),
 
 
             GenericKind::Sym(symbol, generics) => {
@@ -316,7 +327,7 @@ impl<'me> Generic<'me> {
 impl VarId {
     fn occurs_in(self, map: &SymbolMap, ty: Type) -> bool {
         match ty {
-            Type::Ty(_, gens) => map.tys[gens].iter().any(|x| self.occurs_in(map, x.1)),
+            Type::Ty(_, gens) => map.gens[gens].iter().any(|x| self.occurs_in(map, x.1)),
             Type::Var(v) => {
                 if self == v { return true }
                 let sub = map.vars[v].sub;
@@ -344,7 +355,7 @@ impl SymbolId {
     pub const F32   : Self = Self(9);
     pub const F64   : Self = Self(10);
     pub const BOOL  : Self = Self(11); // +2 for variants
-    pub const ERROR : Self = Self(14);
+    pub const ERR   : Self = Self(14);
     pub const NEVER : Self = Self(15);
     pub const PTR   : Self = Self(16);
     pub const RANGE : Self = Self(17);
@@ -462,5 +473,5 @@ impl GenListId {
 
 
 impl<'me> GenericKind<'me> {
-    pub const ERROR : Self = Self::Sym(SymbolId::ERROR, &[]);
+    pub const ERROR : Self = Self::Sym(SymbolId::ERR, &[]);
 }

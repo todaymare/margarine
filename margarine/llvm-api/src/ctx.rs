@@ -1,9 +1,9 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMArrayType2, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleType, LLVMDoubleTypeInContext, LLVMFloatType, LLVMFloatTypeInContext, LLVMIntType, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMVoidType, LLVMVoidTypeInContext}, LLVMContext};
+use llvm_sys::{core::{LLVMArrayType2, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMVoidTypeInContext}, LLVMContext};
 use sti::{arena::Arena, format_in};
 
-use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{func::FunctionPtr, string::StringValue, Value}};
+use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{string::StringValue, Value}};
 
 pub struct Context<'ctx>(ContextRef<'ctx>);
 
@@ -77,11 +77,6 @@ impl<'me> ContextImpl<'me> {
         
     pub fn as_ctx_ref(&self) -> ContextRef<'me> {
         ContextRef(*self)
-    }
-
-
-    pub fn extern_function(&self, module: Module<'_>, path: &str, args: &[Type<'me>], ret: Type<'me>) -> FunctionPtr<'me> {
-        todo!()
     }
 }
 

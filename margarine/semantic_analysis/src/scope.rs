@@ -20,7 +20,7 @@ pub enum ScopeKind<'me> {
     ImplicitNamespace(NamespaceId),
     VariableScope(VariableScope),
     Generics(GenericsScope<'me>),
-    Loop(Loop),
+    Loop,
     Function(FunctionScope),
     Root,
 }
@@ -113,10 +113,10 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_loop(self, scope_map: &ScopeMap) -> Option<Loop> {
+    pub fn find_loop(self, scope_map: &ScopeMap) -> Option<()> {
         self.over(scope_map, |scope| {
-            if let ScopeKind::Loop(l) = scope.kind {
-                return Some(l)
+            if let ScopeKind::Loop = scope.kind {
+                return Some(())
             }
 
             None

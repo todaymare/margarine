@@ -1,8 +1,9 @@
-use std::{ops::Deref, ptr::{null_mut, NonNull}};
+use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMCountStructElementTypes, LLVMGetStructElementTypes, LLVMIsOpaqueStruct, LLVMStructSetBody}, LLVMType};
+use llvm_sys::core::{LLVMCountStructElementTypes, LLVMGetStructElementTypes, LLVMIsOpaqueStruct, LLVMStructSetBody};
+use sti::arena::Arena;
 
-use crate::{module::Module, tys::TypeKind, values::Value};
+use crate::tys::TypeKind;
 
 use super::Type;
 
@@ -45,15 +46,15 @@ impl<'ctx> StructTy<'ctx> {
     }
 
 
-    pub fn fields(self) -> Vec<Type<'ctx>> {
+    pub fn fields<'a>(self, arena: &'a Arena) -> sti::vec::Vec<Type<'ctx>, &'a Arena> {
         let argc = self.fields_count();
 
-        let mut args = Vec::with_capacity(argc);
+        let mut args = sti::vec::Vec::with_cap_in(arena, argc);
         unsafe { LLVMGetStructElementTypes(self.llvm_ty().as_ptr(), args.as_mut_ptr()) };
         unsafe { args.set_len(argc) };
 
         let args = {
-            let mut vec = Vec::with_capacity(argc);
+            let mut vec = sti::vec::Vec::with_cap_in(arena, argc);
             for i in args { vec.push(Type::new(NonNull::new(i).unwrap())) };
             vec
         };

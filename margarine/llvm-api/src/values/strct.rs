@@ -1,8 +1,6 @@
-use std::{ops::Deref, ptr::null_mut};
+use std::ops::Deref;
 
-use llvm_sys::core::{LLVMCountStructElementTypes, LLVMGetParamTypes};
-
-use crate::tys::{strct::StructTy, Type, TypeKind};
+use crate::tys::{strct::StructTy, TypeKind};
 
 use super::Value;
 

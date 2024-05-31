@@ -2,27 +2,32 @@ use std::collections::HashMap;
 
 use common::string_map::{StringIndex, StringMap};
 use lexer::Literal;
-use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, Type as LLVMType}, values::{func::{FunctionPtr, Linkage}, int::Integer, ptr::Ptr, Value}};
+use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, Type as LLVMType}, values::{func::{FunctionPtr, Linkage}, ptr::Ptr, Value}};
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
-use sti::{arena::Arena, format_in, vec::Vec};
+use sti::{arena::Arena, vec::Vec};
 
-use crate::{types::{containers::ContainerKind, func::FunctionKind, ty::{Type, TypeHash}, SymbolId, SymbolKind, SymbolMap}, TyChecker, TyInfo};
+use crate::{namespace::NamespaceMap, types::{containers::ContainerKind, func::FunctionKind, ty::{Type, TypeHash}, GenListId, SymbolId, SymbolKind, SymbolMap}, TyChecker, TyInfo};
 
 pub struct Codegen<'me, 'out, 'ast, 'str, 'ctx> {
     string_map: &'me StringMap<'str>,
     syms: &'me mut SymbolMap<'out>,
+    ns: &'me NamespaceMap,
     ast: &'me AST<'ast>,
 
     ctx: ContextRef<'ctx>,
     module: Module<'ctx>,
 
-    ty_info: &'me TyInfo<'out>,
-    ty_mappings: HashMap<TypeHash, LLVMType<'ctx>>
+    ty_info: &'me TyInfo,
+    ty_mappings: HashMap<TypeHash, LLVMType<'ctx>>,
+    func_mappings: HashMap<TypeHash, (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
+
+    abort_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
 }
 
 
 pub struct Env<'me> {
     vars: Vec<(StringIndex, Local), &'me Arena>,
+    inouts: Vec<(usize, Local), &'me Arena>,
     loop_id: Option<Loop>,
 }
 
@@ -32,6 +37,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
         let ctx = Context::new();
         let module = ctx.module("margarine");
 
+        let void = ctx.void();
+
+        let abort_fn_ty = void.fn_ty(&[], false);
+        let abort_fn = module.function("abort", abort_fn_ty);
+        abort_fn.set_linkage(Linkage::External);
+        abort_fn.set_noreturn(ctx.as_ctx_ref());
+
         let mut codegen = Codegen {
             string_map: ty_checker.string_map,
             syms: &mut ty_checker.syms,
@@ -39,7 +51,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             module,
             ty_info: &ty_checker.type_info,
             ty_mappings: HashMap::new(),
+            func_mappings: HashMap::new(),
             ctx: ctx.as_ctx_ref(),
+            ns: &ty_checker.namespaces,
+            abort_fn: (abort_fn, abort_fn_ty),
         };
 
         {
@@ -71,7 +86,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
         let b = func.builder(codegen.ctx.as_ctx_ref(), func_ty);
 
         for sym in &ty_checker.startups {
-            let (func, func_ty) = codegen.get_func(*sym, &[]);
+            let (func, func_ty) = codegen.get_func(*sym, GenListId::EMPTY);
             b.call(func, func_ty, &[]);
         }
 
@@ -79,31 +94,54 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
         b.ret_void();
         b.build();
 
+
         (ctx, module)
     }
 
 
     fn ty_to_llvm(&mut self, ty: Type) -> LLVMType<'ctx> {
+        self.ty_to_llvm_ex(ty, true)
+    }
+
+
+    fn ty_to_llvm_ex(&mut self, ty: Type, early_out_ptr: bool) -> LLVMType<'ctx> {
         let hash = ty.hash(self.syms);
         if let Some(ty) = self.ty_mappings.get(&hash) { return *ty }
 
         let gens = ty.gens(self.syms);
+        let gens = self.syms.get_gens(gens);
 
         let sym_id = ty.sym(self.syms).unwrap();
-        debug_assert_ne!(sym_id, SymbolId::ERROR);
+        debug_assert_ne!(sym_id, SymbolId::ERR);
 
         let sym = self.syms.sym(sym_id);
 
         let name = ty.display(self.string_map, self.syms);
 
-        if sym_id == SymbolId::PTR {
+        if early_out_ptr && sym_id == SymbolId::PTR {
             let ty = self.ctx.ptr();
             self.ty_mappings.insert(hash, *ty);
             return *ty;
         }
 
         match sym.kind {
-            SymbolKind::Function(_) => todo!(),
+            SymbolKind::Function(v) => {
+                let ret = v.ret.to_ty(gens, self.syms).unwrap();
+                let ret_llvm = self.ty_to_llvm(ret);
+
+                let pool = Arena::tls_get_rec();
+                let args = {
+                    let mut vec = Vec::with_cap_in(&*pool, v.args.len());
+                    for i in v.args {
+                        let ty = i.symbol.to_ty(gens, self.syms).unwrap();
+                        vec.push(self.ty_to_llvm(ty));
+                    }
+
+                    vec
+                };
+
+                *ret_llvm.fn_ty(&*args, false)
+            },
 
             SymbolKind::Container(cont) => {
                 match cont.kind {
@@ -161,7 +199,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 NodeId::Decl(_) => (*builder.const_unit(), Type::UNIT),
 
                 NodeId::Stmt(v) => {
-                    self.stmt(builder, env, v);
+                    if !self.stmt(builder, env, v) { return Err(()) }
                     (*builder.const_unit(), Type::UNIT)
                 },
 
@@ -182,13 +220,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    pub fn stmt(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, stmt: StmtId) {
+    pub fn stmt(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, stmt: StmtId) -> bool {
         if let Some(e) = self.ty_info.stmt(stmt) {
             self.error(builder, e);
         };
 
 
-        let _ = (|| {
+        let result = (|| {
         match self.ast.stmt(stmt) {
             Stmt::Variable { name, rhs, .. } => {
                 let expr = self.expr(builder, env, rhs)?;
@@ -209,38 +247,155 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
-            Stmt::ForLoop { binding, expr, body } => todo!(),
+            Stmt::ForLoop { binding, expr, body } => {
+                let iter_expr = self.expr(builder, env, expr.1)?;
+                let iter_expr_ptr = builder.alloca_store(iter_expr.0);
+
+                let (iter_fn_ret_ty, func) = {
+                    let sym = iter_expr.1.sym(self.syms).unwrap();
+                    let ns = self.syms.sym_ns(sym);
+                    let ns = self.ns.get_ns(ns);
+
+                    let sym = ns.get_sym(StringMap::ITER_NEXT_FUNC).unwrap();
+                    let func = self.get_func(sym, iter_expr.1.gens(&self.syms));
+
+                    let ret_ty = self.syms.sym(sym);
+                    let SymbolKind::Function(ret_ty) = ret_ty.kind
+                    else { unreachable!() };
+
+                    let gens = iter_expr.1.gens(self.syms);
+                    let gens = self.syms.get_gens(gens);
+                    let ret_ty = ret_ty.ret.to_ty(gens, self.syms).unwrap();
+
+                    (ret_ty, func)
+                };
+
+                let iter_fn_ret_value_ty = iter_fn_ret_ty.gens(&self.syms);
+                let iter_fn_ret_value_ty = self.syms.get_gens(iter_fn_ret_value_ty)[0].1;
+                let iter_fn_ret_value_ty_llvm = self.ty_to_llvm(iter_fn_ret_value_ty);
+
+                builder.loop_indefinitely(|builder, l| {
+                    let call_ret_value = builder.call(func.0, func.1, &[*iter_expr_ptr]).as_struct();
+
+                    let index = builder.field_load(call_ret_value, 0).as_integer();
+                    let none_case = builder.const_int(index.as_integer().ty(), 1, false);
+                    let cond = builder.cmp_int(index, none_case, IntCmp::Eq);
+
+                    builder.ite(&mut (), cond, 
+                    |builder, _| {
+                        builder.loop_break(l);
+                    }, |_, _| {});
+
+                    let value = builder.field_load(call_ret_value, 1);
+                    let value = builder.bitcast(value, iter_fn_ret_value_ty_llvm);
+
+                    let local = builder.local(iter_fn_ret_value_ty_llvm);
+                    builder.local_set(local, value);
+
+                    env.vars.push((binding.1, local));
+
+                    let _ = self.block(builder, env, &*body);
+
+                    env.vars.pop();
+                });
+            },
+
+
         };
         Ok::<(), ()>(())
+
         })();
+
+
+        result.is_ok()
     }
 
 
     pub fn assign(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId, value: Value) {
-        let ptr = self.assign_ptr(builder, env, expr);
+        let Some(ptr) = self.assign_ptr(builder, env, expr)
+        else { return; };
         builder.store(ptr, value);
     }
 
 
 
-    pub fn assign_ptr(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId) -> Ptr<'ctx> {
+    pub fn assign_ptr(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId) -> Option<Ptr<'ctx>> {
         match self.ast.expr(expr) {
             Expr::Identifier(ident) => {
                 let local = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
 
-                builder.local_ptr(local.1)
+                Some(builder.local_ptr(local.1))
             },
 
 
-            Expr::Deref(v) => todo!(),
+            Expr::Deref(v) => {
+                let ptr = self.assign_ptr(builder, env, v)?;
+                let rc_data_ty = self.ty_info.expr(v);
+                let rc_data_ty = match rc_data_ty {
+                    Ok(v) => v,
+                    Err(v) => {
+                        self.error(builder, v);
+                        return None;
+                    },
+                };
+
+                let rc_data_ty = self.ty_to_llvm_ex(rc_data_ty, false);
+
+                Some(builder.field_ptr(ptr, rc_data_ty.as_struct(), 1))
+            },
 
 
             Expr::AccessField { val, field_name } => {
-                let ptr = self.assign_ptr(builder, env, val);
-                todo!()
+                let ptr = self.assign_ptr(builder, env, val)?;
+                let ty = self.ty_info.expr(val);
+                let ty = match ty {
+                    Ok(v) => v,
+                    Err(v) => {
+                        self.error(builder, v);
+                        return None;
+                    },
+                };
+
+
+                let sym = ty.sym(self.syms).unwrap();
+                let sym = self.syms.sym(sym);
+
+                let SymbolKind::Container(cont) = sym.kind
+                else { unreachable!() };
+
+                let ty = self.ty_to_llvm(ty);
+                let (index, _) = cont.fields.iter().enumerate().find(|f| f.1.0.unwrap() == field_name).unwrap();
+                Some(builder.field_ptr(ptr, ty.as_struct(), index))
             },
 
-            Expr::Unwrap(_) => todo!(),
+
+            Expr::Unwrap(v) => {
+                let ptr = self.assign_ptr(builder, env, v)?;
+                let ty = self.ty_info.expr(v);
+                let ty = match ty {
+                    Ok(v) => v,
+                    Err(v) => {
+                        self.error(builder, v);
+                        return None;
+                    },
+                };
+
+                let llvm_ty = self.ty_to_llvm(ty).as_struct();
+
+                let strct = builder.load(ptr, *llvm_ty).as_struct();
+                let value_index = builder.field_load(strct, 0).as_integer();
+                let expected_index = builder.const_int(value_index.ty(), 0, false);
+
+                let cmp = builder.cmp_int(value_index, expected_index, IntCmp::Ne);
+
+                builder.ite(self, cmp,
+                |builder, slf| slf.unwrap_fail(builder),
+                |_, _| { });
+
+                Some(builder.field_ptr(ptr, llvm_ty.as_struct(), 1))
+            },
+
+
             Expr::OrReturn(_) => todo!(),
 
             _ => unreachable!()
@@ -257,7 +412,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             },
         };
 
-        Ok((match self.ast.expr(expr) {
+        let ty_sym = ty.sym(self.syms).unwrap();
+
+        let val = match self.ast.expr(expr) {
             Expr::Unit => *builder.const_unit(),
 
 
@@ -286,7 +443,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                         let len_ty = self.ctx.integer(32);
                         let len = builder.const_int(len_ty, string.len() as i64, false);
 
-                        *builder.const_struct(ty, &[*ptr, *len])
+                        *builder.struct_instance(ty, &[*ptr, *len])
                     },
 
 
@@ -324,7 +481,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let rhs = builder.int_cast(rhs.0.as_integer(), *ty, true);
 
                 let strct = self.ty_to_llvm(Type::RANGE).as_struct();
-                *builder.const_struct(strct, &[lhs, rhs])
+                *builder.struct_instance(strct, &[lhs, rhs])
             },
 
 
@@ -419,7 +576,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let ty = self.ty_to_llvm(ty);
                 let local = builder.local(ty);
 
-                builder.ite(&mut (self, env), cond.0.as_bool(),
+                let slf = self;
+                builder.ite(&mut (slf, env), cond.0.as_bool(),
                 |builder, (slf, env)| {
                     let Ok(value) = slf.expr(builder, env, body)
                     else { return; };
@@ -443,7 +601,64 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
-            Expr::Match { value, taken_as_inout, mappings } => todo!(),
+            Expr::Match { value, taken_as_inout, mappings } => {
+                let val = self.expr(builder, env, value)?;
+                let sym = val.1.sym(self.syms).unwrap();
+                let sym = self.syms.sym(sym);
+
+                let SymbolKind::Container(cont) = sym.kind
+                else { unreachable!() };
+
+                let value_ty = val.0.as_struct();
+                let value_alloc = builder.alloca_store(val.0);
+                let value_index = builder.field_load(value_ty, 0).as_integer();
+
+                let iter = cont.fields.iter().map(|sf| {
+                    let name = sf.0.unwrap();
+                    (sf, mappings.iter().find(|x| x.name() == name).unwrap())
+                });
+
+                let ret_ty = self.ty_to_llvm(ty);
+                let ret_local = builder.local(ret_ty);
+                let inout_ptr = builder.field_ptr(value_alloc, value_ty.ty(), 1);
+
+                builder.switch(value_index, iter,
+                |builder, (field, mapping)| {
+                    // initialize the binding
+                    let gens = val.1.gens(self.syms);
+                    let gens = self.syms.get_gens(gens);
+                    let field_ty = field.1.to_ty(gens, self.syms).unwrap();
+                    let field_ty_llvm = self.ty_to_llvm(field_ty);
+
+                    let local = builder.local(field_ty_llvm);
+                    let value = builder.field_load(val.0.as_struct(), 1);
+                    let value = builder.bitcast(value, field_ty_llvm);
+                    builder.local_set(local, value);
+
+                    env.vars.push((mapping.binding(), local));
+
+                    // run the body
+                    let ret_val = self.expr(builder, env, mapping.expr());
+                    debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local));
+
+                    let Ok(ret_val) = ret_val
+                    else { return };
+
+                    builder.local_set(ret_local, ret_val.0);
+
+                    if mapping.is_inout() {
+                        builder.store(inout_ptr, ret_val.0)
+                    }
+                });
+
+                if taken_as_inout {
+                    let val = builder.load(value_alloc, *value_ty.ty());
+                    self.assign(builder, env, expr, val);
+                }
+
+                if ty_sym == SymbolId::NEVER { *builder.const_unit() }
+                else { builder.local_get(ret_local) }
+            },
 
 
             Expr::Block { block } => self.block(builder, env, &*block)?.0,
@@ -465,7 +680,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                     vec.push(value.0);
                 }
 
-                *builder.const_struct(llvm_ty, &*vec)
+                *builder.struct_instance(llvm_ty, &*vec)
             },
 
 
@@ -475,24 +690,82 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let SymbolKind::Container(cont) = self.syms.sym(value_ty).kind
                 else { unreachable!() };
 
-                let (i, _) = cont.fields.iter().enumerate().find(|x| x.1.0.unwrap() == field_name).unwrap();
+                let (i, f) = cont.fields.iter().enumerate().find(|x| x.1.0.unwrap() == field_name).unwrap();
                 
-                builder.field_load(value.0.as_struct(), i)
+                match cont.kind {
+                    ContainerKind::Struct => builder.field_load(value.0.as_struct(), i),
+
+
+                    ContainerKind::Enum => {
+                        let field_ty = {
+                            let gens = value.1.gens(self.syms);
+                            let gens = self.syms.get_gens(gens);
+
+                            f.1.to_ty(gens, self.syms).unwrap()
+                        };
+
+                        let gens_arr = self.syms.arena.alloc_new([(StringMap::T, field_ty)]);
+                        let gens = self.syms.add_gens(gens_arr);
+                        let opt_ty = Type::Ty(SymbolId::OPTION, gens);
+
+                        let opt_ns = self.syms.sym_ns(SymbolId::OPTION);
+                        let opt_ns = self.ns.get_ns(opt_ns);
+
+                        let some_func = opt_ns.get_sym(StringMap::SOME).unwrap();
+                        let none_func = opt_ns.get_sym(StringMap::NONE).unwrap();
+
+                        let value_index = builder.field_load(value.0.as_struct(), 0);
+                        let expected_index = builder.const_int(value_index.ty().as_integer(), i as i64, false);
+                        let cmp = builder.cmp_int(value_index.as_integer(), expected_index, IntCmp::Eq);
+
+                        let local = builder.local(self.ty_to_llvm(opt_ty));
+                        builder.ite(self, cmp,
+                        |builder, slf| {
+                            let func = slf.get_func(some_func, gens);
+                            let val = builder.field_load(value.0.as_struct(), 1);
+                            let val = builder.bitcast(val, slf.ty_to_llvm(field_ty));
+                            let ret = builder.call(func.0, func.1, &[val]);
+                            builder.local_set(local, ret);
+                        },
+
+                        |builder, slf| {
+                            let func = slf.get_func(none_func, gens);
+                            let ret = builder.call(func.0, func.1, &[]);
+                            builder.local_set(local, ret);
+                        });
+
+
+                        builder.local_get(local)
+                    },
+
+
+                    ContainerKind::Tuple => todo!(),
+                }
             },
 
 
-            Expr::CallFunction { args, .. } => {
+            Expr::CallFunction { args, is_accessor, .. } => {
                 let (sym, gens) = self.ty_info.funcs.get(&expr).unwrap();
-                let (func, func_ty) = self.get_func(*sym, gens);
+                let (func, func_ty) = self.get_func(*sym, *gens);
+
+                let func_fields = {
+                    let sym = self.syms.sym(*sym);
+                    let SymbolKind::Function(func) = sym.kind
+                    else { unreachable!() };
+
+                    func.args
+                };
 
                 let pool = Arena::tls_get_rec();
                 let mut inouts = sti::vec::Vec::with_cap_in(&*pool, args.len());
                 let args = {
                     let mut vec = Vec::with_cap_in(&*pool, args.len());
-                    for a in args { 
+                    for (i, (a, fa)) in args.iter().zip(func_fields).enumerate() { 
                         let (val, ty) = self.expr(builder, env, a.0)?;
 
-                        if a.1 {
+                        let is_inout = if fa.inout && is_accessor && i == 0 { true }
+                                        else { a.1 };
+                        if is_inout {
                             let ptr = builder.alloca_store(val);
 
                             inouts.push((ptr, a.0, ty));
@@ -544,7 +817,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
             Expr::Return(v) => {
                 let val = self.expr(builder, env, v)?;
-                builder.ret(val.0);
+
+                if !val.1.is_never(self.syms) {
+                    Self::update_inouts(env, builder);
+                    dbg!(val);
+                    builder.ret(val.0);
+                }
+
                 *builder.const_unit()
             },
 
@@ -579,28 +858,74 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
-            Expr::Unwrap(_) => todo!(),
+            Expr::Unwrap(val) => {
+                let val = self.expr(builder, env, val)?;
+
+                let sym = val.1.sym(self.syms).unwrap();
+                let sym = self.syms.sym(sym);
+
+                let SymbolKind::Container(cont) = sym.kind
+                else { unreachable!() };
+
+                let value_index = builder.field_load(val.0.as_struct(), 0).as_integer();
+                let expected_index = builder.const_int(value_index.ty(), 0, false);
+
+                let cmp = builder.cmp_int(value_index, expected_index, IntCmp::Ne);
+
+                builder.ite(self, cmp,
+                |builder, slf| slf.unwrap_fail(builder),
+                |_, _| { });
+
+                let gens = val.1.gens(self.syms);
+                let gens = self.syms.get_gens(gens);
+                let field_ty = cont.fields[0].1.to_ty(gens, self.syms).unwrap();
+                let val = builder.field_load(val.0.as_struct(), 1);
+                builder.bitcast(val, self.ty_to_llvm(field_ty))
+            },
 
 
             Expr::OrReturn(_) => todo!(),
-        }, ty))
+        }; 
+
+        if ty_sym == SymbolId::NEVER {
+            builder.unreachable();
+            return Ok((*builder.const_unit(), ty))
+        }
+
+        Ok((val, ty))
     }
 
     fn error(&self, builder: &mut Builder<'_>, e: errors::ErrorId) {
+        self.abort(builder)
+    }
+
+
+    fn abort(&self, builder: &mut Builder<'_>) {
+        builder.call(self.abort_fn.0, self.abort_fn.1, &[]);
         builder.unreachable();
     }
 
 
-    fn get_func(&mut self, sym: SymbolId, gens: &[(StringIndex, Type)]) -> (FunctionPtr<'ctx>, FunctionType<'ctx>) {
+    fn unwrap_fail(&self, builder: &mut Builder<'_>) {
+        self.abort(builder)
+    }
+
+
+    fn get_func(&mut self, sym: SymbolId, gens: GenListId) -> (FunctionPtr<'ctx>, FunctionType<'ctx>) {
+        let ty = Type::Ty(sym, gens);
+        let hash = ty.hash(self.syms);
+        if let Some(ty) = self.func_mappings.get(&hash) { return *ty }
+
         let pool = Arena::tls_get_rec();
-        let sym = self.syms.sym(sym);
-        let SymbolKind::Function(sym_func) = sym.kind
+        let fsym = self.syms.sym(sym);
+        let SymbolKind::Function(sym_func) = fsym.kind
         else { unreachable!() };
 
+        let gens = self.syms.gens[gens];
         let ret = sym_func.ret.to_ty(gens, self.syms).unwrap();
-        let ret = self.ty_to_llvm(ret);
+        let llvm_ret = self.ty_to_llvm(ret);
 
-        match sym_func.kind {
+        let res = match sym_func.kind {
             FunctionKind::Extern(path) => {
                 let args = {
                     let mut vec = Vec::with_cap_in(&*pool, sym_func.args.len());
@@ -618,7 +943,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                     vec.leak()
                 };
 
-                let func_ty = ret.fn_ty(args, false);
+                let func_ty = llvm_ret.fn_ty(args, false);
                 let func = self.module.function(self.string_map.get(path), func_ty);
                 func.set_linkage(Linkage::External);
 
@@ -630,6 +955,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let args = {
                     let mut vec = Vec::with_cap_in(&*pool, sym_func.args.len());
                     for i in sym_func.args {
+                        if i.inout {
+                            vec.push(*self.ctx.ptr());
+                            continue;
+                        }
+
                         let ty = i.symbol.to_ty(gens, self.syms).unwrap();
                         let ty = self.ty_to_llvm(ty);
                         vec.push(ty);
@@ -639,8 +969,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
 
-                let func_ty = ret.fn_ty(args, false);
-                let func = self.module.function(self.string_map.get(sym.name), func_ty);
+                let func_ty = llvm_ret.fn_ty(args, false);
+                let func = self.module.function(self.string_map.get(fsym.name), func_ty);
                 let mut builder = func.builder(self.ctx, func_ty);
 
                 let Decl::Function { body, .. } = self.ast.decl(decl)
@@ -649,25 +979,104 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let mut env = Env {
                     vars: Vec::new_in(&*pool),
                     loop_id: None,
+                    inouts: Vec::new_in(&*pool),
                 };
 
-                for (i, a) in sym_func.args.iter().enumerate() {
-                    env.vars.push((a.name, builder.arg(i).unwrap()));
+                for (i, fa) in sym_func.args.iter().enumerate() {
+                    let arg = builder.arg(i).unwrap();
+                    let mut local = arg;
+                    
+                    if fa.inout {
+                        let ty = fa.symbol.to_ty(gens, self.syms).unwrap();
+                        let ty = self.ty_to_llvm(ty);
+
+                        let ptr = builder.local_get(arg).as_ptr();
+                        let load = builder.load(ptr, ty);
+
+                        let new_local = builder.local(ty);
+                        builder.local_set(new_local, load);
+                        local = new_local;
+                        env.inouts.push((i, new_local));
+                    }
+
+                    env.vars.push((fa.name, local));
                 }
 
                 let result = self.block(&mut builder, &mut env, &*body);
+                
+                // update inouts
+                Self::update_inouts(&env, &mut builder);
+
 
                 if let Some(e) = self.ty_info.decl(decl) {
                     self.error(&mut builder, e);
                 } else if let Ok(val) = result {
-                    builder.ret(val.0);
+                    if !val.1.is_never(self.syms) { dbg!(val); builder.ret(val.0); }
+                    else { builder.unreachable() }
                 }
 
                 builder.build();
                 (func, func_ty)
             },
 
-            FunctionKind::Enum { sym } => todo!(),
+            FunctionKind::Enum { sym: sym_id, index } => {
+                let sym = self.syms.sym(sym_id);
+                let SymbolKind::Container(cont) = sym.kind
+                else { unreachable!() };
+
+                let gens_id = self.syms.add_gens(gens);
+                let ret_ty = Type::Ty(sym_id, gens_id);
+                let arg = cont.fields[index];
+                let arg_ty = arg.1.to_ty(gens, self.syms).unwrap();
+
+                let llvm_ret_ty = self.ty_to_llvm(ret_ty);
+
+                let is_unit = arg_ty.sym(self.syms).unwrap() == SymbolId::UNIT;
+                let llvm_arg_ty = self.ty_to_llvm(arg_ty);
+
+                let func_ty = if is_unit { llvm_ret_ty.fn_ty(&[], false) }
+                              else { llvm_ret_ty.fn_ty(&[llvm_arg_ty], false) };
+                let func = self.module.function(self.string_map.get(fsym.name), func_ty);
+
+                let mut builder = func.builder(self.ctx, func_ty);
+
+                let union_struct_fields = llvm_ret_ty.as_struct().fields(&*pool);
+                let alloca = builder.alloca(llvm_ret_ty);
+
+                if !is_unit {
+                    let arg = builder.arg(0).unwrap();
+                    let arg = builder.local_get(arg);
+                    let fp = builder.field_ptr(alloca, llvm_ret_ty.as_struct(), 1);
+                    builder.store(fp, arg);
+                }
+
+                let index = builder.const_int(union_struct_fields[0].as_integer(),
+                                                index as i64, false);
+
+                let fp = builder.field_ptr(alloca, llvm_ret_ty.as_struct(), 0);
+                builder.store(fp, *index);
+
+                let ret = builder.load(alloca, llvm_ret_ty);
+                builder.ret(ret);
+                builder.build();
+
+                (func, func_ty)
+            },
+        };
+
+        self.func_mappings.insert(hash, res);
+
+        res
+    }
+
+
+    fn update_inouts(env: &Env, builder: &mut Builder<'_>) {
+        for (arg_index, local) in env.inouts.iter() {
+            let ptr = builder.arg(*arg_index).unwrap();
+            let ptr = builder.local_get(ptr).as_ptr();
+
+            let local = builder.local_get(*local);
+            builder.store(ptr, local)
         }
     }
 }

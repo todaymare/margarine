@@ -31,15 +31,15 @@ impl<'str> StringMap<'str> {
     pub const UNIT : StringIndex = StringIndex(16);
     pub const NEVER : StringIndex = StringIndex(17);
     pub const OK : StringIndex = StringIndex(18);
-    pub const ERROR : StringIndex = StringIndex(19);
+    pub const ERR : StringIndex = StringIndex(19);
     pub const SOME : StringIndex = StringIndex(20);
     pub const NONE : StringIndex = StringIndex(21);
     pub const SELF : StringIndex = StringIndex(22);
     pub const NEW : StringIndex = StringIndex(23);
     pub const INVALID_IDENT : StringIndex = StringIndex(24);
     pub const RANGE : StringIndex = StringIndex(25);
-    pub const LOW   : StringIndex = StringIndex(26);
-    pub const HIGH  : StringIndex = StringIndex(27);
+    pub const MIN   : StringIndex = StringIndex(26);
+    pub const MAX  : StringIndex = StringIndex(27);
     pub const COUNT : StringIndex = StringIndex(28);
     pub const TUPLE : StringIndex = StringIndex(29);
     pub const PTR : StringIndex = StringIndex(30);
@@ -49,6 +49,7 @@ impl<'str> StringMap<'str> {
     pub const A: StringIndex = StringIndex(34);
 
     pub const ITER_NEXT_FUNC : StringIndex = StringIndex(35);
+    pub const ITER_MUTATE : StringIndex = StringIndex(36);
 
  
     #[inline(always)]
@@ -85,7 +86,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("unit"), Self::UNIT);
         assert_eq!(s.insert("never"), Self::NEVER);
         assert_eq!(s.insert("ok"), Self::OK);
-        assert_eq!(s.insert("err"), Self::ERROR);
+        assert_eq!(s.insert("err"), Self::ERR);
         assert_eq!(s.insert("some"), Self::SOME);
         assert_eq!(s.insert("none"), Self::NONE);
         assert_eq!(s.insert("self"), Self::SELF);
@@ -93,8 +94,8 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("::"), Self::INVALID_IDENT);
 
         assert_eq!(s.insert("Range"), Self::RANGE);
-        assert_eq!(s.insert("low"), Self::LOW);
-        assert_eq!(s.insert("high"), Self::HIGH);
+        assert_eq!(s.insert("min"), Self::MIN);
+        assert_eq!(s.insert("max"), Self::MAX);
         assert_eq!(s.insert("count"), Self::COUNT);
         assert_eq!(s.insert("tuple"), Self::TUPLE);
 

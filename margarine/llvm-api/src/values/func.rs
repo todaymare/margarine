@@ -1,8 +1,8 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMCreateBuilderInContext, LLVMSetLinkage}, LLVMLinkage};
+use llvm_sys::{core::{LLVMAddAttributeAtIndex, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute, LLVMGetEnumAttributeKindForName, LLVMSetLinkage}, LLVMAttributeFunctionIndex, LLVMLinkage};
 
-use crate::{builder::Builder, ctx::{Context, ContextRef}, tys::{func::FunctionType, ptr::PtrTy, TypeKind}};
+use crate::{builder::Builder, cstr, ctx::ContextRef, tys::{func::FunctionType, ptr::PtrTy, TypeKind}};
 
 use super::Value;
 
@@ -14,7 +14,6 @@ impl<'ctx> FunctionPtr<'ctx> {
     /// # Safety
     /// Undefined behaviour if the value isn't a function
     pub unsafe fn new(val: Value<'ctx>) -> Self {
-        println!("{val:?}");
         debug_assert_eq!(val.ty().kind(), TypeKind::Ptr);
 
         Self(val)
@@ -23,7 +22,7 @@ impl<'ctx> FunctionPtr<'ctx> {
 
     pub fn builder(self, ctx: ContextRef<'ctx>, ty: FunctionType<'ctx>) -> Builder<'ctx> {
         let ptr = unsafe { LLVMCreateBuilderInContext(ctx.ptr.as_ptr()) };
-        Builder::new(NonNull::new(ptr).unwrap(), self, ty)
+        Builder::new(NonNull::new(ptr).unwrap(), ctx, self, ty)
     }
 
 
@@ -33,6 +32,13 @@ impl<'ctx> FunctionPtr<'ctx> {
     pub fn set_linkage(self, linkage: Linkage) {
         unsafe { LLVMSetLinkage(self.llvm_val().as_ptr(), linkage.llvm_linkage()); }
     }
+
+
+    pub fn set_noreturn(self, ctx: ContextRef<'ctx>) {
+        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("noreturn"), 8) };
+        let attr = unsafe { LLVMCreateEnumAttribute(ctx.ptr.as_ptr(), attr_kind, 0) };
+        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeFunctionIndex, attr) };
+    }
 }
 
 
@@ -40,6 +46,11 @@ impl<'ctx> Deref for FunctionPtr<'ctx> {
     type Target = Value<'ctx>;
 
     fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+
+pub enum FunctionAttribute {
+    NoReturn,
 }
 
 

@@ -15,7 +15,7 @@ use std::{marker::PhantomData, ptr::NonNull};
 use llvm_sys::{core::{LLVMFunctionType, LLVMGetTypeKind, LLVMPrintTypeToString, LLVMTypeIsSized}, target::{LLVMABISizeOfType, LLVMGetModuleDataLayout}, LLVMType};
 use sti::{arena::Arena, traits::FromIn};
 
-use crate::{info::Message, module::Module, values::{func::FunctionPtr, int::Integer}};
+use crate::{info::Message, module::Module};
 
 use self::{array::ArrayTy, bool::BoolTy, fp::FPTy, func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void};
 

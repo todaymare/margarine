@@ -1,6 +1,7 @@
 use std::{hash::{Hash, Hasher}, ops::Deref};
 
 use common::string_map::{StringIndex, StringMap};
+use parser::nodes::AST;
 use sti::{format_in, hash::fxhash::FxHasher32, traits::FromIn};
 
 use crate::{errors::Error, types::{containers::ContainerKind, SymbolKind}};
@@ -27,7 +28,7 @@ impl Type {
                 let mut str = sti::string::String::new_in(string_map.arena());
                 let sym = map.sym(sym);
 
-                let gens = map.tys[gens];
+                let gens = map.gens[gens];
                 let is_tuple = matches!(sym.kind, SymbolKind::Container(Container { kind: ContainerKind::Tuple, .. }));
 
                 if is_tuple {
@@ -79,14 +80,14 @@ impl Type {
         let b = oth.instantiate_shallow(map);
         match (a, b) {
             (Type::Ty(symida, gena), Type::Ty(symidb, genb)) => {
-                if matches!(symida, SymbolId::ERROR | SymbolId::NEVER) { return true; }
-                if matches!(symidb, SymbolId::ERROR | SymbolId::NEVER) { return true; }
+                if matches!(symida, SymbolId::ERR | SymbolId::NEVER) { return true; }
+                if matches!(symidb, SymbolId::ERR | SymbolId::NEVER) { return true; }
 
                 let gena = instantiate_gens(map, gena);
-                let gena = map.tys[gena];
+                let gena = map.gens[gena];
 
                 let genb = instantiate_gens(map, genb);
-                let genb = map.tys[genb];
+                let genb = map.gens[genb];
 
                 if symida == symidb {
                     return gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1));
@@ -148,7 +149,7 @@ impl Type {
 
                 let var = &mut map.vars[ida].sub;
                 match *var {
-                    Some(ta) if !matches!(ta, Type::Ty(SymbolId::ERROR | SymbolId::NEVER, _)) => b.eq(map, ta),
+                    Some(ta) if !matches!(ta, Type::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
                     _ => {
                         *var = Some(b);
                         true
@@ -161,7 +162,7 @@ impl Type {
 
                 let var = &mut map.vars[idb].sub;
                 match *var {
-                    Some(tb) if !matches!(tb, Type::Ty(SymbolId::ERROR | SymbolId::NEVER, _)) => a.eq(map, tb),
+                    Some(tb) if !matches!(tb, Type::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => a.eq(map, tb),
                     _ => {
                         *var = Some(a);
                         true
@@ -171,6 +172,18 @@ impl Type {
         }
     }
 
+
+    pub fn is_err(self, map: &mut SymbolMap) -> bool {
+        if let Ok(sym) = self.sym(map) { sym == SymbolId::ERR }
+        else { false }
+    }
+
+
+    pub fn is_never(self, map: &mut SymbolMap) -> bool {
+        if let Ok(sym) = self.sym(map) { sym == SymbolId::NEVER }
+        else { false }
+    }
+    
 
     pub fn ne(self, map: &mut SymbolMap, oth: Type) -> bool {
         !self.eq(map, oth)
@@ -188,12 +201,10 @@ impl Type {
     }
 
 
-    pub fn gens<'a>(self, map: &SymbolMap<'a>) -> &'a [(StringIndex, Type)] {
+    pub fn gens<'a>(self, map: &SymbolMap<'a>) -> GenListId {
         match self.instantiate_shallow(map) {
-            Type::Ty(_, v) => {
-                map.tys[v]
-            },
-            Type::Var(_) => &[],
+            Type::Ty(_, v) => v,
+            Type::Var(_) => GenListId::EMPTY,
         }
     }
 
@@ -242,7 +253,7 @@ impl Type {
             Type::Ty(v, g) => {
                 v.hash(hasher);
 
-                let arr = map.tys[g];
+                let arr = map.gens[g];
                 for g in arr.iter() {
                     g.1.hash_ex(map, hasher)
                 }
@@ -261,7 +272,7 @@ pub struct TypeHash(u32);
 
 
 fn instantiate_gens(map: &mut SymbolMap, gen: GenListId) -> GenListId {
-    let gens = map.tys[gen];
+    let gens = map.gens[gen];
     let vec = sti::vec::Vec::from_in(map.arena, gens.iter().map(|g| (g.0, g.1.instantiate(map))));
     map.add_gens(vec.leak())
 }
@@ -280,7 +291,7 @@ impl Type {
     pub const F32  : Self = Self::Ty(SymbolId::F32  , GenListId::EMPTY);
     pub const F64  : Self = Self::Ty(SymbolId::F64  , GenListId::EMPTY);
     pub const BOOL : Self = Self::Ty(SymbolId::BOOL , GenListId::EMPTY);
-    pub const ERROR: Self = Self::Ty(SymbolId::ERROR, GenListId::EMPTY);
+    pub const ERROR: Self = Self::Ty(SymbolId::ERR, GenListId::EMPTY);
     pub const NEVER: Self = Self::Ty(SymbolId::NEVER, GenListId::EMPTY);
     pub const RANGE: Self = Self::Ty(SymbolId::RANGE, GenListId::EMPTY);
     pub const STR  : Self = Self::Ty(SymbolId::STR  , GenListId::EMPTY);

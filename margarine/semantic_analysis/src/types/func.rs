@@ -30,6 +30,7 @@ pub enum FunctionKind {
 
     Enum {
         sym: SymbolId,
+        index: usize,
     }
 }
 

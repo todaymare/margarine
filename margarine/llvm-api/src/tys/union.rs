@@ -1,9 +1,8 @@
 use std::ops::Deref;
 
-use llvm_sys::{core::{LLVMGetStructName, LLVMIsOpaqueStruct, LLVMStructSetBody}, LLVMType};
-use sti::{arena::Arena, format_in};
+use llvm_sys::core::{LLVMIsOpaqueStruct, LLVMStructSetBody};
 
-use crate::{ctx::{Context, ContextRef}, info::Message, module::Module, tys::TypeKind};
+use crate::{ctx::ContextRef, module::Module, tys::TypeKind};
 
 use super::Type;
 
@@ -30,25 +29,17 @@ impl<'ctx> UnionTy<'ctx> {
     pub fn set_fields(self, ctx: ContextRef<'ctx>, module: Module<'ctx>, fields: &[Type<'ctx>]) {
         assert!(self.is_opaque());
 
-        let pool = Arena::tls_get_temp();
-
         let index_ty = ctx.integer(fields.len().count_ones().next_power_of_two());
-        let name = self.name();
 
         let mut max = 0;
 
         for ty in fields {
-            let name = format_in!(&*pool, "{}<{}>", name, ty.name());
-            let strct = ctx.structure(&*name);
-
-            strct.set_fields(&[*index_ty, *ty]);
-
-            let size = strct.size_of(module).unwrap();
-            max = max.max(size);
+            dbg!(ty.size_of(module).unwrap());
+            max = max.max(ty.size_of(module).unwrap());
         }
 
         let unit = ctx.integer(8);
-        let array = ctx.array(*unit, max.next_power_of_two().div_ceil(8));
+        let array = ctx.array(*unit, max);
 
         unsafe { LLVMStructSetBody(self.llvm_ty().as_ptr(),
                                    [index_ty.llvm_ty().as_ptr(), array.llvm_ty().as_ptr()].as_mut_ptr(),
