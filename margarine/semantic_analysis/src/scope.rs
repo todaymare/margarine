@@ -2,7 +2,7 @@ use common::{source::SourceRange, string_map::StringIndex};
 use llvm_api::builder::Loop;
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
-use crate::{namespace::{NamespaceId, NamespaceMap}, types::{SymbolMap, ty::Type, SymbolId}};
+use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, SymbolId, SymbolMap}};
 
 define_key!(u32, pub ScopeId);
 
@@ -50,7 +50,7 @@ impl<'me> ScopeMap<'me> {
 impl<'me> Scope<'me> {
     pub fn new(parent: impl Into<PackedOption<ScopeId>>, kind: ScopeKind<'me>) -> Self { Self { parent: parent.into(), kind } }
 
-    pub fn find_sym(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<SymbolId> {
+    pub fn find_sym(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<Result<SymbolId, Error>> {
         self.over(scope_map, |scope| {
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
                 let ns = namespaces.get_ns(ns);
@@ -62,7 +62,7 @@ impl<'me> Scope<'me> {
 
             if let ScopeKind::Generics(generics_scope) = scope.kind {
                 if let Some(ty) = generics_scope.generics.iter().find(|x| x.0 == name) {
-                    return Some(ty.1.sym(symbols).expect("please work"))
+                    return Some(Ok(ty.1.sym(symbols).expect("please work")))
                 }
             }
 
@@ -84,16 +84,21 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_ns(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap, symbols: &SymbolMap) -> Option<NamespaceId> {
+    pub fn find_ns(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap, symbols: &SymbolMap) -> Option<(NamespaceId, bool)> {
         self.over(scope_map, |scope| {
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
                 let ns = namespaces.get_ns(ns);
                 if let Some(ns) = ns.get_ns(name) {
-                    return Some(ns)
+                    return Some((ns, false))
                 }
 
                 if let Some(ty) = ns.get_sym(name) {
-                    return Some(symbols.sym_ns(ty))
+                    let ns = match ty {
+                        Ok(v) => (symbols.sym_ns(v), false),
+                        Err(_) => (symbols.sym_ns(SymbolId::ERR), true),
+                    };
+
+                    return Some(ns)
                 }
             }
 

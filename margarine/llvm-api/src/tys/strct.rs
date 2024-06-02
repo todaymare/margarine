@@ -1,9 +1,9 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::core::{LLVMCountStructElementTypes, LLVMGetStructElementTypes, LLVMIsOpaqueStruct, LLVMStructSetBody};
+use llvm_sys::core::{LLVMAddAttributeAtIndex, LLVMCountStructElementTypes, LLVMCreateEnumAttribute, LLVMGetEnumAttributeKindForName, LLVMGetStructElementTypes, LLVMIsOpaqueStruct, LLVMStructSetBody};
 use sti::arena::Arena;
 
-use crate::tys::TypeKind;
+use crate::{cstr, tys::TypeKind};
 
 use super::Type;
 
@@ -27,7 +27,7 @@ impl<'ctx> StructTy<'ctx> {
     }
 
 
-    pub fn set_fields(self, fields: &[Type<'ctx>]) {
+    pub fn set_fields(self, fields: &[Type<'ctx>], packed: bool) {
         assert!(self.is_opaque());
 
         // &[Type] == &[*mut LLVMType]
@@ -36,8 +36,7 @@ impl<'ctx> StructTy<'ctx> {
         
 
         unsafe { LLVMStructSetBody(self.llvm_ty().as_ptr(),
-                                   vec.as_mut_ptr(), fields.len() as u32, 0) };
-        dbg!(self);
+                                   vec.as_mut_ptr(), fields.len() as u32, packed as i32) };
     }
 
 

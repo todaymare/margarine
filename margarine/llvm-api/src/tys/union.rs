@@ -34,7 +34,6 @@ impl<'ctx> UnionTy<'ctx> {
         let mut max = 0;
 
         for ty in fields {
-            dbg!(ty.size_of(module).unwrap());
             max = max.max(ty.size_of(module).unwrap());
         }
 

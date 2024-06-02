@@ -1,9 +1,9 @@
-use std::{ops::Deref, ptr::NonNull};
+use std::{any::Any, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMArrayType2, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMVoidTypeInContext}, LLVMContext};
+use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMConstStructInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleType, LLVMDoubleTypeInContext, LLVMFloatType, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMVoidTypeInContext}, LLVMContext};
 use sti::{arena::Arena, format_in};
 
-use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{string::StringValue, Value}};
+use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{array::Array, bool::Bool, fp::FP, int::Integer, strct::Struct, string::StringValue, unit::Unit, Value}};
 
 pub struct Context<'ctx>(ContextRef<'ctx>);
 
@@ -146,6 +146,78 @@ impl<'me> ContextImpl<'me> {
 
     }
 
+
+    pub fn const_unit(&self) -> Unit<'me> {
+        let ptr = unsafe { LLVMConstInt(LLVMIntTypeInContext(self.ptr.as_ptr(), 1), 0, 0) };
+        let ptr = NonNull::new(ptr).unwrap();
+        let ptr = Value::new(ptr);
+        unsafe { Unit::new(ptr) }
+    }
+
+
+    pub fn const_array(&self, ty: Type<'me>, vals: &[Value<'me>]) -> Array<'me> {
+        let pool = Arena::tls_get_rec();
+        let mut vec = sti::vec::Vec::with_cap_in(&*pool, vals.len());
+        for v in vals { assert_eq!(ty, v.ty()); vec.push(unsafe { v.llvm_val().as_ptr() }) }
+
+        let ptr = unsafe { LLVMConstArray2(ty.llvm_ty().as_ptr(), vec.as_mut_ptr(), vec.len() as u64) };
+        let ptr = NonNull::new(ptr).unwrap();
+        let ptr = Value::new(ptr);
+        unsafe { Array::new(ptr) }
+    }
+
+
+    pub fn const_int(&self, ty: IntegerTy<'me>, val: i64, sign_extended: bool) -> Integer<'me> {
+        if val as u64 > 2u64.saturating_pow(ty.bit_size() as u32) {
+            panic!("the constant ({val}) is out of bounds of the integer size ({})", ty.bit_size());
+        }
+
+        let ptr = unsafe { LLVMConstInt(ty.llvm_ty().as_ptr(), val as u64, sign_extended as i32) };
+        let ptr = NonNull::new(ptr).expect("failed to build a const int");
+        let ptr = Value::new(ptr);
+        unsafe { Integer::new(ptr) }
+    }
+
+
+    pub fn const_f32(&self, val: f32) -> FP<'me> {
+        let ptr = unsafe { LLVMConstReal(self.f32().llvm_ty().as_ptr(), val as f64) };
+        let ptr = NonNull::new(ptr).expect("failed to build a const f32");
+        let ptr = Value::new(ptr);
+        unsafe { FP::new(ptr) }
+    }
+
+
+    pub fn const_f64(&self, val: f64) -> FP<'me> {
+        let ptr = unsafe { LLVMConstReal(self.f64().llvm_ty().as_ptr(), val) };
+        let ptr = NonNull::new(ptr).expect("failed to build a const f64");
+        let ptr = Value::new(ptr);
+        unsafe { FP::new(ptr) }
+    }
+
+
+    pub fn const_bool(&self, val: bool) -> Bool<'me> {
+        let ptr = unsafe { LLVMConstInt(LLVMIntTypeInContext(self.ptr.as_ptr(), 1), val as u64, 0) };
+        let ptr = NonNull::new(ptr).expect("failed to build a const bool");
+        let ptr = Value::new(ptr);
+        unsafe { Bool::new(ptr) }
+    }
+
+
+    pub fn const_struct(&self, ty: StructTy<'me>, fields: &[Value<'me>]) -> Struct<'me> {
+        assert!(!ty.is_opaque(), "can't create a non-opaque type");
+        assert_eq!(ty.fields_count(), fields.len());
+
+        let arena = Arena::tls_get_rec();
+        for (f, sf) in fields.iter().zip(ty.fields(&*arena)) {
+            assert_eq!(f.ty(), sf);
+        }
+
+
+        let ptr = unsafe { LLVMConstNamedStruct(ty.llvm_ty().as_ptr(),
+                    fields.as_ptr().cast_mut().cast(), fields.len() as u32) };
+
+        unsafe { Struct::new(Value::new(NonNull::new(ptr).unwrap())) }
+    }
 }
 
 

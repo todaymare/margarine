@@ -1,4 +1,4 @@
-use std::{fs, process::Command};
+use std::{env, fs, process::Command};
 
 use colourful::ColourBrush;
 use margarine::{nodes::{decl::Decl, AST}, Codegen, DropTimer, FileData, SourceRange, StringMap};
@@ -49,8 +49,6 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
         margarine::TyChecker::run(&sema_arena, &mut global, &*modules, string_map)
     };
 
-    dbg!(&sema);
-
     // todo: find a way to comrpess these errors into vecs
     let mut lex_error_files = Vec::with_capacity(lex_errors.len());
     for l in lex_errors {
@@ -86,8 +84,116 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
         sema_errors.push(report);
     } 
 
-    let codegen = Codegen::run(&mut sema);
-    let module = codegen.1;
+    let (ctx, module) = Codegen::run(&mut sema);
+
+    // transfer errors into the binary
+    {
+        let u32_ty = ctx.integer(32);
+        let ptr_ty = ctx.ptr();
+        
+
+        // file count
+        {
+            let file_count_global = module.add_global(*u32_ty, "fileCount");
+            let file_count_value = ctx.const_int(u32_ty, files.len() as i64, false);
+            file_count_global.set_initialiser(*file_count_value);
+        }
+
+
+        // lexer errors
+        {
+            let strct = ctx.structure("lexer_err_ty");
+            strct.set_fields(&[*u32_ty, *ptr_ty], false);
+
+            let errs_ty = ctx.array(*strct, parse_error_files.len());
+            let mut err_arr_values = Vec::with_capacity(parse_error_files.len());
+
+            for file in lex_error_files {
+                let file_err_array_ty = ctx.array(*ptr_ty, file.len());
+                let mut file_arr_values = Vec::with_capacity(file.len());
+
+                for s in &file {
+                    let global = ctx.const_str(&*s);
+                    let ptr = module.add_global(*global.ty(), "");
+                    ptr.set_initialiser(*global);
+                    file_arr_values.push(*ptr);
+                }
+
+                // value arr
+                let ptr = module.add_global(*file_err_array_ty, "");
+                let arr = ctx.const_array(*ptr_ty, &file_arr_values);
+                ptr.set_initialiser(*arr);
+
+                let len = ctx.const_int(u32_ty, file.len() as i64, false);
+
+                let strct = ctx.const_struct(strct, &[*len, *ptr]);
+                err_arr_values.push(*strct);
+            }
+
+            // value arr
+            let ptr = module.add_global(*errs_ty, "lexerErrors");
+            let arr = ctx.const_array(*strct, &err_arr_values);
+            ptr.set_initialiser(*arr);
+        }
+
+
+        // parser errors
+        {
+            let strct = ctx.structure("parser_err_ty");
+            strct.set_fields(&[*u32_ty, *ptr_ty], false);
+
+            let errs_ty = ctx.array(*strct, parse_error_files.len());
+            let mut err_arr_values = Vec::with_capacity(parse_error_files.len());
+
+            for file in parse_error_files {
+                let file_err_array_ty = ctx.array(*ptr_ty, file.len());
+                let mut file_arr_values = Vec::with_capacity(file.len());
+
+                for s in &file {
+                    let global = ctx.const_str(&*s);
+                    let ptr = module.add_global(*global.ty(), "");
+                    ptr.set_initialiser(*global);
+                    file_arr_values.push(*ptr);
+                }
+
+                // value arr
+                let ptr = module.add_global(*file_err_array_ty, "");
+                let arr = ctx.const_array(*ptr_ty, &file_arr_values);
+                ptr.set_initialiser(*arr);
+
+                let len = ctx.const_int(u32_ty, file.len() as i64, false);
+
+                let strct = ctx.const_struct(strct, &[*len, *ptr]);
+                err_arr_values.push(*strct);
+            }
+
+            // value arr
+            let ptr = module.add_global(*errs_ty, "parserErrors");
+            let arr = ctx.const_array(*strct, &err_arr_values);
+            ptr.set_initialiser(*arr);
+        }
+
+
+        // sema errors
+        let sema_err_array_ty = ctx.array(*ptr_ty, sema_errors.len());
+        let mut arr_values = Vec::with_capacity(sema_errors.len());
+
+        for e in &sema_errors {
+            let global = ctx.const_str(&*e);
+            let ptr = module.add_global(*global.ty(), "");
+            ptr.set_initialiser(*global);
+            arr_values.push(*ptr);
+        }
+
+        let ptr = module.add_global(*sema_err_array_ty, "semaErrors");
+        let array = ctx.const_array(*ptr.ty(), &arr_values);
+        ptr.set_initialiser(*array);
+
+        let ptr = module.add_global(*u32_ty, "semaErrorsLen");
+        let num = ctx.const_int(u32_ty, sema_errors.len().try_into().unwrap(), false);
+        ptr.set_initialiser(*num);
+    }
+
 
     let str = module.dump_to_str();
     fs::write("out.ll", str.as_str()).unwrap();
@@ -97,14 +203,16 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
         return Err("fatal compiler error");
     }
 
-
     Command::new("clang")
-        .arg("libcore.a")
+        .arg("/opt/homebrew/lib/libglfw.3.4.dylib")
+        .arg("target/debug/libcore.a")
         .arg("out.ll")
         .arg("-o")
         .arg("out")
         .arg("-Wall")
         .arg("-Wno-override-module")
+        .arg("-framework")
+        .arg("OpenGL")
         .spawn().unwrap().wait().unwrap();
 
 

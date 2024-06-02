@@ -3,15 +3,17 @@ use std::collections::HashMap;
 use common::string_map::StringIndex;
 use sti::{define_key, keyed::{KVec, Key}};
 
-use crate::types::SymbolId;
+use crate::{errors::Error, types::SymbolId};
 
 define_key!(u32, pub NamespaceId);
 
 
 #[derive(Debug)]
 pub struct Namespace {
-    symbols  : HashMap<StringIndex, SymbolId>,
+    symbols  : HashMap<StringIndex, Option<SymbolId>>,
+    imported_symbols: HashMap<StringIndex, Option<SymbolId>>,
     namespaces  : HashMap<StringIndex, NamespaceId>,
+    imported_namespaces: HashMap<StringIndex, NamespaceId>,
     pub path: StringIndex,
 }
 
@@ -53,13 +55,32 @@ impl Namespace {
     pub fn new(path: StringIndex) -> Self {
         Self {
             symbols: HashMap::new(),
+            imported_symbols: HashMap::new(),
             namespaces: HashMap::new(),
+            imported_namespaces: HashMap::new(),
             path,
         }
     }
+
+
     pub fn add_sym(&mut self, name: StringIndex, sym: SymbolId) {
-        let old_sym = self.symbols.insert(name, sym);
-        assert!(old_sym.is_none());
+        let old_sym = self.symbols.insert(name, Some(sym));
+        if old_sym.is_some() {
+            self.symbols.insert(name, None);
+        }
+    }
+
+
+    pub fn add_err_sym(&mut self, name: StringIndex) {
+        self.symbols.insert(name, None);
+    }
+
+
+    pub fn add_import_sym(&mut self, name: StringIndex, sym: SymbolId) {
+        let old_sym = self.imported_symbols.insert(name, Some(sym));
+        if old_sym.is_some() {
+            self.symbols.insert(name, None);
+        }
     }
 
 
@@ -69,8 +90,25 @@ impl Namespace {
     }
 
 
-    pub fn get_sym(&self, name: StringIndex) -> Option<SymbolId> {
-        self.symbols.get(&name).copied()
+    pub fn add_import_ns(&mut self, name: StringIndex, ns: NamespaceId) {
+        let old_sym = self.imported_namespaces.insert(name, ns);
+        assert!(old_sym.is_none());
+    }
+
+
+    pub fn get_sym(&self, name: StringIndex) -> Option<Result<SymbolId, Error>> {
+        if let Some(v) = self.symbols.get(&name).copied() {
+            if let Some(v) = v { return Some(Ok(v)) }
+            return Some(Err(Error::Bypass))
+        }
+
+
+        if let Some(v) = self.imported_symbols.get(&name).copied() {
+            if let Some(v) = v { return Some(Ok(v)) }
+            return Some(Err(Error::Bypass))
+        }
+
+        None
     }
 
 
@@ -78,7 +116,7 @@ impl Namespace {
         self.namespaces.get(&name).copied()
     }
 
-    pub fn syms(&self) -> &HashMap<StringIndex, SymbolId> {
+    pub fn syms(&self) -> &HashMap<StringIndex, Option<SymbolId>> {
         &self.symbols
     }
 

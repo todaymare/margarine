@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFPCast, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstArray2, LLVMConstInt, LLVMConstReal, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMDoubleType, LLVMFloatType, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetParam, LLVMIntTypeInContext, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFPCast, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetParam, LLVMIntTypeInContext, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, keyed::KVec};
 
 use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
@@ -269,70 +269,43 @@ impl<'ctx> Builder<'ctx> {
 
 
     pub fn const_unit(&self) -> Unit<'ctx> {
-        let ptr = unsafe { LLVMConstInt(LLVMIntTypeInContext(self.ctx.ptr.as_ptr(), 1), 0, 0) };
-        let ptr = NonNull::new(ptr).unwrap();
-        let ptr = Value::new(ptr);
-        unsafe { Unit::new(ptr) }
+        self.ctx.const_unit()
     }
 
 
     pub fn const_array(&self, ty: Type<'ctx>, vals: &[Value<'ctx>]) -> Array<'ctx> {
-        let pool = Arena::tls_get_rec();
-        let mut vec = sti::vec::Vec::with_cap_in(&*pool, vals.len());
-        for v in vals { vec.push(unsafe { v.llvm_val().as_ptr() }) }
-
-        let ptr = unsafe { LLVMConstArray2(ty.llvm_ty().as_ptr(), vec.as_mut_ptr(), vec.len() as u64) };
-        let ptr = NonNull::new(ptr).unwrap();
-        let ptr = Value::new(ptr);
-        unsafe { Array::new(ptr) }
+        self.ctx.const_array(ty, vals)
     }
 
 
     pub fn const_int(&self, ty: IntegerTy<'ctx>, val: i64, sign_extended: bool) -> Integer<'ctx> {
-        if val as u64 > 2u64.saturating_pow(ty.bit_size() as u32) {
-            panic!("the constant ({val}) is out of bounds of the integer size ({})", ty.bit_size());
-        }
-
-        let ptr = unsafe { LLVMConstInt(ty.llvm_ty().as_ptr(), val as u64, sign_extended as i32) };
-        let ptr = NonNull::new(ptr).expect("failed to build a const int");
-        let ptr = Value::new(ptr);
-        unsafe { Integer::new(ptr) }
+        self.ctx.const_int(ty, val, sign_extended)
     }
 
 
     pub fn const_f32(&self, val: f32) -> FP<'ctx> {
-        let ptr = unsafe { LLVMConstReal(LLVMFloatType(), val as f64) };
-        let ptr = NonNull::new(ptr).expect("failed to build a const f32");
-        let ptr = Value::new(ptr);
-        unsafe { FP::new(ptr) }
+        self.ctx.const_f32(val)
     }
 
 
     pub fn const_f64(&self, val: f64) -> FP<'ctx> {
-        let ptr = unsafe { LLVMConstReal(LLVMDoubleType(), val) };
-        let ptr = NonNull::new(ptr).expect("failed to build a const f64");
-        let ptr = Value::new(ptr);
-        unsafe { FP::new(ptr) }
+        self.ctx.const_f64(val)
     }
 
 
     pub fn const_bool(&self, val: bool) -> Bool<'ctx> {
-        let ptr = unsafe { LLVMConstInt(LLVMIntTypeInContext(self.ctx.ptr.as_ptr(), 1), val as u64, 0) };
-        let ptr = NonNull::new(ptr).expect("failed to build a const bool");
-        let ptr = Value::new(ptr);
-        unsafe { Bool::new(ptr) }
+        self.ctx.const_bool(val)
     }
 
 
     pub fn struct_instance(&self, ty: StructTy<'ctx>, fields: &[Value<'ctx>]) -> Struct<'ctx> {
         assert!(!ty.is_opaque(), "can't create a non-opaque type");
-
         assert_eq!(ty.fields_count(), fields.len());
+
         let arena = Arena::tls_get_temp();
         let ptr = self.alloca(*ty);
         for (i, (sf, ff)) in ty.fields(&*arena).iter().zip(fields.iter()).enumerate() {
             assert_eq!(*sf, ff.ty());
-            unsafe { dbg!(sf.llvm_ty(), ff.ty().llvm_ty()) };
 
             let ptr = self.field_ptr(ptr, ty, i);
             self.store(ptr, *ff);

@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use llvm_sys::core::{LLVMSetInitializer, LLVMSetLinkage};
+use llvm_sys::core::{LLVMGetElementType, LLVMSetInitializer, LLVMSetLinkage};
 
 use crate::tys::{ptr::PtrTy, TypeKind};
 

@@ -16,7 +16,7 @@ define_key!(u32, pub VarId);
 
 #[derive(Debug)]
 pub struct SymbolMap<'me> {
-    syms : KVec<SymbolId, (Option<Symbol<'me>>, NamespaceId)>,
+    syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId)>,
     pub gens  : KVec<GenListId, &'me [(StringIndex, Type)]>,
     pub vars : KVec<VarId, Var>,
     pub arena: &'me Arena,
@@ -66,7 +66,7 @@ impl<'me> SymbolMap<'me> {
         let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new() };
         macro_rules! init {
             ($name: ident) => {
-                let pending = slf.pending(ns_map, StringMap::$name);
+                let pending = slf.pending(ns_map, StringMap::$name, 0);
                 assert_eq!(pending, SymbolId::$name);
                 let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Struct));
                 slf.add_sym(pending, Symbol::new(StringMap::$name, &[], kind));
@@ -87,7 +87,7 @@ impl<'me> SymbolMap<'me> {
 
         // bool
         {
-            let pending = slf.pending(ns_map, StringMap::BOOL);
+            let pending = slf.pending(ns_map, StringMap::BOOL, 0);
             assert_eq!(pending, SymbolId::BOOL);
             let fields = [
                 (StringMap::TRUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
@@ -103,7 +103,7 @@ impl<'me> SymbolMap<'me> {
 
         // rc 
         {
-            let pending = slf.pending(ns_map, StringMap::PTR);
+            let pending = slf.pending(ns_map, StringMap::PTR, 1);
             assert_eq!(pending, SymbolId::PTR);
             let fields = [
                 (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U64, &[]))),
@@ -118,7 +118,7 @@ impl<'me> SymbolMap<'me> {
 
         // range
         {
-            let pending = slf.pending(ns_map, StringMap::RANGE);
+            let pending = slf.pending(ns_map, StringMap::RANGE, 0);
             assert_eq!(pending, SymbolId::RANGE);
             let fields = [
                 (StringMap::MIN.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
@@ -134,7 +134,7 @@ impl<'me> SymbolMap<'me> {
 
         // option 
         {
-            let pending = slf.pending(ns_map, StringMap::OPTION);
+            let pending = slf.pending(ns_map, StringMap::OPTION, 1);
             assert_eq!(pending, SymbolId::OPTION);
             let fields = [
                 (StringMap::SOME.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
@@ -150,7 +150,7 @@ impl<'me> SymbolMap<'me> {
 
         // result 
         {
-            let pending = slf.pending(ns_map, StringMap::RESULT);
+            let pending = slf.pending(ns_map, StringMap::RESULT, 2);
             assert_eq!(pending, SymbolId::RESULT);
             let fields = [
                 (StringMap::OK.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
@@ -167,7 +167,7 @@ impl<'me> SymbolMap<'me> {
 
         // str 
         {
-            let pending = slf.pending(ns_map, StringMap::STR);
+            let pending = slf.pending(ns_map, StringMap::STR, 0);
             assert_eq!(pending, SymbolId::STR);
             let ptr = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U8, &[]));
             let ptr = slf.arena.alloc_new([ptr]); 
@@ -190,8 +190,8 @@ impl<'me> SymbolMap<'me> {
     }
 
     #[inline(always)]
-    pub fn pending(&mut self, ns_map: &mut NamespaceMap, path: StringIndex) -> SymbolId {
-        self.syms.push((None, ns_map.push(Namespace::new(path))))
+    pub fn pending(&mut self, ns_map: &mut NamespaceMap, path: StringIndex, gen_count: usize) -> SymbolId {
+        self.syms.push((Err(gen_count), ns_map.push(Namespace::new(path))))
     }
 
 
@@ -228,7 +228,7 @@ impl<'me> SymbolMap<'me> {
                        else { &*self.arena.alloc_new([FunctionArgument::new(StringMap::VALUE, i.1, false)]) };
             let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id, index });
             let sym = Symbol::new(func_name, generics, SymbolKind::Function(sym));
-            let id = self.pending(ns_map, func_name);
+            let id = self.pending(ns_map, func_name, generics.len());
             self.add_sym(id, sym);
 
             let ns = ns_map.get_ns_mut(ns);
@@ -238,13 +238,23 @@ impl<'me> SymbolMap<'me> {
 
 
     pub fn add_sym(&mut self, id: SymbolId, sym: Symbol<'me>) { 
-        debug_assert!(self.syms[id].0.is_none());
-        self.syms[id].0 = Some(sym)
+        let gen_len = self.syms[id].0.unwrap_err();
+        assert_eq!(sym.generics.len(), gen_len);
+
+        self.syms[id].0 = Ok(sym)
     }
 
 
     pub fn sym(&mut self, id: SymbolId) -> Symbol<'me> { 
         self.syms[id].0.unwrap()
+    }
+
+
+    pub fn sym_gens_size(&mut self, id: SymbolId) -> usize { 
+        match self.syms[id].0 {
+            Ok(v) => v.generics.len(),
+            Err(v) => v,
+        }
     }
 
 

@@ -11,7 +11,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         let namespace = self.namespaces.push(namespace);
 
         // Collect type names
-        self.collect_names(path, namespace, body);
+        self.collect_names(path, namespace, body, 0);
 
         // Update the current scope so the following functions
         // are able to see the namespace
@@ -44,7 +44,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     }
 
 
-    pub fn collect_names(&mut self, path: StringIndex, ns_id: NamespaceId, nodes: &[NodeId]) {
+    pub fn collect_names(&mut self, path: StringIndex, ns_id: NamespaceId, nodes: &[NodeId], gen_count: usize) {
         for n in nodes {
             let NodeId::Decl(decl) = n
             else { continue };
@@ -52,9 +52,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             let mut ns = self.namespaces.get_ns_mut(ns_id);
             let decl = self.ast.decl(*decl);
             match decl {
-                | Decl::Enum { name, header, .. } 
-                | Decl::Struct { name, header, .. }
-                | Decl::Function { sig: FunctionSignature { name, source: header, .. }, .. }=> {
+                | Decl::Enum { name, header, generics, .. } 
+                | Decl::Struct { name, header, generics, .. }
+                | Decl::Function { sig: FunctionSignature { name, source: header, generics, .. }, .. }=> {
                     if ns.get_sym(name).is_some() {
                         self.error(*n, Error::NameIsAlreadyDefined {
                             source: header, name });
@@ -67,7 +67,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     }
 
                     let path = self.string_map.concat(path, name);
-                    let pend = self.syms.pending(&mut self.namespaces, path);
+                    let pend = self.syms.pending(&mut self.namespaces, path, generics.len() + gen_count);
                     ns = self.namespaces.get_ns_mut(ns_id);
 
                     ns.add_sym(name, pend);
@@ -84,7 +84,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         }
 
                         let path = self.string_map.concat(path, f.name());
-                        let pend = self.syms.pending(&mut self.namespaces, path);
+                        let pend = self.syms.pending(&mut self.namespaces, path, 0);
                         ns = self.namespaces.get_ns_mut(ns_id);
 
                         ns.add_sym(f.name(), pend);
@@ -105,10 +105,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let module_ns = self.namespaces.push(module_ns);
 
                     self.namespaces.get_ns_mut(ns_id).add_ns(name, module_ns);
-                    self.collect_names(path, module_ns, &*body);
+                    self.collect_names(path, module_ns, &*body, gen_count);
                 }
 
-                Decl::Attribute { decl, .. } => self.collect_names(path, ns_id, &[decl.into()]),
+                Decl::Attribute { decl, .. } => self.collect_names(path, ns_id, &[decl.into()], gen_count),
 
                 _ => (),
             }
@@ -125,6 +125,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             match decl {
                 Decl::Module { name, body, .. } => {
                     let module_ns = self.namespaces.get_ns(ns_id).get_ns(name).unwrap();
+                    let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(module_ns));
+                    let scope = self.scopes.push(scope);
                     self.collect_impls(path, scope, module_ns, &*body);
                 }
 
@@ -149,7 +151,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                     let ns = self.syms.sym_ns(sym);
 
-                    self.collect_names(path, ns, &body);
+                    self.collect_names(path, ns, &body, gens.len());
                     self.collect_impls(path, scope, ns, &body);
                 }
 
@@ -171,7 +173,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             match self.ast.decl(id) {
                 Decl::Module { name, body, .. } => {
                     let module_ns = self.namespaces.get_ns(ns_id).get_ns(name).unwrap();
-                    self.collect_uses(scope_id, module_ns, &body);
+                    let scope = Scope::new(scope_id.some(), ScopeKind::ImplicitNamespace(module_ns));
+                    let scope = self.scopes.push(scope);
+                    self.collect_uses(scope, module_ns, &body);
                 }
 
 
@@ -204,7 +208,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     fn collect_use_item(&mut self, node: NodeId, scope: Scope, ns_id: NamespaceId, item: UseItem) {
         match item.kind() {
             UseItemKind::List { list } => {
-                let Some(import_ns) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms)
+                let Some((import_ns, _)) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms)
                 else {
                     self.error(node, Error::NamespaceNotFound { source: item.range(), namespace: item.name() });
                     return;
@@ -219,16 +223,19 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             UseItemKind::BringName => {
                 if let Some(import_sym) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces) {
-                    self.namespaces.get_ns_mut(ns_id).add_sym(item.name(), import_sym);
+                    let ns = self.namespaces.get_ns_mut(ns_id);
+                    match import_sym {
+                        Ok(v) => ns.add_import_sym(item.name(), v),
+                        Err(_) => ns.add_err_sym(item.name()),
+                    };
                     return;
                 };
 
 
-                if let Some(import_ns) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms) {
+                if let Some((import_ns, _)) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms) {
                     self.namespaces.get_ns_mut(ns_id).add_ns(item.name(), import_ns);
                     return;
                 };
-
 
 
                 self.error(node, Error::NamespaceNotFound { source: item.range(), namespace: item.name() });
@@ -236,7 +243,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
 
             UseItemKind::All => {
-                let Some(import_ns) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms)
+                let Some((import_ns, _)) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms)
                 else {
                     self.error(node, Error::NamespaceNotFound { source: item.range(), namespace: item.name() });
                     return;
@@ -250,11 +257,17 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                                        node, Error::NameIsAlreadyDefined { source: item.range(), name: *s.0 });
                         continue;
                     }
-                    ns.add_sym(*s.0, *s.1);
+
+                    let Some(sym) = s.1
+                    else { continue };
+
+                    if ns.get_sym(*s.0).is_none() {
+                        ns.add_import_sym(*s.0, *sym)
+                    }
                 }
 
                 for n in import_ns.nss() {
-                    ns.add_ns(*n.0, *n.1)
+                    ns.add_import_ns(*n.0, *n.1)
                 }
             },
         };
@@ -274,7 +287,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                  Decl::Struct { name, fields, generics, .. } => {
                     let ns = self.namespaces.get_ns(ns);
                     let mut structure_fields = sti::vec::Vec::with_cap_in(self.output, fields.len());
-                    let tsi = ns.get_sym(name).unwrap();
+                    let Ok(tsi) = ns.get_sym(name).unwrap()
+                    else { continue };
 
                     for f in fields {
                         let sym = self.dt_to_gen(self.scopes.get(scope), f.1, generics);
@@ -304,7 +318,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 Decl::Enum { name, mappings, generics, .. } => {
                     let ns = self.namespaces.get_ns(ns);
                     let mut enum_mappings = sti::vec::Vec::with_cap_in(self.output, mappings.len());
-                    let tsi = ns.get_sym(name).unwrap();
+                    let Ok(tsi) = ns.get_sym(name).unwrap()
+                    else { continue };
 
                     for f in mappings {
                         let sym = self.dt_to_gen(self.scopes.get(scope), *f.data_type(), generics);
@@ -338,8 +353,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         vec.extend_from_slice(sig.generics);
                         vec.leak()
                     };
-                    let fid = self.namespaces.get_ns(ns).get_sym(sig.name).unwrap();
 
+                    let Some(Ok(fid)) = self.namespaces.get_ns(ns).get_sym(sig.name)
+                    else { continue };
 
                     let mut args = sti::vec::Vec::with_cap_in(self.output, sig.arguments.len());
 
@@ -398,7 +414,6 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let func = FunctionTy::new(args.leak(), ret, FunctionKind::UserDefined { decl: *id });
                     let func = Symbol::new(sym_name, generics, SymbolKind::Function(func));
 
-                    dbg!(&self.errors);
                     self.syms.add_sym(fid, func);
                 }
 
@@ -438,7 +453,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         let func = FunctionTy::new(args.leak(), ret, FunctionKind::Extern(f.path()));
                         let func = Symbol::new(sym_name, &[], SymbolKind::Function(func));
 
-                        let id = self.namespaces.get_ns(ns).get_sym(f.name()).unwrap();
+                        let Ok(id) = self.namespaces.get_ns(ns).get_sym(f.name()).unwrap()
+                        else { continue };
+
                         self.syms.add_sym(id, func);
                     }
                 }
@@ -497,7 +514,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             NodeId::Expr(expr) => self.expr(path, *scope, expr),
 
-            NodeId::Err(_) => {
+            NodeId::Err(v) => {
                 AnalysisResult::new(Type::ERROR, true)
             },
         }
@@ -513,7 +530,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             
             Decl::Function { sig, body, .. } => {
                 let ns = self.namespaces.get_ns(ns);
-                let Some(func) = ns.get_sym(sig.name)
+                let Some(Ok(func)) = ns.get_sym(sig.name)
                 else { return };
 
                 // we need a scope that'd fake the generics
@@ -525,7 +542,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let generics = {
                     let mut vec = sti::vec::Vec::new_in(&*self.output);
                     for gen in generics {
-                        let ty = self.syms.pending(&mut self.namespaces, *gen);
+                        let ty = self.syms.pending(&mut self.namespaces, *gen, 0);
                         let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Struct));
                         self.syms.add_sym(ty, Symbol::new(*gen, &[], kind));
                         vec.push((*gen, self.syms.get_ty(ty, &[])));
@@ -629,7 +646,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                             return;
                         };
 
-                        let func = self.namespaces.get_ns(ns).get_sym(sig.name).unwrap();
+                        let Ok(func) = self.namespaces.get_ns(ns).get_sym(sig.name).unwrap()
+                        else { return };
+
                         self.startups.push(func);
                     }
                     _ => self.error(id, Error::UnknownAttr(attr_range, attr))
@@ -742,6 +761,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     for n in body.iter() { self.error(*n, Error::Bypass) }
                     return;
                 };
+
+                let Ok(sym) = sym else { return };
                 
 
                 // check if the exprs type is a mutable iterable
@@ -809,6 +830,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             Expr::Deref(e) => {
                 let expr = self.expr(path, scope, e);
                 let sym = expr.ty.sym(&mut self.syms)?;
+
+                if sym == SymbolId::ERR { return Err(Error::Bypass) }
                 
                 if sym != SymbolId::PTR {
                     let range = self.ast.range(e);
@@ -953,6 +976,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         return
                     }
                 })();
+
+                if else_block.is_none() && (value.is_err(&mut self.syms) | value.is_never(&mut self.syms)) {
+                    value = Type::UNIT;
+                }
 
                 if value.ne(&mut self.syms, Type::UNIT) && else_block.is_none() {
                     let body = self.ast.range(body);
@@ -1178,7 +1205,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                     for a in args {
                         let range = self.ast.range(a.0);
-                        vec.push((range, self.expr(path, scope, a.0), a.1));
+                        vec.push((range, self.expr(path, scope, a.0), a.1, a.0));
                     }
 
                     vec.leak()
@@ -1199,6 +1226,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 let Some(sym_id) = func
                 else { return Err(Error::FunctionNotFound { source, name }) };
+
+                let Ok(sym_id) = sym_id
+                else { return Err(Error::Bypass) };
 
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind
@@ -1237,7 +1267,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 // ty & inout check args
                 for (i, (a, fa)) in args_anals.iter().zip(func_args.iter()).enumerate() {
                     if !a.1.ty.eq(&mut self.syms, fa.0) {
-                        self.error(id, Error::InvalidType {
+                        self.error(a.3, Error::InvalidType {
                             source: a.0, found: a.1.ty, expected: fa.0 })
                     }
                     
@@ -1267,7 +1297,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let Some(ns) = ns
                 else { return Err(Error::NamespaceNotFound { source: namespace_source, namespace }) };
 
-                let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(ns));
+                if ns.1 { return Err(Error::Bypass) }
+
+                let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(ns.0));
                 let scope = self.scopes.push(scope);
 
                 self.expr(path, scope, action)

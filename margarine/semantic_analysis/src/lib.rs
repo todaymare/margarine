@@ -127,14 +127,14 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
-                namespace.add_sym(StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap());
-                namespace.add_sym(StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap());
+                namespace.add_sym(StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap());
+                namespace.add_sym(StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap());
             }
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::RESULT));
-                namespace.add_sym(StringMap::OK , ns.get_sym(StringMap::OK ).unwrap());
-                namespace.add_sym(StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap());
+                namespace.add_sym(StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap());
+                namespace.add_sym(StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap());
             }
 
             analyzer.namespaces.push(namespace)
@@ -151,8 +151,6 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.1.node, error)
             }
         }
-
-        dbg!(&analyzer.errors);
 
         analyzer
     }
@@ -201,7 +199,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces, &self.syms)
                 else { return Err(Error::NamespaceNotFound { namespace: ns, source: dt.range() }) };
 
-                let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
+                if ns.1 { return Err(Error::Bypass) }
+
+                let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns.0));
                 self.dt_to_gen(scope, *dt, gens)
             },
 
@@ -213,11 +213,13 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let Some(base) = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
 
-                let sym = self.syms.sym(base);
+                let base = base?;
 
-                if sym.generics.len() != generics.len() {
+                let genc = self.syms.sym_gens_size(base);
+
+                if genc != generics.len() {
                     return Err(Error::GenericLenMismatch {
-                        source: dt.range(), found: generics.len(), expected: sym.generics.len() });
+                        source: dt.range(), found: generics.len(), expected: genc });
                 }
 
                 let generics = {
@@ -248,7 +250,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces, &self.syms)
                 else { return Err(Error::NamespaceNotFound { namespace: ns, source: dt.range() }) };
 
-                let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
+                if ns.1 { return Err(Error::Bypass) }
+
+                let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns.0));
                 let scope = self.scopes.push(scope);
                 self.dt_to_ty(scope, id, *dt)
             },
@@ -263,6 +267,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 let Some(base) = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
+
+                let base = base?;
 
                 let base_sym = self.syms.sym(base);
 
