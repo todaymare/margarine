@@ -1,23 +1,15 @@
-use common::{source::SourceRange, string_map::{OptStringIndex, StringIndex}};
+use common::{source::SourceRange, string_map::{OptStringIndex, StringIndex}, ImmutableData};
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, ImmutableData)]
 pub struct DataType<'a> {
-    source_range: SourceRange,
+    range: SourceRange,
     kind: DataTypeKind<'a>, 
 }
 
 
 impl<'a> DataType<'a> {
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange { self.source_range }
-    #[inline(always)]
-    pub fn kind(&self) -> DataTypeKind<'a> { self.kind }
-}
-
-
-impl<'a> DataType<'a> {
     pub fn new(source_range: SourceRange, kind: DataTypeKind<'a>) -> Self { 
-        Self { source_range, kind } 
+        Self { range: source_range, kind } 
     }
 }
 
@@ -33,10 +25,9 @@ pub enum DataTypeKind<'a> {
 
 
 impl<'a> DataTypeKind<'a> {
-    /// Coersions happen from self to oth
-    /// not the other way around
     pub fn is(&self, oth: &DataTypeKind<'a>) -> bool {
         self == &DataTypeKind::Never
+        || oth == &DataTypeKind::Never
         || self == oth
     }
 }

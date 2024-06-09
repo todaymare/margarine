@@ -5,7 +5,7 @@ use errors::ErrorType;
 use parser::nodes::expr::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
-use crate::syms::{ty::Type, SymbolMap};
+use crate::syms::{ty::Sym, sym_map::SymbolMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {
@@ -13,8 +13,8 @@ pub enum Error {
 
     InvalidCast {
         range: SourceRange,
-        from_ty: Type,
-        to_ty: Type,
+        from_ty: Sym,
+        to_ty: Sym,
     },
 
     DerefOnNonPtr(SourceRange),
@@ -37,8 +37,8 @@ pub enum Error {
     FunctionBodyAndReturnMismatch {
         header: SourceRange,
         item: SourceRange,
-        return_type: Type,
-        body_type: Type,
+        return_type: Sym,
+        body_type: Sym,
     },
 
     OutsideOfAFunction {
@@ -47,8 +47,8 @@ pub enum Error {
 
     InvalidType {
         source: SourceRange,
-        found: Type,
-        expected: Type,
+        found: Sym,
+        expected: Sym,
     },
 
     DuplicateField {
@@ -62,8 +62,8 @@ pub enum Error {
     },
 
     VariableValueAndHintDiffer {
-        value_type: Type,
-        hint_type: Type,
+        value_type: Sym,
+        hint_type: Sym,
         source: SourceRange,
     },
 
@@ -76,36 +76,36 @@ pub enum Error {
 
     InvalidBinaryOp {
         operator: BinaryOperator,
-        lhs: Type,
-        rhs: Type,
+        lhs: Sym,
+        rhs: Sym,
         source: SourceRange,
     },
 
     InvalidUnaryOp {
         operator: UnaryOperator,
-        rhs: Type,
+        rhs: Sym,
         source: SourceRange,
     },
 
     IfMissingElse {
-        body: (SourceRange, Type),
+        body: (SourceRange, Sym),
     },
 
     IfBodyAndElseMismatch {
-        body: (SourceRange, Type),
-        else_block: (SourceRange, Type),
+        body: (SourceRange, Sym),
+        else_block: (SourceRange, Sym),
     },
     
     MatchValueIsntEnum {
         source: SourceRange,
-        typ: Type,
+        typ: Sym,
     },
     
     MatchBranchesDifferInReturnType {
         initial_source: SourceRange,
-        initial_typ: Type,
+        initial_typ: Sym,
         branch_source: SourceRange,
-        branch_typ: Type,
+        branch_typ: Sym,
     },
 
     DuplicateMatch {
@@ -116,7 +116,7 @@ pub enum Error {
     InvalidMatch {
         name: StringIndex,
         range: SourceRange,
-        value: Type,
+        value: Sym,
     },
      
     MissingMatch {
@@ -125,12 +125,12 @@ pub enum Error {
     },
 
     ValueIsntAnIterator {
-        ty: Type,
+        ty: Sym,
         range: SourceRange,
     },
 
     ValueIsntAMutableIterator {
-        ty: Type,
+        ty: Sym,
         range: SourceRange,
     },
      
@@ -144,18 +144,18 @@ pub enum Error {
     
     StructCreationOnNonStruct {
         source: SourceRange,
-        typ: Type,
+        typ: Sym,
     },
     
     FieldAccessOnNonEnumOrStruct {
         source: SourceRange,
-        typ: Type,
+        typ: Sym,
     },
 
     FieldDoesntExist {
         source: SourceRange,
         field: StringIndex,
-        typ: Type,
+        typ: Sym,
     },
 
     MissingFields {
@@ -171,7 +171,7 @@ pub enum Error {
     BindedFunctionNotFound {
         source: SourceRange,
         name: StringIndex,
-        bind: Type,
+        bind: Sym,
     },
 
     FunctionArgsMismatch {
@@ -188,8 +188,8 @@ pub enum Error {
     InOutValueIsntMut(SourceRange),
 
     ValueUpdateTypeMismatch {
-        lhs: Type,
-        rhs: Type,
+        lhs: Sym,
+        rhs: Sym,
         source: SourceRange,
     },
 
@@ -201,32 +201,32 @@ pub enum Error {
 
     BreakOutsideOfLoop(SourceRange),
 
-    CantUnwrapOnGivenType(SourceRange, Type),
+    CantUnwrapOnGivenType(SourceRange, Sym),
 
-    CantTryOnGivenType(SourceRange, Type),
+    CantTryOnGivenType(SourceRange, Sym),
 
     FunctionDoesntReturnAnOption {
         source: SourceRange,
-        func_typ: Type,
+        func_typ: Sym,
     },
 
     FunctionDoesntReturnAResult {
         source: SourceRange,
-        func_typ: Type,
+        func_typ: Sym,
     },
     
     FunctionReturnsAResultButTheErrIsntTheSame {
         source: SourceRange,
         func_source: SourceRange,
-        func_err_typ: Type,
-        err_typ: Type,
+        func_err_typ: Sym,
+        err_typ: Sym,
     },
 
     ReturnAndFuncTypDiffer {
         source: SourceRange,
         func_source: SourceRange,
-        typ: Type,
-        func_typ: Type,
+        typ: Sym,
+        func_typ: Sym,
     },
 
     CyclicType {
@@ -243,7 +243,7 @@ pub enum Error {
 
     InvalidRange {
         source: SourceRange,
-        ty: Type,
+        ty: Sym,
     },
 
     ImplOnGeneric(SourceRange),

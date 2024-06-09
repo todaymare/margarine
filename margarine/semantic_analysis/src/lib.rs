@@ -8,7 +8,7 @@ use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
 use sti::{arena::Arena, keyed::KVec};
-use syms::{func::FunctionTy, ty::Type, GenListId, Generic, GenericKind, SymbolId, SymbolMap};
+use syms::{func::FunctionTy, ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 
 use crate::scope::ScopeKind;
 
@@ -48,7 +48,7 @@ pub struct TyInfo {
 #[derive(Debug, Clone, Copy)]
 pub enum ExprInfo {
     Result {
-        ty    : Type,
+        ty    : Sym,
         is_mut: bool,
     },
 
@@ -58,14 +58,14 @@ pub enum ExprInfo {
 
 #[derive(Debug, Clone, Copy)]
 pub struct AnalysisResult {
-    ty    : Type,
+    ty    : Sym,
     is_mut: bool,
 }
 
 impl AnalysisResult {
-    pub fn new(ty: Type, is_mut: bool) -> Self { Self { ty, is_mut } }
-    pub fn error() -> Self { Self::new(Type::ERROR, true) }
-    pub fn never() -> Self { Self::new(Type::NEVER, true) }
+    pub fn new(ty: Sym, is_mut: bool) -> Self { Self { ty, is_mut } }
+    pub fn error() -> Self { Self::new(Sym::ERROR, true) }
+    pub fn never() -> Self { Self::new(Sym::NEVER, true) }
 }
 
 
@@ -147,7 +147,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         let empty = analyzer.string_map.insert("");
         analyzer.block(empty, scope, block);
 
-        for v in analyzer.syms.vars.iter() {
+        for v in analyzer.syms.vars().iter() {
             if v.1.sub().is_none() {
                 let error = Error::UnableToInfer(analyzer.ast.range(v.1.node()));
                 Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.1.node(), error)
@@ -241,10 +241,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
 
     fn dt_to_ty(&mut self, scope_id: ScopeId, id: impl Into<NodeId> + Copy,
-                dt: DataType) -> Result<Type, Error> {
+                dt: DataType) -> Result<Sym, Error> {
         match dt.kind() {
-            DataTypeKind::Unit => Ok(Type::UNIT),
-            DataTypeKind::Never => Ok(Type::NEVER),
+            DataTypeKind::Unit => Ok(Sym::UNIT),
+            DataTypeKind::Never => Ok(Sym::NEVER),
 
 
             DataTypeKind::Within(ns, dt) => {
@@ -314,7 +314,7 @@ impl TyInfo {
     
     pub fn set_expr(&mut self, expr: ExprId, info: AnalysisResult) {
         let val = &mut self.exprs[expr];
-        if val.is_none() || !matches!(info.ty, Type::Ty(SymbolId::ERR, GenListId::EMPTY)) {
+        if val.is_none() || !matches!(info.ty, Sym::Ty(SymbolId::ERR, GenListId::EMPTY)) {
             *val = Some(ExprInfo::Result { ty: info.ty, is_mut: info.is_mut })
         }
     }
@@ -333,7 +333,7 @@ impl TyInfo {
     }
 
 
-    pub fn expr(&self, expr: ExprId) -> Result<Type, ErrorId> {
+    pub fn expr(&self, expr: ExprId) -> Result<Sym, ErrorId> {
         match self.exprs[expr].unwrap() {
             ExprInfo::Result { ty, .. } => return Ok(ty),
             ExprInfo::Errored(e) => return Err(e),

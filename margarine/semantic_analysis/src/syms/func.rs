@@ -1,7 +1,7 @@
 use common::{string_map::StringIndex, ImmutableData};
 use parser::nodes::decl::DeclId;
 
-use super::{Generic, SymbolId};
+use super::sym_map::{Generic, SymbolId};
 
 #[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct FunctionTy<'me> {

@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::Deref};
 
-use common::{source::SourceRange, string_map::StringIndex};
+use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
 use lexer::Literal;
 use sti::define_key;
 
@@ -100,13 +100,13 @@ pub enum Expr<'a> {
 }
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy, ImmutableData)]
 pub struct MatchMapping {
     variant: StringIndex,
     binding: StringIndex,
     binding_range: SourceRange,
-    source_range: SourceRange,
-    expression: ExprId,
+    range: SourceRange,
+    expr: ExprId,
     is_inout: bool,
 }
 
@@ -123,40 +123,26 @@ impl MatchMapping {
         Self { 
             variant, 
             binding, 
-            expression,
-            source_range, 
+            expr: expression,
+            range: source_range, 
             is_inout,
             binding_range,
         } 
     }
-
-    
-    #[inline(always)]
-    pub fn name(&self) -> StringIndex { self.variant }
-    #[inline(always)]
-    pub fn binding(&self) -> StringIndex { self.binding }
-    #[inline(always)]
-    pub fn expr(&self) -> ExprId{ self.expression }
-    #[inline(always)]
-    pub fn range(&self) -> SourceRange { self.source_range }
-    #[inline(always)]
-    pub fn binding_range(&self) -> SourceRange { self.binding_range }
-    #[inline(always)]
-    pub fn is_inout(&self) -> bool { self.is_inout }
-
 }
 
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub struct Block<'a>(&'a [NodeId], SourceRange);
+#[derive(Debug, PartialEq, Clone, Copy, ImmutableData)]
+pub struct Block<'a> {
+    body: &'a [NodeId],
+    range: SourceRange
+}
+
 
 impl<'a> Block<'a> {
-    pub fn new(body: &'a [NodeId], sr: SourceRange) -> Self {
-        Self(body, sr)
+    pub fn new(body: &'a [NodeId], range : SourceRange) -> Self {
+        Self { body, range } 
     }
-
-
-    pub fn range(self) -> SourceRange { self.1 }
 }
 
 
@@ -164,7 +150,7 @@ impl<'a> Deref for Block<'a> {
     type Target = &'a [NodeId];
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.body
     }
 }
 

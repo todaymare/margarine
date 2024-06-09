@@ -2,7 +2,7 @@ use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
 use llvm_api::builder::Loop;
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
-use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{ty::Type, SymbolId, SymbolMap}};
+use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{ty::Sym, sym_map::{SymbolId, SymbolMap}}};
 
 define_key!(u32, pub ScopeId);
 
@@ -71,7 +71,7 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_gen(self, name: StringIndex, scope_map: &ScopeMap) -> Option<Type> {
+    pub fn find_gen(self, name: StringIndex, scope_map: &ScopeMap) -> Option<Sym> {
         self.over(scope_map, |scope| {
             if let ScopeKind::Generics(generics_scope) = scope.kind {
                 if let Some(ty) = generics_scope.generics.iter().find(|x| x.0 == name) {
@@ -155,18 +155,18 @@ impl<'me> Scope<'me> {
 #[derive(Debug, Clone, Copy)]
 pub struct VariableScope {
     name  : StringIndex,
-    ty    : Type,
+    ty    : Sym,
     is_mut: bool, 
 }
 
 impl VariableScope {
-    pub fn new(name: StringIndex, ty: Type, is_mut: bool) -> Self { Self { name, ty, is_mut } }
+    pub fn new(name: StringIndex, ty: Sym, is_mut: bool) -> Self { Self { name, ty, is_mut } }
 
     #[inline(always)]
     pub fn is_mut(&self) -> bool { self.is_mut }
 
     #[inline(always)]
-    pub fn ty(&self) -> Type { self.ty }
+    pub fn ty(&self) -> Sym { self.ty }
 
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
@@ -175,24 +175,24 @@ impl VariableScope {
 
 #[derive(Debug, Clone, Copy)]
 pub struct GenericsScope<'me> {
-    generics: &'me [(StringIndex, Type)],
+    generics: &'me [(StringIndex, Sym)],
 }
 
 
 impl<'me> GenericsScope<'me> {
-    pub fn new(generics: &'me [(StringIndex, Type)]) -> Self { Self { generics } }
+    pub fn new(generics: &'me [(StringIndex, Sym)]) -> Self { Self { generics } }
 }
 
 
 #[derive(Debug, Clone, Copy)]
 pub struct FunctionScope {
-    pub ret: Type,
+    pub ret: Sym,
     pub ret_source: SourceRange,
         
 }
 
 
 impl FunctionScope {
-    pub fn new(ret: Type, ret_source: SourceRange) -> Self { Self { ret, ret_source } }
+    pub fn new(ret: Sym, ret_source: SourceRange) -> Self { Self { ret, ret_source } }
 
 }

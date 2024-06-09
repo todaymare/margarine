@@ -1,4 +1,4 @@
-use std::{any::Any, ffi::CStr, ops::Deref, ptr::{null_mut, NonNull}};
+use std::{ffi::CStr, ops::Deref, ptr::{null_mut, NonNull}};
 
 use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMConstStructInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleType, LLVMDoubleTypeInContext, LLVMFloatType, LLVMFloatTypeInContext, LLVMGetDataLayout, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMVoidTypeInContext}, target::{LLVMGetModuleDataLayout, LLVMPointerSize, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineRef}, LLVMContext};
 use sti::{arena::Arena, format_in};
@@ -44,7 +44,7 @@ impl<'me> ContextImpl<'me> {
         let ptr = unsafe { LLVMContextCreate() };
         let ctx = NonNull::new(ptr).expect("failed to create an llvm context");
 
-        let tm = unsafe {
+        let tm = {
             let tt = unsafe { LLVMGetDefaultTargetTriple() };
             let mut target = null_mut();
             let mut msg = null_mut();
@@ -53,11 +53,11 @@ impl<'me> ContextImpl<'me> {
                 panic!("{}", cstr.to_str().unwrap());
             }
 
-             LLVMCreateTargetMachine(target, tt, "".as_ptr() as _,
+            unsafe { LLVMCreateTargetMachine(target, tt, "".as_ptr() as _,
                                      "".as_ptr() as _,
                                      llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
                                      llvm_sys::target_machine::LLVMRelocMode::LLVMRelocDefault,
-                                     llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault) 
+                                     llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault) }
         };
 
         let tm = NonNull::new(tm).unwrap();

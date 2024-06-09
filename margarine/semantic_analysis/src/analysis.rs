@@ -2,7 +2,7 @@ use common::{copy_slice_in, string_map::{StringIndex, StringMap}};
 use parser::nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
 use sti::arena::Arena;
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, ty::Type, Generic, GenericKind, Symbol, SymbolId, SymbolKind}, AnalysisResult, TyChecker};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, ty::Sym, sym_map::{Generic, GenericKind, SymbolId}, Symbol, SymbolKind}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
@@ -37,7 +37,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         // Finalise
         let result = match last_node {
             Some(v) => v,
-            None    => AnalysisResult::new(Type::UNIT, true),
+            None    => AnalysisResult::new(Sym::UNIT, true),
         };
 
         result
@@ -504,18 +504,18 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         match node {
             NodeId::Decl(decl) => {
                 self.decl(scope, ns, decl);
-                AnalysisResult::new(Type::UNIT, true)
+                AnalysisResult::new(Sym::UNIT, true)
             },
 
             NodeId::Stmt(stmt) => {
                 self.stmt(path, scope, stmt);
-                AnalysisResult::new(Type::UNIT, true)
+                AnalysisResult::new(Sym::UNIT, true)
             },
 
             NodeId::Expr(expr) => self.expr(path, *scope, expr),
 
             NodeId::Err(v) => {
-                AnalysisResult::new(Type::ERROR, true)
+                AnalysisResult::new(Sym::ERROR, true)
             },
         }
     }
@@ -562,7 +562,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         Ok(v) => v,
                         Err(v) => {
                             self.error(id, v);
-                            Type::ERROR
+                            Sym::ERROR
                         }
                     };
 
@@ -575,7 +575,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     Ok(v) => v,
                     Err(v) => {
                         self.error(id, v);
-                        Type::ERROR
+                        Sym::ERROR
                     }
                 };
 
@@ -667,7 +667,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let rhs_anal = self.expr(path, *scope, rhs);
                 
                 let place_dummy = |slf: &mut TyChecker<'_, 'out, '_, '_>, scope: &mut ScopeId| {
-                    let vs = VariableScope::new(name, Type::ERROR, is_mut);
+                    let vs = VariableScope::new(name, Sym::ERROR, is_mut);
                     *scope = slf.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
                 };
 
@@ -783,7 +783,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     Ok(v) => v,
                     Err(v) => {
                         self.error(id, v);
-                        Type::ERROR
+                        Sym::ERROR
                     },
                 };
 
@@ -806,15 +806,15 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         let source = self.ast.range(id);
         let expr = self.ast.expr(id);
         let result = (|| Ok(match expr {
-            Expr::Unit => AnalysisResult::new(Type::UNIT, true),
+            Expr::Unit => AnalysisResult::new(Sym::UNIT, true),
 
 
             Expr::Literal(lit) => {
                 match lit {
-                    lexer::Literal::Integer(_) => AnalysisResult::new(Type::I64, true),
-                    lexer::Literal::Float(_)   => AnalysisResult::new(Type::F64, true),
-                    lexer::Literal::String(_)  => AnalysisResult::new(Type::STR, true),
-                    lexer::Literal::Bool(_)    => AnalysisResult::new(Type::BOOL, true),
+                    lexer::Literal::Integer(_) => AnalysisResult::new(Sym::I64, true),
+                    lexer::Literal::Float(_)   => AnalysisResult::new(Sym::F64, true),
+                    lexer::Literal::String(_)  => AnalysisResult::new(Sym::STR, true),
+                    lexer::Literal::Bool(_)    => AnalysisResult::new(Sym::BOOL, true),
                 }
             },
 
@@ -862,7 +862,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     return Err(Error::InvalidRange { source: range, ty: rhs_anal.ty });
                 }
 
-                AnalysisResult::new(Type::RANGE, true)
+                AnalysisResult::new(Sym::RANGE, true)
             },
 
 
@@ -918,7 +918,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     | BinaryOperator::Gt 
                     | BinaryOperator::Ge 
                     | BinaryOperator::Lt 
-                    | BinaryOperator::Le => Type::BOOL
+                    | BinaryOperator::Le => Sym::BOOL
                 };
 
                 AnalysisResult::new(result, true)
@@ -951,10 +951,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     if sym == SymbolId::NEVER { return Ok(AnalysisResult::never()) }
                 }
 
-                if !cond.ty.eq(&mut self.syms, Type::BOOL) {
+                if !cond.ty.eq(&mut self.syms, Sym::BOOL) {
                     let range = self.ast.range(condition);
                     return Err(Error::InvalidType {
-                        source: range, found: cond.ty, expected: Type::BOOL })
+                        source: range, found: cond.ty, expected: Sym::BOOL })
                 }
 
                 let body_anal = self.expr(path, scope, body);
@@ -978,10 +978,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 })();
 
                 if else_block.is_none() && (value.is_err(&mut self.syms) | value.is_never(&mut self.syms)) {
-                    value = Type::UNIT;
+                    value = Sym::UNIT;
                 }
 
-                if value.ne(&mut self.syms, Type::UNIT) && else_block.is_none() {
+                if value.ne(&mut self.syms, Sym::UNIT) && else_block.is_none() {
                     let body = self.ast.range(body);
                     return Err(Error::IfMissingElse { body: (body, value) })
                 }
@@ -1017,16 +1017,16 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         let Some(name) = x.0.to_option()
                         else { unreachable!() };
 
-                        m.name() == name
+                        m.variant() == name
                     });
 
                     if !exists {
                         return Err(Error::InvalidMatch {
-                            name: m.name(), range: m.range(), value: anal.ty });
+                            name: m.variant(), range: m.range(), value: anal.ty });
                     }
 
                     for o in mappings.iter().skip(i+1) {
-                        if o.name() == m.name() {
+                        if o.variant() == m.variant() {
                             return Err(Error::DuplicateMatch {
                                 declared_at: m.range(), error_point: o.range() });
                         }
@@ -1039,7 +1039,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let Some(name) = sm.0.to_option()
                     else { unreachable!() };
 
-                    if !mappings.iter().any(|x| x.name() == name) {
+                    if !mappings.iter().any(|x| x.variant() == name) {
                         missings.push(name);
                     }
                 }
@@ -1188,7 +1188,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                     ContainerKind::Enum => {
                         let gens = self.output.alloc_new([(StringMap::T, field_ty)]);
-                        Type::Ty(SymbolId::OPTION, self.syms.add_gens(gens))
+                        Sym::Ty(SymbolId::OPTION, self.syms.add_gens(gens))
                     },
 
                     ContainerKind::Tuple => todo!(),
@@ -1323,7 +1323,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let scope = self.scopes.push(scope);
                 self.block(path, scope, &*body);
 
-                AnalysisResult::new(Type::UNIT, true)
+                AnalysisResult::new(Sym::UNIT, true)
             },
 
 
@@ -1341,7 +1341,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         typ: ret_anal.ty, func_typ: func.ret })
                 }
 
-                AnalysisResult::new(Type::NEVER, true)
+                AnalysisResult::new(Sym::NEVER, true)
             },
 
 
@@ -1350,7 +1350,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     return Err(Error::ContinueOutsideOfLoop(source)) 
                 }
 
-                AnalysisResult::new(Type::NEVER, true)
+                AnalysisResult::new(Sym::NEVER, true)
             },
 
 
@@ -1359,7 +1359,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     return Err(Error::ContinueOutsideOfLoop(source)) 
                 }
 
-                AnalysisResult::new(Type::NEVER, true)
+                AnalysisResult::new(Sym::NEVER, true)
             },
 
 

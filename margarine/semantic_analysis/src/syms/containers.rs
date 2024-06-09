@@ -1,6 +1,6 @@
 use common::{string_map::OptStringIndex, ImmutableData};
 
-use super::Generic;
+use super::sym_map::Generic;
 
 #[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Container<'me> {

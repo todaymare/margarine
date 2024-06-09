@@ -1,6 +1,6 @@
 use std::{ffi::CStr, marker::PhantomData, ptr::{null_mut, NonNull}};
 
-use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMGetDataLayout, LLVMPrintModuleToString}, target::{LLVMGetModuleDataLayout, LLVMPointerSize, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple}, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMPassBuilderOptionsSetDebugLogging, LLVMPassBuilderOptionsSetVerifyEach, LLVMRunPasses}, LLVMModule};
+use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMPrintModuleToString}, target::{LLVMGetModuleDataLayout, LLVMPointerSize}, LLVMModule};
 use sti::arena::Arena;
 
 use crate::{cstr, info::Message, tys::{func::FunctionType, Type}, values::{func::FunctionPtr, global::GlobalPtr, Value}};
