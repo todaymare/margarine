@@ -1,13 +1,13 @@
-use common::{source::SourceRange, string_map::StringIndex};
+use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
 use llvm_api::builder::Loop;
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
-use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, types::{ty::Type, SymbolId, SymbolMap}};
+use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{ty::Type, SymbolId, SymbolMap}};
 
 define_key!(u32, pub ScopeId);
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Scope<'me> {
     parent: PackedOption<ScopeId>,
     kind  : ScopeKind<'me>,

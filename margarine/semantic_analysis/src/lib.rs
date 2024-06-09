@@ -8,17 +8,17 @@ use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
 use sti::{arena::Arena, keyed::KVec};
-use types::{func::FunctionTy, ty::Type, GenListId, Generic, GenericKind, SymbolId, SymbolMap};
+use syms::{func::FunctionTy, ty::Type, GenListId, Generic, GenericKind, SymbolId, SymbolMap};
 
 use crate::scope::ScopeKind;
 
 pub mod scope;
 pub mod namespace;
-pub mod types;
 pub mod errors;
 pub mod analysis;
 pub mod codegen;
 pub mod global;
+pub mod syms;
 
 #[derive(Debug)]
 pub struct TyChecker<'me, 'out, 'ast, 'str> {
@@ -112,10 +112,12 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             add_sym!(I16);
             add_sym!(I32);
             add_sym!(I64);
+            add_sym!(ISIZE);
             add_sym!(U8);
             add_sym!(U16);
             add_sym!(U32);
             add_sym!(U64);
+            add_sym!(USIZE);
             add_sym!(F32);
             add_sym!(F64);
             add_sym!(BOOL);
@@ -146,9 +148,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
         analyzer.block(empty, scope, block);
 
         for v in analyzer.syms.vars.iter() {
-            if v.1.sub.is_none() {
-                let error = Error::UnableToInfer(analyzer.ast.range(v.1.node));
-                Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.1.node, error)
+            if v.1.sub().is_none() {
+                let error = Error::UnableToInfer(analyzer.ast.range(v.1.node()));
+                Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.1.node(), error)
             }
         }
 
@@ -273,9 +275,9 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let base_sym = self.syms.sym(base);
 
                 let pool = Arena::tls_get_temp();
-                let mut generics = sti::vec::Vec::with_cap_in(&*pool, base_sym.generics.len());
+                let mut generics = sti::vec::Vec::with_cap_in(&*pool, base_sym.generics().len());
                 if generics_list.is_empty() {
-                    for _ in base_sym.generics {
+                    for _ in base_sym.generics() {
                         generics.push(self.syms.new_var(id, dt.range()))
                     }
 
@@ -284,9 +286,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         generics.push(self.dt_to_ty(scope_id, id, *g)?);
                     }
 
-                    if generics.len() != base_sym.generics.len() {
+                    if generics.len() != base_sym.generics().len() {
                         return Err(Error::GenericLenMismatch {
-                            source: dt.range(), found: generics.len(), expected: base_sym.generics.len() });
+                            source: dt.range(), found: generics.len(),
+                            expected: base_sym.generics().len() });
                     }
                 };
 

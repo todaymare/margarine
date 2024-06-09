@@ -1,11 +1,11 @@
-use common::string_map::OptStringIndex;
+use common::{string_map::OptStringIndex, ImmutableData};
 
 use super::Generic;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Container<'me> {
-    pub fields: &'me [(OptStringIndex, Generic<'me>)],
-    pub kind  : ContainerKind,
+    fields: &'me [(OptStringIndex, Generic<'me>)],
+    kind  : ContainerKind,
 }
 
 

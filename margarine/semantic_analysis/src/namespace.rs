@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use common::string_map::StringIndex;
 use sti::{define_key, keyed::{KVec, Key}};
 
-use crate::{errors::Error, types::SymbolId};
+use crate::{errors::Error, syms::SymbolId};
 
 define_key!(u32, pub NamespaceId);
 

@@ -7,7 +7,7 @@ use llvm_api::{builder::{self, Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Conte
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{arena::Arena, vec::Vec};
 
-use crate::{namespace::NamespaceMap, types::{containers::ContainerKind, func::FunctionKind, ty::{self, Type, TypeHash}, GenListId, SymbolId, SymbolKind, SymbolMap}, TyChecker, TyInfo};
+use crate::{namespace::NamespaceMap, syms::{containers::ContainerKind, func::FunctionKind, ty::{self, Type, TypeHash}, GenListId, SymbolId, SymbolKind, SymbolMap}, TyChecker, TyInfo};
 
 pub struct Codegen<'me, 'out, 'ast, 'str, 'ctx> {
     string_map: &'me StringMap<'str>,
@@ -83,10 +83,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             register!(I16, ctx.integer(16));
             register!(I32, ctx.integer(32));
             register!(I64, ctx.integer(64));
+            register!(ISIZE, ctx.integer(module.ptr_size() as u32));
             register!(U8 , ctx.integer(8 ));
             register!(U16, ctx.integer(16));
             register!(U32, ctx.integer(32));
             register!(U64, ctx.integer(64));
+            register!(USIZE, ctx.integer(module.ptr_size() as u32));
             register!(F32, ctx.f32());
             register!(F64, ctx.f64());
             register!(BOOL, ctx.bool());
@@ -153,15 +155,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             return *ty;
         }
 
-        match sym.kind {
+        match sym.kind() {
             SymbolKind::Function(v) => {
-                let ret = v.ret.to_ty(gens, self.syms).unwrap();
+                let ret = v.ret().to_ty(gens, self.syms).unwrap();
                 let ret_llvm = self.ty_to_llvm(ret, scope_gens);
 
                 let args = {
-                    let mut vec = Vec::with_cap_in(&*pool, v.args.len());
-                    for i in v.args {
-                        let ty = i.symbol.to_ty(gens, self.syms).unwrap();
+                    let mut vec = Vec::with_cap_in(&*pool, v.args().len());
+                    for i in v.args() {
+                        let ty = i.symbol().to_ty(gens, self.syms).unwrap();
                         vec.push(self.ty_to_llvm(ty, scope_gens));
                     }
 
@@ -172,15 +174,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
             SymbolKind::Container(cont) => {
-                match cont.kind {
+                match cont.kind() {
                     ContainerKind::Struct => {
                         let strct = self.ctx.structure(name);
                         self.ty_mappings.insert(hash, *strct);
 
                         let pool = Arena::tls_get_rec();
                         let fields = {
-                            let mut vec = Vec::with_cap_in(&*pool, cont.fields.len());
-                            for i in cont.fields {
+                            let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
+                            for i in cont.fields() {
                                 let ty = i.1.to_ty(gens, self.syms).unwrap();
                                 vec.push(self.ty_to_llvm(ty, scope_gens));
                             }
@@ -188,7 +190,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                             vec.leak()
                         };
 
-                        strct.set_fields(fields, sym_id == SymbolId::PTR);
+                        strct.set_fields(fields, false);
 
                         *strct
 
@@ -201,8 +203,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                         self.ty_mappings.insert(hash, *union);
 
                         let fields = {
-                            let mut vec = Vec::with_cap_in(&*pool, cont.fields.len());
-                            for i in cont.fields {
+                            let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
+                            for i in cont.fields() {
                                 let ty = i.1.to_ty(gens, self.syms).unwrap();
                                 vec.push(self.ty_to_llvm(ty, scope_gens));
                             }
@@ -290,12 +292,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                     let func = self.get_func(sym, iter_expr.1.gens(&self.syms))?;
 
                     let ret_ty = self.syms.sym(sym);
-                    let SymbolKind::Function(ret_ty) = ret_ty.kind
+                    let SymbolKind::Function(ret_ty) = ret_ty.kind()
                     else { unreachable!() };
 
                     let gens = iter_expr.1.gens(self.syms);
                     let gens = self.syms.get_gens(gens);
-                    let ret_ty = ret_ty.ret.to_ty(gens, self.syms).unwrap();
+                    let ret_ty = ret_ty.ret().to_ty(gens, self.syms).unwrap();
 
                     (ret_ty, func)
                 };
@@ -393,11 +395,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let sym = ty.sym(self.syms).unwrap();
                 let sym = self.syms.sym(sym);
 
-                let SymbolKind::Container(cont) = sym.kind
+                let SymbolKind::Container(cont) = sym.kind()
                 else { unreachable!() };
 
                 let ty = self.ty_to_llvm(ty, &env.gens);
-                let (index, _) = cont.fields.iter().enumerate().find(|f| f.1.0.unwrap() == field_name).unwrap();
+                let (index, _) = cont.fields().iter().enumerate().find(|f| f.1.0.unwrap() == field_name).unwrap();
                 Some(builder.field_ptr(ptr, ty.as_struct(), index))
             },
 
@@ -673,14 +675,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let sym = val.1.sym(this.syms).unwrap();
                 let sym = this.syms.sym(sym);
 
-                let SymbolKind::Container(cont) = sym.kind
+                let SymbolKind::Container(cont) = sym.kind()
                 else { unreachable!() };
 
                 let value_ty = val.0.as_struct();
                 let value_alloc = builder.alloca_store(val.0);
                 let value_index = builder.field_load(value_ty, 0).as_integer();
 
-                let iter = cont.fields.iter().map(|sf| {
+                let iter = cont.fields().iter().map(|sf| {
                     let name = sf.0.unwrap();
                     (sf, mappings.iter().find(|x| x.name() == name).unwrap())
                 });
@@ -747,11 +749,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let llvm_ty = this.ty_to_llvm(ty, &env.gens).as_struct();
                 let sym = ty.sym(this.syms).unwrap();
-                let SymbolKind::Container(cont) = this.syms.sym(sym).kind
+                let SymbolKind::Container(cont) = this.syms.sym(sym).kind()
                 else { unreachable!() };
 
                 let mut vec = sti::vec::Vec::with_cap_in(&*pool, fields.len());
-                for sf in cont.fields {
+                for sf in cont.fields() {
                     let f = field_vals.iter().find(|f| f.0 == sf.0.unwrap()).unwrap();
 
                     vec.push(f.1.0);
@@ -766,12 +768,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 out_if_err!();
 
                 let value_ty = value.1.sym(this.syms).unwrap();
-                let SymbolKind::Container(cont) = this.syms.sym(value_ty).kind
+                let SymbolKind::Container(cont) = this.syms.sym(value_ty).kind()
                 else { unreachable!() };
 
-                let (i, f) = cont.fields.iter().enumerate().find(|x| x.1.0.unwrap() == field_name).unwrap();
+                let (i, f) = cont.fields().iter().enumerate().find(|x| x.1.0.unwrap() == field_name).unwrap();
                 
-                match cont.kind {
+                match cont.kind() {
                     ContainerKind::Struct => builder.field_load(value.0.as_struct(), i),
 
 
@@ -839,10 +841,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let func_fields = {
                     let sym = this.syms.sym(*sym);
-                    let SymbolKind::Function(func) = sym.kind
+                    let SymbolKind::Function(func) = sym.kind()
                     else { unreachable!() };
 
-                    func.args
+                    func.args()
                 };
 
                 let mut inouts = sti::vec::Vec::with_cap_in(&*pool, func_args.len());
@@ -851,7 +853,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                     for (i, (a, fa)) in func_args.iter().zip(func_fields).enumerate() { 
                         let (val, ty) = a.1;
 
-                        let is_inout = if fa.inout && is_accessor && i == 0 { true }
+                        let is_inout = if fa.inout() && is_accessor && i == 0 { true }
                                         else { a.2 };
                         if is_inout {
                             let ptr = builder.alloca_store(val);
@@ -970,7 +972,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let sym = val.1.sym(this.syms).unwrap();
                 let sym = this.syms.sym(sym);
 
-                let SymbolKind::Container(cont) = sym.kind
+                let SymbolKind::Container(cont) = sym.kind()
                 else { unreachable!() };
 
                 let value_index = builder.field_load(val.0.as_struct(), 0).as_integer();
@@ -984,7 +986,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let gens = val.1.gens(this.syms);
                 let gens = this.syms.get_gens(gens);
-                let field_ty = cont.fields[0].1.to_ty(gens, this.syms).unwrap();
+                let field_ty = cont.fields()[0].1.to_ty(gens, this.syms).unwrap();
                 let val = builder.field_load(val.0.as_struct(), 1);
                 builder.bitcast(val, this.ty_to_llvm(field_ty, &env.gens))
             },
@@ -1047,29 +1049,29 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
         let pool = Arena::tls_get_rec();
         let fsym = self.syms.sym(sym);
-        let SymbolKind::Function(sym_func) = fsym.kind
+        let SymbolKind::Function(sym_func) = fsym.kind()
         else { unreachable!() };
 
         let gens = self.syms.gens[gens];
         for g in gens { if g.1.is_err(self.syms) { return Err(()) } }
 
-        let ret = sym_func.ret.to_ty(gens, self.syms).unwrap();
+        let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
         if ret.is_err(self.syms) { return Err(()) }
 
         let llvm_ret = self.ty_to_llvm(ret, gens);
 
-        let res = match sym_func.kind {
+        let res = match sym_func.kind() {
             FunctionKind::Extern(path) => {
                 if let Some(v) = self.externs.get(&path) { return Ok(*v) }
 
                 let args = {
-                    let mut vec = Vec::with_cap_in(&*pool, sym_func.args.len());
-                    for i in sym_func.args {
-                        if i.inout {
+                    let mut vec = Vec::with_cap_in(&*pool, sym_func.args().len());
+                    for i in sym_func.args() {
+                        if i.inout() {
                             let ptr = self.ctx.ptr();
                             vec.push(*ptr);
                         } else {
-                            let ty = i.symbol.to_ty(gens, self.syms).unwrap();
+                            let ty = i.symbol().to_ty(gens, self.syms).unwrap();
                             if ty.is_err(self.syms) { return Err(()) }
 
                             let ty = self.ty_to_llvm(ty, gens);
@@ -1092,14 +1094,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
             FunctionKind::UserDefined { decl } => {
                 let args = {
-                    let mut vec = Vec::with_cap_in(&*pool, sym_func.args.len());
-                    for i in sym_func.args {
-                        if i.inout {
+                    let mut vec = Vec::with_cap_in(&*pool, sym_func.args().len());
+                    for i in sym_func.args() {
+                        if i.inout() {
                             vec.push(*self.ctx.ptr());
                             continue;
                         }
 
-                        let ty = i.symbol.to_ty(gens, self.syms).unwrap();
+                        let ty = i.symbol().to_ty(gens, self.syms).unwrap();
                         if ty.is_err(self.syms) { return Err(()) }
 
                         let ty = self.ty_to_llvm(ty, gens);
@@ -1111,7 +1113,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 let func_ty = llvm_ret.fn_ty(args, false);
-                let func = self.module.function(self.string_map.get(fsym.name), func_ty);
+                let func = self.module.function(self.string_map.get(fsym.name()), func_ty);
                 let mut builder = func.builder(self.ctx, func_ty);
 
                 let Decl::Function { body, .. } = self.ast.decl(decl)
@@ -1121,15 +1123,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                     vars: Vec::new_in(&*pool),
                     loop_id: None,
                     inouts: Vec::new_in(&*pool),
-                    gens: gens,
+                    gens,
                 };
 
-                for (i, fa) in sym_func.args.iter().enumerate() {
+                for (i, fa) in sym_func.args().iter().enumerate() {
                     let arg = builder.arg(i).unwrap();
                     let mut local = arg;
                     
-                    if fa.inout {
-                        let ty = fa.symbol.to_ty(gens, self.syms).unwrap();
+                    if fa.inout() {
+                        let ty = fa.symbol().to_ty(gens, self.syms).unwrap();
                         if ty.is_err(self.syms) { return Err(()) }
 
                         let ty = self.ty_to_llvm(ty, env.gens);
@@ -1143,7 +1145,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                         env.inouts.push((i, new_local));
                     }
 
-                    env.vars.push((fa.name, local));
+                    env.vars.push((fa.name(), local));
                 }
 
                 let result = self.block(&mut builder, &mut env, &*body);
@@ -1166,12 +1168,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
             FunctionKind::Enum { sym: sym_id, index } => {
                 let sym = self.syms.sym(sym_id);
-                let SymbolKind::Container(cont) = sym.kind
+                let SymbolKind::Container(cont) = sym.kind()
                 else { unreachable!() };
 
                 let gens_id = self.syms.add_gens(gens);
                 let ret_ty = Type::Ty(sym_id, gens_id);
-                let arg = cont.fields[index];
+                let arg = cont.fields()[index];
                 let arg_ty = arg.1.to_ty(gens, self.syms).unwrap();
 
                 let llvm_ret_ty = self.ty_to_llvm(ret_ty, gens);
@@ -1181,7 +1183,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let func_ty = if is_unit { llvm_ret_ty.fn_ty(&[], false) }
                               else { llvm_ret_ty.fn_ty(&[llvm_arg_ty], false) };
-                let func = self.module.function(self.string_map.get(fsym.name), func_ty);
+                let func = self.module.function(self.string_map.get(fsym.name()), func_ty);
 
                 let mut builder = func.builder(self.ctx, func_ty);
 

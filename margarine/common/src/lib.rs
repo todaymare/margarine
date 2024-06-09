@@ -8,7 +8,7 @@ use std::{ops::Deref, time::Instant};
 use sti::{alloc::Alloc, arena::Arena, vec::Vec};
 use colourful::*;
 
-
+pub use derive::ImmutableData;
 
 pub struct DropTimer<'a> {
     message: &'a str,

@@ -930,7 +930,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::In))?;
         self.advance();
 
-        // let is_expr_inout = self.is_inout();
+        let is_expr_inout = self.is_inout();
         let is_expr_inout = false;
 
         let expr = self.expression(

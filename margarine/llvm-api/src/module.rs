@@ -1,6 +1,6 @@
 use std::{ffi::CStr, marker::PhantomData, ptr::{null_mut, NonNull}};
 
-use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMPrintModuleToString}, target::{LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple}, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMRunPasses}, LLVMModule};
+use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMGetDataLayout, LLVMPrintModuleToString}, target::{LLVMGetModuleDataLayout, LLVMPointerSize, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple}, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMPassBuilderOptionsSetDebugLogging, LLVMPassBuilderOptionsSetVerifyEach, LLVMRunPasses}, LLVMModule};
 use sti::arena::Arena;
 
 use crate::{cstr, info::Message, tys::{func::FunctionType, Type}, values::{func::FunctionPtr, global::GlobalPtr, Value}};
@@ -63,30 +63,13 @@ impl<'ctx> Module<'ctx> {
     }
 
 
+    pub fn ptr_size(&self) -> usize {
+        let dt = unsafe { LLVMGetModuleDataLayout(self.ptr.as_ptr()) };
+        unsafe { LLVMPointerSize(dt) as usize } 
+    }
+
+
     pub fn optimize(&self) {
-        unsafe { LLVM_InitializeAllTargets() };
-        unsafe { LLVM_InitializeAllTargetInfos() };
-        unsafe { LLVM_InitializeAllTargetMCs() };
-        unsafe { LLVM_InitializeAllAsmParsers() };
-        unsafe { LLVM_InitializeAllAsmPrinters() };
-
-        let pbo = unsafe { LLVMCreatePassBuilderOptions() };
-        let tt = unsafe { LLVMGetDefaultTargetTriple() };
-        let mut target = null_mut();
-        let mut msg = null_mut();
-        if unsafe { LLVMGetTargetFromTriple(tt, &mut target, &mut msg) } != 0 {
-            let cstr = unsafe { CStr::from_ptr(msg) };
-            panic!("{}", cstr.to_str().unwrap());
-        }
-
-
-
-        let tm = unsafe { LLVMCreateTargetMachine(target, tt, "".as_ptr() as _,
-                                                  "".as_ptr() as _,
-                                                  llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
-                                                  llvm_sys::target_machine::LLVMRelocMode::LLVMRelocDefault,
-                                                  llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault) };
-
-        unsafe { LLVMRunPasses(self.ptr.as_ptr(), cstr!("default<O3>"), tm, pbo); }
+        todo!();
     }
 }

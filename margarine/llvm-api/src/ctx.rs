@@ -1,6 +1,6 @@
-use std::{any::Any, ops::Deref, ptr::NonNull};
+use std::{any::Any, ffi::CStr, ops::Deref, ptr::{null_mut, NonNull}};
 
-use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMConstStructInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleType, LLVMDoubleTypeInContext, LLVMFloatType, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMVoidTypeInContext}, LLVMContext};
+use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMConstStructInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleType, LLVMDoubleTypeInContext, LLVMFloatType, LLVMFloatTypeInContext, LLVMGetDataLayout, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMVoidTypeInContext}, target::{LLVMGetModuleDataLayout, LLVMPointerSize, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineRef}, LLVMContext};
 use sti::{arena::Arena, format_in};
 
 use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{array::Array, bool::Bool, fp::FP, int::Integer, strct::Struct, string::StringValue, unit::Unit, Value}};
@@ -14,6 +14,7 @@ pub struct ContextRef<'ctx>(ContextImpl<'ctx>);
 #[derive(Clone, Copy)]
 pub struct ContextImpl<'me> {
     pub(crate) ptr: NonNull<LLVMContext>,
+    target_machine: NonNull<LLVMOpaqueTargetMachine>,
 
     // cache
     f32: FPTy<'me>,
@@ -33,8 +34,33 @@ impl<'ctx> Context<'ctx> {
 
 impl<'me> ContextImpl<'me> {
     fn new() -> Self {
+        unsafe { LLVM_InitializeAllTargets() };
+        unsafe { LLVM_InitializeAllTargetInfos() };
+        unsafe { LLVM_InitializeAllTargetMCs() };
+        unsafe { LLVM_InitializeAllAsmParsers() };
+        unsafe { LLVM_InitializeAllAsmPrinters() };
+
+
         let ptr = unsafe { LLVMContextCreate() };
         let ctx = NonNull::new(ptr).expect("failed to create an llvm context");
+
+        let tm = unsafe {
+            let tt = unsafe { LLVMGetDefaultTargetTriple() };
+            let mut target = null_mut();
+            let mut msg = null_mut();
+            if unsafe { LLVMGetTargetFromTriple(tt, &mut target, &mut msg) } != 0 {
+                let cstr = unsafe { CStr::from_ptr(msg) };
+                panic!("{}", cstr.to_str().unwrap());
+            }
+
+             LLVMCreateTargetMachine(target, tt, "".as_ptr() as _,
+                                     "".as_ptr() as _,
+                                     llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
+                                     llvm_sys::target_machine::LLVMRelocMode::LLVMRelocDefault,
+                                     llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault) 
+        };
+
+        let tm = NonNull::new(tm).unwrap();
 
         let f32 = unsafe { LLVMFloatTypeInContext(ptr) };
         let f32 = NonNull::new(f32).expect("failed to create an f32 type");
@@ -56,7 +82,7 @@ impl<'me> ContextImpl<'me> {
         let void = NonNull::new(void).expect("failed to create a void type");
         let void = unsafe { Void::new(Type::new(void)) };
 
-        Self { ptr: ctx, f32, f64, bool, unit, void }
+        Self { ptr: ctx, f32, f64, bool, unit, void, target_machine: tm }
     }
     
 

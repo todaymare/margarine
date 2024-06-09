@@ -1,22 +1,22 @@
-use common::string_map::StringIndex;
+use common::{string_map::StringIndex, ImmutableData};
 use parser::nodes::decl::DeclId;
 
 use super::{Generic, SymbolId};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct FunctionTy<'me> {
-    pub args: &'me [FunctionArgument<'me>],
-    pub ret : Generic<'me>,
+    args: &'me [FunctionArgument<'me>],
+    ret : Generic<'me>,
 
-    pub kind: FunctionKind,
+    kind: FunctionKind,
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct FunctionArgument<'me> {
-    pub name  : StringIndex,
-    pub symbol: Generic<'me>,
-    pub inout : bool,
+    name  : StringIndex,
+    symbol: Generic<'me>,
+    inout : bool,
 }
 
 

@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use derive::ImmutableData;
+
 use crate::string_map::{StringIndex, StringMap};
 
 ///
@@ -75,7 +77,7 @@ impl Extension {
 /// something in byte offset from its
 /// respected file data.
 ///
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, ImmutableData)]
 pub struct SourceRange {
     start: u32,
     end  : u32,
@@ -97,18 +99,6 @@ impl SourceRange {
     #[inline(always)]
     pub const fn range(self) -> (u32, u32) {
         (self.start, self.end)
-    }
-
-
-    #[inline(always)]
-    pub const fn start(self) -> u32 {
-        self.start
-    }
-
-
-    #[inline(always)]
-    pub const fn end(self) -> u32 {
-        self.end
     }
 
 

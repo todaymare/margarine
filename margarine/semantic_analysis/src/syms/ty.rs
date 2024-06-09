@@ -4,7 +4,7 @@ use common::string_map::{StringIndex, StringMap};
 use parser::nodes::AST;
 use sti::{format_in, hash::fxhash::FxHasher32, traits::FromIn};
 
-use crate::{errors::Error, types::{containers::ContainerKind, SymbolKind}};
+use crate::{errors::Error, syms::{containers::ContainerKind, SymbolKind}};
 
 use super::{containers::Container, GenListId, SymbolId, SymbolMap, VarId};
 
@@ -29,7 +29,8 @@ impl Type {
                 let sym = map.sym(sym);
 
                 let gens = map.gens[gens];
-                let is_tuple = matches!(sym.kind, SymbolKind::Container(Container { kind: ContainerKind::Tuple, .. }));
+                let is_tuple = matches!(sym.kind, SymbolKind::Container(cont)
+                                                    if cont.kind() == ContainerKind::Tuple);
 
                 if is_tuple {
                     let SymbolKind::Container(cont) = sym.kind
@@ -37,7 +38,7 @@ impl Type {
 
                     str.push_char('(');
                     
-                    for (i, f) in cont.fields.iter().enumerate() {
+                    for (i, f) in cont.fields().iter().enumerate() {
                         if i != 0 { str.push(", ") }
 
                         let ty = f.1.to_ty(gens, map).unwrap();
@@ -98,18 +99,18 @@ impl Type {
 
                 match (syma.kind, symb.kind) {
                     (SymbolKind::Function(fa), SymbolKind::Function(fb)) => {
-                        if fa.args.len() != fb.args.len() { return false; }
+                        if fa.args().len() != fb.args().len() { return false; }
 
-                        let reta = fa.ret.to_ty(gena, map).unwrap_or(Type::ERROR);
-                        let retb = fb.ret.to_ty(genb, map).unwrap_or(Type::ERROR);
+                        let reta = fa.ret().to_ty(gena, map).unwrap_or(Type::ERROR);
+                        let retb = fb.ret().to_ty(genb, map).unwrap_or(Type::ERROR);
 
                         if !reta.eq(map, retb) {
                             return false;
                         }
 
-                        for (aa, ab) in fa.args.iter().zip(fb.args.iter()) {
-                            let aa = aa.symbol.to_ty(gena, map).unwrap_or(Type::ERROR);
-                            let ab = ab.symbol.to_ty(genb, map).unwrap_or(Type::ERROR);
+                        for (aa, ab) in fa.args().iter().zip(fb.args().iter()) {
+                            let aa = aa.symbol().to_ty(gena, map).unwrap_or(Type::ERROR);
+                            let ab = ab.symbol().to_ty(genb, map).unwrap_or(Type::ERROR);
 
                             if !aa.eq(map, ab) {
                                 return false;
@@ -120,12 +121,12 @@ impl Type {
 
                     (SymbolKind::Container(ca), SymbolKind::Container(cb)) => {
                         // is a tuple
-                        if ca.kind != ContainerKind::Tuple
-                            || cb.kind != ContainerKind::Tuple { return false; }
+                        if ca.kind() != ContainerKind::Tuple
+                            || cb.kind() != ContainerKind::Tuple { return false; }
 
-                        if ca.fields.len() != cb.fields.len() { return false; }
+                        if ca.fields().len() != cb.fields().len() { return false; }
 
-                        for (fa, fb) in ca.fields.iter().zip(cb.fields.iter()) {
+                        for (fa, fb) in ca.fields().iter().zip(cb.fields().iter()) {
                             let tfa = fa.1.to_ty(gena, map).unwrap_or(Type::ERROR);
                             let tfb = fb.1.to_ty(genb, map).unwrap_or(Type::ERROR);
 
@@ -284,10 +285,12 @@ impl Type {
     pub const I16  : Self = Self::Ty(SymbolId::I16  , GenListId::EMPTY);
     pub const I32  : Self = Self::Ty(SymbolId::I32  , GenListId::EMPTY);
     pub const I64  : Self = Self::Ty(SymbolId::I64  , GenListId::EMPTY);
+    pub const ISIZE: Self = Self::Ty(SymbolId::ISIZE, GenListId::EMPTY);
     pub const U8   : Self = Self::Ty(SymbolId::U8   , GenListId::EMPTY);
     pub const U16  : Self = Self::Ty(SymbolId::U16  , GenListId::EMPTY);
     pub const U32  : Self = Self::Ty(SymbolId::U32  , GenListId::EMPTY);
     pub const U64  : Self = Self::Ty(SymbolId::U64  , GenListId::EMPTY);
+    pub const USIZE: Self = Self::Ty(SymbolId::USIZE, GenListId::EMPTY);
     pub const F32  : Self = Self::Ty(SymbolId::F32  , GenListId::EMPTY);
     pub const F64  : Self = Self::Ty(SymbolId::F64  , GenListId::EMPTY);
     pub const BOOL : Self = Self::Ty(SymbolId::BOOL , GenListId::EMPTY);

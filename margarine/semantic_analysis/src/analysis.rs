@@ -2,7 +2,7 @@ use common::{copy_slice_in, string_map::{StringIndex, StringMap}};
 use parser::nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
 use sti::arena::Arena;
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, types::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, ty::Type, Generic, GenericKind, Symbol, SymbolId, SymbolKind}, AnalysisResult, TyChecker};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, ty::Type, Generic, GenericKind, Symbol, SymbolId, SymbolKind}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
@@ -535,10 +535,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 // we need a scope that'd fake the generics
                 let sym = self.syms.sym(func);
-                let SymbolKind::Function(func) = sym.kind
+                let SymbolKind::Function(func) = sym.kind()
                 else { unreachable!() };
 
-                let generics = sym.generics;
+                let generics = sym.generics();
                 let generics = {
                     let mut vec = sti::vec::Vec::new_in(&*self.output);
                     for gen in generics {
@@ -556,8 +556,8 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let gscope = GenericsScope::new(generics);
                 let mut scope = Scope::new(scope.some(), ScopeKind::Generics(gscope));
 
-                for a in func.args {
-                    let ty = a.symbol.to_ty(&generics, &mut self.syms);
+                for a in func.args() {
+                    let ty = a.symbol().to_ty(&generics, &mut self.syms);
                     let ty = match ty {
                         Ok(v) => v,
                         Err(v) => {
@@ -566,11 +566,11 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                         }
                     };
 
-                    let vs = VariableScope::new(a.name, ty, a.inout);
+                    let vs = VariableScope::new(a.name(), ty, a.inout());
                     scope = Scope::new(self.scopes.push(scope).some(), ScopeKind::VariableScope(vs))
                 }
 
-                let ret = func.ret.to_ty(&generics, &mut self.syms);
+                let ret = func.ret().to_ty(&generics, &mut self.syms);
                 let ret = match ret {
                     Ok(v) => v,
                     Err(v) => {
@@ -586,7 +586,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let scope = self.scopes.push(scope);
 
                 // GO GO GO
-                let anal = self.block(sym.name, scope, &*body);
+                let anal = self.block(sym.name(), scope, &*body);
 
                 if !anal.ty.eq(&mut self.syms, ret) {
                     self.error(id, Error::FunctionBodyAndReturnMismatch {
@@ -601,7 +601,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let Ok(ty) = self.dt_to_gen(s, data_type, gens)
                 else { return; };
                 
-                let GenericKind::Sym(sym, _) = ty.kind
+                let GenericKind::Sym(sym, _) = ty.kind()
                 else { return; };
 
                 let ns = self.syms.sym_ns(sym);
@@ -772,13 +772,13 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 }
 
                 let binding_ty = self.syms.sym(sym);
-                let SymbolKind::Function(binding_ty) = binding_ty.kind
+                let SymbolKind::Function(binding_ty) = binding_ty.kind()
                 else { unreachable!() };
 
                 let gens = anal.ty.gens(&self.syms);
                 let gens = self.syms.get_gens(gens);
 
-                let binding_ty = binding_ty.ret.to_ty(gens, &mut self.syms);
+                let binding_ty = binding_ty.ret().to_ty(gens, &mut self.syms);
                 let binding_ty = match binding_ty {
                     Ok(v) => v,
                     Err(v) => {
@@ -996,24 +996,24 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let sym = anal.ty.sym(&mut self.syms)?;
                 let sym = self.syms.sym(sym);
 
-                let SymbolKind::Container(cont) = sym.kind
+                let SymbolKind::Container(cont) = sym.kind()
                 else {
                     let range = self.ast.range(value);
                     return Err(Error::MatchValueIsntEnum { source: range, typ: anal.ty });
                 };
 
                 // check if the value is an enum
-                if !matches!(cont.kind, ContainerKind::Enum) {
+                if !matches!(cont.kind(), ContainerKind::Enum) {
                     let range = self.ast.range(value);
                     return Err(Error::MatchValueIsntEnum { source: range, typ: anal.ty });
                 }
 
                 // asserts assumptions on struct
-                debug_assert!(cont.fields.iter().all(|x| x.0.is_some()));
+                debug_assert!(cont.fields().iter().all(|x| x.0.is_some()));
 
                 // check the mapping names
                 for (i, m) in mappings.iter().enumerate() {
-                    let exists = cont.fields.iter().any(|x| {
+                    let exists = cont.fields().iter().any(|x| {
                         let Some(name) = x.0.to_option()
                         else { unreachable!() };
 
@@ -1035,7 +1035,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 
                 let mut missings = sti::vec::Vec::new();
-                for sm in cont.fields.iter() {
+                for sm in cont.fields().iter() {
                     let Some(name) = sm.0.to_option()
                     else { unreachable!() };
 
@@ -1051,7 +1051,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 // ty chck
                 let ret_ty = self.syms.new_var(id, source);
-                for (m, f) in mappings.iter().zip(cont.fields.iter()) {
+                for (m, f) in mappings.iter().zip(cont.fields().iter()) {
                     if m.is_inout() && !taken_as_inout {
                         self.error(m.expr(), Error::InOutValueWithoutInOutBinding { value_range: m.range() });
                     }
@@ -1087,21 +1087,21 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let sym = ty.sym(&mut self.syms)?;
                 let sym = self.syms.sym(sym);
 
-                let SymbolKind::Container(cont) = sym.kind
+                let SymbolKind::Container(cont) = sym.kind()
                 else { return Err(Error::StructCreationOnNonStruct { source, typ: ty }) };
 
                 // check if the sym is a struct
-                if !matches!(cont.kind, ContainerKind::Struct) {
+                if !matches!(cont.kind(), ContainerKind::Struct) {
                     return Err(Error::StructCreationOnNonStruct { source, typ: ty });
                 }
 
                 // asserts assumptions on struct
-                debug_assert!(cont.fields.iter().all(|x| x.0.is_some()));
+                debug_assert!(cont.fields().iter().all(|x| x.0.is_some()));
 
 
                 // check if the fields are valid
                 for f in fields.iter() {
-                    let exists = cont.fields.iter().any(|x| {
+                    let exists = cont.fields().iter().any(|x| {
                         let Some(name) = x.0.to_option()
                         else { unreachable!() };
 
@@ -1117,7 +1117,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 // check missing fields
                 let mut missing_fields = sti::vec::Vec::new();
-                for f in cont.fields.iter() {
+                for f in cont.fields().iter() {
                     let Some(name) = f.0.to_option()
                     else { unreachable!() };
 
@@ -1137,7 +1137,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                     let gens = ty.gens(&mut self.syms);
                     let gens = self.syms.get_gens(gens);
 
-                    for f in cont.fields {
+                    for f in cont.fields() {
                         vec.push((f.0, f.1.to_ty(gens, &mut self.syms)?))
                     }
 
@@ -1164,10 +1164,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let sym = expr.ty.sym(&mut self.syms)?;
                 let sym = self.syms.sym(sym);
 
-                let SymbolKind::Container(cont) = sym.kind
+                let SymbolKind::Container(cont) = sym.kind()
                 else { return Err(Error::FieldAccessOnNonEnumOrStruct { source, typ: expr.ty }) };
 
-                let field = cont.fields.iter().find(|f| {
+                let field = cont.fields().iter().find(|f| {
                     let Some(name) = f.0.to_option()
                     else { return false };
 
@@ -1183,7 +1183,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 let field_ty = field.1.to_ty(gens, &mut self.syms)?;
 
-                let ty = match cont.kind {
+                let ty = match cont.kind() {
                     ContainerKind::Struct => field_ty,
 
                     ContainerKind::Enum => {
@@ -1231,20 +1231,20 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 else { return Err(Error::Bypass) };
 
                 let sym = self.syms.sym(sym_id);
-                let SymbolKind::Function(func) = sym.kind
+                let SymbolKind::Function(func) = sym.kind()
                 else { unreachable!() };
 
                 // check arg len
-                if func.args.len() != args.len() {
+                if func.args().len() != args.len() {
                     return Err(Error::FunctionArgsMismatch {
-                        source, sig_len: func.args.len(), call_len: args.len() });
+                        source, sig_len: func.args().len(), call_len: args.len() });
                 }
 
 
                 // create gens
                 let func_generics = {
-                    let mut vec = sti::vec::Vec::with_cap_in(self.output, sym.generics.len());
-                    for g in sym.generics {
+                    let mut vec = sti::vec::Vec::with_cap_in(self.output, sym.generics().len());
+                    for g in sym.generics() {
                         vec.push((*g, self.syms.new_var(id, source)));
                     }
 
@@ -1254,15 +1254,15 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
 
                 // find out the args
                 let func_args = {
-                    let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.args.len());
-                    for g in func.args {
-                        vec.push((g.symbol.to_ty(func_generics, &mut self.syms)?, g.inout));
+                    let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.args().len());
+                    for g in func.args() {
+                        vec.push((g.symbol().to_ty(func_generics, &mut self.syms)?, g.inout()));
                     }
 
                     vec
                 };
 
-                let ret = func.ret.to_ty(func_generics, &mut self.syms)?;
+                let ret = func.ret().to_ty(func_generics, &mut self.syms)?;
 
                 // ty & inout check args
                 for (i, (a, fa)) in args_anals.iter().zip(func_args.iter()).enumerate() {

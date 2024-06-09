@@ -11,3 +11,4 @@ fuzzer = []
 [dependencies]
 sti = { git = "https://github.com/leddoo/sti"}
 colourful = { git = "https://github.com/rookieCookies/colourful" }
+derive = { path = "./derive" }

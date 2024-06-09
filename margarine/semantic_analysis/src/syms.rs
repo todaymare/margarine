@@ -2,11 +2,11 @@ pub mod containers;
 pub mod ty;
 pub mod func;
 
-use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
+use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}, ImmutableData};
 use parser::nodes::{expr::ExprId, NodeId};
 use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, types::func::{FunctionArgument, FunctionKind}};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::func::{FunctionArgument, FunctionKind}};
 
 use self::{containers::{Container, ContainerKind}, func::FunctionTy, ty::Type};
 
@@ -24,11 +24,11 @@ pub struct SymbolMap<'me> {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Symbol<'me> {
-    pub name    : StringIndex,
-    pub generics: &'me [StringIndex],
-    pub kind    : SymbolKind<'me>,
+    name    : StringIndex,
+    generics: &'me [StringIndex],
+    kind    : SymbolKind<'me>,
 }
 
 
@@ -39,18 +39,18 @@ pub enum SymbolKind<'me> {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Var {
-    pub sub: Option<Type>,
-    pub node: NodeId,
-    pub range: SourceRange,
+    sub: Option<Type>,
+    node: NodeId,
+    range: SourceRange,
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, ImmutableData)]
 pub struct Generic<'me> {
-    pub range: SourceRange,
-    pub kind : GenericKind<'me>,
+    range: SourceRange,
+    kind : GenericKind<'me>,
 }
 
 
@@ -62,133 +62,6 @@ pub enum GenericKind<'me> {
 
 
 impl<'me> SymbolMap<'me> {
-    pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap, string_map: &mut StringMap) -> Self {
-        let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new() };
-        macro_rules! init {
-            ($name: ident) => {
-                let pending = slf.pending(ns_map, StringMap::$name, 0);
-                assert_eq!(pending, SymbolId::$name);
-                let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Struct));
-                slf.add_sym(pending, Symbol::new(StringMap::$name, &[], kind));
-            };
-        }
-
-        init!(UNIT);
-        init!(I8);
-        init!(I16);
-        init!(I32);
-        init!(I64);
-        init!(U8);
-        init!(U16);
-        init!(U32);
-        init!(U64);
-        init!(F32);
-        init!(F64);
-
-        // bool
-        {
-            let pending = slf.pending(ns_map, StringMap::BOOL, 0);
-            assert_eq!(pending, SymbolId::BOOL);
-            let fields = [
-                (StringMap::TRUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
-                (StringMap::FALSE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
-            ];
-
-            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO,
-                         StringMap::BOOL, slf.arena.alloc_new(fields), &[]);
-        }
-
-        init!(ERR);
-        init!(NEVER);
-
-        // rc 
-        {
-            let pending = slf.pending(ns_map, StringMap::PTR, 1);
-            assert_eq!(pending, SymbolId::PTR);
-            let fields = [
-                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U64, &[]))),
-                (StringMap::VALUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
-            ];
-
-            let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
-            let kind = SymbolKind::Container(cont);
-
-            slf.add_sym(pending, Symbol::new(StringMap::PTR, &[StringMap::T], kind));
-        }
-
-        // range
-        {
-            let pending = slf.pending(ns_map, StringMap::RANGE, 0);
-            assert_eq!(pending, SymbolId::RANGE);
-            let fields = [
-                (StringMap::MIN.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
-                (StringMap::MAX.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
-            ];
-
-            let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
-            let kind = SymbolKind::Container(cont);
-
-            slf.add_sym(pending, Symbol::new(StringMap::RANGE, &[], kind));
-        }
-
-
-        // option 
-        {
-            let pending = slf.pending(ns_map, StringMap::OPTION, 1);
-            assert_eq!(pending, SymbolId::OPTION);
-            let fields = [
-                (StringMap::SOME.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
-                (StringMap::NONE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
-            ];
-
-            let gens = slf.arena.alloc_new([StringMap::T]);
-
-            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
-                         StringMap::OPTION, slf.arena.alloc_new(fields), gens);
-        }
-
-
-        // result 
-        {
-            let pending = slf.pending(ns_map, StringMap::RESULT, 2);
-            assert_eq!(pending, SymbolId::RESULT);
-            let fields = [
-                (StringMap::OK.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
-                (StringMap::ERR.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A))),
-            ];
-
-            let gens = slf.arena.alloc_new([StringMap::T, StringMap::A]);
-
-            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
-                         StringMap::RESULT, slf.arena.alloc_new(fields), gens);
-
-        }
-
-
-        // str 
-        {
-            let pending = slf.pending(ns_map, StringMap::STR, 0);
-            assert_eq!(pending, SymbolId::STR);
-            let ptr = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U8, &[]));
-            let ptr = slf.arena.alloc_new([ptr]); 
-
-            let fields = [
-                (StringMap::PTR.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::PTR, ptr))),
-                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U32, &[]))),
-            ];
-
-            let fields = slf.arena.alloc_new(fields);
-
-            let sym = Symbol::new(StringMap::STR, &[], SymbolKind::Container(Container::new(fields, ContainerKind::Struct)));
-            slf.add_sym(pending, sym);
-        }
-
-        assert_eq!(slf.gens.push(&[]), GenListId::EMPTY);
-
-
-        slf
-    }
-
     #[inline(always)]
     pub fn pending(&mut self, ns_map: &mut NamespaceMap, path: StringIndex, gen_count: usize) -> SymbolId {
         self.syms.push((Err(gen_count), ns_map.push(Namespace::new(path))))
@@ -334,6 +207,137 @@ impl<'me> Generic<'me> {
 }
 
 
+impl<'me> SymbolMap<'me> {
+    pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap, string_map: &mut StringMap) -> Self {
+        let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new() };
+        macro_rules! init {
+            ($name: ident) => {
+                let pending = slf.pending(ns_map, StringMap::$name, 0);
+                assert_eq!(pending, SymbolId::$name);
+                let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Struct));
+                slf.add_sym(pending, Symbol::new(StringMap::$name, &[], kind));
+            };
+        }
+
+        init!(UNIT);
+        init!(I8);
+        init!(I16);
+        init!(I32);
+        init!(I64);
+        init!(ISIZE);
+        init!(U8);
+        init!(U16);
+        init!(U32);
+        init!(U64);
+        init!(USIZE);
+        init!(F32);
+        init!(F64);
+
+        // bool
+        {
+            let pending = slf.pending(ns_map, StringMap::BOOL, 0);
+            assert_eq!(pending, SymbolId::BOOL);
+            let fields = [
+                (StringMap::TRUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
+                (StringMap::FALSE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
+            ];
+
+            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO,
+                         StringMap::BOOL, slf.arena.alloc_new(fields), &[]);
+        }
+
+        init!(ERR);
+        init!(NEVER);
+
+        // ptr 
+        {
+            let pending = slf.pending(ns_map, StringMap::PTR, 1);
+            assert_eq!(pending, SymbolId::PTR);
+            let fields = [
+                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U64, &[]))),
+                (StringMap::VALUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
+            ];
+
+            let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
+            let kind = SymbolKind::Container(cont);
+
+            slf.add_sym(pending, Symbol::new(StringMap::PTR, &[StringMap::T], kind));
+        }
+
+        // range
+        {
+            let pending = slf.pending(ns_map, StringMap::RANGE, 0);
+            assert_eq!(pending, SymbolId::RANGE);
+            let fields = [
+                (StringMap::MIN.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
+                (StringMap::MAX.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
+            ];
+
+            let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
+            let kind = SymbolKind::Container(cont);
+
+            slf.add_sym(pending, Symbol::new(StringMap::RANGE, &[], kind));
+        }
+
+
+        // option 
+        {
+            let pending = slf.pending(ns_map, StringMap::OPTION, 1);
+            assert_eq!(pending, SymbolId::OPTION);
+            let fields = [
+                (StringMap::SOME.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
+                (StringMap::NONE.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
+            ];
+
+            let gens = slf.arena.alloc_new([StringMap::T]);
+
+            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
+                         StringMap::OPTION, slf.arena.alloc_new(fields), gens);
+        }
+
+
+        // result 
+        {
+            let pending = slf.pending(ns_map, StringMap::RESULT, 2);
+            assert_eq!(pending, SymbolId::RESULT);
+            let fields = [
+                (StringMap::OK.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
+                (StringMap::ERR.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A))),
+            ];
+
+            let gens = slf.arena.alloc_new([StringMap::T, StringMap::A]);
+
+            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
+                         StringMap::RESULT, slf.arena.alloc_new(fields), gens);
+
+        }
+
+
+        // str 
+        {
+            let pending = slf.pending(ns_map, StringMap::STR, 0);
+            assert_eq!(pending, SymbolId::STR);
+            let ptr = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U8, &[]));
+            let ptr = slf.arena.alloc_new([ptr]); 
+
+            let fields = [
+                (StringMap::PTR.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::PTR, ptr))),
+                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U32, &[]))),
+            ];
+
+            let fields = slf.arena.alloc_new(fields);
+
+            let sym = Symbol::new(StringMap::STR, &[], SymbolKind::Container(Container::new(fields, ContainerKind::Struct)));
+            slf.add_sym(pending, sym);
+        }
+
+        assert_eq!(slf.gens.push(&[]), GenListId::EMPTY);
+
+
+        slf
+    }}
+
+
 impl VarId {
     fn occurs_in(self, map: &SymbolMap, ty: Type) -> bool {
         match ty {
@@ -358,20 +362,22 @@ impl SymbolId {
     pub const I16   : Self = Self(2);
     pub const I32   : Self = Self(3);
     pub const I64   : Self = Self(4);
-    pub const U8    : Self = Self(5);
-    pub const U16   : Self = Self(6);
-    pub const U32   : Self = Self(7);
-    pub const U64   : Self = Self(8);
-    pub const F32   : Self = Self(9);
-    pub const F64   : Self = Self(10);
-    pub const BOOL  : Self = Self(11); // +2 for variants
-    pub const ERR   : Self = Self(14);
-    pub const NEVER : Self = Self(15);
-    pub const PTR   : Self = Self(16);
-    pub const RANGE : Self = Self(17);
-    pub const OPTION: Self = Self(18); // +2 for variants
-    pub const RESULT: Self = Self(21); // +2 for variants
-    pub const STR   : Self = Self(24);
+    pub const ISIZE : Self = Self(5);
+    pub const U8    : Self = Self(6);
+    pub const U16   : Self = Self(7);
+    pub const U32   : Self = Self(8);
+    pub const U64   : Self = Self(9);
+    pub const USIZE : Self = Self(10);
+    pub const F32   : Self = Self(11);
+    pub const F64   : Self = Self(12);
+    pub const BOOL  : Self = Self(13); // +2 for variants
+    pub const ERR   : Self = Self(16);
+    pub const NEVER : Self = Self(17);
+    pub const PTR   : Self = Self(18);
+    pub const RANGE : Self = Self(19);
+    pub const OPTION: Self = Self(20); // +2 for variants
+    pub const RESULT: Self = Self(23); // +2 for variants
+    pub const STR   : Self = Self(26);
 
 
     pub fn supports_arith(self) -> bool {
@@ -380,10 +386,12 @@ impl SymbolId {
             | Self::I16
             | Self::I32
             | Self::I64
+            | Self::ISIZE
             | Self::U8
             | Self::U16
             | Self::U32
             | Self::U64
+            | Self::USIZE
             | Self::F32
             | Self::F64
         )
@@ -396,10 +404,12 @@ impl SymbolId {
             | Self::I16
             | Self::I32
             | Self::I64
+            | Self::ISIZE
             | Self::U8
             | Self::U16
             | Self::U32
             | Self::U64
+            | Self::USIZE
         )
     }
 
@@ -410,10 +420,12 @@ impl SymbolId {
             | Self::I16
             | Self::I32
             | Self::I64
+            | Self::ISIZE
             | Self::U8
             | Self::U16
             | Self::U32
             | Self::U64
+            | Self::USIZE
             | Self::F32
             | Self::F64
         )
@@ -425,10 +437,12 @@ impl SymbolId {
             | Self::I16
             | Self::I32
             | Self::I64
+            | Self::ISIZE
             | Self::U8
             | Self::U16
             | Self::U32
             | Self::U64
+            | Self::USIZE
             | Self::F32
             | Self::F64
             | Self::BOOL
@@ -443,10 +457,12 @@ impl SymbolId {
             | Self::I16
             | Self::I32
             | Self::I64
+            | Self::ISIZE
             | Self::U8
             | Self::U16
             | Self::U32
             | Self::U64
+            | Self::USIZE
             | Self::F32
             | Self::F64
         )
@@ -459,10 +475,12 @@ impl SymbolId {
             | Self::I16
             | Self::I32
             | Self::I64
+            | Self::ISIZE
             | Self::U8
             | Self::U16
             | Self::U32
             | Self::U64
+            | Self::USIZE
         )
     }
 
@@ -472,6 +490,7 @@ impl SymbolId {
             | Self::I16
             | Self::I32
             | Self::I64
+            | Self::ISIZE
         )
     }
 }

@@ -5,7 +5,7 @@ use errors::ErrorType;
 use parser::nodes::expr::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
-use crate::types::{ty::Type, SymbolMap};
+use crate::syms::{ty::Type, SymbolMap};
 
 #[derive(Clone, Debug)]
 pub enum Error {
