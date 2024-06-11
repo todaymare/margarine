@@ -21,7 +21,6 @@ pub enum SymbolKind<'me> {
 }
 
 
-
 impl<'me> Symbol<'me> {
     pub fn new(name: StringIndex, generics: &'me [StringIndex], kind: SymbolKind<'me>) -> Self {
         Self { name, generics, kind }

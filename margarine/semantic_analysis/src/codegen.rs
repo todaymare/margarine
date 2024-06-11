@@ -464,15 +464,31 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             Expr::Literal(v) => {
+                let ty = out_if_err!();
                 match v {
                     Literal::Integer(v) => {
-                        let ty = this.ctx.integer(64);
+                        let size = match ty.sym(this.syms).map_err(|_|())? {
+                            SymbolId::I8  | SymbolId::U8  => 8,
+                            SymbolId::I16 | SymbolId::U16 => 16,
+                            SymbolId::I32 | SymbolId::U32 => 32,
+                            SymbolId::I64 | SymbolId::U64 => 64,
+                            SymbolId::ISIZE | SymbolId::USIZE => this.module.ptr_size_in_bytes() * 8,
+
+                            _ => unreachable!(),
+                        };
+
+                        let ty = this.ctx.integer(size as u32);
                         *builder.const_int(ty, v, true)
                     },
 
 
                     Literal::Float(v) => {
-                        *builder.const_f64(v.inner())
+                        match ty.sym(this.syms).map_err(|_|())? {
+                            SymbolId::F32 => *builder.const_f32(v.inner() as f32),
+                            SymbolId::F64 => *builder.const_f64(v.inner()),
+
+                            _ => unreachable!(),
+                        }
                     },
 
 
@@ -998,7 +1014,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
         let val = val?;
 
         let ty = out_if_err!();
-        let ty_sym = ty.sym(this.syms).unwrap();
+
+        let Ok(ty_sym) = ty.sym(this.syms)
+        else { return Err(()) };
+
         if ty_sym == SymbolId::ERR {
             builder.unreachable();
             return Err(())

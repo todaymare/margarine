@@ -5,7 +5,7 @@ use sti::{format_in, hash::fxhash::FxHasher32, traits::FromIn};
 
 use crate::{errors::Error, syms::{containers::ContainerKind, SymbolKind}};
 
-use super::sym_map::{GenListId, SymbolId, SymbolMap, VarId};
+use super::sym_map::{GenListId, SymbolId, SymbolMap, VarId, VarSub};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Sym {
@@ -70,7 +70,12 @@ impl Sym {
                     return string_map.get(def)
                 }
 
-                format_in!(string_map.arena(), "{}", v.inner()).leak()
+                match map.vars()[v].sub() {
+                    VarSub::Concrete(v) => v.display_ex(string_map, map, def),
+                    VarSub::Integer => "{integer}",
+                    VarSub::Float => "{float}",
+                    VarSub::None => "{unknown}",
+                }
             },
         }
     }
@@ -147,24 +152,35 @@ impl Sym {
             (Sym::Var(ida), _) => {
                 if ida.occurs_in(map, b) { return false }
 
-                let var = map.vars_mut()[ida].sub_mut();
-                match *var {
-                    Some(ta) if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
+                let var = map.vars()[ida].sub();
+ 
+                dbg!(var, b);
+                match var {
+                    VarSub::Concrete(ta) if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
+
+                    VarSub::Integer if !b.is_int(map) => false,
+                    VarSub::Float if !b.is_float(map) => false,
+
                     _ => {
-                        *var = Some(b);
+                        map.vars_mut()[ida].set_sub(VarSub::Concrete(b));
                         true
                     },
                 }
             },
 
+
             (_, Sym::Var(idb)) => {
                 if idb.occurs_in(map, a) { return false }
 
-                let var = map.vars_mut()[idb].sub_mut();
-                match *var {
-                    Some(tb) if !matches!(tb, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => a.eq(map, tb),
+                let var = map.vars()[idb].sub();
+                match var {
+                    VarSub::Concrete(ta) if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
+
+                    VarSub::Integer if !a.is_int(map) => false,
+                    VarSub::Float if !a.is_float(map) => false,
+
                     _ => {
-                        *var = Some(a);
+                        map.vars_mut()[idb].set_sub(VarSub::Concrete(a));
                         true
                     },
                 }
@@ -209,7 +225,8 @@ impl Sym {
     }
 
 
-    pub fn instantiate(self, map: &mut SymbolMap) -> Sym {
+    pub fn instantiate(self, map: &mut SymbolMap, depth: usize) -> Sym {
+        if depth == 100 { panic!() }
         match self {
             Sym::Ty(sym, gens) => {
                 Sym::Ty(sym, instantiate_gens(map, gens))
@@ -218,8 +235,8 @@ impl Sym {
 
             Sym::Var(v) => {
                 match map.vars()[v].sub() {
-                    Some(v) => v.instantiate(map),
-                    None => self,
+                    VarSub::Concrete(v) => v.instantiate(map, depth + 1),
+                    _ => self,
                 }
             },
         }
@@ -232,8 +249,8 @@ impl Sym {
 
             Sym::Var(v) => {
                 match map.vars()[v].sub() {
-                    Some(v) => v.instantiate_shallow(map),
-                    None => self,
+                    VarSub::Concrete(v) => v,
+                    _ => self
                 }
             },
         }
@@ -248,7 +265,7 @@ impl Sym {
 
 
     fn hash_ex(self, map: &mut SymbolMap, hasher: &mut impl Hasher) {
-        let init = self.instantiate(map);
+        let init = self.instantiate(map, 0);
         match init {
             Sym::Ty(v, g) => {
                 v.hash(hasher);
@@ -264,6 +281,51 @@ impl Sym {
         }
 
     }
+
+
+    pub fn is_num(self, map: &mut SymbolMap) -> bool {
+        self.is_int(map) || self.is_float(map)
+    }
+
+
+    pub fn is_int(self, map: &mut SymbolMap) -> bool {
+        let ty = self.instantiate_shallow(map);
+        match ty {
+            Sym::Ty(v, _) => v.is_int(),
+            Sym::Var(v) => {
+                let var = map.vars_mut()[v].sub();
+                match var {
+                    VarSub::Concrete(v) => v.is_int(map),
+                    VarSub::Integer => true,
+                    VarSub::Float => false,
+                    VarSub::None => {
+                        map.vars_mut()[v].set_sub(VarSub::Integer);
+                        true
+                    },
+                }
+            },
+        }
+    }
+
+
+    pub fn is_float(self, map: &mut SymbolMap) -> bool {
+        let ty = self.instantiate_shallow(map);
+        match ty {
+            Sym::Ty(v, _) => v.is_float(),
+            Sym::Var(v) => {
+                let var = map.vars_mut()[v].sub();
+                match var {
+                    VarSub::Concrete(v) => v.is_int(map),
+                    VarSub::Integer => false,
+                    VarSub::Float => true,
+                    VarSub::None => {
+                        map.vars_mut()[v].set_sub(VarSub::Float);
+                        true
+                    },
+                }
+            },
+        }
+    }
 }
 
 
@@ -274,7 +336,7 @@ pub struct TypeHash(u32);
 fn instantiate_gens(map: &mut SymbolMap, gen: GenListId) -> GenListId {
     let gens = map.gens()[gen];
     let arena = map.arena();
-    let vec = sti::vec::Vec::from_in(arena, gens.iter().map(|g| (g.0, g.1.instantiate(map))));
+    let vec = sti::vec::Vec::from_in(arena, gens.iter().map(|g| (g.0, g.1.instantiate(map, 0))));
     map.add_gens(vec.leak())
 }
 

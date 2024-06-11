@@ -21,9 +21,18 @@ pub struct SymbolMap<'me> {
 
 #[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Var {
-    sub: Option<Sym>,
+    sub: VarSub,
     node: NodeId,
     range: SourceRange,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum VarSub {
+    Concrete(Sym),
+    Integer,
+    Float,
+    None,
 }
 
 
@@ -119,7 +128,12 @@ impl<'me> SymbolMap<'me> {
 
 
     pub fn new_var(&mut self, node: impl Into<NodeId>, range: SourceRange) -> Sym {
-        Sym::Var(self.vars.push(Var { sub: None, node: node.into(), range }))
+        self.new_var_ex(node, range, VarSub::None)
+    }
+
+
+    pub fn new_var_ex(&mut self, node: impl Into<NodeId>, range: SourceRange, sub: VarSub) -> Sym {
+        Sym::Var(self.vars.push(Var { sub, node: node.into(), range }))
     }
 
 
@@ -342,8 +356,8 @@ impl VarId {
                 if self == v { return true }
                 let sub = map.vars[v].sub;
                 match sub {
-                    Some(ty) => self.occurs_in(map, ty),
-                    None => self == v,
+                    VarSub::Concrete(ty) => self.occurs_in(map, ty),
+                    _ => false
                 }
             },
         }
@@ -352,9 +366,10 @@ impl VarId {
 
 
 impl Var {
-    pub fn sub_mut(&mut self) -> &mut Option<Sym> { &mut self.sub }
+    pub fn set_sub(&mut self, sub: VarSub) { 
+        self.sub = sub;
+    }
 }
-
 
 
 impl SymbolId {
@@ -492,6 +507,14 @@ impl SymbolId {
             | Self::I32
             | Self::I64
             | Self::ISIZE
+        )
+    }
+
+
+    pub fn is_float(self) -> bool {
+        matches!(self,
+              Self::F32
+            | Self::F64
         )
     }
 }
