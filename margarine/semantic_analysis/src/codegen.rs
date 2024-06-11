@@ -82,12 +82,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             register!(I16, ctx.integer(16));
             register!(I32, ctx.integer(32));
             register!(I64, ctx.integer(64));
-            register!(ISIZE, ctx.integer(module.ptr_size() as u32));
+            register!(ISIZE, ctx.integer(module.ptr_size_in_bytes() as u32 * 8));
             register!(U8 , ctx.integer(8 ));
             register!(U16, ctx.integer(16));
             register!(U32, ctx.integer(32));
             register!(U64, ctx.integer(64));
-            register!(USIZE, ctx.integer(module.ptr_size() as u32));
+            register!(USIZE, ctx.integer(module.ptr_size_in_bytes() as u32 * 8));
             register!(F32, ctx.f32());
             register!(F64, ctx.f64());
             register!(BOOL, ctx.bool());

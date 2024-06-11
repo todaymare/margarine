@@ -63,7 +63,7 @@ impl<'ctx> Module<'ctx> {
     }
 
 
-    pub fn ptr_size(&self) -> usize {
+    pub fn ptr_size_in_bytes(&self) -> usize {
         let dt = unsafe { LLVMGetModuleDataLayout(self.ptr.as_ptr()) };
         unsafe { LLVMPointerSize(dt) as usize } 
     }
