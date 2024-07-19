@@ -154,7 +154,6 @@ impl Sym {
 
                 let var = map.vars()[ida].sub();
  
-                dbg!(var, b);
                 match var {
                     VarSub::Concrete(ta) if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
 

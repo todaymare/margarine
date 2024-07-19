@@ -14,7 +14,6 @@ system fn main() {
     let or = x | y
     let xor = x ^ y
 
-
     let mut z = 0
 
     z += add

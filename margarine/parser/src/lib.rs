@@ -981,6 +981,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             if self.current_is(TokenKind::Equals) || self.current_is(TokenKind::Colon) {
                 break
             }
+            break
         }
 
         let hint =
@@ -1315,11 +1316,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 continue
             }
 
+            /*
             if self.current_is(TokenKind::QuestionMark) {
                 let source = SourceRange::new(self.ast.range(result).start(), self.current_range().end());
                 result = self.ast.add_expr(Expr::OrReturn(result), source);
                 continue
             }
+            */
             
             self.advance();
 

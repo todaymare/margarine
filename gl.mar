@@ -1,0 +1,7 @@
+extern {
+    fn glClear(bit: u32)
+    fn glClearColor(r: f32, g: f32, b: f32, a: f32)
+}
+
+
+fn COLOR_BUFFER_BIT(): u32 { 16384 as u32 }

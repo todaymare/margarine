@@ -1,14 +1,14 @@
 component Position {
-    x: float,
-    y: float,
+    x: f32,
+    y: f32,
 }
 
 
 resource Time {
-    delta: float,
+    delta: f64,
 }
 
 
 struct NormalStruct {
-    something: int,
+    something: i16,
 }

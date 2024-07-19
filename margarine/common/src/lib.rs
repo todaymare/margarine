@@ -1,7 +1,7 @@
 pub mod string_map;
 pub mod hashables;
 pub mod source;
-pub mod toggle_buffer;
+pub mod buffer;
 
 use std::{ops::Deref, time::Instant};
 

@@ -1,16 +1,16 @@
 #![feature(get_many_mut)]
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write};
 
-use common::string_map::{StringIndex, StringMap};
+use common::{buffer::Buffer, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, keyed::KVec};
-use syms::{func::FunctionTy, ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
+use sti::{arena::Arena, keyed::KVec, string::String, vec::Vec, write};
+use syms::{ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 
-use crate::scope::ScopeKind;
+use crate::{scope::ScopeKind, syms::{containers::Container, Symbol}};
 
 pub mod scope;
 pub mod namespace;
@@ -21,8 +21,9 @@ pub mod global;
 pub mod syms;
 
 #[derive(Debug)]
-pub struct TyChecker<'me, 'out, 'ast, 'str> {
+pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     output      : &'out Arena,
+    temp        : &'temp Arena,
     pub string_map: &'me mut StringMap<'str>,
     ast         : &'me AST<'ast>,
 
@@ -69,8 +70,9 @@ impl AnalysisResult {
 }
 
 
-impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
+impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub fn run(out: &'out Arena,
+               temp: &'temp Arena,
                ast: &'me mut AST<'ast>,
                block: &[NodeId],
                string_map: &'me mut StringMap<'str>) -> Self {
@@ -91,6 +93,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             },
             ast,
             startups: Vec::new(),
+            temp,
         };
 
         {
@@ -194,7 +197,24 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]))),
 
 
-            DataTypeKind::Tuple(_) => todo!(),
+            DataTypeKind::Tuple(tys) => {
+                let pool = Arena::tls_get_rec();
+                let (fields, generics) = {
+                    let mut fields = Buffer::new(&*pool, tys.len());
+                    let mut generics = Buffer::new(self.output, tys.len());
+                    for ty in tys {
+                        let gen = self.dt_to_gen(scope, ty.1, gens)?;
+                        fields.push(ty.0);
+                        generics.push(gen);
+                    }
+
+                    (fields.leak(), generics.leak())
+                };
+
+                let sym = self.tuple_sym(dt.range(), fields);
+
+                Ok(Generic::new(dt.range(), GenericKind::Sym(sym, generics)))
+            },
 
 
             DataTypeKind::Within(ns, dt) => {
@@ -225,7 +245,7 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 }
 
                 let generics = {
-                    let mut vec = sti::vec::Vec::with_cap_in(&*self.output, generics.len());
+                    let mut vec = Buffer::new(&*self.output, generics.len());
 
                     for g in generics {
                         vec.push(self.dt_to_gen(scope, *g, gens)?);
@@ -275,10 +295,10 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
                 let base_sym = self.syms.sym(base);
 
                 let pool = Arena::tls_get_temp();
-                let mut generics = sti::vec::Vec::with_cap_in(&*pool, base_sym.generics().len());
+                let mut generics = Buffer::new(&*pool, base_sym.generics().len());
                 if generics_list.is_empty() {
                     for _ in base_sym.generics() {
-                        generics.push(self.syms.new_var(id, dt.range()))
+                        generics.push(self.syms.new_var(id, dt.range()));
                     }
 
                 } else {
@@ -298,8 +318,58 @@ impl<'me, 'out, 'ast, 'str> TyChecker<'me, 'out, 'ast, 'str> {
             },
 
 
-            DataTypeKind::Tuple(_) => todo!(),
+            DataTypeKind::Tuple(vals) => {
+                let pool = Arena::tls_get_rec();
+                let (fields, generics) = {
+                    let mut fields = Buffer::new(&*pool, vals.len());
+                    let mut generics = Buffer::new(self.output, vals.len());
+                    let mut str = String::new_in(&*pool);
+                    for (index, ty) in vals.iter().enumerate() {
+                        str.clear();
+                        write!(str, "{index}");
+                        let index = self.string_map.insert(&str);
+
+                        let gen = self.dt_to_ty(scope_id, id, ty.1)?;
+                        fields.push(ty.0);
+                        generics.push((index, gen));
+                    }
+
+                    (fields.leak(), generics.leak())
+                };
+
+                let sym = self.tuple_sym(dt.range(), fields);
+                let generics = self.syms.add_gens(generics);
+
+                Ok(Sym::Ty(sym, generics))
+            },
         }
+    }
+
+
+    fn tuple_sym(&mut self, range: SourceRange, fields: &[OptStringIndex]) -> SymbolId {
+        let pool = Arena::tls_get_temp();
+        let pending = self.syms.pending(&mut self.namespaces, StringMap::INVALID_IDENT, fields.len());
+        let (fields, gens) = {
+            let mut sym_fields = Buffer::new(self.output, fields.len());
+            let mut gens = Buffer::new(self.output, fields.len());
+            let mut str = String::new_in(&*pool);
+            for (index, name) in fields.iter().enumerate() {
+                str.clear();
+                write!(str, "{index}");
+                let index = self.string_map.insert(&str);
+                gens.push(index);
+                sym_fields.push((*name, Generic::new(range, GenericKind::Generic(index))));
+            }
+
+            (sym_fields.leak(), gens.leak())
+        };
+
+
+        let cont = Container::new(fields, syms::containers::ContainerKind::Tuple);
+        let sym = Symbol::new(StringMap::TUPLE, gens, syms::SymbolKind::Container(cont));
+        self.syms.add_sym(pending, sym);
+
+        pending
     }
 }
 

@@ -3,8 +3,6 @@ use std::env;
 use margarine::{DropTimer, FileData, StringMap};
 use sti::arena::Arena;
 
-// const GAME_RUNTIME : &[u8] = include_bytes!("../../target/debug/game-runtime");
-
 fn main() -> Result<(), &'static str> {
     DropTimer::with_timer("compilation", || {
        let string_map_arena = Arena::new();
@@ -12,13 +10,15 @@ fn main() -> Result<(), &'static str> {
        let files = {
            let mut files = Vec::new();
            for i in env::args().skip(1) {
-               files.push(FileData::open(i, &mut string_map).unwrap());
+               files.push(FileData::open(&i, &mut string_map).expect(&format!("{}", i)));
            }
 
            files
        };
 
-       butter::run(&mut string_map, files)
+       butter::run(&mut string_map, files.clone())?;
+
+       Ok(())
     })
 }
 

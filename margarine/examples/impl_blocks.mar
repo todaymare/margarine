@@ -1,7 +1,7 @@
-struct Number { value: int }
+struct Number { value: i64 }
 
 impl Number {
-    fn new(number: int): Number {
+    fn new(number: i64): Number {
         Number {
             value: number
         }

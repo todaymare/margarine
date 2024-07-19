@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write, ptr::copy_nonoverlapping};
 
-use common::string_map::{StringIndex, StringMap};
+use common::{copy_slice_in, string_map::{StringIndex, StringMap}};
 use lexer::Literal;
 use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, Type}, values::{func::{FunctionPtr, Linkage}, ptr::Ptr, Value}};
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
@@ -9,7 +9,7 @@ use sti::{arena::Arena, vec::Vec};
 use crate::{namespace::NamespaceMap, syms::{containers::ContainerKind, func::FunctionKind, ty::{self, Sym, TypeHash}, sym_map::{GenListId, SymbolId, SymbolMap}, SymbolKind}, TyChecker, TyInfo};
 
 pub struct Codegen<'me, 'out, 'ast, 'str, 'ctx> {
-    string_map: &'me StringMap<'str>,
+    string_map: &'me mut StringMap<'str>,
     syms: &'me mut SymbolMap<'out>,
     ns: &'me NamespaceMap,
     ast: &'me AST<'ast>,
@@ -20,6 +20,7 @@ pub struct Codegen<'me, 'out, 'ast, 'str, 'ctx> {
     ty_info: &'me TyInfo,
     ty_mappings: HashMap<TypeHash, Type<'ctx>>,
     func_mappings: HashMap<TypeHash, (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
+    tuples: HashMap<&'me [TypeHash], Type<'ctx>>,
 
     externs : HashMap<StringIndex, (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
 
@@ -62,6 +63,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             ty_info: &ty_checker.type_info,
             ty_mappings: HashMap::new(),
             func_mappings: HashMap::new(),
+            tuples: HashMap::new(),
             externs: HashMap::new(),
             ctx: ctx.as_ctx_ref(),
             ns: &ty_checker.namespaces,
@@ -113,7 +115,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    fn ty_to_llvm(&mut self, ty: Sym, scope_gens: &[(StringIndex, Sym)]) -> Type<'ctx> {
+    fn sym_to_llvm(&mut self, ty: Sym, scope_gens: &[(StringIndex, Sym)]) -> Type<'ctx> {
         self.ty_to_llvm_ex(ty, scope_gens, true)
     }
 
@@ -158,13 +160,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
         match sym.kind() {
             SymbolKind::Function(v) => {
                 let ret = v.ret().to_ty(gens, self.syms).unwrap();
-                let ret_llvm = self.ty_to_llvm(ret, scope_gens);
+                let ret_llvm = self.sym_to_llvm(ret, scope_gens);
 
                 let args = {
                     let mut vec = Vec::with_cap_in(&*pool, v.args().len());
                     for i in v.args() {
                         let ty = i.symbol().to_ty(gens, self.syms).unwrap();
-                        vec.push(self.ty_to_llvm(ty, scope_gens));
+                        vec.push(self.sym_to_llvm(ty, scope_gens));
                     }
 
                     vec
@@ -179,12 +181,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                         let strct = self.ctx.structure(name);
                         self.ty_mappings.insert(hash, *strct);
 
-                        let pool = Arena::tls_get_rec();
                         let fields = {
                             let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
                             for i in cont.fields() {
                                 let ty = i.1.to_ty(gens, self.syms).unwrap();
-                                vec.push(self.ty_to_llvm(ty, scope_gens));
+                                vec.push(self.sym_to_llvm(ty, scope_gens));
                             }
 
                             vec.leak()
@@ -206,7 +207,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                             let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
                             for i in cont.fields() {
                                 let ty = i.1.to_ty(gens, self.syms).unwrap();
-                                vec.push(self.ty_to_llvm(ty, scope_gens));
+                                vec.push(self.sym_to_llvm(ty, scope_gens));
                             }
 
                             vec.leak()
@@ -216,7 +217,42 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                         *union
                     },
 
-                    ContainerKind::Tuple => todo!(),
+
+                    ContainerKind::Tuple => {
+                        let hashes = { 
+                            let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
+                            for i in cont.fields() {
+                                let ty = i.1.to_ty(gens, self.syms).unwrap();
+                                vec.push(ty.hash(self.syms));
+                            }
+                            vec.leak()
+                        };
+
+                        if let Some(val) = self.tuples.get(hashes) {
+                            return *val
+                        }
+
+                        let strct = self.ctx.structure(name);
+                        self.ty_mappings.insert(hash, *strct);
+
+                        let hashes = copy_slice_in(self.syms.arena(), hashes);
+                        self.tuples.insert(hashes, *strct);
+
+
+                        let fields = {
+                            let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
+                            for i in cont.fields() {
+                                let ty = i.1.to_ty(gens, self.syms).unwrap();
+                                vec.push(self.sym_to_llvm(ty, scope_gens));
+                            }
+
+                            vec.leak()
+                        };
+
+                        strct.set_fields(fields, false);
+
+                        *strct
+                    },
                 }
             },
         }
@@ -260,7 +296,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
         match self.ast.stmt(stmt) {
             Stmt::Variable { name, rhs, .. } => {
                 let expr = self.expr(builder, env, rhs)?;
-                let ty = self.ty_to_llvm(expr.1, &env.gens);
+                let ty = self.sym_to_llvm(expr.1, &env.gens);
                 let local = builder.local(ty);
                 builder.local_set(local, expr.0);
 
@@ -304,7 +340,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let iter_fn_ret_value_ty = iter_fn_ret_ty.gens(&self.syms);
                 let iter_fn_ret_value_ty = self.syms.get_gens(iter_fn_ret_value_ty)[0].1;
-                let iter_fn_ret_value_ty_llvm = self.ty_to_llvm(iter_fn_ret_value_ty, &env.gens);
+                let iter_fn_ret_value_ty_llvm = self.sym_to_llvm(iter_fn_ret_value_ty, &env.gens);
 
                 builder.loop_indefinitely(|builder, l| {
                     let call_ret_value = builder.call(func.0, func.1, &[*iter_expr_ptr]).as_struct();
@@ -398,8 +434,21 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let SymbolKind::Container(cont) = sym.kind()
                 else { unreachable!() };
 
-                let ty = self.ty_to_llvm(ty, &env.gens);
-                let (index, _) = cont.fields().iter().enumerate().find(|f| f.1.0.unwrap() == field_name).unwrap();
+                let ty = self.sym_to_llvm(ty, &env.gens);
+                let mut str = sti::string::String::new_in(self.syms.arena());
+                let (index, _) = cont.fields().iter().enumerate().find(|(i, f)| {
+                    let name = match f.0.to_option() {
+                        Some(v) => v,
+                        None => {
+                            str.clear();
+                            let _ = write!(str, "{i}");
+                            let index = self.string_map.insert(&str);
+                            index
+                        },
+                    };
+
+                    field_name == name
+                }).unwrap();
                 Some(builder.field_ptr(ptr, ty.as_struct(), index))
             },
 
@@ -417,7 +466,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
                 if ty.is_err(self.syms) { return None }
 
-                let llvm_ty = self.ty_to_llvm(ty, &env.gens).as_struct();
+                let llvm_ty = self.sym_to_llvm(ty, &env.gens).as_struct();
 
                 let strct = builder.load(ptr, *llvm_ty).as_struct();
                 let value_index = builder.field_load(strct, 0).as_integer();
@@ -433,7 +482,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
-            Expr::OrReturn(_) => todo!(),
+            Expr::OrReturn(val) => {
+                todo!()
+            },
 
             // Some values just don't support assignment
             // That's fine, they'll just terminate the assignment
@@ -493,7 +544,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                     Literal::String(v) => {
-                        let ty = this.ty_to_llvm(Sym::STR, &env.gens).as_struct();
+                        let ty = this.sym_to_llvm(Sym::STR, &env.gens).as_struct();
 
                         let string = this.string_map.get(v);
                         let str = format!("\x01\x00\x00\x00\x00\x00\x00\x00{}", string);
@@ -547,7 +598,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let lhs = builder.int_cast(lhs.0.as_integer(), *ty, true);
                 let rhs = builder.int_cast(rhs.0.as_integer(), *ty, true);
 
-                let strct = this.ty_to_llvm(Sym::RANGE, &env.gens).as_struct();
+                let strct = this.sym_to_llvm(Sym::RANGE, &env.gens).as_struct();
                 *builder.struct_instance(strct, &[lhs, rhs])
             },
 
@@ -649,7 +700,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let local = if ty_sym == SymbolId::ERR { None }
                             else {
-                                let ty = this.ty_to_llvm(ty, &env.gens);
+                                let ty = this.sym_to_llvm(ty, &env.gens);
                                 Some(builder.local(ty))
                             };
 
@@ -704,7 +755,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 });
 
                 let ty = out_if_err!();
-                let ret_ty = this.ty_to_llvm(ty, &env.gens);
+                let ret_ty = this.sym_to_llvm(ty, &env.gens);
                 let ret_local = builder.local(ret_ty);
                 let inout_ptr = builder.field_ptr(value_alloc, value_ty.ty(), 1);
 
@@ -714,7 +765,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                     let gens = val.1.gens(this.syms);
                     let gens = this.syms.get_gens(gens);
                     let field_ty = field.1.to_ty(gens, this.syms).unwrap();
-                    let field_ty_llvm = this.ty_to_llvm(field_ty, &env.gens);
+                    let field_ty_llvm = this.sym_to_llvm(field_ty, &env.gens);
 
                     let local = builder.local(field_ty_llvm);
                     let value = builder.field_load(val.0.as_struct(), 1);
@@ -763,7 +814,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                     field_vals.push((f.0, this.expr(builder, env, f.2)?));
                 }
 
-                let llvm_ty = this.ty_to_llvm(ty, &env.gens).as_struct();
+                let llvm_ty = this.sym_to_llvm(ty, &env.gens).as_struct();
                 let sym = ty.sym(this.syms).unwrap();
                 let SymbolKind::Container(cont) = this.syms.sym(sym).kind()
                 else { unreachable!() };
@@ -787,10 +838,24 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let SymbolKind::Container(cont) = this.syms.sym(value_ty).kind()
                 else { unreachable!() };
 
-                let (i, f) = cont.fields().iter().enumerate().find(|x| x.1.0.unwrap() == field_name).unwrap();
+                let mut str = sti::string::String::new_in(this.syms.arena());
+                let (i, f) = cont.fields().iter().enumerate().find(|(i, f)| {
+                    let name = match f.0.to_option() {
+                        Some(v) => v,
+                        None => {
+                            str.clear();
+                            let _ = write!(str, "{i}");
+                            let index = this.string_map.insert(&str);
+                            index
+                        },
+                    };
+
+                    field_name == name
+                }).unwrap();
                 
                 match cont.kind() {
-                    ContainerKind::Struct => builder.field_load(value.0.as_struct(), i),
+                    | ContainerKind::Tuple
+                    | ContainerKind::Struct => builder.field_load(value.0.as_struct(), i),
 
 
                     ContainerKind::Enum => {
@@ -818,12 +883,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                         let expected_index = builder.const_int(value_index.ty().as_integer(), i as i64, false);
                         let cmp = builder.cmp_int(value_index.as_integer(), expected_index, IntCmp::Eq);
 
-                        let local = builder.local(this.ty_to_llvm(opt_ty, &env.gens));
+                        let local = builder.local(this.sym_to_llvm(opt_ty, &env.gens));
                         builder.ite(this, cmp,
                         |builder, slf| {
                             let func = slf.get_func(some_func, gens).unwrap();
                             let val = builder.field_load(value.0.as_struct(), 1);
-                            let val = builder.bitcast(val, slf.ty_to_llvm(field_ty, &env.gens));
+                            let val = builder.bitcast(val, slf.sym_to_llvm(field_ty, &env.gens));
                             let ret = builder.call(func.0, func.1, &[val]);
                             builder.local_set(local, ret);
                         },
@@ -839,7 +904,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                     },
 
 
-                    ContainerKind::Tuple => todo!(),
                 }
             },
 
@@ -888,7 +952,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let ret = builder.call(func, func_ty, &*args);
 
                 for i in inouts {
-                    let ty = this.ty_to_llvm(i.2, &env.gens);
+                    let ty = this.sym_to_llvm(i.2, &env.gens);
                     let val = builder.load(i.0, ty);
                     this.assign(builder, env, i.1, val)
                 }
@@ -959,7 +1023,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
-            Expr::Tuple(_) => todo!(),
+            Expr::Tuple(v) => {
+                let pool = Arena::tls_get_rec();
+                let mut vals = Vec::with_cap_in(&*pool, v.len());
+                for a in v { vals.push(this.expr(builder, env, *a)?.0) }
+
+                let strct = out_if_err!();
+                let strct = this.sym_to_llvm(strct, env.gens).as_struct();
+
+                *builder.struct_instance(strct, &vals)
+            },
 
 
             Expr::AsCast { lhs, .. } => {
@@ -969,7 +1042,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let lsym = lhs.1.sym(this.syms).unwrap();
 
                 let ty = out_if_err!();
-                let dest = this.ty_to_llvm(ty, &env.gens);
+                let dest = this.sym_to_llvm(ty, &env.gens);
 
 
                 if lsym.is_int() {
@@ -1004,11 +1077,27 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let gens = this.syms.get_gens(gens);
                 let field_ty = cont.fields()[0].1.to_ty(gens, this.syms).unwrap();
                 let val = builder.field_load(val.0.as_struct(), 1);
-                builder.bitcast(val, this.ty_to_llvm(field_ty, &env.gens))
+                builder.bitcast(val, this.sym_to_llvm(field_ty, &env.gens))
             },
 
 
-            Expr::OrReturn(_) => todo!(),
+            Expr::OrReturn(value) => {
+                let value = this.expr(builder, env, value)?;
+                let ret_ty = out_if_err!();
+
+                let sym_id = value.1.sym(this.syms).unwrap();
+
+                if sym_id == SymbolId::OPTION {
+                    todo!()
+                }
+
+
+                if sym_id == SymbolId::RESULT {
+                    todo!()
+                }
+
+                unreachable!()
+            },
         })})(); 
 
         let val = val?;
@@ -1077,7 +1166,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
         if ret.is_err(self.syms) { return Err(()) }
 
-        let llvm_ret = self.ty_to_llvm(ret, gens);
+        let llvm_ret = self.sym_to_llvm(ret, gens);
 
         let res = match sym_func.kind() {
             FunctionKind::Extern(path) => {
@@ -1093,7 +1182,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                             let ty = i.symbol().to_ty(gens, self.syms).unwrap();
                             if ty.is_err(self.syms) { return Err(()) }
 
-                            let ty = self.ty_to_llvm(ty, gens);
+                            let ty = self.sym_to_llvm(ty, gens);
                             vec.push(ty);
                         }
                     }
@@ -1105,6 +1194,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let func = self.module.function(self.string_map.get(path), func_ty);
                 func.set_linkage(Linkage::External);
 
+                self.func_mappings.insert(hash, (func, func_ty));
                 self.externs.insert(path, (func, func_ty));
 
                 return Ok((func, func_ty));
@@ -1123,7 +1213,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                         let ty = i.symbol().to_ty(gens, self.syms).unwrap();
                         if ty.is_err(self.syms) { return Err(()) }
 
-                        let ty = self.ty_to_llvm(ty, gens);
+                        let ty = self.sym_to_llvm(ty, gens);
                         vec.push(ty);
                     }
 
@@ -1133,6 +1223,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let func_ty = llvm_ret.fn_ty(args, false);
                 let func = self.module.function(self.string_map.get(fsym.name()), func_ty);
+                self.func_mappings.insert(hash, (func, func_ty));
+
                 let mut builder = func.builder(self.ctx, func_ty);
 
                 let Decl::Function { body, .. } = self.ast.decl(decl)
@@ -1153,7 +1245,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                         let ty = fa.symbol().to_ty(gens, self.syms).unwrap();
                         if ty.is_err(self.syms) { return Err(()) }
 
-                        let ty = self.ty_to_llvm(ty, env.gens);
+                        let ty = self.sym_to_llvm(ty, env.gens);
 
                         let ptr = builder.local_get(arg).as_ptr();
                         let load = builder.load(ptr, ty);
@@ -1195,14 +1287,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 let arg = cont.fields()[index];
                 let arg_ty = arg.1.to_ty(gens, self.syms).unwrap();
 
-                let llvm_ret_ty = self.ty_to_llvm(ret_ty, gens);
+                let llvm_ret_ty = self.sym_to_llvm(ret_ty, gens);
 
                 let is_unit = arg_ty.sym(self.syms).unwrap() == SymbolId::UNIT;
-                let llvm_arg_ty = self.ty_to_llvm(arg_ty, gens);
+                let llvm_arg_ty = self.sym_to_llvm(arg_ty, gens);
 
                 let func_ty = if is_unit { llvm_ret_ty.fn_ty(&[], false) }
                               else { llvm_ret_ty.fn_ty(&[llvm_arg_ty], false) };
                 let func = self.module.function(self.string_map.get(fsym.name()), func_ty);
+                self.func_mappings.insert(hash, (func, func_ty));
 
                 let mut builder = func.builder(self.ctx, func_ty);
 
@@ -1229,8 +1322,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
                 (func, func_ty)
             },
         };
-
-        self.func_mappings.insert(hash, res);
 
         Ok(res)
     }

@@ -1,4 +1,4 @@
-use std::{env, fs, process::Command};
+use std::{fs, process::Command};
 
 use colourful::ColourBrush;
 use margarine::{nodes::{decl::Decl, AST}, Codegen, DropTimer, FileData, SourceRange, StringMap};
@@ -43,10 +43,11 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
 
 
     let sema_arena = Arena::new();
+    let temp = Arena::new();
     let _scopes = Arena::new();
     let mut sema = {
         let _1 = DropTimer::new("semantic analysis");
-        margarine::TyChecker::run(&sema_arena, &mut global, &*modules, string_map)
+        margarine::TyChecker::run(&sema_arena, &temp, &mut global, &*modules, string_map)
     };
 
     // todo: find a way to comrpess these errors into vecs
@@ -195,25 +196,28 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Result<(), &
     }
 
 
-    let str = module.dump_to_str();
-    fs::write("out.ll", str.as_str()).unwrap();
+    #[cfg(not(feature="fuzzer"))]
+    {
+        let str = module.dump_to_str();
+        fs::write("out.ll", str.as_str()).unwrap();
 
-    if let Err(e) = module.validate() {
-        println!("COMPILER ERROR! {}", e.red().bold());
-        return Err("fatal compiler error");
+        if let Err(e) = module.validate() {
+            println!("COMPILER ERROR! {}", e.red().bold());
+            return Err("fatal compiler error");
+        }
+
+        Command::new("/opt/homebrew/opt/llvm/bin/clang")
+            .arg("/opt/homebrew/lib/libglfw.3.4.dylib")
+            .arg("target/debug/libcore.a")
+            .arg("out.ll")
+            .arg("-o")
+            .arg("out")
+            .arg("-Wall")
+            .arg("-Wno-override-module")
+            .arg("-framework")
+            .arg("OpenGL")
+            .spawn().unwrap().wait().unwrap();
     }
-
-    Command::new("clang")
-        .arg("/opt/homebrew/lib/libglfw.3.4.dylib")
-        .arg("target/debug/libcore.a")
-        .arg("out.ll")
-        .arg("-o")
-        .arg("out")
-        .arg("-Wall")
-        .arg("-Wno-override-module")
-        .arg("-framework")
-        .arg("OpenGL")
-        .spawn().unwrap().wait().unwrap();
 
 
     Ok(())

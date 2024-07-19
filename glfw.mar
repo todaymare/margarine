@@ -1,0 +1,29 @@
+use ffi::(CPtr, CStr)
+
+extern {
+    fn glfwInit(): i32
+    fn glfwWindowHint(key: i32, value: i32)
+    fn glfwCreateWindow(width: i32, height: i32,
+                        name: CStr, monitor: CPtr<GLFWmonitor>,
+                        share: CPtr<GLFWwindow>): CPtr<GLFWwindow>
+    fn glfwWindowShouldClose(window: CPtr<GLFWwindow>): i32
+    fn glfwSetWindowShouldClose(window: CPtr<GLFWwindow>, bool: i32) 
+    fn glfwGetKey(window: CPtr<GLFWwindow>, key: u16): i32
+    fn glfwMakeContextCurrent(window: CPtr<GLFWwindow>) 
+    fn glfwPollEvents() 
+    fn glfwSwapBuffers(window: CPtr<GLFWwindow>) 
+}
+
+fn TRUE() : i32 { 1 as i32 }
+fn FALSE(): i32 { 0 as i32 }
+fn CONTEXT_VERSION_MAJOR(): i32 { 139266 as i32 }
+fn CONTEXT_VERSION_MINOR(): i32 { 139267 as i32 }
+fn OPENGL_PROFILE       (): i32 { 139272 as i32 }
+fn OPENGL_CORE_PROFILE  (): i32 { 204801 as i32 }
+
+struct GLFWwindow  {}
+struct GLFWmonitor {}
+
+
+fn PRESS(): i32 { 1 as i32 }
+

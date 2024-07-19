@@ -1,0 +1,7 @@
+fn hi() {}
+fn hi() {}
+
+extern {
+    fn random_number(): f64
+    fn random_number(): f64
+}

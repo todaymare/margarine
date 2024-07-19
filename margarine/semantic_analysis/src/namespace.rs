@@ -64,14 +64,12 @@ impl Namespace {
 
 
     pub fn add_sym(&mut self, name: StringIndex, sym: SymbolId) {
-        let old_sym = self.symbols.insert(name, Some(sym));
-        if old_sym.is_some() {
-            self.symbols.insert(name, None);
-        }
+        let old = self.symbols.insert(name, Some(sym));
+        assert!(old.is_none());
     }
 
 
-    pub fn add_err_sym(&mut self, name: StringIndex) {
+    pub fn set_err_sym(&mut self, name: StringIndex) {
         self.symbols.insert(name, None);
     }
 

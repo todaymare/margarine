@@ -410,6 +410,7 @@ impl SymbolId {
             | Self::USIZE
             | Self::F32
             | Self::F64
+            | Self::ERR
         )
     }
 
@@ -426,6 +427,7 @@ impl SymbolId {
             | Self::U32
             | Self::U64
             | Self::USIZE
+            | Self::ERR
         )
     }
 
@@ -444,6 +446,7 @@ impl SymbolId {
             | Self::USIZE
             | Self::F32
             | Self::F64
+            | Self::ERR
         )
     }
 
@@ -463,6 +466,7 @@ impl SymbolId {
             | Self::F64
             | Self::BOOL
             | Self::UNIT
+            | Self::ERR
         )
     }
 
@@ -481,6 +485,7 @@ impl SymbolId {
             | Self::USIZE
             | Self::F32
             | Self::F64
+            | Self::ERR
         )
     }
 
@@ -497,6 +502,7 @@ impl SymbolId {
             | Self::U32
             | Self::U64
             | Self::USIZE
+            | Self::ERR
         )
     }
 
@@ -507,6 +513,7 @@ impl SymbolId {
             | Self::I32
             | Self::I64
             | Self::ISIZE
+            | Self::ERR
         )
     }
 
@@ -515,6 +522,7 @@ impl SymbolId {
         matches!(self,
               Self::F32
             | Self::F64
+            | Self::ERR
         )
     }
 }

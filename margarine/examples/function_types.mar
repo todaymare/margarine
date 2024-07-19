@@ -1,9 +1,9 @@
 @startup
-system fn main(): int {
+system fn main(): usize {
     69 - add(5, 4)
 }
 
 
-fn add(value_1: int, value_2: int): int {
+fn add(value_1: usize, value_2: usize): usize {
     value_1 + value_2 
 }

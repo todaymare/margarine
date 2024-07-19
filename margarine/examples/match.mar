@@ -1,6 +1,6 @@
 @startup
-system fn main(): int {
-    let value = [int?]::new(69)
+system fn main(): i64 {
+    let value = some(69)
 
     match value {
         some: value => value + 5,

@@ -1,0 +1,25 @@
+struct CPtr<T> { ptr: usize }
+
+impl<T> CPtr<T> {
+    fn null(): CPtr<T> { CPtr { ptr: 0 as usize } }
+    fn is_null(self): bool { self.ptr == 0 as usize }
+}
+
+
+struct CStr { ptr: CPtr<u8> }
+
+impl CStr {
+    fn from_str(str: str): CStr {
+        extern { fn str_to_cstr(str: str): CStr }
+        str_to_cstr(str)
+    }
+
+    
+    fn free(self) {
+        // std::assert(!self.ptr.is_null())
+        extern { fn free_cstr(str: CPtr<u8>) }
+        free_cstr(self.ptr)
+    }
+}
+
+extern { fn print_cstr(cstr: CStr) }

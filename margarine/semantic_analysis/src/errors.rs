@@ -160,7 +160,7 @@ pub enum Error {
 
     MissingFields {
         source: SourceRange,
-        fields: Vec<StringIndex>,
+        fields: sti::vec::Vec<StringIndex>,
     },
 
     FunctionNotFound {
@@ -257,6 +257,8 @@ pub enum Error {
     InvalidSystem(SourceRange),
 
     Bypass,
+
+    CallOnNonFunction { source: SourceRange, name: StringIndex },
 }
 
 
@@ -423,13 +425,22 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 fmt.error("struct creation on a type which is not a struct")
                     .highlight_with_note(*source, &msg);
             }
-            
+             
             Error::FunctionNotFound { name, source } => {
                 let msg = format!("there's no function named '{}' in the current scope",
                     fmt.string(*name),
                 );
 
                 fmt.error("function not found")
+                    .highlight_with_note(*source, &msg)
+            },
+
+            Error::CallOnNonFunction { name, source } => {
+                let msg = format!("the symbol named '{}' isn't a function",
+                    fmt.string(*name),
+                );
+
+                fmt.error("call on non-function")
                     .highlight_with_note(*source, &msg)
             },
             
@@ -518,7 +529,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::MissingMatch { name, range } => {
                 let mut msg = format!("missing variants: ");
                 let mut is_first = true;
-                for n in name {
+                for n in name.iter() {
                     if !is_first {
                         let _ = write!(msg, ", ");
                     }

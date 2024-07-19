@@ -34,12 +34,13 @@ pub extern "C" fn main() {
 // API stuff
 #[no_mangle]
 pub extern "C" fn print(str: Str) {
-    println!("{}", str.read())
+    println!("{:?}", str.read())
 }
 
+
 #[no_mangle]
-pub extern "C" fn print_cstr(str: Rc<*const i8>) {
-    println!("{}", unsafe { CStr::from_ptr(str.read()).to_string_lossy() });
+pub extern "C" fn print_cstr(str: *const i8) {
+    println!("{}", unsafe { CStr::from_ptr(str).to_string_lossy() });
 }
 
 
@@ -50,14 +51,17 @@ pub extern "C" fn print_i64(str: i64) {
 
 
 #[no_mangle]
-pub extern "C" fn str_to_cstr(str: Str) -> Rc<*const i8> {
+pub extern "C" fn str_to_cstr(str: Str) -> *const i8 {
     let str = str.read();
-    let str = CString::new(str).unwrap().into_boxed_c_str();
-    let str = Box::leak(str);
-    let str = str.as_ptr();
-    let rc = Rc::new(str);
+    let str = CString::new(str).unwrap();
+    let str = CString::into_raw(str);
+    str
+}
 
-    rc
+
+#[no_mangle]
+pub extern "C" fn free_cstr(str: *mut i8) {
+    core::mem::drop(unsafe { CString::from_raw(str) });
 }
 
 
@@ -121,21 +125,24 @@ extern "C" {
 
 
 #[no_mangle]
-pub extern "C" fn loadOpenGlToGLFW(window: *mut GLFWwindow, width: i32, height: i32) {
+pub extern "C" fn loadOpenGlToGLFW() {
+    unsafe { 
+        gl::load_with(|s| {
+            let str = CString::new(s).unwrap();
+            let result = glfwGetProcAddress(str.as_ptr());
+            result
+        });
+    } 
+}
+
+
+#[no_mangle]
+pub extern "C" fn setFrameBufferCallback(window: *mut GLFWwindow, width: i32, height: i32) {
     unsafe { 
         let prev_ctx = glfwGetCurrentContext();
         glfwMakeContextCurrent(window);
 
-        {
-            gl::load_with(|s| {
-                let str = CString::new(s).unwrap();
-                let result = glfwGetProcAddress(str.as_ptr());
-                result
-            });
-
-            gl::Viewport(0, 0, width, height);
-        }
-
+        gl::Viewport(0, 0, width, height);
         glfwSetFramebufferSizeCallback(window, Some(framebuffer_size_callback));
 
         glfwMakeContextCurrent(prev_ctx);

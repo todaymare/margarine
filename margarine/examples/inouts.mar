@@ -7,6 +7,6 @@ system fn main(): bool {
 }
 
 
-fn add(&value: int, num: int) {
+fn add(&value: i32, num: i32) {
     value += num
 }

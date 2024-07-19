@@ -1,1 +1,4 @@
-fn side_effects(&val: *int) {}
+fn side_effects(val: Ptr<i64>) {
+    val.* += 9
+}
+
