@@ -72,8 +72,6 @@ impl Sym {
 
                 match map.vars()[v].sub() {
                     VarSub::Concrete(v) => v.display_ex(string_map, map, def),
-                    VarSub::Integer => "{integer}",
-                    VarSub::Float => "{float}",
                     VarSub::None => "{unknown}",
                 }
             },
@@ -157,9 +155,6 @@ impl Sym {
                 match var {
                     VarSub::Concrete(ta) if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
 
-                    VarSub::Integer if !b.is_int(map) => false,
-                    VarSub::Float if !b.is_float(map) => false,
-
                     _ => {
                         map.vars_mut()[ida].set_sub(VarSub::Concrete(b));
                         true
@@ -174,9 +169,6 @@ impl Sym {
                 let var = map.vars()[idb].sub();
                 match var {
                     VarSub::Concrete(ta) if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
-
-                    VarSub::Integer if !a.is_int(map) => false,
-                    VarSub::Float if !a.is_float(map) => false,
 
                     _ => {
                         map.vars_mut()[idb].set_sub(VarSub::Concrete(a));
@@ -295,10 +287,7 @@ impl Sym {
                 let var = map.vars_mut()[v].sub();
                 match var {
                     VarSub::Concrete(v) => v.is_int(map),
-                    VarSub::Integer => true,
-                    VarSub::Float => false,
                     VarSub::None => {
-                        map.vars_mut()[v].set_sub(VarSub::Integer);
                         true
                     },
                 }
@@ -314,11 +303,8 @@ impl Sym {
             Sym::Var(v) => {
                 let var = map.vars_mut()[v].sub();
                 match var {
-                    VarSub::Concrete(v) => v.is_int(map),
-                    VarSub::Integer => false,
-                    VarSub::Float => true,
+                    VarSub::Concrete(v) => v.is_float(map),
                     VarSub::None => {
-                        map.vars_mut()[v].set_sub(VarSub::Float);
                         true
                     },
                 }
@@ -342,17 +328,7 @@ fn instantiate_gens(map: &mut SymbolMap, gen: GenListId) -> GenListId {
 
 impl Sym {
     pub const UNIT : Self = Self::Ty(SymbolId::UNIT , GenListId::EMPTY);
-    pub const I8   : Self = Self::Ty(SymbolId::I8   , GenListId::EMPTY);
-    pub const I16  : Self = Self::Ty(SymbolId::I16  , GenListId::EMPTY);
-    pub const I32  : Self = Self::Ty(SymbolId::I32  , GenListId::EMPTY);
     pub const I64  : Self = Self::Ty(SymbolId::I64  , GenListId::EMPTY);
-    pub const ISIZE: Self = Self::Ty(SymbolId::ISIZE, GenListId::EMPTY);
-    pub const U8   : Self = Self::Ty(SymbolId::U8   , GenListId::EMPTY);
-    pub const U16  : Self = Self::Ty(SymbolId::U16  , GenListId::EMPTY);
-    pub const U32  : Self = Self::Ty(SymbolId::U32  , GenListId::EMPTY);
-    pub const U64  : Self = Self::Ty(SymbolId::U64  , GenListId::EMPTY);
-    pub const USIZE: Self = Self::Ty(SymbolId::USIZE, GenListId::EMPTY);
-    pub const F32  : Self = Self::Ty(SymbolId::F32  , GenListId::EMPTY);
     pub const F64  : Self = Self::Ty(SymbolId::F64  , GenListId::EMPTY);
     pub const BOOL : Self = Self::Ty(SymbolId::BOOL , GenListId::EMPTY);
     pub const ERROR: Self = Self::Ty(SymbolId::ERR, GenListId::EMPTY);

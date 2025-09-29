@@ -7,7 +7,7 @@ use dt::{DataType, DataTypeKind};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, StructKind, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
+use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{arena::Arena, vec::Vec, keyed::KVec};
 
 use crate::nodes::expr::{BinaryOperator, ExprId};
@@ -167,21 +167,6 @@ impl<'out> Parser<'_, 'out, '_> {
     }
 
 
-    #[inline(always)]
-    fn expect_multi(&mut self, token_kinds: &'static [TokenKind]) -> Result<&Token, ErrorId> {
-        self.is_error_token()?;
-        if !token_kinds.contains(&self.current_kind()) {
-            return Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedXFoundYMulti { 
-                            source: self.current_range(), 
-                            found: self.current_kind(),
-                            expected: token_kinds,
-                        }))));
-        }
-
-        Ok(self.current())
-    }
-    
-
     fn expect_type(&mut self) -> Result<DataType<'out>, ErrorId> {
         let start = self.current_range().start();
         let result = if self.current_is(TokenKind::Bang) {
@@ -279,17 +264,6 @@ impl<'out> Parser<'_, 'out, '_> {
         };
 
         Ok(result)
-    }
-
-
-    #[inline(always)]
-    fn is_inout(&mut self) -> bool {
-        if self.current_is(TokenKind::Ampersand) {
-            self.advance();
-            true
-        } else {
-            false
-        }
     }
 
 
@@ -438,17 +412,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn statement(&mut self, settings: &ParserSettings<'ta>) -> Result<NodeId, ErrorId> {
         let node = match self.current_kind() {
             | TokenKind::Keyword(Keyword::Struct)
-            | TokenKind::Keyword(Keyword::Resource)
-            | TokenKind::Keyword(Keyword::Component)
             => self.struct_declaration()?.into(),
 
 
-            TokenKind::Keyword(Keyword::Fn) => self.function_declaration(false, &settings)?.into(),
-            TokenKind::Keyword(Keyword::System) => {
-                self.advance();
-                self.function_declaration(true, &settings)?.into()
-            },
-
+            TokenKind::Keyword(Keyword::Fn) => self.function_declaration(&settings)?.into(),
 
             TokenKind::Keyword(Keyword::Impl) => self.impl_declaration()?.into(),
             TokenKind::Keyword(Keyword::Mod) => self.mod_declaration()?.into(),
@@ -457,8 +424,9 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Use) => self.using_declaration()?.into(),
 
 
-            TokenKind::Keyword(Keyword::Let) => self.let_statement()?.into(),
+            TokenKind::Keyword(Keyword::Var) => self.let_statement()?.into(),
             TokenKind::Keyword(Keyword::For) => self.for_statement()?.into(),
+
 
             TokenKind::At => {
                 let start = self.current_range().start();
@@ -477,7 +445,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                                 SourceRange::new(start, self.current_range().end())).into()
             },
 
-
             _ => self.assignment(&settings)?.into(),
         };
 
@@ -487,21 +454,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn struct_declaration(&mut self) -> DeclResult<'ta> {
         let start = self.current_range().start();
-        let kind = match self.current_kind() {
-            TokenKind::Keyword(Keyword::Struct) => StructKind::Normal,
-            TokenKind::Keyword(Keyword::Resource) => StructKind::Resource,
-            TokenKind::Keyword(Keyword::Component) => StructKind::Component,
-
-            _ => {
-                self.expect_multi(&[
-                    TokenKind::Keyword(Keyword::Struct),
-                    TokenKind::Keyword(Keyword::Resource),
-                    TokenKind::Keyword(Keyword::Component),
-                ])?;
-                
-                unreachable!();
-            }
-        };
+        self.expect(TokenKind::Keyword(Keyword::Struct))?;
         self.advance();
 
         let name = self.expect_identifier()?;
@@ -534,7 +487,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::RightBracket)?;
         let end = self.current_range().end();
 
-        let node = Decl::Struct { kind, name, header, fields, generics };
+        let node = Decl::Struct { name, header, fields, generics };
 
         Ok(self.ast.add_decl(node, SourceRange::new(start, end)))
     }
@@ -543,7 +496,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn function_declaration(
         &mut self, 
-        is_system: bool, 
         settings: &ParserSettings<'ta>
     ) -> DeclResult<'ta> {
 
@@ -560,8 +512,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let arguments = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma), |parser, index| {
-            let is_inout = parser.is_inout();
-            
             let start = parser.current_range().start();
             let name = parser.expect_identifier()?;
 
@@ -571,7 +521,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     return Ok(FunctionArgument::new(
                         name,
                         parser_type,
-                        is_inout,
                         parser.current_range(),
                     ));
                 }
@@ -589,7 +538,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let argument = FunctionArgument::new(
                 name,
                 data_type,
-                is_inout,
                 SourceRange::new(start, end)
             );
 
@@ -627,7 +575,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         Ok(self.ast.add_decl(
             Decl::Function {
                 sig: FunctionSignature::new(
-                     is_system, 
                      name, 
                      header,
                      arguments,
@@ -726,7 +673,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
             |parser, index| {
                 let start = parser.current_range().start();
 
-                let is_inout = parser.is_inout();
                 let identifier = parser.expect_identifier()?;
 
                 if index == 0
@@ -735,7 +681,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         return Ok(FunctionArgument::new(
                             name,
                             parser_type,
-                            is_inout,
                             parser.current_range(),
                         ));
                     }
@@ -752,7 +697,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 Ok(FunctionArgument::new(
                     identifier, 
                     data_type, 
-                    is_inout, 
                     SourceRange::new(start, end)
                 ))
             });
@@ -919,19 +863,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         let binding_start = self.current_range().start();
 
-        // todo: In-Out for for loops is unsupported rn
-        //let is_inout = self.is_inout();
-        let is_inout = false;
-
         let binding = self.expect_identifier()?;
         let binding_range = SourceRange::new(binding_start, self.current_range().end());
         self.advance();
 
         self.expect(TokenKind::Keyword(Keyword::In))?;
         self.advance();
-
-        let is_expr_inout = self.is_inout();
-        let is_expr_inout = false;
 
         let expr = self.expression(
             &ParserSettings { can_parse_struct_creation: false, ..Default::default() })?;
@@ -946,8 +883,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(self.ast.add_stmt(
             Stmt::ForLoop {
-                binding: (is_inout, binding, binding_range),
-                expr: (is_expr_inout, expr),
+                binding: (binding, binding_range),
+                expr,
                 body: block
             },
             SourceRange::new(start, self.current_range().end()),
@@ -956,7 +893,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn let_statement(&mut self) -> StmtResult<'ta> {
         let start = self.current_range().start();
-        self.expect(TokenKind::Keyword(Keyword::Let))?;
+        self.expect(TokenKind::Keyword(Keyword::Var))?;
         self.advance();
 
         let pool = Arena::tls_get_temp();
@@ -966,21 +903,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 self.expect(TokenKind::Comma)?;
                 self.advance();
             }
-
-            let is_mut = 
-                if self.current_is(TokenKind::Keyword(Keyword::Mut)) {
-                    self.advance();
-                    true
-                } else { false };
-
             
+
             let name = self.expect_identifier()?;
             self.advance();
             
-            bindings.push((name, is_mut));
+            bindings.push(name);
             if self.current_is(TokenKind::Equals) || self.current_is(TokenKind::Colon) {
                 break
             }
+
+            // @todo: enable tuple var decls
             break
         }
 
@@ -1000,7 +933,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         
         Ok(self.ast.add_stmt(if bindings.len() == 1 {
             let b = bindings[0];
-            Stmt::Variable { name: b.0, hint, is_mut: b.1, rhs }
+            Stmt::Variable { name: b, hint, rhs }
         } else {
             Stmt::VariableTuple {
                 names: bindings.move_into(self.arena).leak(), 
@@ -1316,22 +1249,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 continue
             }
 
-            /*
             if self.current_is(TokenKind::QuestionMark) {
                 let source = SourceRange::new(self.ast.range(result).start(), self.current_range().end());
                 result = self.ast.add_expr(Expr::OrReturn(result), source);
                 continue
             }
-            */
             
             self.advance();
-
-            if self.current_is(TokenKind::Star) {
-                result = self.ast.add_expr(
-                    Expr::Deref(result),
-                    SourceRange::new(self.ast.range(result).start(), self.current_range().end()));
-                continue
-            }
             
             let start = self.current_range().start();
             let ident = match self.current_kind() {
@@ -1438,7 +1362,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 if settings.can_parse_struct_creation 
                     && (
                         self.peek_kind() == Some(TokenKind::LeftBracket)
-                        || self.peek_kind() == Some(TokenKind::QuestionMark)
                     ) {
                     return self.struct_creation_expression()
                 }
@@ -1601,7 +1524,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Match))?;
         self.advance();
 
-        let taken_as_inout = self.is_inout();
         let val = {
             let settings = ParserSettings {
                 can_parse_struct_creation: false,
@@ -1626,20 +1548,19 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let source_range = SourceRange::new(start, parser.current_range().end());
             parser.advance();
 
-            let (bind_to, is_inout, binding_range) =
+            let (bind_to, binding_range) =
                 if parser.current_is(TokenKind::Colon) {
                     parser.advance();
 
                     let binding_start = parser.current_range().start();
-                    let is_inout = parser.is_inout();
-                    
+
                     let name = parser.expect_identifier()?;
                     let binding_range = SourceRange::new(binding_start, parser.current_range().end());
                     parser.advance();
-                    (name, is_inout, binding_range)
+                    (name, binding_range)
 
                 } else {
-                    (parser.string_map.insert("_"), false, parser.current_range())
+                    (parser.string_map.insert("_"), parser.current_range())
                 };
 
 
@@ -1648,7 +1569,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             let expr = parser.expression(&ParserSettings::default())?;
 
-            Ok(MatchMapping::new(name, bind_to, binding_range, source_range, expr, is_inout))
+            Ok(MatchMapping::new(name, bind_to, binding_range, source_range, expr))
         })?;
 
         self.expect(TokenKind::RightBracket)?;
@@ -1657,7 +1578,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         Ok(self.ast.add_expr(
             Expr::Match { 
                 value: val, 
-                taken_as_inout,
                 mappings
             },
             SourceRange::new(start, end)
@@ -1741,13 +1661,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn parse_function_call_args(
         &mut self, 
         associated: Option<ExprId>
-    ) -> Result<&'ta mut [(ExprId, bool)], ErrorId> {
+    ) -> Result<&'ta mut [ExprId], ErrorId> {
 
         let binding = Arena::tls_get_rec();
         let mut args = Vec::new_in(&*binding);
 
         if let Some(node) = associated {
-            args.push((node, false));
+            args.push(node);
         }
         
         loop {
@@ -1774,11 +1694,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
 
 
-            let is_inout = self.is_inout();
             let expr = self.expression(&ParserSettings::default())?;
             self.advance();
             
-            args.push((expr, is_inout));
+            args.push(expr);
         }
         self.expect(TokenKind::RightParenthesis)?;
 

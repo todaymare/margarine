@@ -1,4 +1,3 @@
-#![feature(get_many_mut)]
 use std::{collections::HashMap, fmt::Write};
 
 use common::{buffer::Buffer, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
@@ -16,9 +15,10 @@ pub mod scope;
 pub mod namespace;
 pub mod errors;
 pub mod analysis;
-pub mod codegen;
+//pub mod codegen;
 pub mod global;
 pub mod syms;
+pub mod codegen;
 
 #[derive(Debug)]
 pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
@@ -50,7 +50,6 @@ pub struct TyInfo {
 pub enum ExprInfo {
     Result {
         ty    : Sym,
-        is_mut: bool,
     },
 
     Errored(ErrorId),
@@ -60,13 +59,12 @@ pub enum ExprInfo {
 #[derive(Debug, Clone, Copy)]
 pub struct AnalysisResult {
     ty    : Sym,
-    is_mut: bool,
 }
 
 impl AnalysisResult {
-    pub fn new(ty: Sym, is_mut: bool) -> Self { Self { ty, is_mut } }
-    pub fn error() -> Self { Self::new(Sym::ERROR, true) }
-    pub fn never() -> Self { Self::new(Sym::NEVER, true) }
+    pub fn new(ty: Sym) -> Self { Self { ty } }
+    pub fn error() -> Self { Self::new(Sym::ERROR) }
+    pub fn never() -> Self { Self::new(Sym::NEVER) }
 }
 
 
@@ -111,17 +109,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 };
             }
 
-            add_sym!(I8);
-            add_sym!(I16);
-            add_sym!(I32);
             add_sym!(I64);
-            add_sym!(ISIZE);
-            add_sym!(U8);
-            add_sym!(U16);
-            add_sym!(U32);
-            add_sym!(U64);
-            add_sym!(USIZE);
-            add_sym!(F32);
             add_sym!(F64);
             add_sym!(BOOL);
             add_sym!(PTR);
@@ -385,7 +373,7 @@ impl TyInfo {
     pub fn set_expr(&mut self, expr: ExprId, info: AnalysisResult) {
         let val = &mut self.exprs[expr];
         if val.is_none() || !matches!(info.ty, Sym::Ty(SymbolId::ERR, GenListId::EMPTY)) {
-            *val = Some(ExprInfo::Result { ty: info.ty, is_mut: info.is_mut })
+            *val = Some(ExprInfo::Result { ty: info.ty })
         }
     }
 

@@ -1,8 +1,0 @@
-[package]
-name = "llvm-api"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-llvm-sys = "181.0"
-sti = { git = "https://github.com/leddoo/sti" }

@@ -13,13 +13,12 @@ pub enum Stmt<'a> {
     Variable {
         name: StringIndex,
         hint: Option<DataType<'a>>,
-        is_mut: bool,
         rhs: ExprId,
     },
 
 
     VariableTuple {
-        names: &'a [(StringIndex, bool)],
+        names: &'a [StringIndex],
         hint: Option<DataType<'a>>,
         rhs: ExprId,
     },
@@ -32,8 +31,8 @@ pub enum Stmt<'a> {
 
 
     ForLoop {
-        binding: (bool, StringIndex, SourceRange),
-        expr: (bool, ExprId),
+        binding: (StringIndex, SourceRange),
+        expr: ExprId,
         body: Block<'a>,
     }
 }

@@ -1,5 +1,5 @@
 use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}, ImmutableData};
-use parser::nodes::NodeId;
+use parser::nodes::{decl::DeclId, NodeId};
 use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind}};
@@ -30,8 +30,6 @@ pub struct Var {
 #[derive(Debug, Clone, Copy)]
 pub enum VarSub {
     Concrete(Sym),
-    Integer,
-    Float,
     None,
 }
 
@@ -62,7 +60,7 @@ impl<'me> SymbolMap<'me> {
     pub fn add_enum(&mut self, id: SymbolId, ns_map: &mut NamespaceMap,
                     string_map: &mut StringMap, range: SourceRange,
                     name: StringIndex, mappings: &'me [(OptStringIndex, Generic<'me>)],
-                    generics: &'me [StringIndex]) {
+                    generics: &'me [StringIndex], decl: Option<DeclId>) {
 
         assert!(mappings.iter().all(|x| x.0.is_some()));
 
@@ -89,8 +87,8 @@ impl<'me> SymbolMap<'me> {
             let is_unit = i.1.sym().map(|x| x == SymbolId::UNIT).unwrap_or(false);
 
             let args = if is_unit { [].as_slice() }
-                       else { &*self.arena.alloc_new([FunctionArgument::new(StringMap::VALUE, i.1, false)]) };
-            let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id, index });
+                       else { &*self.arena.alloc_new([FunctionArgument::new(StringMap::VALUE, i.1)]) };
+            let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id, index }, decl);
             let sym = Symbol::new(func_name, generics, SymbolKind::Function(sym));
             let id = self.pending(ns_map, func_name, generics.len());
             self.add_sym(id, sym);
@@ -229,17 +227,7 @@ impl<'me> SymbolMap<'me> {
         }
 
         init!(UNIT);
-        init!(I8);
-        init!(I16);
-        init!(I32);
         init!(I64);
-        init!(ISIZE);
-        init!(U8);
-        init!(U16);
-        init!(U32);
-        init!(U64);
-        init!(USIZE);
-        init!(F32);
         init!(F64);
 
         // bool
@@ -252,7 +240,7 @@ impl<'me> SymbolMap<'me> {
             ];
 
             slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO,
-                         StringMap::BOOL, slf.arena.alloc_new(fields), &[]);
+                         StringMap::BOOL, slf.arena.alloc_new(fields), &[], None);
         }
 
         init!(ERR);
@@ -263,7 +251,7 @@ impl<'me> SymbolMap<'me> {
             let pending = slf.pending(ns_map, StringMap::PTR, 1);
             assert_eq!(pending, SymbolId::PTR);
             let fields = [
-                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U64, &[]))),
+                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
                 (StringMap::VALUE.some(), Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
             ];
 
@@ -301,7 +289,7 @@ impl<'me> SymbolMap<'me> {
             let gens = slf.arena.alloc_new([StringMap::T]);
 
             slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
-                         StringMap::OPTION, slf.arena.alloc_new(fields), gens);
+                         StringMap::OPTION, slf.arena.alloc_new(fields), gens, None);
         }
 
 
@@ -317,7 +305,7 @@ impl<'me> SymbolMap<'me> {
             let gens = slf.arena.alloc_new([StringMap::T, StringMap::A]);
 
             slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
-                         StringMap::RESULT, slf.arena.alloc_new(fields), gens);
+                         StringMap::RESULT, slf.arena.alloc_new(fields), gens, None);
 
         }
 
@@ -326,12 +314,12 @@ impl<'me> SymbolMap<'me> {
         {
             let pending = slf.pending(ns_map, StringMap::STR, 0);
             assert_eq!(pending, SymbolId::STR);
-            let ptr = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U8, &[]));
+            let ptr = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]));
             let ptr = slf.arena.alloc_new([ptr]); 
 
             let fields = [
                 (StringMap::PTR.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::PTR, ptr))),
-                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::U32, &[]))),
+                (StringMap::COUNT.some(), Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
             ];
 
             let fields = slf.arena.alloc_new(fields);
@@ -374,41 +362,21 @@ impl Var {
 
 impl SymbolId {
     pub const UNIT  : Self = Self(0);
-    pub const I8    : Self = Self(1);
-    pub const I16   : Self = Self(2);
-    pub const I32   : Self = Self(3);
-    pub const I64   : Self = Self(4);
-    pub const ISIZE : Self = Self(5);
-    pub const U8    : Self = Self(6);
-    pub const U16   : Self = Self(7);
-    pub const U32   : Self = Self(8);
-    pub const U64   : Self = Self(9);
-    pub const USIZE : Self = Self(10);
-    pub const F32   : Self = Self(11);
-    pub const F64   : Self = Self(12);
-    pub const BOOL  : Self = Self(13); // +2 for variants
-    pub const ERR   : Self = Self(16);
-    pub const NEVER : Self = Self(17);
-    pub const PTR   : Self = Self(18);
-    pub const RANGE : Self = Self(19);
-    pub const OPTION: Self = Self(20); // +2 for variants
-    pub const RESULT: Self = Self(23); // +2 for variants
-    pub const STR   : Self = Self(26);
+    pub const I64   : Self = Self(1);
+    pub const F64   : Self = Self(2);
+    pub const BOOL  : Self = Self(3); // +2 for variants
+    pub const ERR   : Self = Self(6);
+    pub const NEVER : Self = Self(7);
+    pub const PTR   : Self = Self(8);
+    pub const RANGE : Self = Self(9);
+    pub const OPTION: Self = Self(10); // +2 for variants
+    pub const RESULT: Self = Self(13); // +2 for variants
+    pub const STR   : Self = Self(16);
 
 
     pub fn supports_arith(self) -> bool {
         matches!(self,
-              Self::I8
-            | Self::I16
-            | Self::I32
             | Self::I64
-            | Self::ISIZE
-            | Self::U8
-            | Self::U16
-            | Self::U32
-            | Self::U64
-            | Self::USIZE
-            | Self::F32
             | Self::F64
             | Self::ERR
         )
@@ -417,16 +385,7 @@ impl SymbolId {
 
     pub fn supports_bw(self) -> bool {
         matches!(self,
-              Self::I8
-            | Self::I16
-            | Self::I32
             | Self::I64
-            | Self::ISIZE
-            | Self::U8
-            | Self::U16
-            | Self::U32
-            | Self::U64
-            | Self::USIZE
             | Self::ERR
         )
     }
@@ -434,17 +393,7 @@ impl SymbolId {
 
     pub fn supports_ord(self) -> bool {
         matches!(self,
-              Self::I8
-            | Self::I16
-            | Self::I32
             | Self::I64
-            | Self::ISIZE
-            | Self::U8
-            | Self::U16
-            | Self::U32
-            | Self::U64
-            | Self::USIZE
-            | Self::F32
             | Self::F64
             | Self::ERR
         )
@@ -452,17 +401,7 @@ impl SymbolId {
 
     pub fn supports_eq(self) -> bool {
         matches!(self,
-              Self::I8
-            | Self::I16
-            | Self::I32
             | Self::I64
-            | Self::ISIZE
-            | Self::U8
-            | Self::U16
-            | Self::U32
-            | Self::U64
-            | Self::USIZE
-            | Self::F32
             | Self::F64
             | Self::BOOL
             | Self::UNIT
@@ -473,17 +412,7 @@ impl SymbolId {
 
     pub fn is_num(self) -> bool {
         matches!(self,
-              Self::I8
-            | Self::I16
-            | Self::I32
             | Self::I64
-            | Self::ISIZE
-            | Self::U8
-            | Self::U16
-            | Self::U32
-            | Self::U64
-            | Self::USIZE
-            | Self::F32
             | Self::F64
             | Self::ERR
         )
@@ -492,27 +421,14 @@ impl SymbolId {
 
     pub fn is_int(self) -> bool {
         matches!(self,
-              Self::I8
-            | Self::I16
-            | Self::I32
             | Self::I64
-            | Self::ISIZE
-            | Self::U8
-            | Self::U16
-            | Self::U32
-            | Self::U64
-            | Self::USIZE
             | Self::ERR
         )
     }
 
     pub fn is_sint(self) -> bool {
         matches!(self,
-              Self::I8
-            | Self::I16
-            | Self::I32
             | Self::I64
-            | Self::ISIZE
             | Self::ERR
         )
     }
@@ -520,7 +436,6 @@ impl SymbolId {
 
     pub fn is_float(self) -> bool {
         matches!(self,
-              Self::F32
             | Self::F64
             | Self::ERR
         )

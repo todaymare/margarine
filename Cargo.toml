@@ -1,19 +1,19 @@
 [workspace]
 resolver = "1"
-members = [
-  "butter", # The engine
-#  "game-runtime", # The binary in which the wasm will be put into
-
-#  "butter-runtime-api",
-#  "butter-runtime-api/proc-macros",
-
-  "margarine", # The Language
-  "margarine/common",
-  "margarine/lexer",
-  "margarine/parser",
-  "margarine/semantic_analysis",
-  "margarine/errors",
-  "margarine/llvm-api",
-  "core",
-# "fuzz",
+default-members = [
+    "margarine",
 ]
+
+members = [
+    "margarine",
+    "margarine/common",
+    "margarine/common/derive",
+    "margarine/lexer",
+    "margarine/parser",
+    "margarine/semantic_analysis",
+    "margarine/errors",
+    "margarine/runtime",
+    "fuzz",
+]
+
+

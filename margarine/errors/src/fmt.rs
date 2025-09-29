@@ -41,7 +41,7 @@ impl<'me> ErrorFormatter<'me> {
     }
 
 
-    pub fn string_map(&self) -> &StringMap {
+    pub fn string_map(&self) -> &StringMap<'me> {
         self.string_map
     }
 }

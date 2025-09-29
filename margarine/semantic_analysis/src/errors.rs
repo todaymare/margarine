@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::StringIndex};
-use errors::ErrorType;
+use errors::{ErrorId, ErrorType};
 use parser::nodes::expr::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
@@ -69,6 +69,8 @@ pub enum Error {
 
     VariableValueNotTuple(SourceRange),
 
+    VariableTupleAndHintTupleSizeMismatch(SourceRange, usize, usize),
+
     VariableNotFound {
         name: StringIndex,
         source: SourceRange,
@@ -129,19 +131,6 @@ pub enum Error {
         range: SourceRange,
     },
 
-    ValueIsntAMutableIterator {
-        ty: Sym,
-        range: SourceRange,
-    },
-     
-    InOutValueWithoutInOutBinding {
-        value_range: SourceRange,
-    },
-
-    InOutBindingWithoutInOutValue {
-        value_range: SourceRange,
-    },
-    
     StructCreationOnNonStruct {
         source: SourceRange,
         typ: Sym,
@@ -185,15 +174,9 @@ pub enum Error {
         namespace: StringIndex,
     },
 
-    InOutValueIsntMut(SourceRange),
-
     ValueUpdateTypeMismatch {
         lhs: Sym,
         rhs: Sym,
-        source: SourceRange,
-    },
-
-    ValueUpdateNotMut {
         source: SourceRange,
     },
 
@@ -560,25 +543,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 
             },
             
-            
-            Error::InOutValueIsntMut(r) => {
-                fmt.error("in-out value isn't mutable")
-                    .highlight(*r)
-            },
-            
-            
-            Error::InOutValueWithoutInOutBinding { value_range } => {
-                let mut err = fmt.error("in-out value without in-out binding");
-                err.highlight_with_note(*value_range, "consider removing the '&' at the start of this");
-            },
-
-            
-            Error::InOutBindingWithoutInOutValue { value_range } => {
-                let mut err = fmt.error("in-out binding without in-out value");
-                err.highlight_with_note(*value_range, "consider adding a '&' at the start of this");
-            },
-             
-            
+                       
             Error::ValueUpdateTypeMismatch { lhs, rhs, source } => {
                 let msg = format!("lhs is '{}' while the rhs is '{}'",
                     lhs.display(fmt.string_map(), types),
@@ -589,13 +554,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*source, &msg)
             },
 
-            
-            Error::ValueUpdateNotMut { source } => {
-                fmt.error("can't update the binding because it's not mutable")
-                    .highlight(*source)
-            },
-            
-            
+                       
             Error::ContinueOutsideOfLoop(v) => {
                 fmt.error("continue outside of loop")
                     .highlight(*v);
@@ -794,13 +753,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight(*v)
             },
 
-
-            Error::ValueIsntAMutableIterator { ty, range } => {
-                let msg = format!("the type '{}' is an iterator but it does not support mutation",
-                                  ty.display(fmt.string_map(), types));
-
-                fmt.error("value isn't a mutable iterator")
-                    .highlight_with_note(*range, &msg)
+            Error::VariableTupleAndHintTupleSizeMismatch(range, exp, given) => {
             },
 
 

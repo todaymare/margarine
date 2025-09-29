@@ -1,0 +1,769 @@
+#![feature(try_trait_v2)]
+
+#[cfg(not(debug_assertions))]
+use std::marker::PhantomData;
+
+use std::{collections::HashMap, convert::Infallible, ops::{Deref, DerefMut, FromResidual}};
+
+pub mod runtime;
+pub mod opcode;
+
+
+#[derive(Clone, Copy)]
+pub struct Reg {
+    kind: u8,
+    data: RegData,
+}
+
+
+#[derive(Clone, Copy)]
+union RegData {
+    as_int: i64,
+    as_float: f64,
+    as_bool: bool,
+    as_obj: u64,
+    as_unit: (),
+}
+
+
+#[derive(Debug)]
+pub struct Stack {
+    pub values: Vec<Reg>,
+    pub bottom: usize,
+    curr      : usize,
+}
+
+
+pub struct VM<'src> {
+    pub stack: Stack,
+    callstack: Callstack<'src>,
+    curr: CallFrame<'src>,
+    pub funcs: Vec<Function<'src>>,
+    host_fns: HashMap<String, fn(&mut VM<'src>) -> Reg>,
+    error_table: &'src [u8],
+    pub objs: Vec<Object>,
+}
+
+
+pub enum Object {
+    Struct {
+        fields: Vec<Reg>,
+    },
+
+    String(Box<str>),
+}
+
+
+#[derive(Debug)]
+pub struct Function<'src> {
+    name: &'src str,
+    kind: FunctionKind<'src>
+}
+
+
+#[derive(Debug)]
+pub enum FunctionKind<'src> {
+    Code {
+        byte_offset: usize,
+        byte_size: usize,
+    },
+
+
+    Host(fn(&mut VM<'src>) -> Reg),
+}
+
+
+#[derive(Debug)]
+pub enum Status {
+    Ok,
+    Err(FatalError),
+}
+
+
+struct Callstack<'me> {
+    stack: Vec<CallFrame<'me>>,
+    src: &'me [u8],
+}
+
+
+
+///
+/// A program error that can not be recovered from.
+/// This error could be caused by a variety of runtime issues 
+///
+#[derive(Debug)]
+pub struct FatalError {
+    pub msg: String,
+}
+
+
+///
+/// A stack frame
+///
+struct CallFrame<'me> {
+    reader: Reader<'me>,
+    
+    /// The bottom of the previous frame's stack.
+    previous_offset: usize,
+
+    argc: u8,
+
+}
+
+
+struct Reader<'me> {
+    /// The source code
+    /// Note: This pointer is only valid in the range given at creation
+    src: *const u8,
+
+    bounds: &'me [u8],
+
+    #[cfg(not(debug_assertions))]
+    _phantom: PhantomData<&'me ()>
+}
+
+
+impl<'src> VM<'src> {
+    pub fn new(hosts: HashMap<String, fn(&mut VM<'src>) -> Reg>, src: &'src [u8]) -> Result<Self, FatalError> {
+        let mut reader = Reader::new(src);
+        let Some(b"BUTTERY") = reader.try_next_n().as_ref()
+        else { return Err(FatalError::new(String::from("invalid header"))) };
+
+        let mut objs = vec![];
+
+
+        // table sizes
+        let Some(funcs_size) = reader.try_next_u32()
+        else { return Err(FatalError::new(String::from("invalid func block size"))) };
+
+        let Some(errs_size) = reader.try_next_u32()
+        else { return Err(FatalError::new(String::from("invalid err block size"))) };
+
+        let Some(strs_size) = reader.try_next_u32()
+        else { return Err(FatalError::new(String::from("invalid str block size"))) };
+
+        let Some(errs) = reader.try_next_slice(errs_size as usize)
+        else { return Err(FatalError::new(String::from("invalid errs block"))) };
+
+
+        let Some(strs) = reader.try_next_slice(strs_size as usize)
+        else { return Err(FatalError::new(String::from("invalid strs block"))) };
+
+        {
+            let mut reader = Reader::new(strs);
+            let Some(count) = reader.try_next_u32()
+            else { return Err(FatalError::new(String::from("str count is invalid"))) };
+            dbg!(count);
+
+            for _ in 0..count {
+                let Some(str) = reader.try_next_str()
+                else { return Err(FatalError::new(String::from("invalid str"))) };
+
+                objs.push(Object::String(str.to_string().into_boxed_str()));
+            }
+        }
+
+
+        // func metadata
+        let Some(funcs_data) = reader.try_next_slice(funcs_size as usize)
+        else { return Err(FatalError::new(String::from("invalid funcs metadata block"))) };
+
+        let mut funcs_reader = Reader::new(funcs_data);
+
+        let mut funcs : Vec<Function> = vec![];
+
+        unsafe {
+        loop {
+            match funcs_reader.next() {
+                opcode::func::consts::Terminate => {
+                    break;
+                }
+
+
+                opcode::func::consts::Func => {
+                    let name = funcs_reader.next_str();
+                    let kind = funcs_reader.next();
+
+                    match kind {
+                        0 => {
+                            let code = funcs_reader.next_u32();
+                            let size = funcs_reader.next_u32();
+
+                            funcs.push(Function {
+                                name,
+                                kind: FunctionKind::Code {
+                                    byte_offset: code as usize,
+                                    byte_size: size as usize,
+                                }
+                            });
+                        }
+                        1 => {
+                            let path = funcs_reader.next_str();
+                            let Some(host_fn) = hosts.get(path)
+                            else {
+                                return Err(FatalError::new(format!("invalid host function: '{path}'")));
+                            };
+
+                            funcs.push(Function {
+                                name,
+                                kind: FunctionKind::Host(*host_fn)
+                            });
+                        }
+                        _ => return Err(FatalError::new(String::from("invalid func kind")))
+                    }
+
+                }
+
+                _ => unreachable!()
+            }
+        }
+        }
+
+
+        let offset = unsafe { reader.src.offset_from(src.as_ptr()) } as usize;
+        let code_section = &src[offset..];
+
+        Ok(Self {
+            stack: Stack::new(1024),
+            callstack: Callstack::new(256, code_section),
+            curr: CallFrame::new(code_section, 0, 0),
+            funcs,
+            error_table: errs,
+            host_fns: hosts,
+            objs,
+        })
+    }
+
+
+    fn new_obj(&mut self, obj: Object) -> Reg {
+        let id = self.objs.len();
+        self.objs.push(obj);
+        Reg { kind: Reg::TAG_OBJ, data: RegData { as_obj: id as u64 } }
+    }
+}
+
+
+impl<'me> CallFrame<'me> {
+    pub fn new(
+        code: &'me [u8],
+        previous_offset: usize,
+        argc: u8,
+    ) -> Self {
+
+        Self {
+            reader: Reader::new(code),
+            previous_offset,
+            argc,
+        }
+    }
+}
+
+
+impl<'me> Reader<'me> {
+    pub fn new(code: &'me [u8]) -> Self {
+        Self {
+            src: code.as_ptr(),
+
+            bounds: code,
+
+            #[cfg(not(debug_assertions))]
+            _phantom: PhantomData,
+        }
+    }
+
+
+    ///
+    /// Offsets the current cursor by `offset`
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds that the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn offset(&mut self, offset: i32) {
+        unsafe {
+            self.src = self.src.offset(offset as isize);
+            debug_assert!(self.bounds.as_ptr_range().contains(&self.src));
+        }
+    }
+
+
+    ///
+    /// Returns the next value in the source code whilst moving the cursor
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds that the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next(&mut self) -> u8 {
+        unsafe {
+            self.next_n::<1>()[0]
+        }
+    }
+
+
+    ///
+    /// Reads the next 4 bytes as a `u32` in little endian order whilst moving the cursor
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds that the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next_u32(&mut self) -> u32 {
+        unsafe {
+            u32::from_le_bytes(self.next_n::<4>())
+        }
+    }
+
+
+    ///
+    /// Reads the next 8 bytes as a `u64` in little endian order whilst moving the cursor
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds that the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next_u64(&mut self) -> u64 {
+        unsafe {
+            u64::from_le_bytes(self.next_n::<8>())
+        }
+    }
+
+
+    ///
+    /// Reads the next 8 bytes as a `f64` in little endian order whilst moving the cursor
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds that the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next_f64(&mut self) -> f64 {
+        unsafe {
+            f64::from_le_bytes(self.next_n::<8>())
+        }
+    }
+
+
+    ///
+    /// Reads the next 8 bytes as a `i64` in little endian order whilst moving the cursor
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds that the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next_i64(&mut self) -> i64 {
+        unsafe {
+            self.next_u64() as i64
+        }
+    }
+
+
+
+    ///
+    /// Reads the next 4 bytes as a `i32` in little endian order whilst moving the cursor
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds that the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next_i32(&mut self) -> i32 {
+        unsafe {
+            self.next_u32() as i32
+        }
+    }
+
+
+    ///
+    /// Reads the next 4 bytes as a `u32` in little endian order and interprets it as the lenght
+    /// `len` of the string.
+    /// Then, reads the next `len` bytes as a UTF-8 string and returns it.
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds that the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next_str(&mut self) -> &'me str {
+        unsafe {
+            let len = self.next_u32();
+            let str = self.next_slice(len as usize);
+            core::str::from_utf8(str).unwrap()
+        }
+    }
+
+
+    ///
+    /// Reads the next 4 bytes as a `u32` in little endian order and interprets it as the lenght
+    /// `len` of the string.
+    /// Then, reads the next `len` bytes as a UTF-8 string and returns it.
+    ///
+    pub fn try_next_str(&mut self) -> Option<&'me str> {
+        let len = self.try_next_u32()?;
+        let str = self.try_next_slice(len as usize)?;
+        Some(core::str::from_utf8(str).unwrap())
+    }
+
+
+    ///
+    /// Reads the next 4 bytes as a `u32` in little endian order whilst moving the cursor
+    ///
+    pub fn try_next_u32(&mut self) -> Option<u32> {
+        Some(u32::from_le_bytes(self.try_next_n::<4>()?))
+    }
+
+
+    ///
+    /// Returns the next `N` values in the source code whilst moving the cursor
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds of the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next_n<const N: usize>(&mut self) -> [u8; N] {
+        unsafe {
+            debug_assert!(self.bounds.as_ptr_range().contains(&self.src));
+            debug_assert!(self.bounds.as_ptr_range().contains(&self.src.add(N-1)));
+
+            let value = *self.src.cast::<[u8; N]>();
+            self.src = self.src.add(N);
+            value
+        }
+    }
+
+
+    ///
+    /// Returns the next `n` values in the source code as a slice whilst moving the cursor
+    ///
+    pub fn try_next_slice(&mut self, n: usize) -> Option<&'me [u8]> {
+        unsafe {
+            if !self.bounds.as_ptr_range().contains(&self.src)
+                || !self.bounds.as_ptr_range().contains(&self.src.add(n-1)) {
+                return None
+            }
+
+            Some(self.next_slice(n))
+        }
+    }
+
+
+    ///
+    /// Returns the next `n` values in the source code as a slice whilst moving the cursor
+    ///
+    /// # Undefined Behaviour
+    /// If this function exceeds the initial bounds of the source code it \
+    /// will cause undefined behaviour.
+    ///
+    pub unsafe fn next_slice(&mut self, n: usize) -> &'me [u8] {
+        unsafe {
+            if n == 0 { return &[] }
+            debug_assert!(self.bounds.as_ptr_range().contains(&self.src));
+            debug_assert!(self.bounds.as_ptr_range().contains(&self.src.add(n-1)));
+
+            let value = std::slice::from_raw_parts(self.src, n);
+            self.src = self.src.add(n);
+            value
+        }
+    }
+
+    ///
+    /// Returns the next `N` values in the source code whilst moving the cursor
+    ///
+    pub fn try_next_n<const N: usize>(&mut self) -> Option<[u8; N]> {
+        unsafe {
+            if !self.bounds.as_ptr_range().contains(&self.src)
+                || !self.bounds.as_ptr_range().contains(&self.src.add(N-1)) {
+                return None
+            }
+
+            Some(self.next_n())
+        }
+    }
+}
+
+
+impl Stack {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            values: Vec::from_iter((0..cap).map(|_| Reg::new_unit())),
+            bottom: 0,
+            curr: 0,
+        }
+    }
+
+
+
+    /// 
+    /// Returns the value at `bottom + reg`
+    ///
+    /// # Undefined Behaviour
+    /// Accessing a register above the `top` of the stack is undefined behaviour
+    ///
+    #[inline(always)]
+    #[must_use]
+    pub unsafe fn reg(&self, reg: u8) -> Reg {
+        /*
+        let abs_offset = self.bottom + reg as usize;
+        debug_assert!(
+            abs_offset < self.top, 
+            "failed to fetch reg '{reg}' relative to offset '{}' \
+            because it overflows the specified top of the stack top '{}'",
+            self.bottom,
+            self.top
+        );
+
+
+        debug_assert!((reg as usize + self.bottom) < self.top, "{reg} {} {}", self.bottom, self.top);
+        */
+        self.values[reg as usize + self.bottom]
+    }
+
+
+    ///
+    /// Sets the value at `bottom + reg` to the given value
+    ///
+    /// # Undefined Behaviour
+    /// Accessing a register above the `top` of the stack is undefined behaviour
+    ///
+    #[inline(always)]
+    pub unsafe fn set_reg(&mut self, reg: u8, data: Reg) {
+        /*
+        let abs_offset = self.bottom + reg as usize;
+        debug_assert!(
+            abs_offset < self.top, 
+            "failed to set reg '{reg}' relative to offset '{}' to '{data:?}' \
+            because it overflows the specified top of the stack top '{}'",
+            self.bottom,
+            self.top
+        );
+        */
+
+        self.values[reg as usize + self.bottom] = data;
+    }
+
+
+    ///
+    /// Sets the bottom of the stack to the given value.
+    ///
+    /// # Undefined Behaviour
+    /// It is undefined behaviour to set the `amount` to a value which is \
+    /// greater than or equal to the `top` of the stack.
+    ///
+    #[inline(always)]
+    unsafe fn set_bottom(&mut self, amount: usize) {
+        /*
+        debug_assert!(
+            amount < self.top,
+            "failed to set the bottom of the stack to '{amount}' as it \
+            overflows the specified top '{}'", self.top,
+        );
+        */
+
+        self.bottom = amount;
+    }
+    
+
+    ///
+    /// Increments the `top` of the stack by the given `amount`
+    ///
+    /// # Returns
+    /// - This method will return `Status::Err` with a stack overflow message \
+    ///   if the requested `top` of the stack exceeds the capacity of the stack.
+    /// - Else, it will return `Status::Ok`
+    ///
+    #[inline(always)]
+    fn push(&mut self, value: Reg) {
+        self.values[self.curr] = value;
+        self.curr += 1;
+    }
+
+
+    ///
+    /// Decrements the `top` of the stack by the given `amount`
+    ///
+    /// # Undefined Behaviour
+    /// If the `top` of the stack is less than or equal to `amount` it will be \
+    /// considered undefined behaviour. The `top` of the stack must always be at least 1
+    ///
+    #[inline(always)]
+    unsafe fn pop(&mut self) -> Reg {
+        self.curr -= 1;
+        let val = self.values[self.curr];
+        val
+    }
+
+    ///
+    /// Returns the top of the stack
+    ///
+    /// # Undefined Behaviour
+    /// If the `top` of the stack is less than or equal to `amount` it will be \
+    /// considered undefined behaviour. The `top` of the stack must always be at least 1
+    ///
+    #[inline(always)]
+    unsafe fn read(&mut self) -> Reg {
+        let val = self.values[self.curr-1];
+        val
+    }
+}
+
+
+impl FatalError {
+    pub fn new(msg: String) -> Self {
+        Self { msg }
+    }
+}
+
+
+impl<'me> Callstack<'me> {
+    pub fn new(cap: usize, src: &'me [u8]) -> Self {
+        Self {
+            stack: Vec::with_capacity(cap),
+            src,
+        }
+    }
+
+
+    pub fn push(&mut self, frame: CallFrame<'me>) {
+        self.stack.push(frame);
+    }
+
+
+    pub fn pop(&mut self) -> Option<CallFrame<'me>> {
+        self.stack.pop()
+    }
+}
+
+
+impl Reg {
+    pub unsafe fn as_int(self) -> i64 {
+        debug_assert_eq!(self.kind, Self::TAG_INT);
+        unsafe { self.data.as_int }
+    }
+
+
+    pub unsafe fn as_bool(self) -> bool {
+        debug_assert_eq!(self.kind, Self::TAG_BOOL);
+        unsafe { self.data.as_bool }
+    }
+
+
+    pub unsafe fn as_float(self) -> f64 {
+        debug_assert_eq!(self.kind, Self::TAG_FLOAT);
+        unsafe { self.data.as_float }
+    }
+
+
+    pub unsafe fn as_obj(self) -> u64 {
+        debug_assert_eq!(self.kind, Self::TAG_OBJ);
+        unsafe { self.data.as_obj }
+
+    }
+
+}
+
+
+impl FromResidual<std::result::Result<Infallible, FatalError>> for Status {
+    fn from_residual(residual: std::result::Result<Infallible, FatalError>) -> Self {
+        match residual {
+            Ok(_) => Self::Ok,
+            Err(e) => Self::Err(e),
+        }
+    }
+}
+
+
+impl std::ops::Try for Status {
+    type Output = ();
+
+    type Residual = std::result::Result<Infallible, FatalError>;
+
+    fn from_output(_: Self::Output) -> Self {
+        Self::Ok
+    }
+
+    fn branch(self) -> std::ops::ControlFlow<Self::Residual, Self::Output> {
+        match self {
+            Status::Ok => std::ops::ControlFlow::Continue(()),
+            Status::Err(fatal_error) => std::ops::ControlFlow::Break(Err(fatal_error)),
+        }
+    }
+}
+
+
+impl<'src> Deref for CallFrame<'src> {
+    type Target = Reader<'src>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.reader
+    }
+}
+
+impl<'src> DerefMut for CallFrame<'src> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.reader
+    }
+}
+
+
+impl Reg {
+    pub const TAG_INT   : u8 = 0;
+    pub const TAG_FLOAT : u8 = 1;
+    pub const TAG_BOOL  : u8 = 2;
+    pub const TAG_UNIT  : u8 = 3;
+    pub const TAG_OBJ   : u8 = 4;
+
+
+    pub fn new_int(data: i64) -> Self { Reg { kind: Self::TAG_INT, data: RegData { as_int: data }} }
+    pub fn new_float(data: f64) -> Self { Reg { kind: Self::TAG_FLOAT, data: RegData { as_float: data } } }
+    pub fn new_bool(data: bool) -> Self { Reg { kind: Self::TAG_BOOL, data: RegData { as_bool: data } } }
+    pub fn new_unit() -> Self { Reg { kind: Self::TAG_UNIT, data: RegData { as_unit: () } } }
+    pub fn new_obj(data: u64) -> Self { Reg { kind: Self::TAG_OBJ, data: RegData { as_obj: data } } }
+}
+
+
+impl Object {
+    pub fn as_fields(&self) -> &[Reg] {
+        match self {
+            Object::Struct { fields } => &fields,
+            _ => unreachable!(),
+        }
+    }
+
+
+    pub fn as_mut_fields(&mut self) -> &mut [Reg] {
+        match self {
+            Object::Struct { fields } => &mut *fields,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Object::String(str) => &str,
+            _ => unreachable!(),
+        }
+    }
+}
+
+
+impl core::fmt::Debug for Reg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut strct = f.debug_struct("Reg");
+        match self.kind {
+            Self::TAG_INT   => strct.field("tag", &"int"),
+            Self::TAG_FLOAT => strct.field("tag", &"float"),
+            Self::TAG_BOOL  => strct.field("tag", &"bool"),
+            Self::TAG_UNIT  => strct.field("tag", &"unit"),
+            Self::TAG_OBJ   => strct.field("tag", &"obj"),
+            _ => strct.field("tag", &"unknown".to_string()),
+        };
+
+        match self.kind {
+            Self::TAG_INT   => strct.field("data", &unsafe { self.data.as_int }),
+            Self::TAG_FLOAT => strct.field("data", &unsafe { self.data.as_float }),
+            Self::TAG_BOOL  => strct.field("data", &unsafe { self.data.as_bool }),
+            Self::TAG_UNIT  => strct.field("data", &unsafe { self.data.as_unit }),
+            Self::TAG_OBJ   => strct.field("data", &unsafe { self.data.as_obj }),
+            _ => strct.field("data", &"unknown".to_string()),
+        };
+
+        strct.finish()
+    }
+}

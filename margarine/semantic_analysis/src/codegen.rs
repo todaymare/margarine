@@ -1,1340 +1,1471 @@
-use std::{collections::HashMap, fmt::Write, ptr::copy_nonoverlapping};
+use std::{collections::HashMap, fmt::Write, fs};
 
-use common::{copy_slice_in, string_map::{StringIndex, StringMap}};
-use lexer::Literal;
-use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, Type}, values::{func::{FunctionPtr, Linkage}, ptr::Ptr, Value}};
-use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
-use sti::{arena::Arena, vec::Vec};
+use common::string_map::{StringIndex, StringMap};
+use errors::ErrorId;
+use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, stmt::StmtId, NodeId, AST};
+use runtime::opcode::{self, runtime::{builder::{self, Builder}, consts}, HEADER};
+use sti::{arena::Arena, define_key, keyed::KVec};
 
-use crate::{namespace::NamespaceMap, syms::{containers::ContainerKind, func::FunctionKind, ty::{self, Sym, TypeHash}, sym_map::{GenListId, SymbolId, SymbolMap}, SymbolKind}, TyChecker, TyInfo};
+use crate::{namespace::NamespaceMap, syms::{containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
 
-pub struct Codegen<'me, 'out, 'ast, 'str, 'ctx> {
+#[derive(Debug)]
+pub struct Conversion<'me, 'out, 'ast, 'str> {
     string_map: &'me mut StringMap<'str>,
     syms: &'me mut SymbolMap<'out>,
     ns: &'me NamespaceMap,
     ast: &'me AST<'ast>,
 
-    ctx: ContextRef<'ctx>,
-    module: Module<'ctx>,
-
     ty_info: &'me TyInfo,
-    ty_mappings: HashMap<TypeHash, Type<'ctx>>,
-    func_mappings: HashMap<TypeHash, (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
-    tuples: HashMap<&'me [TypeHash], Type<'ctx>>,
 
-    externs : HashMap<StringIndex, (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
-
-    abort_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
-    err_fn  : (FunctionPtr<'ctx>, FunctionType<'ctx>),
+    funcs: HashMap<TypeHash, Function<'me>>,
+    const_strs: Vec<StringIndex>,
+    buf: &'me Arena,
 }
 
 
-pub struct Env<'me> {
-    vars: Vec<(StringIndex, Local), &'me Arena>,
-    inouts: Vec<(usize, Local), &'me Arena>,
-    loop_id: Option<Loop>,
-    gens: &'me [(StringIndex, Sym)],
+#[derive(Clone, Copy, Debug)]
+struct FuncIndex(u32);
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+struct BlockIndex(u32);
+
+
+#[derive(Debug)]
+struct Function<'a> {
+    name: StringIndex,
+    index: FuncIndex,
+
+    kind: FunctionKind<'a>,
+    error: Option<ErrorId>,
 }
 
 
-impl<'me, 'out, 'ast, 'str, 'ctx> Codegen<'me, 'out, 'ast, 'str, 'ctx> {
-    pub fn run(ty_checker: &mut TyChecker) -> (Context<'me>, Module<'me>) {
-        let ctx = Context::new();
-        let module = ctx.module("margarine");
-
-        let void = ctx.void();
-
-        let abort_fn_ty = void.fn_ty(&[], false);
-        let abort_fn = module.function("abort", abort_fn_ty);
-        abort_fn.set_linkage(Linkage::External);
-        abort_fn.set_noreturn(ctx.as_ctx_ref());
-
-        let i32_ty = ctx.integer(32);
-        let err_fn_ty = void.fn_ty(&[*i32_ty, *i32_ty, *i32_ty], false);
-        let err_fn = module.function("margarineError", abort_fn_ty);
-        err_fn.set_linkage(Linkage::External);
-        err_fn.set_noreturn(ctx.as_ctx_ref());
-
-        let mut codegen = Codegen {
-            string_map: ty_checker.string_map,
-            syms: &mut ty_checker.syms,
-            ast: ty_checker.ast,
-            module,
-            ty_info: &ty_checker.type_info,
-            ty_mappings: HashMap::new(),
-            func_mappings: HashMap::new(),
-            tuples: HashMap::new(),
-            externs: HashMap::new(),
-            ctx: ctx.as_ctx_ref(),
-            ns: &ty_checker.namespaces,
-
-            abort_fn: (abort_fn, abort_fn_ty),
-            err_fn: (err_fn, err_fn_ty),
-        };
-
-        {
-            macro_rules! register {
-                ($enum: ident, $call: expr) => {
-                    codegen.ty_mappings.insert(Sym::$enum.hash(codegen.syms), *$call);
-                };
-            }
+#[derive(Debug)]
+enum FunctionKind<'a> {
+    Code {
+        local_count: u8,
+        entry: BlockIndex,
+        blocks: Vec<Block<'a>>,
+    },
 
 
-            register!(I8 , ctx.integer(8 ));
-            register!(I16, ctx.integer(16));
-            register!(I32, ctx.integer(32));
-            register!(I64, ctx.integer(64));
-            register!(ISIZE, ctx.integer(module.ptr_size_in_bytes() as u32 * 8));
-            register!(U8 , ctx.integer(8 ));
-            register!(U16, ctx.integer(16));
-            register!(U32, ctx.integer(32));
-            register!(U64, ctx.integer(64));
-            register!(USIZE, ctx.integer(module.ptr_size_in_bytes() as u32 * 8));
-            register!(F32, ctx.f32());
-            register!(F64, ctx.f64());
-            register!(BOOL, ctx.bool());
-            register!(UNIT, ctx.unit());
-        }
+    Extern(StringIndex),
+}
 
-        let void = ctx.void();
-        let func_ty = void.fn_ty(&[], false);
-        let func = module.function("__initStartupSystems__", func_ty);
-        func.set_linkage(Linkage::External);
-        let mut b = func.builder(codegen.ctx.as_ctx_ref(), func_ty);
 
-        for sym in &ty_checker.startups {
-            let Ok((func, func_ty)) = codegen.get_func(*sym, GenListId::EMPTY)
-            else { codegen.abort(&mut b); break };
-            b.call(func, func_ty, &[]);
-        }
+struct Env<'a> {
+    vars: Vec<(StringIndex, u32)>,
+    var_counter: u32,
+    block_counter: u32,
+    blocks: Vec<Block<'a>>,
+    loop_cont: Option<BlockIndex>,
+    loop_brek: Option<BlockIndex>,
+}
 
-        b.ret_void();
-        b.build();
 
-        (ctx, module)
+#[derive(Debug)]
+struct Block<'a> {
+    index: BlockIndex,
+    bytecode: Builder,
+    terminator: BlockTerminator<'a>,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+enum BlockTerminator<'a> {
+    Goto(BlockIndex),
+    SwitchBool { op1: BlockIndex, op2: BlockIndex },
+    Switch(&'a [BlockIndex]),
+    Err(ErrorId),
+    Ret,
+}
+
+
+pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8> {
+    let out = Arena::new();
+    let mut conv = Conversion {
+        string_map: ty_checker.string_map,
+        syms: &mut ty_checker.syms,
+        ns: &ty_checker.namespaces,
+        ast: ty_checker.ast,
+        ty_info: &ty_checker.type_info,
+        funcs: HashMap::new(),
+        buf: &out,
+        const_strs: Vec::new(),
+    };
+
+
+    // create IR
+    for sym in &ty_checker.startups {
+        conv.get_func(*sym, GenListId::EMPTY).unwrap();
     }
 
+    // do the codegen
+    let mut func_sec = vec![];
+    let mut code = Builder::new();
+    let mut funcs = conv.funcs.iter().collect::<Vec<_>>();
+    funcs.sort_by_key(|x| x.1.index.0);
+    for (_, func) in funcs {
+        func_sec.push(opcode::func::consts::Func);
 
-    fn sym_to_llvm(&mut self, ty: Sym, scope_gens: &[(StringIndex, Sym)]) -> Type<'ctx> {
-        self.ty_to_llvm_ex(ty, scope_gens, true)
-    }
+        let name = conv.string_map.get(func.name);
+        // func meta
+        func_sec.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        func_sec.extend_from_slice(name.as_bytes());
 
+        match &func.kind {
+            FunctionKind::Code { local_count, entry, blocks } => {
+                func_sec.push(0);
 
-    fn ty_to_llvm_ex(&mut self, ty: Sym, scope_gens: &[(StringIndex, Sym)],
-                     early_out_ptr: bool) -> Type<'ctx> {
+                // code offset
+                func_sec.extend_from_slice(&(code.len() as u32).to_le_bytes());
 
-        let pool = Arena::tls_get_rec();
-        let gens = ty.gens(self.syms);
-        let gens = self.syms.get_gens(gens);
-        let gens = {
-            let mut vec = Vec::with_cap_in(&*self.syms.arena(), gens.len());
-            for g in gens {
-                let Some(v) = scope_gens.iter().find(|x| x.0 == g.0)
-                else { vec.push(*g); continue };
+                let code_sec_start = code.len();
 
-                vec.push(*v)
-            }
+                let mut terminators = vec![];
+                let mut bbs_hm = HashMap::with_capacity(blocks.len());
 
-            vec.leak()
-        };
+                let mut buf = vec![];
+                let mut stack = vec![];
+                stack.push(*entry);
+                while let Some(bb) = stack.pop() {
+                    let block = blocks.iter().find(|x| x.index == bb).unwrap();
 
-        let sym_id = ty.sym(self.syms).unwrap();
-        debug_assert_ne!(sym_id, SymbolId::ERR);
+                    if bbs_hm.contains_key(&block.index.0) { continue }
 
-        let ty = Sym::Ty(sym_id, self.syms.add_gens(gens));
+                    bbs_hm.insert(block.index.0, code.len());
 
-        // PERFORMANCE: This allocates a new generics array for EVERY
-        // SINGLE FUCKING TYPE, fix it later babes xoxo
-        let hash = ty.hash(self.syms);
-        if let Some(ty) = self.ty_mappings.get(&hash) { return *ty }
+                    code.append(&block.bytecode);
 
-        let sym = self.syms.sym(sym_id);
+                    let start = code.len();
+                    match block.terminator {
+                        BlockTerminator::Goto(v) => {
+                            stack.push(v);
 
-        let name = ty.display(self.string_map, self.syms);
-
-        if early_out_ptr && sym_id == SymbolId::PTR {
-            let ty = self.ctx.ptr();
-            return *ty;
-        }
-
-        match sym.kind() {
-            SymbolKind::Function(v) => {
-                let ret = v.ret().to_ty(gens, self.syms).unwrap();
-                let ret_llvm = self.sym_to_llvm(ret, scope_gens);
-
-                let args = {
-                    let mut vec = Vec::with_cap_in(&*pool, v.args().len());
-                    for i in v.args() {
-                        let ty = i.symbol().to_ty(gens, self.syms).unwrap();
-                        vec.push(self.sym_to_llvm(ty, scope_gens));
-                    }
-
-                    vec
-                };
-
-                *ret_llvm.fn_ty(&*args, false)
-            },
-
-            SymbolKind::Container(cont) => {
-                match cont.kind() {
-                    ContainerKind::Struct => {
-                        let strct = self.ctx.structure(name);
-                        self.ty_mappings.insert(hash, *strct);
-
-                        let fields = {
-                            let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
-                            for i in cont.fields() {
-                                let ty = i.1.to_ty(gens, self.syms).unwrap();
-                                vec.push(self.sym_to_llvm(ty, scope_gens));
-                            }
-
-                            vec.leak()
-                        };
-
-                        strct.set_fields(fields, false);
-
-                        *strct
-
-                    },
+                            code.jump(i32::MAX);
+                        },
 
 
-                    ContainerKind::Enum => {
-                        let union = self.ctx.union(name);
+                        BlockTerminator::SwitchBool { op1, op2  } => {
+                            stack.push(op1);
+                            stack.push(op2);
 
-                        self.ty_mappings.insert(hash, *union);
-
-                        let fields = {
-                            let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
-                            for i in cont.fields() {
-                                let ty = i.1.to_ty(gens, self.syms).unwrap();
-                                vec.push(self.sym_to_llvm(ty, scope_gens));
-                            }
-
-                            vec.leak()
-                        };
-
-                        union.set_fields(self.ctx, self.module, fields);
-                        *union
-                    },
+                            code.switch_on(i32::MAX, i32::MAX);
+                        },
 
 
-                    ContainerKind::Tuple => {
-                        let hashes = { 
-                            let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
-                            for i in cont.fields() {
-                                let ty = i.1.to_ty(gens, self.syms).unwrap();
-                                vec.push(ty.hash(self.syms));
-                            }
-                            vec.leak()
-                        };
+                        BlockTerminator::Switch(bbs) => {
+                            buf.clear();
+                            buf.extend((0..(bbs.len() * 4)).map(|_| 255u8));
 
-                        if let Some(val) = self.tuples.get(hashes) {
-                            return *val
+                            stack.extend_from_slice(bbs);
+
+                            code.switch(&buf);
                         }
 
-                        let strct = self.ctx.structure(name);
-                        self.ty_mappings.insert(hash, *strct);
 
-                        let hashes = copy_slice_in(self.syms.arena(), hashes);
-                        self.tuples.insert(hashes, *strct);
+                        BlockTerminator::Err(err) => {
+                            match err {
+                                errors::ErrorId::Lexer(error) => {
+                                    code.err(0, error.0, error.1.inner());
+                                },
 
 
-                        let fields = {
-                            let mut vec = Vec::with_cap_in(&*pool, cont.fields().len());
-                            for i in cont.fields() {
-                                let ty = i.1.to_ty(gens, self.syms).unwrap();
-                                vec.push(self.sym_to_llvm(ty, scope_gens));
+                                errors::ErrorId::Parser(error) => {
+                                    code.err(1, error.0, error.1.inner());
+
+                                },
+
+
+                                errors::ErrorId::Sema(sema_error) => {
+                                    code.err(2, 0, sema_error.inner());
+                                },
+                            }
+                        }
+
+
+                        BlockTerminator::Ret => {
+                            code.pop_local_space(*local_count);
+
+                            code.ret();
+                        },
+                    }
+
+                    terminators.push((block.terminator, start, code.len()));
+
+                }
+
+
+                for (term, start_offset, end_offset) in terminators {
+                    match term {
+                        BlockTerminator::Goto(block_index) => {
+                            let bb = bbs_hm.get(&block_index.0).unwrap();
+                            let jmp_offset = *bb as i32 - end_offset as i32;
+                            code.jump_at(start_offset, jmp_offset);
+                        },
+
+
+                        BlockTerminator::SwitchBool { op1, op2 } => {
+                            let bb = bbs_hm.get(&op1.0).unwrap();
+                            let op1_jmp_offset = *bb as i32 - end_offset as i32;
+
+                            let bb = bbs_hm.get(&op2.0).unwrap();
+                            let op2_jmp_offset = *bb as i32 - end_offset as i32;
+                            code.switch_on_at(start_offset, op1_jmp_offset, op2_jmp_offset);
+                        },
+
+
+                        BlockTerminator::Switch(bbs) => {
+                            buf.clear();
+
+                            for bb in bbs {
+                                let bb = *bbs_hm.get(&bb.0).unwrap();
+                                let jmp_offset = bb as i32 - (start_offset + 9 + buf.len()) as i32;
+                                buf.extend_from_slice(&jmp_offset.to_le_bytes());
                             }
 
-                            vec.leak()
-                        };
+                            code.switch_at(start_offset, &buf);
+                        }
 
-                        strct.set_fields(fields, false);
 
-                        *strct
-                    },
+                        BlockTerminator::Ret => (),
+                        BlockTerminator::Err(_) => (),
+                    }
                 }
+
+
+                func_sec.extend(&((code.len() - code_sec_start) as u32).to_le_bytes());
+
+            },
+
+
+            FunctionKind::Extern(string_index) => {
+                func_sec.push(1);
+                let path = conv.string_map.get(*string_index);
+
+                func_sec.extend_from_slice(&(path.len() as u32).to_le_bytes());
+                func_sec.extend_from_slice(path.as_bytes());
             },
         }
     }
 
 
-    pub fn block(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, block: &[NodeId]) -> Result<(Value<'ctx>, Sym), ()> {
-        for (i, n) in block.iter().enumerate() {
-            let res = match *n {
-                NodeId::Decl(_) => (*builder.const_unit(), Sym::UNIT),
+    func_sec.push(opcode::func::consts::Terminate);
 
-                NodeId::Stmt(v) => {
-                    if !self.stmt(builder, env, v) { return Err(()) }
-                    (*builder.const_unit(), Sym::UNIT)
+    let mut errors_table = vec![];
+    for error_files in errors {
+        errors_table.extend_from_slice(&(error_files.len() as u32).to_le_bytes());
+        for file in error_files {
+            errors_table.extend_from_slice(&(file.len() as u32).to_le_bytes());
+
+            for error in file {
+                errors_table.extend_from_slice(&(error.len() as u32).to_le_bytes());
+                errors_table.extend_from_slice(error.as_bytes());
+            }
+        }
+    }
+
+    
+    let mut strs_table = vec![];
+    strs_table.extend_from_slice(&(conv.const_strs.len() as u32).to_le_bytes());
+    for str in &conv.const_strs {
+        let str = conv.string_map.get(*str);
+
+        strs_table.extend_from_slice(&(str.len() as u32).to_le_bytes());
+        strs_table.extend_from_slice(str.as_bytes());
+    }
+
+
+    let mut final_product = vec![];
+    final_product.extend_from_slice(&HEADER);
+    final_product.extend_from_slice(&(func_sec.len() as u32).to_le_bytes());
+    final_product.extend_from_slice(&(errors_table.len() as u32).to_le_bytes());
+    final_product.extend_from_slice(&(strs_table.len() as u32).to_le_bytes());
+    final_product.extend_from_slice(&errors_table);
+    final_product.extend_from_slice(&strs_table);
+    final_product.extend_from_slice(&func_sec);
+    dbg!(&code);
+    final_product.extend_from_slice(&code.bytecode);
+
+    final_product
+}
+
+
+
+impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
+    fn get_func(&mut self, sym: SymbolId, gens: GenListId) -> Result<&Function<'me>, ()> {
+        let ty = Sym::Ty(sym, gens);
+        let hash = ty.hash(self.syms);
+        if self.funcs.contains_key(&hash) { 
+            return Ok(self.funcs.get(&hash).unwrap())
+        }
+
+        // create
+        let fsym = self.syms.sym(sym);
+        let SymbolKind::Function(sym_func) = fsym.kind()
+        else { unreachable!() };
+
+        let gens = self.syms.gens()[gens];;
+        for g in gens { if g.1.is_err(self.syms) { return Err(()) } }
+
+        let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
+        if ret.is_err(self.syms) { return Err(()) }
+
+        match sym_func.kind() {
+            crate::syms::func::FunctionKind::Extern(path) => {
+                let func = Function {
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
+                    index: FuncIndex(self.funcs.len() as u32),
+                    kind: FunctionKind::Extern(path),
+                    error: self.ty_info.decl(sym_func.decl().unwrap()),
+                };
+
+                self.funcs.insert(hash, func);
+                return Ok(self.funcs.get(&hash).unwrap())
+            },
+
+
+            crate::syms::func::FunctionKind::UserDefined => {
+                let Decl::Function { body, .. } = self.ast.decl(sym_func.decl().unwrap())
+                else { unreachable!() };
+
+                let err = self.ty_info.decl(sym_func.decl().unwrap());
+                let func = Function {
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
+                    index: FuncIndex(self.funcs.len() as u32),
+                    kind: FunctionKind::Code {
+                        local_count: 0,
+                        entry: BlockIndex(0),
+                        blocks: vec![],
+                    },
+                    error: err,
+
+                };
+
+                self.funcs.insert(hash, func);
+
+                let mut env = Env {
+                    vars: Vec::new(),
+                    var_counter: 0,
+                    block_counter: 0,
+                    blocks: vec![],
+                    loop_brek: None,
+                    loop_cont: None,
+                };
+
+
+                for arg in sym_func.args() {
+                    env.alloc_var(arg.name());
+                }
+
+
+                let entry_block = env.next_block_index();
+                let mut block = Block {
+                    index: entry_block,
+                    bytecode: Builder::new(),
+                    terminator: BlockTerminator::Ret,
+                };
+
+                block.bytecode.push_local_space(u8::MAX);
+
+                let _ = self.process(&mut env, &mut block, &*body);
+
+                if let Some(err) = err {
+                    generate_error(&mut env, &mut block, err);
+                }
+
+                env.blocks.push(block);
+                let block = env.blocks.iter_mut().find(|x| x.index == entry_block).unwrap();
+                block.bytecode.push_local_space_at(0, (env.var_counter - sym_func.args().len() as u32).try_into().unwrap());
+
+                env.blocks.sort_by_key(|x| x.index.0);
+
+                let func = self.funcs.get_mut(&hash).unwrap();
+                func.kind = FunctionKind::Code {
+                    local_count: (env.var_counter - sym_func.args().len() as u32).try_into().unwrap(),
+                    entry: entry_block,
+                    blocks: env.blocks,
+                };
+
+                return Ok(func)
+            },
+
+
+            crate::syms::func::FunctionKind::Enum { sym: sym_id, index } => {
+                let sym = self.syms.sym(sym_id);
+                let SymbolKind::Container(cont) = sym.kind()
+                else { unreachable!() };
+
+                let arg = cont.fields()[index];
+                let arg_ty = arg.1.to_ty(gens, self.syms).unwrap();
+
+                let is_unit = arg_ty.sym(self.syms).unwrap() == SymbolId::UNIT;
+
+                let mut builder = Builder::new();
+                if is_unit {
+                    builder.const_int(index as i64);
+                    builder.unit();
+                    builder.create_struct(2);
+                } else {
+                    builder.const_int(index as i64);
+                    builder.load(0);
+                    builder.create_struct(2);
+                }
+
+                let err = sym_func.decl().map(|t| self.ty_info.decl(t)).flatten();
+                let func = Function {
+                    name: sym.name(),
+                    index: FuncIndex(self.funcs.len() as u32),
+                    kind: FunctionKind::Code {
+                        local_count: 0,
+                        entry: BlockIndex(0),
+                        blocks: vec![Block {
+                            index: BlockIndex(0),
+                            bytecode: builder,
+                            terminator: BlockTerminator::Ret,
+                        }]
+                    },
+                    error: err,
+                };
+
+                self.funcs.insert(hash, func);
+                return Ok(self.funcs.get(&hash).unwrap())
+
+            },
+        };
+    }
+
+
+
+    pub fn process(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, instrs: &[NodeId]) -> Result<(), ()> {
+        let mut has_ret = false;
+
+        for (i, &n) in instrs.iter().enumerate() {
+            has_ret = false;
+            match n {
+                NodeId::Decl(decl_id) => {
+                    continue;
                 },
 
-                NodeId::Expr(v) => self.expr(builder, env, v)?,
 
-                NodeId::Err(v) => {
-                    self.error(builder, v);
-                    return Err(())
+                NodeId::Stmt(stmt_id) => {
+                    self.stmt(env, block, stmt_id)?;
+                    continue;
+
+                },
+
+
+                NodeId::Expr(expr_id) => {
+                    if let Err(error_id) = self.ty_info.expr(expr_id) {
+                        generate_error(env, block, error_id);
+                        continue;
+                    }
+
+                    has_ret = true;
+
+                    self.expr(env, block, expr_id)?;
+                    if i != instrs.len() - 1 {
+                        block.bytecode.pop()
+                    }
+                },
+
+
+                NodeId::Err(error_id) => {
+                    generate_error(env, block, error_id);
                 },
             };
 
-            if i == block.len() - 1 {
-                return Ok(res);
-            }
         }
 
-        Ok((*builder.const_unit(), Sym::UNIT))
+
+        if !has_ret { 
+            block.bytecode.unit()
+        }
+
+        Ok(())
     }
 
 
-    pub fn stmt(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, stmt: StmtId) -> bool {
-        if let Some(e) = self.ty_info.stmt(stmt) {
-            self.error(builder, e);
-        };
+    fn stmt(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, stmt: StmtId) -> Result<(), ()> {
+        macro_rules! out_if_err {
+            () => {
+               match self.ty_info.stmt(stmt) {
+                    None => (),
+                    Some(e) => {
+                        generate_error(env, block, e);
+                        return Err(());
+                    },
+               }
+            };
+        }
 
 
-        let result = (|| -> Result<(), ()> {
         match self.ast.stmt(stmt) {
-            Stmt::Variable { name, rhs, .. } => {
-                let expr = self.expr(builder, env, rhs)?;
-                let ty = self.sym_to_llvm(expr.1, &env.gens);
-                let local = builder.local(ty);
-                builder.local_set(local, expr.0);
+            parser::nodes::stmt::Stmt::Variable { name, rhs, .. } => {
+                env.alloc_var(name);
+                self.expr(env, block, rhs)?;
+                out_if_err!();
 
-                env.vars.push((name, local));
+                let (_, index) = env.vars.iter().rev().find(|x| x.0 == name).unwrap();
+                block.bytecode.store((*index).try_into().unwrap());
             },
 
 
-            Stmt::VariableTuple { names, hint, rhs } => todo!(),
+            parser::nodes::stmt::Stmt::VariableTuple { names, rhs, .. } => {
+                self.expr(env, block, rhs)?;
+                out_if_err!();
 
-
-            Stmt::UpdateValue { lhs, rhs } => {
-                let rhs = self.expr(builder, env, rhs)?;
-                self.assign(builder, env, lhs, rhs.0)
+                for &name in names.iter().rev() {
+                    env.alloc_var(name);
+                    let (_, index) = env.vars.iter().rev().find(|x| x.0 == name).unwrap();
+                    block.bytecode.store((*index).try_into().unwrap());
+                }
             },
 
 
-            Stmt::ForLoop { binding, expr, body } => {
-                let iter_expr = self.expr(builder, env, expr.1)?;
-                let iter_expr_ptr = builder.alloca_store(iter_expr.0);
+            parser::nodes::stmt::Stmt::UpdateValue { lhs, rhs } => {
+                match self.ty_info.expr(lhs) {
+                     Ok(_) => (),
+                     Err(e) => {
+                         generate_error(env, block, e);
+                         return Err(());
+                     },
+                };
 
-                let (iter_fn_ret_ty, func) = {
-                    let sym = iter_expr.1.sym(self.syms).unwrap();
+                self.expr(env, block, rhs)?;
+                out_if_err!();
+
+                self.update_value(env, block, lhs)?;
+
+            },
+
+
+            parser::nodes::stmt::Stmt::ForLoop { binding, expr, body } => {
+                self.expr(env, block, expr)?;
+                out_if_err!();
+
+                let iter_expr = self.ty_info.expr(expr).unwrap();
+                let iter_fn = {
+                    let sym = iter_expr.sym(self.syms).unwrap();
                     let ns = self.syms.sym_ns(sym);
                     let ns = self.ns.get_ns(ns);
 
                     let Ok(sym) = ns.get_sym(StringMap::ITER_NEXT_FUNC).unwrap()
                     else { return Err(()) };
 
-                    let func = self.get_func(sym, iter_expr.1.gens(&self.syms))?;
-
-                    let ret_ty = self.syms.sym(sym);
-                    let SymbolKind::Function(ret_ty) = ret_ty.kind()
-                    else { unreachable!() };
-
-                    let gens = iter_expr.1.gens(self.syms);
-                    let gens = self.syms.get_gens(gens);
-                    let ret_ty = ret_ty.ret().to_ty(gens, self.syms).unwrap();
-
-                    (ret_ty, func)
+                    let func = self.get_func(sym, iter_expr.gens(&self.syms))?.index;
+                    func
                 };
 
-                let iter_fn_ret_value_ty = iter_fn_ret_ty.gens(&self.syms);
-                let iter_fn_ret_value_ty = self.syms.get_gens(iter_fn_ret_value_ty)[0].1;
-                let iter_fn_ret_value_ty_llvm = self.sym_to_llvm(iter_fn_ret_value_ty, &env.gens);
+                let len = env.vars.len();
 
-                builder.loop_indefinitely(|builder, l| {
-                    let call_ret_value = builder.call(func.0, func.1, &[*iter_expr_ptr]).as_struct();
+                let iterable = env.alloc_anon_var();
+                block.bytecode.store(iterable.try_into().unwrap());
 
-                    let index = builder.field_load(call_ret_value, 0).as_integer();
-                    let none_case = builder.const_int(index.as_integer().ty(), 1, false);
-                    let cond = builder.cmp_int(index, none_case, IntCmp::Eq);
 
-                    builder.ite(&mut (), cond, 
-                    |builder, _| {
-                        builder.loop_break(l);
-                    }, |_, _| {});
+                let value = env.alloc_var(binding.0);
 
-                    let value = builder.field_load(call_ret_value, 1);
-                    let value = builder.bitcast(value, iter_fn_ret_value_ty_llvm);
+                self.build_loop(env, block,
+                |this, env, block| {
 
-                    let local = builder.local(iter_fn_ret_value_ty_llvm);
-                    builder.local_set(local, value);
+                    block.bytecode.load(iterable as u8);
+                    block.bytecode.call(iter_fn.0, 1);
 
-                    env.vars.push((binding.1, local));
+                    block.bytecode.copy();
 
-                    let _ = self.block(builder, env, &*body);
+                    block.bytecode.load_field(0);
+                    block.bytecode.const_int(0);
 
-                    env.vars.pop();
-                });
+                    block.bytecode.eq_int();
+
+                    this.build_ite(env, block,
+                    |this, env, block| {
+                        block.bytecode.load_field(1);
+                        block.bytecode.store(value.try_into().unwrap());
+
+                        this.process(env, block, &body)?;
+                        block.bytecode.pop();
+
+                        Ok(())
+                    },
+                    |_, env, block| {
+                        block.bytecode.pop();
+
+                        let goto = env.loop_brek.unwrap();
+                        let mut cont_block = env.next_block();
+                        cont_block.terminator = BlockTerminator::Goto(goto);
+
+                        core::mem::swap(block, &mut cont_block);
+                        env.blocks.push(cont_block);
+                        Ok(())
+                    }
+                    )?;
+                    Ok(())
+                })?;
+
+                env.vars.truncate(len);
             },
-
-
         };
-        Ok::<(), ()>(())
 
-        })();
-
-
-        result.is_ok()
+        Ok(())
     }
 
 
-    pub fn assign(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId, value: Value) {
-        let Some(ptr) = self.assign_ptr(builder, env, expr)
-        else { return; };
-        builder.store(ptr, value);
-    }
-
-
-
-    pub fn assign_ptr(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId) -> Option<Ptr<'ctx>> {
-        match self.ast.expr(expr) {
-            Expr::Identifier(ident) => {
-                let local = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
-
-                Some(builder.local_ptr(local.1))
-            },
-
-
-            Expr::Deref(v) => {
-                let ptr = self.assign_ptr(builder, env, v)?;
-                let rc_data_ty = self.ty_info.expr(v);
-                let rc_data_ty = match rc_data_ty {
-                    Ok(v) => v,
-                    Err(v) => {
-                        self.error(builder, v);
-                        return None;
-                    },
-                };
-
-                if rc_data_ty.is_err(self.syms) { return None }
-
-                let rc_data_ty = self.ty_to_llvm_ex(rc_data_ty, &env.gens, false);
-
-                Some(builder.field_ptr(ptr, rc_data_ty.as_struct(), 1))
-            },
-
-
-            Expr::AccessField { val, field_name } => {
-                let ptr = self.assign_ptr(builder, env, val)?;
-                let ty = self.ty_info.expr(val);
-                let ty = match ty {
-                    Ok(v) => v,
-                    Err(v) => {
-                        self.error(builder, v);
-                        return None;
-                    },
-                };
-
-                if ty.is_err(self.syms) { return None }
-
-                let sym = ty.sym(self.syms).unwrap();
-                let sym = self.syms.sym(sym);
-
-                let SymbolKind::Container(cont) = sym.kind()
-                else { unreachable!() };
-
-                let ty = self.sym_to_llvm(ty, &env.gens);
-                let mut str = sti::string::String::new_in(self.syms.arena());
-                let (index, _) = cont.fields().iter().enumerate().find(|(i, f)| {
-                    let name = match f.0.to_option() {
-                        Some(v) => v,
-                        None => {
-                            str.clear();
-                            let _ = write!(str, "{i}");
-                            let index = self.string_map.insert(&str);
-                            index
-                        },
-                    };
-
-                    field_name == name
-                }).unwrap();
-                Some(builder.field_ptr(ptr, ty.as_struct(), index))
-            },
-
-
-            Expr::Unwrap(v) => {
-                let ptr = self.assign_ptr(builder, env, v)?;
-                let ty = self.ty_info.expr(v);
-                let ty = match ty {
-                    Ok(v) => v,
-                    Err(v) => {
-                        self.error(builder, v);
-                        return None;
-                    },
-                };
-
-                if ty.is_err(self.syms) { return None }
-
-                let llvm_ty = self.sym_to_llvm(ty, &env.gens).as_struct();
-
-                let strct = builder.load(ptr, *llvm_ty).as_struct();
-                let value_index = builder.field_load(strct, 0).as_integer();
-                let expected_index = builder.const_int(value_index.ty(), 0, false);
-
-                let cmp = builder.cmp_int(value_index, expected_index, IntCmp::Ne);
-
-                builder.ite(self, cmp,
-                |builder, slf| slf.unwrap_fail(builder),
-                |_, _| { });
-
-                Some(builder.field_ptr(ptr, llvm_ty.as_struct(), 1))
-            },
-
-
-            Expr::OrReturn(val) => {
-                todo!()
-            },
-
-            // Some values just don't support assignment
-            // That's fine, they'll just terminate the assignment
-            // 
-            // Which shouldn't be noticable to the user as it would've been
-            // type checked :D 
-            _ => None,
-        }
-    }
-
-
-    pub fn expr(&mut self, builder: &mut Builder<'ctx>, env: &mut Env, expr: ExprId) -> Result<(Value<'ctx>, Sym), ()> {
-        let mut this = self;
+    fn expr(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId) -> Result<(), ()> {
         macro_rules! out_if_err {
             () => {
-               match this.ty_info.expr(expr) {
+               match self.ty_info.expr(expr) {
                     Ok(e) => e,
                     Err(e) => {
-                        this.error(builder, e);
+                        generate_error(env, block, e);
                         return Err(());
                     },
-                } 
+               }
             };
         }
 
-        let val = (|| { Ok(match this.ast.expr(expr) {
-            Expr::Unit => *builder.const_unit(),
+
+        match self.ast.expr(expr) {
+            parser::nodes::expr::Expr::Unit => {
+                block.bytecode.unit();
+                out_if_err!();
+            },
 
 
-            Expr::Literal(v) => {
-                let ty = out_if_err!();
-                match v {
-                    Literal::Integer(v) => {
-                        let size = match ty.sym(this.syms).map_err(|_|())? {
-                            SymbolId::I8  | SymbolId::U8  => 8,
-                            SymbolId::I16 | SymbolId::U16 => 16,
-                            SymbolId::I32 | SymbolId::U32 => 32,
-                            SymbolId::I64 | SymbolId::U64 => 64,
-                            SymbolId::ISIZE | SymbolId::USIZE => this.module.ptr_size_in_bytes() * 8,
-
-                            _ => unreachable!(),
-                        };
-
-                        let ty = this.ctx.integer(size as u32);
-                        *builder.const_int(ty, v, true)
+            parser::nodes::expr::Expr::Literal(literal) => {
+                out_if_err!();
+                match literal {
+                    lexer::Literal::Integer(v) => block.bytecode.const_int(v),
+                    lexer::Literal::Float(non_na_nf64) => block.bytecode.const_float(non_na_nf64.inner()),
+                    lexer::Literal::String(string_index) => {
+                        self.const_strs.push(string_index);
+                        block.bytecode.const_str(self.const_strs.len() as u32 - 1);
                     },
 
 
-                    Literal::Float(v) => {
-                        match ty.sym(this.syms).map_err(|_|())? {
-                            SymbolId::F32 => *builder.const_f32(v.inner() as f32),
-                            SymbolId::F64 => *builder.const_f64(v.inner()),
-
-                            _ => unreachable!(),
-                        }
-                    },
+                    lexer::Literal::Bool(v) => block.bytecode.const_bool(v as u8),
+                };
+            },
 
 
-                    Literal::String(v) => {
-                        let ty = this.sym_to_llvm(Sym::STR, &env.gens).as_struct();
-
-                        let string = this.string_map.get(v);
-                        let str = format!("\x01\x00\x00\x00\x00\x00\x00\x00{}", string);
-                        let str = this.ctx.const_str(&str);
-                        let ptr = this.module.add_global(*str.ty(), "str");
-                        ptr.set_initialiser(*str);
-
-                        let len_ty = this.ctx.integer(32);
-                        let len = builder.const_int(len_ty, string.len() as i64, false);
-
-                        *builder.struct_instance(ty, &[*ptr, *len])
-                    },
+            parser::nodes::expr::Expr::Identifier(string_index) => {
+                out_if_err!();
+                let (_, index) = env.vars.iter().rev().find(|x| x.0 == string_index).unwrap();
+                block.bytecode.load((*index).try_into().unwrap());
+            },
 
 
-                    Literal::Bool(v) => {
-                        *builder.const_bool(v)
-                    },
+            parser::nodes::expr::Expr::Range { lhs, rhs } => {
+                self.expr(env, block, lhs)?;
+                self.expr(env, block, rhs)?;
+                out_if_err!();
+
+                block.bytecode.create_struct(2);
+            },
+
+
+            parser::nodes::expr::Expr::BinaryOp { operator, lhs, rhs } => {
+                self.expr(env, block, lhs)?;
+                self.expr(env, block, rhs)?;
+                out_if_err!();
+
+                let Ok(ty) = self.ty_info.expr(lhs)
+                // we can just return cos if an err happened then the program would terminate
+                // at an earlier point anyways
+                else { block.bytecode.unit(); return Ok(()) };
+                let Ok(sym) = ty.sym(self.syms)
+                else { block.bytecode.unit(); return Ok(()) };
+
+                match (sym, operator) {
+                    (SymbolId::I64, BinaryOperator::Add) => block.bytecode.add_int(),
+                    (SymbolId::I64, BinaryOperator::Sub) => block.bytecode.sub_int(),
+                    (SymbolId::I64, BinaryOperator::Mul) => block.bytecode.mul_int(),
+                    (SymbolId::I64, BinaryOperator::Div) => block.bytecode.div_int(),
+                    (SymbolId::I64, BinaryOperator::Rem) => block.bytecode.rem_int(),
+                    (SymbolId::I64, BinaryOperator::Eq) => block.bytecode.eq_int(),
+                    (SymbolId::I64, BinaryOperator::Ne) => block.bytecode.ne_int(),
+                    (SymbolId::I64, BinaryOperator::Gt) => block.bytecode.gt_int(),
+                    (SymbolId::I64, BinaryOperator::Ge) => block.bytecode.ge_int(),
+                    (SymbolId::I64, BinaryOperator::Lt) => block.bytecode.lt_int(),
+                    (SymbolId::I64, BinaryOperator::Le) => block.bytecode.le_int(),
+                    (SymbolId::I64, BinaryOperator::BitwiseOr) => block.bytecode.bitwise_or(),
+                    (SymbolId::I64, BinaryOperator::BitwiseAnd) => block.bytecode.bitwise_and(),
+                    (SymbolId::I64, BinaryOperator::BitwiseXor) => block.bytecode.bitwise_xor(),
+                    (SymbolId::I64, BinaryOperator::BitshiftLeft) => block.bytecode.bitshift_left(),
+                    (SymbolId::I64, BinaryOperator::BitshiftRight) => block.bytecode.bitshift_right(),
+
+                    (SymbolId::F64, BinaryOperator::Add) => block.bytecode.add_float(),
+                    (SymbolId::F64, BinaryOperator::Sub) => block.bytecode.sub_float(),
+                    (SymbolId::F64, BinaryOperator::Mul) => block.bytecode.mul_float(),
+                    (SymbolId::F64, BinaryOperator::Div) => block.bytecode.div_float(),
+                    (SymbolId::F64, BinaryOperator::Rem) => block.bytecode.rem_float(),
+                    (SymbolId::F64, BinaryOperator::Eq) => block.bytecode.eq_float(),
+                    (SymbolId::F64, BinaryOperator::Ne) => block.bytecode.ne_float(),
+                    (SymbolId::F64, BinaryOperator::Gt) => block.bytecode.gt_float(),
+                    (SymbolId::F64, BinaryOperator::Ge) => block.bytecode.ge_float(),
+                    (SymbolId::F64, BinaryOperator::Lt) => block.bytecode.lt_float(),
+                    (SymbolId::F64, BinaryOperator::Le) => block.bytecode.le_float(),
+
+
+                    (SymbolId::BOOL, BinaryOperator::Eq) => block.bytecode.eq_bool(),
+                    (SymbolId::BOOL, BinaryOperator::Ne) => block.bytecode.ne_bool(),
+
+                    _ => unreachable!(),
+                };
+            },
+
+
+            parser::nodes::expr::Expr::UnaryOp { operator, rhs } => {
+                self.expr(env, block, rhs)?;
+                out_if_err!();
+
+                let Ok(ty) = self.ty_info.expr(rhs)
+                // we can just return cos if an err happened then the program would terminate
+                // at an earlier point anyways
+                else { block.bytecode.unit(); return Ok(()) };
+                let Ok(sym) = ty.sym(self.syms)
+                else { block.bytecode.unit(); return Ok(()) };
+
+                match (sym, operator) {
+                    (SymbolId::I64, UnaryOperator::Neg) => block.bytecode.neg_int(),
+                    (SymbolId::F64, UnaryOperator::Neg) => block.bytecode.neg_float(),
+                    (SymbolId::BOOL, UnaryOperator::Not) => block.bytecode.not_bool(),
+
+                    _ => unreachable!(),
                 }
+
             },
 
 
-            Expr::Identifier(v) => {
+            parser::nodes::expr::Expr::If { condition, body, else_block } => {
+                self.expr(env, block, condition)?;
                 out_if_err!();
 
-                let local = env.vars.iter().rev().find(|x| x.0 == v).unwrap().1;
-                builder.local_get(local)
-            },
-
-
-            Expr::Deref(v) => {
-                let (ptr, value_ty) = this.expr(builder, env, v)?;
-                out_if_err!();
-
-                let value_ty = this.ty_to_llvm_ex(value_ty, &env.gens, false);
-                let ptr = ptr.as_ptr();
-
-                let strct = builder.load(ptr, value_ty);
-                let strct = strct.as_struct();
-
-                builder.field_load(strct, 1)
-            },
-
-
-            Expr::Range { lhs, rhs } => {
-                let lhs = this.expr(builder, env, lhs)?;
-                let rhs = this.expr(builder, env, rhs)?;
-
-                out_if_err!();
-
-                let ty = this.ctx.integer(64);
-                let lhs = builder.int_cast(lhs.0.as_integer(), *ty, true);
-                let rhs = builder.int_cast(rhs.0.as_integer(), *ty, true);
-
-                let strct = this.sym_to_llvm(Sym::RANGE, &env.gens).as_struct();
-                *builder.struct_instance(strct, &[lhs, rhs])
-            },
-
-
-            Expr::BinaryOp { operator, lhs, rhs } => {
-                let lhs = this.expr(builder, env, lhs)?;
-                let rhs = this.expr(builder, env, rhs)?;
-                out_if_err!();
-
-                let sym = lhs.1.sym(this.syms).unwrap();
-
-                if sym.is_int() {
-                    let l = lhs.0.as_integer();
-                    let r = rhs.0.as_integer();
-                    let signed = sym.is_sint();
-
-                    match operator {
-                      BinaryOperator::Add => *builder.add_int(l, r),
-                      BinaryOperator::Sub => *builder.sub_int(l, r),
-                      BinaryOperator::Mul => *builder.mul_int(l, r),
-                      BinaryOperator::Div => *builder.div_int(l, r, signed),
-                      BinaryOperator::Rem => *builder.rem_int(l, r, signed),
-                      BinaryOperator::BitshiftLeft => *builder.shl(l, r),
-                      BinaryOperator::BitshiftRight => *builder.shr(l, r, signed),
-                      BinaryOperator::BitwiseAnd => *builder.and(l, r),
-                      BinaryOperator::BitwiseOr => *builder.or(l, r),
-                      BinaryOperator::BitwiseXor => *builder.xor(l, r),
-                      BinaryOperator::Eq => *builder.cmp_int(l, r, IntCmp::Eq),
-                      BinaryOperator::Ne => *builder.cmp_int(l, r, IntCmp::Ne),
-                      BinaryOperator::Gt => *builder.cmp_int(l, r, IntCmp::SignedGt),
-                      BinaryOperator::Ge => *builder.cmp_int(l, r, IntCmp::SignedGe),
-                      BinaryOperator::Lt => *builder.cmp_int(l, r, IntCmp::SignedLt),
-                      BinaryOperator::Le => *builder.cmp_int(l, r, IntCmp::SignedLe), 
-                    }
-
-                } else if sym.is_num() {
-                    let l = lhs.0.as_fp();
-                    let r = rhs.0.as_fp();
-
-                    match operator {
-                      BinaryOperator::Add => *builder.add_fp(l, r),
-                      BinaryOperator::Sub => *builder.sub_fp(l, r),
-                      BinaryOperator::Mul => *builder.mul_fp(l, r),
-                      BinaryOperator::Div => *builder.div_fp(l, r),
-                      BinaryOperator::Rem => *builder.rem_fp(l, r),
-                      BinaryOperator::Eq => *builder.cmp_fp(l, r, FPCmp::Eq),
-                      BinaryOperator::Ne => *builder.cmp_fp(l, r, FPCmp::Ne),
-                      BinaryOperator::Gt => *builder.cmp_fp(l, r, FPCmp::Gt),
-                      BinaryOperator::Ge => *builder.cmp_fp(l, r, FPCmp::Ge),
-                      BinaryOperator::Lt => *builder.cmp_fp(l, r, FPCmp::Lt),
-                      BinaryOperator::Le => *builder.cmp_fp(l, r, FPCmp::Le), 
-
-                      _ => unreachable!(),
-                    }
-
-                } else if sym == SymbolId::BOOL {
-                    let l = lhs.0.as_bool();
-                    let r = rhs.0.as_bool();
-
-                    match operator {
-                        BinaryOperator::Eq => *builder.bool_eq(l, r),
-                        BinaryOperator::Ne => *builder.bool_ne(l, r),
-
-                        _ => unreachable!(),
-                    }
-                } else if sym == SymbolId::UNIT {
-
-                    match operator {
-                        BinaryOperator::Eq => *builder.const_bool(true),
-                        BinaryOperator::Ne => *builder.const_bool(false),
-
-                        _ => unreachable!(),
-                    }
-
-                } else { unreachable!() }
-            },
-
-
-            Expr::UnaryOp { operator, rhs } => {
-                let rhs = this.expr(builder, env, rhs)?;
-                out_if_err!();
-                
-                match operator {
-                    UnaryOperator::Not => *builder.bool_not(rhs.0.as_bool()),
-                    UnaryOperator::Neg => {
-                        let c = builder.const_int(rhs.0.ty().as_integer(), -1, true);
-                        *builder.mul_int(rhs.0.as_integer(), c)
-                    },
-                }
-            },
-
-
-            Expr::If { condition, body, else_block } => {
-                let cond = this.expr(builder, env, condition)?;
-                out_if_err!();
-
-                let ty = out_if_err!();
-                let ty_sym = ty.sym(this.syms).unwrap();
-
-                let local = if ty_sym == SymbolId::ERR { None }
-                            else {
-                                let ty = this.sym_to_llvm(ty, &env.gens);
-                                Some(builder.local(ty))
-                            };
-
-                builder.ite(&mut (&mut this, env), cond.0.as_bool(),
-                |builder, (this, env)| {
-                    let Ok(value) = this.expr(builder, env, body)
-                    else { return; };
-
-                    if let Some(local) = local {
-                        builder.local_set(local, value.0);
-                    }
+                self.build_ite(env, block,
+                |this, env, block| {
+                    this.expr(env, block, body)?;
+                    Ok(())
                 },
 
-
-                |builder, (slf, env)| {
-                    let Some(body) = else_block
-                    else { return; };
-
-                    let Ok(value) = slf.expr(builder, env, body)
-                    else { return; };
-
-                    if let Some(local) = local {
-                        builder.local_set(local, value.0);
+                |this, env, block| {
+                    if let Some(else_block) = else_block {
+                        this.expr(env, block, else_block)?;
+                    } else {
+                        block.bytecode.unit();
                     }
-                },
-                );
 
-                if let Some(local) = local {
-                    builder.local_get(local)
-                } else {
-                    *builder.const_unit()
-                }
+                    Ok(())
+                })?;
+
             },
 
 
-            Expr::Match { value, taken_as_inout, mappings } => {
-                let val = this.expr(builder, env, value)?;
+            parser::nodes::expr::Expr::Match { value, mappings } => {
+                self.expr(env, block, value)?;
+                block.bytecode.copy();
+                block.bytecode.load_field(0);
 
-                let sym = val.1.sym(this.syms).unwrap();
-                let sym = this.syms.sym(sym);
 
-                let SymbolKind::Container(cont) = sym.kind()
-                else { unreachable!() };
+                let mut cont_block = env.next_block();
+                cont_block.terminator = block.terminator;
 
-                let value_ty = val.0.as_struct();
-                let value_alloc = builder.alloca_store(val.0);
-                let value_index = builder.field_load(value_ty, 0).as_integer();
+                let mut blocks = Vec::with_capacity(mappings.len());
+                for mm in mappings {
+                    let mut match_block = env.next_block();
+                    blocks.push(match_block.index);
 
-                let iter = cont.fields().iter().map(|sf| {
-                    let name = sf.0.unwrap();
-                    (sf, mappings.iter().find(|x| x.variant() == name).unwrap())
-                });
+                    let v = env.alloc_var(mm.binding());
+                    match_block.bytecode.load_field(1);
+                    match_block.bytecode.store(v.try_into().unwrap());
 
-                let ty = out_if_err!();
-                let ret_ty = this.sym_to_llvm(ty, &env.gens);
-                let ret_local = builder.local(ret_ty);
-                let inout_ptr = builder.field_ptr(value_alloc, value_ty.ty(), 1);
+                    let _ = self.expr(env, &mut match_block, mm.expr());
 
-                builder.switch(value_index, iter,
-                |builder, (field, mapping)| {
-                    // initialize the binding
-                    let gens = val.1.gens(this.syms);
-                    let gens = this.syms.get_gens(gens);
-                    let field_ty = field.1.to_ty(gens, this.syms).unwrap();
-                    let field_ty_llvm = this.sym_to_llvm(field_ty, &env.gens);
-
-                    let local = builder.local(field_ty_llvm);
-                    let value = builder.field_load(val.0.as_struct(), 1);
-                    let value = builder.bitcast(value, field_ty_llvm);
-                    builder.local_set(local, value);
-
-                    env.vars.push((mapping.binding(), local));
-
-                    // run the body
-                    let ret_val = this.expr(builder, env, mapping.expr());
-                    debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local));
-
-                    let Ok(ret_val) = ret_val
-                    else { return };
-
-                    builder.local_set(ret_local, ret_val.0);
-
-                    if mapping.is_inout() {
-                        builder.store(inout_ptr, ret_val.0)
-                    }
-                });
-
-                if taken_as_inout {
-                    let val = builder.load(value_alloc, *value_ty.ty());
-                    this.assign(builder, env, expr, val);
+                    match_block.terminator = BlockTerminator::Goto(cont_block.index);
+                    env.blocks.push(match_block);
                 }
 
-                let ty = out_if_err!();
-                if ty.is_never(this.syms) { *builder.const_unit() }
-                else { builder.local_get(ret_local) }
+                block.terminator = BlockTerminator::Switch(blocks.leak());
+
+                core::mem::swap(block, &mut cont_block);
+                env.blocks.push(cont_block);
             },
 
 
-            Expr::Block { block } => {
-                let ret = this.block(builder, env, &*block)?.0;
+            parser::nodes::expr::Expr::Block { block: instrs } => {
+                let var_len = env.vars.len();
+                self.process(env, block, &instrs).unwrap();
                 out_if_err!();
-                ret
+                env.vars.truncate(var_len);
             },
 
 
-            Expr::CreateStruct { fields, .. } => {
+            parser::nodes::expr::Expr::CreateStruct { fields, .. } => {
                 let ty = out_if_err!();
-                let pool = Arena::tls_get_rec();
-                let mut field_vals = sti::vec::Vec::with_cap_in(&*pool, fields.len());
-                for f in fields {
-                    field_vals.push((f.0, this.expr(builder, env, f.2)?));
-                }
-
-                let llvm_ty = this.sym_to_llvm(ty, &env.gens).as_struct();
-                let sym = ty.sym(this.syms).unwrap();
-                let SymbolKind::Container(cont) = this.syms.sym(sym).kind()
+                let sym = ty.sym(self.syms).unwrap();
+                let SymbolKind::Container(cont) = self.syms.sym(sym).kind()
                 else { unreachable!() };
 
-                let mut vec = sti::vec::Vec::with_cap_in(&*pool, fields.len());
                 for sf in cont.fields() {
-                    let f = field_vals.iter().find(|f| f.0 == sf.0.unwrap()).unwrap();
+                    let f = fields.iter().find(|f| f.0 == sf.0.unwrap()).unwrap();
 
-                    vec.push(f.1.0);
+                    self.expr(env, block, f.2)?;
                 }
 
-                *builder.struct_instance(llvm_ty, &*vec)
+                block.bytecode.create_struct(fields.len().try_into().unwrap());
             },
 
 
-            Expr::AccessField { val, field_name } => {
-                let value = this.expr(builder, env, val)?;
+            parser::nodes::expr::Expr::AccessField { val, field_name } => {
+                self.expr(env, block, val)?;
                 out_if_err!();
 
-                let value_ty = value.1.sym(this.syms).unwrap();
-                let SymbolKind::Container(cont) = this.syms.sym(value_ty).kind()
+                let val = self.ty_info.expr(val).unwrap();
+                let ty = val.sym(self.syms).unwrap();
+                let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
                 else { unreachable!() };
 
-                let mut str = sti::string::String::new_in(this.syms.arena());
-                let (i, f) = cont.fields().iter().enumerate().find(|(i, f)| {
+                let mut str = sti::string::String::new_in(self.syms.arena());
+                let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
                     let name = match f.0.to_option() {
                         Some(v) => v,
                         None => {
                             str.clear();
-                            let _ = write!(str, "{i}");
-                            let index = this.string_map.insert(&str);
-                            index
+                            self.string_map.num(*i)
                         },
                     };
 
                     field_name == name
                 }).unwrap();
-                
-                match cont.kind() {
-                    | ContainerKind::Tuple
-                    | ContainerKind::Struct => builder.field_load(value.0.as_struct(), i),
 
+                match cont.kind() {
+                      ContainerKind::Tuple
+                    | ContainerKind::Struct => block.bytecode.load_field(i.try_into().unwrap()),
 
                     ContainerKind::Enum => {
-                        let field_ty = {
-                            let gens = value.1.gens(this.syms);
-                            let gens = this.syms.get_gens(gens);
+                        block.bytecode.load_enum_field(i.try_into().unwrap());
+                    },
+                }
 
-                            f.1.to_ty(gens, this.syms).unwrap()
-                        };
 
-                        let gens_arr = this.syms.arena().alloc_new([(StringMap::T, field_ty)]);
-                        let gens = this.syms.add_gens(gens_arr);
-                        let opt_ty = Sym::Ty(SymbolId::OPTION, gens);
+            },
 
-                        let opt_ns = this.syms.sym_ns(SymbolId::OPTION);
-                        let opt_ns = this.ns.get_ns(opt_ns);
 
-                        let Ok(some_func) = opt_ns.get_sym(StringMap::SOME).unwrap()
-                        else { return Err(()) };
-                        
-                        let Ok(none_func) = opt_ns.get_sym(StringMap::NONE).unwrap()
-                        else { return Err(()) };
+            parser::nodes::expr::Expr::CallFunction { args, .. } => {
+                for arg in args {
+                    self.expr(env, block, *arg)?;
+                }
 
-                        let value_index = builder.field_load(value.0.as_struct(), 0);
-                        let expected_index = builder.const_int(value_index.ty().as_integer(), i as i64, false);
-                        let cmp = builder.cmp_int(value_index.as_integer(), expected_index, IntCmp::Eq);
+                out_if_err!();
 
-                        let local = builder.local(this.sym_to_llvm(opt_ty, &env.gens));
-                        builder.ite(this, cmp,
-                        |builder, slf| {
-                            let func = slf.get_func(some_func, gens).unwrap();
-                            let val = builder.field_load(value.0.as_struct(), 1);
-                            let val = builder.bitcast(val, slf.sym_to_llvm(field_ty, &env.gens));
-                            let ret = builder.call(func.0, func.1, &[val]);
-                            builder.local_set(local, ret);
+                let (sym, gens) = self.ty_info.funcs.get(&expr).unwrap();
+                if *sym == SymbolId::ERR { return Err(()) }
+
+                let func = self.get_func(*sym, *gens)?;
+                if let Some(err) = func.error {
+                    generate_error(env, block, err);
+                    block.bytecode.unit();
+                    return Ok(());
+                }
+
+
+
+                block.bytecode.call(func.index.0, args.len().try_into().unwrap());
+            },
+
+
+            parser::nodes::expr::Expr::WithinNamespace { action, .. } => {
+                out_if_err!();
+                self.expr(env, block, action)?;
+            },
+
+
+            parser::nodes::expr::Expr::WithinTypeNamespace { action, .. } => {
+                out_if_err!();
+                self.expr(env, block, action)?;
+            },
+
+
+            parser::nodes::expr::Expr::Loop { body } => {
+                self.build_loop(env, block, 
+                |this, env, block| {
+                    this.process(env, block, &body)?;
+                    block.bytecode.pop();
+                    match this.ty_info.expr(expr){
+                        Ok(e) => e,
+                        Err(e) => {
+                            generate_error(env, block, e);
+                            return Err(());
                         },
-
-                        |builder, slf| {
-                            let func = slf.get_func(none_func, gens).unwrap();
-                            let ret = builder.call(func.0, func.1, &[]);
-                            builder.local_set(local, ret);
-                        });
+                    };
+                    Ok(())
+                })?;
+            },
 
 
-                        builder.local_get(local)
+            parser::nodes::expr::Expr::Return(expr_id) => {
+                self.expr(env, block, expr_id)?;
+                out_if_err!();
+                
+                block.bytecode.ret();
+                let mut cont_block = env.next_block();
+                cont_block.terminator = block.terminator;
+
+                core::mem::swap(block, &mut cont_block);
+                env.blocks.push(cont_block);
+                block.bytecode.unit();
+            },
+
+
+            parser::nodes::expr::Expr::Continue => {
+                out_if_err!();
+
+                let term = block.terminator;
+                let mut cont_block = env.next_block();
+
+                block.terminator = BlockTerminator::Goto(env.loop_cont.unwrap());
+                cont_block.terminator = term;
+
+                core::mem::swap(block, &mut cont_block);
+                env.blocks.push(cont_block);
+            },
+
+
+            parser::nodes::expr::Expr::Break => {
+                out_if_err!();
+
+                block.bytecode.unit();
+
+                let term = block.terminator;
+                let mut cont_block = env.next_block();
+
+                block.terminator = BlockTerminator::Goto(env.loop_brek.unwrap());
+                cont_block.terminator = term;
+
+                core::mem::swap(block, &mut cont_block);
+                env.blocks.push(cont_block);
+            },
+
+
+            parser::nodes::expr::Expr::Tuple(expr_ids) => {
+                for &e in expr_ids {
+                    self.expr(env, block, e)?;
+                }
+
+                out_if_err!();
+                block.bytecode.create_struct(expr_ids.len().try_into().unwrap());
+            },
+
+
+            parser::nodes::expr::Expr::AsCast { lhs, .. } => {
+                self.expr(env, block, lhs)?;
+
+                let Ok(lsym) = self.ty_info.expr(lhs).unwrap().sym(self.syms)
+                else { return Err(()) };
+
+                let Ok(ty) = out_if_err!().sym(self.syms)
+                else { return Err(()) };
+
+                if lsym == ty {
+                    // no op
+                    return Ok(())
+                }
+
+                match (lsym, ty) {
+                    (SymbolId::BOOL, SymbolId::I64) => block.bytecode.cast_bool_to_int(),
+                    (SymbolId::I64, SymbolId::F64) => block.bytecode.cast_int_to_float(),
+                    (SymbolId::F64, SymbolId::I64) => block.bytecode.cast_float_to_int(),
+                    _ => unreachable!(),
+                }
+
+            },
+
+
+            parser::nodes::expr::Expr::Unwrap(expr_id) => {
+                self.expr(env, block, expr_id)?;
+                out_if_err!();
+                block.bytecode.unwrap();
+            },
+
+
+            parser::nodes::expr::Expr::OrReturn(expr_id) => {
+                self.expr(env, block, expr_id)?;
+                out_if_err!();
+
+                block.bytecode.copy();
+                block.bytecode.load_field(0);
+
+                block.bytecode.const_int(0);
+                block.bytecode.eq_int();
+
+                self.build_ite(env, block,
+                |_, _, block| {
+                    block.bytecode.load_field(1);
+                    Ok(())
+                },
+                |_, env, block| {
+                    let mut cont_block = env.next_block();
+                    cont_block.terminator = block.terminator;
+                    block.terminator = BlockTerminator::Ret;
+
+                    core::mem::swap(block, &mut cont_block);
+                    env.blocks.push(cont_block);
+
+                    Ok(())
+                })?;
+            },
+        };
+        Ok(())
+    }
+
+
+
+    fn build_loop(
+        &mut self, env: &mut Env<'me>, block: &mut Block<'me>,
+        f: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ()>
+    ) -> Result<(), ()> {
+
+        let mut loop_block = env.next_block();
+
+        let mut next_block = env.next_block();
+        next_block.terminator = block.terminator;
+
+        let loop_block_entry = loop_block.index;
+        let term = block.terminator;
+        let loop_cont = env.loop_cont;
+        let loop_brek = env.loop_brek;
+
+        env.loop_cont = Some(loop_block_entry);
+        env.loop_brek = Some(next_block.index);
+
+        block.terminator = BlockTerminator::Goto(loop_block_entry);
+
+        let var_len = env.vars.len();
+
+        /*
+        self.process(env, &mut loop_block, &body)?;
+        loop_block.bytecode.pop();
+        */
+        f(self, env, &mut loop_block)?;
+        loop_block.terminator = BlockTerminator::Goto(loop_block_entry);
+
+        env.vars.truncate(var_len);
+
+
+        env.loop_cont = Some(loop_block_entry);
+        env.loop_brek = Some(next_block.index);
+
+        next_block.terminator = term;
+
+        core::mem::swap(block, &mut next_block);
+        env.blocks.push(next_block);
+        env.blocks.push(loop_block);
+
+        env.loop_brek = loop_brek;
+        env.loop_cont = loop_cont;
+        Ok(())
+    }
+
+
+
+
+    fn build_ite(&mut self, env: &mut Env<'me>, block: &mut Block<'me>,
+        t: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ()>,
+        f: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ()>,
+    ) -> Result<(), ()> {
+
+        let mut continue_block = env.next_block();
+
+        let true_case = {
+            let mut body_block = env.next_block();
+            let body_block_entry = body_block.index;
+
+
+            t(self, env, &mut body_block)?;
+
+            body_block.terminator = BlockTerminator::Goto(continue_block.index);
+            env.blocks.push(body_block);
+
+            body_block_entry
+        };
+
+        let false_case = {
+            let mut body_block = env.next_block();
+            let body_block_entry = body_block.index;
+
+
+            f(self, env, &mut body_block)?;
+
+            body_block.terminator = BlockTerminator::Goto(continue_block.index);
+            env.blocks.push(body_block);
+
+            body_block_entry
+        };
+
+        block.terminator = BlockTerminator::SwitchBool { op1: true_case, op2: false_case };
+
+        core::mem::swap(block, &mut continue_block);
+        env.blocks.push(continue_block);
+        Ok(())
+
+    }
+
+
+
+
+    fn update_value(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId) -> Result<(), ()> {
+        match self.ast.expr(expr) {
+            parser::nodes::expr::Expr::Identifier(ident) => {
+                let (_, index) = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
+                block.bytecode.store((*index).try_into().unwrap());
+            },
+
+
+            parser::nodes::expr::Expr::AccessField { val, field_name } => {
+                self.expr(env, block, val)?;
+
+                let val = self.ty_info.expr(val).unwrap();
+                let ty = val.sym(self.syms).unwrap();
+                let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
+                else { unreachable!() };
+
+                let mut str = sti::string::String::new_in(self.syms.arena());
+                let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
+                    let name = match f.0.to_option() {
+                        Some(v) => v,
+                        None => {
+                            str.clear();
+                            self.string_map.num(*i)
+                        },
+                    };
+
+                    field_name == name
+                }).unwrap();
+
+
+                match cont.kind() {
+                      ContainerKind::Tuple
+                    | ContainerKind::Struct => {
+                        block.bytecode.store_field(i.try_into().unwrap());
+                    }
+
+                    // you can't assign to an enum field that's not unwrapped
+                    // that just doesn't make sense
+                    ContainerKind::Enum => unreachable!(),
+                }
+            },
+
+
+            parser::nodes::expr::Expr::Unwrap(expr_id) => {
+                match self.ast.expr(expr_id) {
+                    parser::nodes::expr::Expr::Identifier(ident) => {
+                        let (_, index) = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
+                        block.bytecode.load((*index).try_into().unwrap());
+                        block.bytecode.unwrap_store();
                     },
 
 
-                }
-            },
+                    parser::nodes::expr::Expr::AccessField { val, field_name } => {
+                        self.expr(env, block, val)?;
+
+                        let val = self.ty_info.expr(val).unwrap();
+                        let ty = val.sym(self.syms).unwrap();
+                        let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
+                        else { unreachable!() };
+
+                        let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
+                            let name = match f.0.to_option() {
+                                Some(v) => v,
+                                None => {
+                                    self.string_map.num(*i)
+                                },
+                            };
+
+                            field_name == name
+                        }).unwrap();
 
 
-            Expr::CallFunction { args, is_accessor, .. } => {
-                let pool = Arena::tls_get_rec();
-                let mut func_args = Vec::with_cap_in(&*pool, args.len());
-                for a in args { func_args.push((a.0, this.expr(builder, env, a.0)?, a.1)) }
+                        match cont.kind() {
+                              ContainerKind::Tuple
+                            | ContainerKind::Struct => {
+                                block.bytecode.load_field(i.try_into().unwrap());
+                                block.bytecode.unwrap_store();
+                            }
 
-                out_if_err!();
-                let (sym, gens) = this.ty_info.funcs.get(&expr).unwrap();
-                if *sym == SymbolId::ERR { return Err(()) }
+                            ContainerKind::Enum => {
+                                block.bytecode.copy();
+                                block.bytecode.load_field(0); // the tag
 
-                let (func, func_ty) = this.get_func(*sym, *gens)?;
+                                block.bytecode.const_int(i.try_into().unwrap());
+                                block.bytecode.eq_int();
 
-                let func_fields = {
-                    let sym = this.syms.sym(*sym);
-                    let SymbolKind::Function(func) = sym.kind()
-                    else { unreachable!() };
+                                self.build_ite(env, block,
+                                |_, _, block| {
+                                    block.bytecode.store_field(1);
+                                    Ok(())
+                                },
+                                |_, _, block| {
+                                    block.bytecode.unwrap_fail();
+                                    Ok(())
+                                })?;
 
-                    func.args()
-                };
-
-                let mut inouts = sti::vec::Vec::with_cap_in(&*pool, func_args.len());
-                let args = {
-                    let mut vec = Vec::with_cap_in(&*pool, func_args.len());
-                    for (i, (a, fa)) in func_args.iter().zip(func_fields).enumerate() { 
-                        let (val, ty) = a.1;
-
-                        let is_inout = if fa.inout() && is_accessor && i == 0 { true }
-                                        else { a.2 };
-                        if is_inout {
-                            let ptr = builder.alloca_store(val);
-
-                            inouts.push((ptr, a.0, ty));
-                            vec.push(*ptr);
-                        } else {
-                            vec.push(val)
+                            },
                         }
-                    };
-
-                    vec
-                };
+                    }
 
 
-                let ret = builder.call(func, func_ty, &*args);
+                    parser::nodes::expr::Expr::Unwrap(_) => {
+                        self.expr(env, block, expr_id)?;
+                        block.bytecode.unwrap_store();
 
-                for i in inouts {
-                    let ty = this.sym_to_llvm(i.2, &env.gens);
-                    let val = builder.load(i.0, ty);
-                    this.assign(builder, env, i.1, val)
+                    }
+
+
+                    parser::nodes::expr::Expr::OrReturn(_) => {
+                        self.expr(env, block, expr_id)?;
+                        block.bytecode.unwrap_store();
+
+                    }
+
+
+                    _ => unreachable!()
+                }
+            },
+
+
+            parser::nodes::expr::Expr::OrReturn(expr_id) => {
+                match self.ast.expr(expr_id) {
+                    parser::nodes::expr::Expr::Identifier(ident) => {
+                        let (_, index) = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
+
+                        block.bytecode.load((*index).try_into().unwrap());
+                        block.bytecode.load_field(0);
+
+                        block.bytecode.const_int(0);
+                        block.bytecode.eq_int();
+
+
+                        self.build_ite(env, block,
+                        |_, _, block| {
+                            block.bytecode.store_field(1);
+                            Ok(())
+                        },
+                        |_, env, block| {
+                            let mut cont_block = env.next_block();
+                            cont_block.terminator = block.terminator;
+                            block.terminator = BlockTerminator::Ret;
+
+                            core::mem::swap(block, &mut cont_block);
+                            env.blocks.push(cont_block);
+
+                            Ok(())
+                        })?;
+                    },
+
+
+                   parser::nodes::expr::Expr::AccessField { val, field_name } => {
+                        self.expr(env, block, val)?;
+
+                        let val = self.ty_info.expr(val).unwrap();
+                        let ty = val.sym(self.syms).unwrap();
+                        let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
+                        else { unreachable!() };
+
+                        let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
+                            let name = match f.0.to_option() {
+                                Some(v) => v,
+                                None => {
+                                    self.string_map.num(*i)
+                                },
+                            };
+
+                            field_name == name
+                        }).unwrap();
+
+
+                        match cont.kind() {
+                              ContainerKind::Tuple
+                            | ContainerKind::Struct => {
+                                block.bytecode.load_field(i.try_into().unwrap());
+
+                                block.bytecode.copy();
+                                block.bytecode.load_field(0);
+
+                                block.bytecode.const_int(0);
+                                block.bytecode.eq_int();
+
+
+                                self.build_ite(env, block,
+                                |_, _, block| {
+                                    block.bytecode.store_field(1);
+                                    Ok(())
+                                },
+                                |_, env, block| {
+                                    let mut cont_block = env.next_block();
+                                    cont_block.terminator = block.terminator;
+                                    block.terminator = BlockTerminator::Ret;
+
+                                    core::mem::swap(block, &mut cont_block);
+                                    env.blocks.push(cont_block);
+
+                                    Ok(())
+                                })?;
+                            }
+
+                            ContainerKind::Enum => {
+                                block.bytecode.copy();
+                                block.bytecode.load_field(0); // the tag
+
+                                block.bytecode.const_int(i.try_into().unwrap());
+                                block.bytecode.eq_int();
+
+                                self.build_ite(env, block,
+                                |_, _, block| {
+                                    block.bytecode.store_field(1);
+                                    Ok(())
+                                },
+                                |_, env, block| {
+                                    let mut cont_block = env.next_block();
+                                    cont_block.terminator = block.terminator;
+                                    block.terminator = BlockTerminator::Ret;
+
+                                    core::mem::swap(block, &mut cont_block);
+                                    env.blocks.push(cont_block);
+
+                                    Ok(())
+                                })?;
+
+                            },
+                        }
+                    },
+
+
+                    parser::nodes::expr::Expr::Unwrap(_) => {
+                        self.expr(env, block, expr_id)?;
+                        block.bytecode.copy();
+                        block.bytecode.load_field(0); // the tag
+
+                        block.bytecode.const_int(0);
+                        block.bytecode.eq_int();
+
+                        self.build_ite(env, block,
+                        |_, _, block| {
+                            block.bytecode.store_field(1);
+                            Ok(())
+                        },
+                        |_, env, block| {
+                            let mut cont_block = env.next_block();
+                            cont_block.terminator = block.terminator;
+                            block.terminator = BlockTerminator::Ret;
+
+                            core::mem::swap(block, &mut cont_block);
+                            env.blocks.push(cont_block);
+
+                            Ok(())
+                        })?;
+
+                    }
+
+
+                    parser::nodes::expr::Expr::OrReturn(_) => {
+                        self.expr(env, block, expr_id)?;
+                        block.bytecode.copy();
+                        block.bytecode.load_field(0); // the tag
+
+                        block.bytecode.const_int(0);
+                        block.bytecode.eq_int();
+
+                        self.build_ite(env, block,
+                        |_, _, block| {
+                            block.bytecode.store_field(1);
+                            Ok(())
+                        },
+                        |_, env, block| {
+                            let mut cont_block = env.next_block();
+                            cont_block.terminator = block.terminator;
+                            block.terminator = BlockTerminator::Ret;
+
+                            core::mem::swap(block, &mut cont_block);
+                            env.blocks.push(cont_block);
+
+                            Ok(())
+                        })?;
+
+
+
+                    }
+
+
+                    _ => unreachable!()
                 }
 
-                ret
             },
 
-
-            Expr::WithinNamespace { action, .. } => {
-                out_if_err!();
-                this.expr(builder, env, action)?.0
-            },
-
-
-            Expr::WithinTypeNamespace { action, .. } => {
-                out_if_err!();
-                this.expr(builder, env, action)?.0
-            },
-
-
-            Expr::Loop { body } => {
-                let mut value = None;
-                builder.loop_indefinitely(
-                |builder, id| {
-                    let prev = env.loop_id;
-                    env.loop_id = Some(id);
-
-                    let result = this.block(builder, env, &*body);
-
-                    env.loop_id = prev;
-
-                    if let Ok(e) = result { value = Some(e.0) }
-                });
-
-                match value {
-                    Some(v) => v,
-                    None => return Err(()),
-                };
-
-                out_if_err!();
-
-                *builder.const_unit()
-            },
-
-
-            Expr::Return(v) => {
-                let val = this.expr(builder, env, v)?;
-                out_if_err!();
-
-                if !val.1.is_never(this.syms) {
-                    Self::update_inouts(env, builder);
-                    builder.ret(val.0);
-                }
-
-                *builder.const_unit()
-            },
-
-
-            Expr::Continue => {
-                builder.loop_continue(env.loop_id.unwrap());
-                *builder.const_unit()
-            },
-
-
-            Expr::Break => {
-                builder.loop_break(env.loop_id.unwrap());
-                *builder.const_unit()
-            },
-
-
-            Expr::Tuple(v) => {
-                let pool = Arena::tls_get_rec();
-                let mut vals = Vec::with_cap_in(&*pool, v.len());
-                for a in v { vals.push(this.expr(builder, env, *a)?.0) }
-
-                let strct = out_if_err!();
-                let strct = this.sym_to_llvm(strct, env.gens).as_struct();
-
-                *builder.struct_instance(strct, &vals)
-            },
-
-
-            Expr::AsCast { lhs, .. } => {
-                let lhs = this.expr(builder, env, lhs)?;
-                out_if_err!();
-
-                let lsym = lhs.1.sym(this.syms).unwrap();
-
-                let ty = out_if_err!();
-                let dest = this.sym_to_llvm(ty, &env.gens);
-
-
-                if lsym.is_int() {
-                    builder.int_cast(lhs.0.as_integer(), dest, lsym.is_sint())
-                } else {
-                    builder.fp_cast(lhs.0.as_fp(), dest)
-                }
-
-            },
-
-
-            Expr::Unwrap(val) => {
-                let val = this.expr(builder, env, val)?;
-                out_if_err!();
-
-                let sym = val.1.sym(this.syms).unwrap();
-                let sym = this.syms.sym(sym);
-
-                let SymbolKind::Container(cont) = sym.kind()
-                else { unreachable!() };
-
-                let value_index = builder.field_load(val.0.as_struct(), 0).as_integer();
-                let expected_index = builder.const_int(value_index.ty(), 0, false);
-
-                let cmp = builder.cmp_int(value_index, expected_index, IntCmp::Ne);
-
-                builder.ite(this, cmp,
-                |builder, slf| slf.unwrap_fail(builder),
-                |_, _| { });
-
-                let gens = val.1.gens(this.syms);
-                let gens = this.syms.get_gens(gens);
-                let field_ty = cont.fields()[0].1.to_ty(gens, this.syms).unwrap();
-                let val = builder.field_load(val.0.as_struct(), 1);
-                builder.bitcast(val, this.sym_to_llvm(field_ty, &env.gens))
-            },
-
-
-            Expr::OrReturn(value) => {
-                let value = this.expr(builder, env, value)?;
-                let ret_ty = out_if_err!();
-
-                let sym_id = value.1.sym(this.syms).unwrap();
-
-                if sym_id == SymbolId::OPTION {
-                    todo!()
-                }
-
-
-                if sym_id == SymbolId::RESULT {
-                    todo!()
-                }
-
-                unreachable!()
-            },
-        })})(); 
-
-        let val = val?;
-
-        let ty = out_if_err!();
-
-        let Ok(ty_sym) = ty.sym(this.syms)
-        else { return Err(()) };
-
-        if ty_sym == SymbolId::ERR {
-            builder.unreachable();
-            return Err(())
-        }
-
-        if ty_sym == SymbolId::NEVER {
-            builder.unreachable();
-            return Ok((*builder.const_unit(), ty))
-        }
-
-
-        Ok((val, ty))
-    }
-
-    fn error(&self, builder: &mut Builder<'_>, e: errors::ErrorId) {
-        let (err_ty, err_file, err_index) = match e {
-            errors::ErrorId::Lexer(v) => (0, v.0, v.1.inner()),
-            errors::ErrorId::Parser(v) => (1, v.0, v.1.inner()),
-            errors::ErrorId::Sema(v) => (2, 0, v.inner()),
+            _ => unreachable!(),
         };
 
-        let i32_ty = self.ctx.integer(32);
-
-        let err_ty    = builder.const_int(i32_ty, err_ty, false);
-        let err_file  = builder.const_int(i32_ty, err_file as i64, false);
-        let err_index = builder.const_int(i32_ty, err_index as i64, false);
-
-        builder.call(self.err_fn.0, self.err_fn.1, &[*err_ty, *err_file, *err_index]);
-        builder.unreachable();
+        Ok(())
     }
 
 
-    fn abort(&self, builder: &mut Builder<'_>) {
-        builder.call(self.abort_fn.0, self.abort_fn.1, &[]);
-        builder.unreachable();
+}
+
+
+impl<'buf> Env<'buf> {
+    pub fn alloc_var(&mut self, str: StringIndex) -> u32 {
+        let value = self.alloc_anon_var();
+        self.vars.push((str, value));
+        value
     }
 
 
-    fn unwrap_fail(&self, builder: &mut Builder<'_>) {
-        self.abort(builder)
+    pub fn alloc_anon_var(&mut self) -> u32 {
+        self.var_counter += 1;
+        self.var_counter - 1
     }
 
 
-    fn get_func(&mut self, sym: SymbolId, gens: GenListId) -> Result<(FunctionPtr<'ctx>, FunctionType<'ctx>), ()> {
-        let ty = Sym::Ty(sym, gens);
-        let hash = ty.hash(self.syms);
-        if let Some(ty) = self.func_mappings.get(&hash) { return Ok(*ty) }
 
-        let pool = Arena::tls_get_rec();
-        let fsym = self.syms.sym(sym);
-        let SymbolKind::Function(sym_func) = fsym.kind()
-        else { unreachable!() };
-
-        let gens = self.syms.gens()[gens];
-        for g in gens { if g.1.is_err(self.syms) { return Err(()) } }
-
-        let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
-        if ret.is_err(self.syms) { return Err(()) }
-
-        let llvm_ret = self.sym_to_llvm(ret, gens);
-
-        let res = match sym_func.kind() {
-            FunctionKind::Extern(path) => {
-                if let Some(v) = self.externs.get(&path) { return Ok(*v) }
-
-                let args = {
-                    let mut vec = Vec::with_cap_in(&*pool, sym_func.args().len());
-                    for i in sym_func.args() {
-                        if i.inout() {
-                            let ptr = self.ctx.ptr();
-                            vec.push(*ptr);
-                        } else {
-                            let ty = i.symbol().to_ty(gens, self.syms).unwrap();
-                            if ty.is_err(self.syms) { return Err(()) }
-
-                            let ty = self.sym_to_llvm(ty, gens);
-                            vec.push(ty);
-                        }
-                    }
-
-                    vec.leak()
-                };
-
-                let func_ty = llvm_ret.fn_ty(args, false);
-                let func = self.module.function(self.string_map.get(path), func_ty);
-                func.set_linkage(Linkage::External);
-
-                self.func_mappings.insert(hash, (func, func_ty));
-                self.externs.insert(path, (func, func_ty));
-
-                return Ok((func, func_ty));
-            },
-
-
-            FunctionKind::UserDefined { decl } => {
-                let args = {
-                    let mut vec = Vec::with_cap_in(&*pool, sym_func.args().len());
-                    for i in sym_func.args() {
-                        if i.inout() {
-                            vec.push(*self.ctx.ptr());
-                            continue;
-                        }
-
-                        let ty = i.symbol().to_ty(gens, self.syms).unwrap();
-                        if ty.is_err(self.syms) { return Err(()) }
-
-                        let ty = self.sym_to_llvm(ty, gens);
-                        vec.push(ty);
-                    }
-
-                    vec.leak()
-                };
-
-
-                let func_ty = llvm_ret.fn_ty(args, false);
-                let func = self.module.function(self.string_map.get(fsym.name()), func_ty);
-                self.func_mappings.insert(hash, (func, func_ty));
-
-                let mut builder = func.builder(self.ctx, func_ty);
-
-                let Decl::Function { body, .. } = self.ast.decl(decl)
-                else { unreachable!() };
-
-                let mut env = Env {
-                    vars: Vec::new_in(&*pool),
-                    loop_id: None,
-                    inouts: Vec::new_in(&*pool),
-                    gens,
-                };
-
-                for (i, fa) in sym_func.args().iter().enumerate() {
-                    let arg = builder.arg(i).unwrap();
-                    let mut local = arg;
-                    
-                    if fa.inout() {
-                        let ty = fa.symbol().to_ty(gens, self.syms).unwrap();
-                        if ty.is_err(self.syms) { return Err(()) }
-
-                        let ty = self.sym_to_llvm(ty, env.gens);
-
-                        let ptr = builder.local_get(arg).as_ptr();
-                        let load = builder.load(ptr, ty);
-
-                        let new_local = builder.local(ty);
-                        builder.local_set(new_local, load);
-                        local = new_local;
-                        env.inouts.push((i, new_local));
-                    }
-
-                    env.vars.push((fa.name(), local));
-                }
-
-                let result = self.block(&mut builder, &mut env, &*body);
-                
-                // update inouts
-                Self::update_inouts(&env, &mut builder);
-
-                if let Some(e) = self.ty_info.decl(decl) {
-                    self.error(&mut builder, e);
-                } else if let Ok(val) = result {
-                    if !val.1.is_never(self.syms) { builder.ret(val.0); }
-                    else { builder.unreachable() }
-                } else {
-                    builder.unreachable();
-                }
-
-                builder.build();
-                (func, func_ty)
-            },
-
-            FunctionKind::Enum { sym: sym_id, index } => {
-                let sym = self.syms.sym(sym_id);
-                let SymbolKind::Container(cont) = sym.kind()
-                else { unreachable!() };
-
-                let gens_id = self.syms.add_gens(gens);
-                let ret_ty = Sym::Ty(sym_id, gens_id);
-                let arg = cont.fields()[index];
-                let arg_ty = arg.1.to_ty(gens, self.syms).unwrap();
-
-                let llvm_ret_ty = self.sym_to_llvm(ret_ty, gens);
-
-                let is_unit = arg_ty.sym(self.syms).unwrap() == SymbolId::UNIT;
-                let llvm_arg_ty = self.sym_to_llvm(arg_ty, gens);
-
-                let func_ty = if is_unit { llvm_ret_ty.fn_ty(&[], false) }
-                              else { llvm_ret_ty.fn_ty(&[llvm_arg_ty], false) };
-                let func = self.module.function(self.string_map.get(fsym.name()), func_ty);
-                self.func_mappings.insert(hash, (func, func_ty));
-
-                let mut builder = func.builder(self.ctx, func_ty);
-
-                let union_struct_fields = llvm_ret_ty.as_struct().fields(&*pool);
-                let alloca = builder.alloca(llvm_ret_ty);
-
-                if !is_unit {
-                    let arg = builder.arg(0).unwrap();
-                    let arg = builder.local_get(arg);
-                    let fp = builder.field_ptr(alloca, llvm_ret_ty.as_struct(), 1);
-                    builder.store(fp, arg);
-                }
-
-                let index = builder.const_int(union_struct_fields[0].as_integer(),
-                                                index as i64, false);
-
-                let fp = builder.field_ptr(alloca, llvm_ret_ty.as_struct(), 0);
-                builder.store(fp, *index);
-
-                let ret = builder.load(alloca, llvm_ret_ty);
-                builder.ret(ret);
-                builder.build();
-
-                (func, func_ty)
-            },
-        };
-
-        Ok(res)
+    pub fn next_block_index(&mut self) -> BlockIndex {
+        self.block_counter += 1;
+        BlockIndex(self.block_counter - 1)
     }
 
 
-    fn update_inouts(env: &Env, builder: &mut Builder<'_>) {
-        for (arg_index, local) in env.inouts.iter() {
-            let ptr = builder.arg(*arg_index).unwrap();
-            let ptr = builder.local_get(ptr).as_ptr();
-
-            let local = builder.local_get(*local);
-            builder.store(ptr, local)
+    pub fn next_block(&mut self) -> Block<'buf> {
+        Block {
+            index: self.next_block_index(),
+            bytecode: Builder::new(),
+            terminator: BlockTerminator::Ret,
         }
     }
+}
+
+
+
+fn generate_error<'buf>(env: &mut Env<'buf>, builder: &mut Block<'buf>, err: ErrorId) {
+    let mut cont_block = env.next_block();
+    cont_block.terminator = builder.terminator;
+    builder.terminator = BlockTerminator::Err(err);
+
+    core::mem::swap(builder, &mut cont_block);
+    env.blocks.push(cont_block);
+    
+
+    /*
+    match err {
+        errors::ErrorId::Lexer(error) => {
+            builder.err(0, error.0, error.1.inner());
+        },
+
+
+        errors::ErrorId::Parser(error) => {
+            builder.err(1, error.0, error.1.inner());
+
+        },
+
+
+        errors::ErrorId::Sema(sema_error) => {
+            builder.err(2, 0, sema_error.inner());
+        },
+    }*/
 }
 

@@ -18,8 +18,6 @@ pub enum Expr<'a> {
 
     Identifier(StringIndex),
 
-    Deref(ExprId),
-
     Range {
         lhs: ExprId,
         rhs: ExprId,
@@ -44,7 +42,6 @@ pub enum Expr<'a> {
 
     Match {
         value: ExprId,
-        taken_as_inout: bool,
         mappings: &'a [MatchMapping],
     },
 
@@ -65,7 +62,7 @@ pub enum Expr<'a> {
     CallFunction {
         name: StringIndex,
         is_accessor: bool,
-        args: &'a [(ExprId, bool)],
+        args: &'a [ExprId],
     },
 
     WithinNamespace {
@@ -107,7 +104,6 @@ pub struct MatchMapping {
     binding_range: SourceRange,
     range: SourceRange,
     expr: ExprId,
-    is_inout: bool,
 }
 
 
@@ -118,14 +114,12 @@ impl MatchMapping {
         binding_range: SourceRange,
         source_range: SourceRange, 
         expression: ExprId,
-        is_inout: bool,
     ) -> Self { 
         Self { 
             variant, 
             binding, 
             expr: expression,
             range: source_range, 
-            is_inout,
             binding_range,
         } 
     }

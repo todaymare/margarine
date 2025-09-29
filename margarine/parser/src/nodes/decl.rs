@@ -8,7 +8,6 @@ define_key!(u32, pub DeclId);
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Decl<'a> {
     Struct {
-        kind: StructKind,
         name: StringIndex,
         header: SourceRange,
         fields: &'a [(StringIndex, DataType<'a>, SourceRange)],
@@ -57,16 +56,7 @@ pub enum Decl<'a> {
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StructKind {
-    Component,
-    Resource,
-    Normal,
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FunctionSignature<'a> {
-    pub is_system  : bool,
     pub name       : StringIndex,
     pub source     : SourceRange,
     pub arguments  : &'a [FunctionArgument<'a>],
@@ -76,10 +66,10 @@ pub struct FunctionSignature<'a> {
 
 impl<'a> FunctionSignature<'a> {
     pub fn new(
-        is_system: bool, name: StringIndex, 
+        name: StringIndex, 
         source: SourceRange, arguments: &'a [FunctionArgument<'a>], 
         generics: &'a [StringIndex], return_type: DataType<'a>) -> Self { 
-        Self { is_system, name, source, arguments, return_type, generics }
+        Self { name, source, arguments, return_type, generics }
     }
 }
 
@@ -117,14 +107,13 @@ impl<'arena> ExternFunction<'arena> {
 pub struct FunctionArgument<'a> {
     name: StringIndex,
     data_type: DataType<'a>,
-    is_inout: bool,
     source_range: SourceRange,
 }
 
 
 impl<'arena> FunctionArgument<'arena> {
-    pub fn new(name: StringIndex, data_type: DataType<'arena>, is_inout: bool, source_range: SourceRange) -> Self { 
-        Self { name, data_type, is_inout, source_range } 
+    pub fn new(name: StringIndex, data_type: DataType<'arena>, source_range: SourceRange) -> Self { 
+        Self { name, data_type, source_range } 
     }
 
 
@@ -132,8 +121,6 @@ impl<'arena> FunctionArgument<'arena> {
     pub fn data_type(&self) -> DataType<'arena> { self.data_type }
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
-    #[inline(always)]
-    pub fn is_inout(&self) -> bool { self.is_inout }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
 }

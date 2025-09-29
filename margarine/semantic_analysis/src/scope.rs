@@ -1,5 +1,4 @@
 use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
-use llvm_api::builder::Loop;
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
 use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{ty::Sym, sym_map::{SymbolId, SymbolMap}}};
@@ -156,14 +155,10 @@ impl<'me> Scope<'me> {
 pub struct VariableScope {
     name  : StringIndex,
     ty    : Sym,
-    is_mut: bool, 
 }
 
 impl VariableScope {
-    pub fn new(name: StringIndex, ty: Sym, is_mut: bool) -> Self { Self { name, ty, is_mut } }
-
-    #[inline(always)]
-    pub fn is_mut(&self) -> bool { self.is_mut }
+    pub fn new(name: StringIndex, ty: Sym) -> Self { Self { name, ty } }
 
     #[inline(always)]
     pub fn ty(&self) -> Sym { self.ty }

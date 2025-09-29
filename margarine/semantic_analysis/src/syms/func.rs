@@ -9,6 +9,7 @@ pub struct FunctionTy<'me> {
     ret : Generic<'me>,
 
     kind: FunctionKind,
+    decl: Option<DeclId>,
 }
 
 
@@ -16,7 +17,6 @@ pub struct FunctionTy<'me> {
 pub struct FunctionArgument<'me> {
     name  : StringIndex,
     symbol: Generic<'me>,
-    inout : bool,
 }
 
 
@@ -24,9 +24,7 @@ pub struct FunctionArgument<'me> {
 pub enum FunctionKind {
     Extern(StringIndex),
     
-    UserDefined {
-        decl: DeclId,
-    },
+    UserDefined,
 
     Enum {
         sym: SymbolId,
@@ -36,10 +34,10 @@ pub enum FunctionKind {
 
 
 impl<'me> FunctionTy<'me> {
-    pub fn new(args: &'me [FunctionArgument<'me>], ret: Generic<'me>, kind: FunctionKind) -> Self { Self { args, ret, kind } }
+    pub fn new(args: &'me [FunctionArgument<'me>], ret: Generic<'me>, kind: FunctionKind, decl: Option<DeclId>) -> Self { Self { args, ret, kind, decl } }
 }
 
 
 impl<'me> FunctionArgument<'me> {
-    pub fn new(name: StringIndex, symbol: Generic<'me>, inout: bool) -> Self { Self { name, symbol, inout } }
+    pub fn new(name: StringIndex, symbol: Generic<'me>) -> Self { Self { name, symbol } }
 }

@@ -1,0 +1,9 @@
+[package]
+name = "fuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+margarine = { path = "../margarine" }
+afl = "*"
+sti = { git = "https://github.com/leddoo/sti" }
