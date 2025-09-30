@@ -182,7 +182,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::UNIT, &[]))),
 
 
-            //DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::)),
+            DataTypeKind::Hole => Err(Error::CantUseHoleHere { source: dt.range() }),
 
 
             DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]))),
@@ -256,6 +256,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Sym::UNIT),
             DataTypeKind::Never => Ok(Sym::NEVER),
+            DataTypeKind::Hole => Ok(self.syms.new_var(id, dt.range())),
 
 
             DataTypeKind::Within(ns, dt) => {

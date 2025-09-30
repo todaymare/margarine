@@ -235,6 +235,8 @@ pub enum Error {
 
     GenericOnGeneric { source: SourceRange },
 
+    CantUseHoleHere { source: SourceRange },
+
     NameIsReservedForFunctions { source: SourceRange },
 
     InvalidSystem(SourceRange),
@@ -713,6 +715,11 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::DerefOnNonPtr(v) => {
                 fmt.error("deref on non pointer")
                     .highlight(*v);
+            },
+
+            Error::CantUseHoleHere { source } => {
+                fmt.error("can't use the hole ('_') here")
+                    .highlight(*source);
             },
 
             Error::UnableToInfer(v) => {

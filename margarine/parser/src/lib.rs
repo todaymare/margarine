@@ -172,8 +172,7 @@ impl<'out> Parser<'_, 'out, '_> {
         let result = if self.current_is(TokenKind::Bang) {
             DataType::new(self.current_range(), DataTypeKind::Never)
         } else if self.current_is(TokenKind::Underscore) {
-            //DataType::new(self.current_range(), DataTypeKind::Hole)
-            todo!()
+            DataType::new(self.current_range(), DataTypeKind::Hole)
         } else if self.current_is(TokenKind::LeftParenthesis) { 
             self.advance();
             if self.current_is(TokenKind::RightParenthesis) {
@@ -1289,7 +1288,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             };
 
             if self.peek_is(TokenKind::LeftParenthesis)
-                || self.peek_is(TokenKind::LeftAngle) {
+                || self.peek_is(TokenKind::DoubleColon) {
                 self.advance();
                 self.advance();
 

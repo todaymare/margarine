@@ -22,8 +22,12 @@ fn print_opt<T>(opt: Option<T>) {
 }
 
 
+fn test<T, A>(val: T, boo: A) {
+}
+
+
 @startup
 fn main() {
-    print_opt(none::<int>())
+    test::<int, _>(69, 42.0)
 }
  
