@@ -40,7 +40,7 @@ fn main() {
     dbg!(&vm.funcs);
     {
         let _t = DropTimer::new("runtime");
-        match vm.run("test::main") {
+        match vm.run("examples/test::main") {
             Status::Ok => (),
             Status::Err(fatal_error) => println!("{}", fatal_error.msg),
         }

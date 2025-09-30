@@ -543,11 +543,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let generics = sym.generics();
                 let generics = {
                     let mut vec = Buffer::new(&*self.output, generics.len());
-                    for gen in generics {
-                        let ty = self.syms.pending(&mut self.namespaces, *gen, 0);
+                    for g in generics {
+                        let ty = self.syms.pending(&mut self.namespaces, *g, 0);
                         let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Struct));
-                        self.syms.add_sym(ty, Symbol::new(*gen, &[], kind));
-                        vec.push((*gen, self.syms.get_ty(ty, &[])));
+                        self.syms.add_sym(ty, Symbol::new(*g, &[], kind));
+                        vec.push((*g, self.syms.get_ty(ty, &[])));
                     }
 
                     vec
@@ -755,6 +755,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     self.error(id, Error::VariableTupleAndHintTupleSizeMismatch(range, cont.fields().len(), names.len()));
                     return;
                 }
+
+
             },
 
 
@@ -1208,7 +1210,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
-            Expr::CallFunction { name, is_accessor, args } => {
+            Expr::CallFunction { name, is_accessor, args, gens } => {
                 let pool = Arena::tls_get_rec();
                 let args_anals = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, args.len());
@@ -1251,8 +1253,22 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 }
 
 
+                if let Some(gens) = gens && gens.len() != sym.generics().len() {
+                    return Err(Error::GenericLenMismatch { 
+                        source: range, found: gens.len(), expected: sym.generics().len() });
+                }
+
+
                 // create gens
-                let func_generics = {
+                let func_generics = if let Some(gens) = gens {
+                    let mut vec = sti::vec::Vec::with_cap_in(self.output, sym.generics().len());
+                    for (g, dt) in sym.generics().iter().zip(gens.iter()) {
+                        let sym = self.dt_to_ty(scope, id, *dt)?;
+                        vec.push((*g, sym));
+                    }
+
+                    vec.leak()
+                } else {
                     let mut vec = sti::vec::Vec::with_cap_in(self.output, sym.generics().len());
                     for g in sym.generics() {
                         vec.push((*g, self.syms.new_var(id, range)));

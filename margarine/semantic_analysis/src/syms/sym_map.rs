@@ -135,8 +135,8 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn get_gens(&mut self, gen: GenListId) -> &'me [(StringIndex, Sym)] {
-        self.gens[gen]
+    pub fn get_gens(&mut self, g: GenListId) -> &'me [(StringIndex, Sym)] {
+        self.gens[g]
     }
 
 

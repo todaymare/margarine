@@ -14,10 +14,16 @@ impl Range {
 }
 
 
+fn print_opt<T>(opt: Option<T>) {
+    match opt {
+        some => print_str("yay"),
+        none => print_str("nay"),
+    }
+}
+
 
 @startup
 fn main() {
-    var a = (69,)
-    print(a.0)
+    print_opt(none::<int>())
 }
-
+ 

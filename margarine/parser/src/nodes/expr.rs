@@ -63,6 +63,7 @@ pub enum Expr<'a> {
         name: StringIndex,
         is_accessor: bool,
         args: &'a [ExprId],
+        gens: Option<&'a [DataType<'a>]>,
     },
 
     WithinNamespace {

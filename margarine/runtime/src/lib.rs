@@ -7,6 +7,7 @@ use std::{collections::HashMap, convert::Infallible, ops::{Deref, DerefMut, From
 
 pub mod runtime;
 pub mod opcode;
+pub mod alloc;
 
 
 #[derive(Clone, Copy)]

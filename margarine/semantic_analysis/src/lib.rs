@@ -182,6 +182,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::UNIT, &[]))),
 
 
+            //DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::)),
+
+
             DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]))),
 
 
@@ -191,9 +194,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let mut fields = Buffer::new(&*pool, tys.len());
                     let mut generics = Buffer::new(self.output, tys.len());
                     for ty in tys {
-                        let gen = self.dt_to_gen(scope, ty.1, gens)?;
+                        let g = self.dt_to_gen(scope, ty.1, gens)?;
                         fields.push(ty.0);
-                        generics.push(gen);
+                        generics.push(g);
                     }
 
                     (fields.leak(), generics.leak())
@@ -317,9 +320,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         write!(str, "{index}");
                         let index = self.string_map.insert(&str);
 
-                        let gen = self.dt_to_ty(scope_id, id, ty.1)?;
+                        let g = self.dt_to_ty(scope_id, id, ty.1)?;
                         fields.push(ty.0);
-                        generics.push((index, gen));
+                        generics.push((index, g));
                     }
 
                     (fields.leak(), generics.leak())

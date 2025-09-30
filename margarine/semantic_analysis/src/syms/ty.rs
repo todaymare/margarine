@@ -318,8 +318,8 @@ impl Sym {
 pub struct TypeHash(u32);
 
 
-fn instantiate_gens(map: &mut SymbolMap, gen: GenListId) -> GenListId {
-    let gens = map.gens()[gen];
+fn instantiate_gens(map: &mut SymbolMap, g: GenListId) -> GenListId {
+    let gens = map.gens()[g];
     let arena = map.arena();
     let vec = sti::vec::Vec::from_in(arena, gens.iter().map(|g| (g.0, g.1.instantiate(map, 0))));
     map.add_gens(vec.leak())

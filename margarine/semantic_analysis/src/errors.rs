@@ -234,7 +234,7 @@ pub enum Error {
     GenericLenMismatch { source: SourceRange, found: usize, expected: usize },
 
     GenericOnGeneric { source: SourceRange },
-    
+
     NameIsReservedForFunctions { source: SourceRange },
 
     InvalidSystem(SourceRange),
