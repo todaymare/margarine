@@ -75,17 +75,18 @@ impl<'a> FunctionSignature<'a> {
 
 
 #[derive(Debug, PartialEq)]
-pub struct ExternFunction<'arena> {
+pub struct ExternFunction<'a> {
     name: StringIndex,
     path: StringIndex,
-    args: &'arena [FunctionArgument<'arena>],
-    return_type: DataType<'arena>,
+    gens: &'a [StringIndex],
+    args: &'a [FunctionArgument<'a>],
+    return_type: DataType<'a>,
     source_range: SourceRange,
 }
 
-impl<'arena> ExternFunction<'arena> {
-    pub(crate) fn new(name: StringIndex, path: StringIndex, args: &'arena [FunctionArgument<'arena>], return_type: DataType<'arena>, source_range: SourceRange) -> Self { 
-        Self { name, args, return_type, source_range, path } 
+impl<'a> ExternFunction<'a> {
+    pub(crate) fn new(name: StringIndex, path: StringIndex, gens: &'a [StringIndex], args: &'a [FunctionArgument<'a>], return_type: DataType<'a>, source_range: SourceRange) -> Self { 
+        Self { name, gens, args, return_type, source_range, path } 
     }
 
 
@@ -94,9 +95,11 @@ impl<'arena> ExternFunction<'arena> {
     #[inline(always)]
     pub fn path(&self) -> StringIndex { self.path }
     #[inline(always)]
-    pub fn args(&self) -> &[FunctionArgument<'arena>] { &self.args }
+    pub fn gens(&self) -> &[StringIndex] { &self.gens }
     #[inline(always)]
-    pub fn return_type(&self) -> DataType<'arena> { self.return_type }
+    pub fn args(&self) -> &[FunctionArgument<'a>] { &self.args }
+    #[inline(always)]
+    pub fn return_type(&self) -> DataType<'a> { self.return_type }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
 

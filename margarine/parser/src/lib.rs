@@ -686,6 +686,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             
             parser.advance();
 
+            let gens = parser.generic_decl()?;
+
             let path = if let Some(path) = parser.is_literal_str() { parser.advance(); path }
             else { name };
 
@@ -751,6 +753,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             Ok(ExternFunction::new(
                 name,
                 path,
+                gens,
                 arguments,
                 return_type,
                 SourceRange::new(start, end)
@@ -1290,10 +1293,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
             if self.peek_is(TokenKind::LeftParenthesis)
                 || self.peek_is(TokenKind::DoubleColon) {
                 self.advance();
+
+                let gens = self.parse_generic_usage()?;
                 self.advance();
 
                 let args = self.parse_function_call_args(Some(result))?;
-                let gens = self.parse_generic_usage()?;
 
                 result = self.ast.add_expr(
                     Expr::CallFunction {

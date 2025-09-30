@@ -117,6 +117,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             add_sym!(RESULT);
             add_sym!(STR);
             add_sym!(RANGE);
+            add_sym!(TYPE_ID);
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
@@ -274,8 +275,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             DataTypeKind::CustomType(name, generics_list) => {
                 let scope = self.scopes.get(scope_id);
-                if scope.find_gen(name, &self.scopes).is_some() {
-                    return Err(Error::GenericOnGeneric { source: dt.range() });
+                if let Some(sym) = scope.find_gen(name, &self.scopes) {
+                    // @info: i got no idea why i had this error
+                    // i have a feeling it might fuck me up later
+                    //return Err(Error::GenericOnGeneric { source: dt.range() });
+                    return Ok(sym)
                 }
 
 

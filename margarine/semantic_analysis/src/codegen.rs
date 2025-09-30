@@ -390,6 +390,35 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             },
 
 
+
+            crate::syms::func::FunctionKind::TypeId => {
+                let mut block = Block {
+                    index: BlockIndex(0),
+                    bytecode: Builder::new(),
+                    terminator: BlockTerminator::Ret,
+                };
+
+                let id = gens[0].1.sym(self.syms).unwrap();
+                block.bytecode.const_int(id.inner() as i64);
+
+                let func = Function {
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
+                    index: FuncIndex(self.funcs.len().try_into().unwrap()),
+
+                    kind: FunctionKind::Code {
+                        local_count: 0,
+                        entry: BlockIndex(0),
+                        blocks: vec![block],
+                    },
+
+                    error: None,
+                };
+
+                self.funcs.insert(hash, func);
+                return Ok(self.funcs.get(&hash).unwrap())
+            }
+
+
             crate::syms::func::FunctionKind::Enum { sym: sym_id, index } => {
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Container(cont) = sym.kind()

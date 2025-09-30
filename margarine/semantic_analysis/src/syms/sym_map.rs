@@ -314,6 +314,7 @@ impl<'me> SymbolMap<'me> {
         {
             let pending = slf.pending(ns_map, StringMap::STR, 0);
             assert_eq!(pending, SymbolId::STR);
+
             let ptr = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]));
             let ptr = slf.arena.alloc_new([ptr]); 
 
@@ -327,6 +328,26 @@ impl<'me> SymbolMap<'me> {
             let sym = Symbol::new(StringMap::STR, &[], SymbolKind::Container(Container::new(fields, ContainerKind::Struct)));
             slf.add_sym(pending, sym);
         }
+
+
+        // type_id
+        {
+            let pending = slf.pending(ns_map, StringMap::TYPE_ID, 1);
+            assert_eq!(pending, SymbolId::TYPE_ID);
+
+            let sym = Symbol::new(
+                StringMap::TYPE_ID,
+                &[StringMap::T],
+                SymbolKind::Function(FunctionTy::new(
+                        &[],
+                        Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[])),
+                        FunctionKind::TypeId,
+                        None,
+                )));
+
+            slf.add_sym(pending, sym);
+        }
+
 
         assert_eq!(slf.gens.push(&[]), GenListId::EMPTY);
 
@@ -361,17 +382,18 @@ impl Var {
 
 
 impl SymbolId {
-    pub const UNIT  : Self = Self(0);
-    pub const I64   : Self = Self(1);
-    pub const F64   : Self = Self(2);
-    pub const BOOL  : Self = Self(3); // +2 for variants
-    pub const ERR   : Self = Self(6);
-    pub const NEVER : Self = Self(7);
-    pub const PTR   : Self = Self(8);
-    pub const RANGE : Self = Self(9);
-    pub const OPTION: Self = Self(10); // +2 for variants
-    pub const RESULT: Self = Self(13); // +2 for variants
-    pub const STR   : Self = Self(16);
+    pub const UNIT   : Self = Self(0);
+    pub const I64    : Self = Self(1);
+    pub const F64    : Self = Self(2);
+    pub const BOOL   : Self = Self(3); // +2 for variants
+    pub const ERR    : Self = Self(6);
+    pub const NEVER  : Self = Self(7);
+    pub const PTR    : Self = Self(8);
+    pub const RANGE  : Self = Self(9);
+    pub const OPTION : Self = Self(10); // +2 for variants
+    pub const RESULT : Self = Self(13); // +2 for variants
+    pub const STR    : Self = Self(16);
+    pub const TYPE_ID: Self = Self(17);
 
 
     pub fn supports_arith(self) -> bool {

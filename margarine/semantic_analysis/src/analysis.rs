@@ -89,7 +89,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         }
 
                         let path = self.string_map.concat(path, f.name());
-                        let pend = self.syms.pending(&mut self.namespaces, path, 0);
+                        let pend = self.syms.pending(&mut self.namespaces, path, f.gens().len());
                         ns = self.namespaces.get_ns_mut(ns_id);
 
                         ns.add_sym(f.name(), pend);
@@ -423,9 +423,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 Decl::Extern { functions } => {
                     for f in functions {
                         let mut args = Buffer::new(self.output, f.args().len());
+                        let gens = Vec::from_slice_in(self.output, f.gens()).leak();
 
                         for a in f.args() {
-                            let sym = self.dt_to_gen(self.scopes.get(scope), a.data_type(), &[]);
+                            let sym = self.dt_to_gen(self.scopes.get(scope), a.data_type(), gens);
                             let sym = match sym {
                                 Ok(v) => v,
                                 Err(v) => {
@@ -439,7 +440,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         }
 
 
-                        let ret = self.dt_to_gen(self.scopes.get(scope), f.return_type(), &[]);
+                        let ret = self.dt_to_gen(self.scopes.get(scope), f.return_type(), gens);
                         let ret = match ret {
                             Ok(v) => v,
                             Err(v) => {
@@ -453,7 +454,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let sym_name = self.string_map.concat(path, f.name());
 
                         let func = FunctionTy::new(args.leak(), ret, FunctionKind::Extern(f.path()), Some(*id));
-                        let func = Symbol::new(sym_name, &[], SymbolKind::Function(func));
+                        let func = Symbol::new(sym_name, gens, SymbolKind::Function(func));
 
                         let Ok(id) = self.namespaces.get_ns(ns).get_sym(f.name()).unwrap()
                         else { continue };

@@ -36,6 +36,38 @@ fn main() {
         Reg::new_unit()
     });
 
+
+    hosts.insert("too".to_string(), |vm| {
+        let obj = *unsafe { &vm.stack.reg(0) };
+        obj
+    });
+
+
+    hosts.insert("new_any".to_string(), |vm| {
+        let value = *unsafe { &vm.stack.reg(0) };
+        let type_id = unsafe { vm.stack.reg(1) };
+
+        let obj = vm.new_obj(runtime::Object::Struct { fields: vec![type_id, value] });
+        obj
+    });
+
+
+    hosts.insert("downcast_any".to_string(), |vm| {
+        let any_value = *unsafe { &vm.stack.reg(0) };
+        let target_ty = *unsafe { &vm.stack.reg(1) };
+
+        let obj = unsafe { any_value.as_obj() };
+        let obj = vm.objs[obj as usize].as_fields();
+
+        unsafe {
+            if obj[0].as_int() == target_ty.as_int() {
+                vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), obj[1]] })
+            } else {
+                vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+            }
+        }
+    });
+
     let mut vm = VM::new(hosts, &*src).unwrap();
     dbg!(&vm.funcs);
     {

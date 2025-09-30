@@ -236,7 +236,7 @@ impl<'src> VM<'src> {
     }
 
 
-    fn new_obj(&mut self, obj: Object) -> Reg {
+    pub fn new_obj(&mut self, obj: Object) -> Reg {
         let id = self.objs.len();
         self.objs.push(obj);
         Reg { kind: Reg::TAG_OBJ, data: RegData { as_obj: id as u64 } }

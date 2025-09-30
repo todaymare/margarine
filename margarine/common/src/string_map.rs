@@ -41,6 +41,7 @@ impl<'str> StringMap<'str> {
     pub const A: StringIndex = StringIndex(26);
 
     pub const ITER_NEXT_FUNC : StringIndex = StringIndex(27);
+    pub const TYPE_ID : StringIndex = StringIndex(28);
 
  
     #[inline(always)]
@@ -89,6 +90,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("A"), Self::A);
 
         assert_eq!(s.insert("__next__"), Self::ITER_NEXT_FUNC);
+        assert_eq!(s.insert("type_id"), Self::TYPE_ID);
         s
     }
 

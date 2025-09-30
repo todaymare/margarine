@@ -761,6 +761,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             },
 
             Error::VariableTupleAndHintTupleSizeMismatch(range, exp, given) => {
+                todo!()
             },
 
 

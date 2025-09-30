@@ -1,4 +1,8 @@
-extern { fn print(val: int) fn print_str(val: str) }
+extern {
+    fn print(val: int)
+    fn print_str(val: str)
+    fn too<T>(val: T): T
+}
 
 
 impl Range {
@@ -26,8 +30,42 @@ fn test<T, A>(val: T, boo: A) {
 }
 
 
+fn foo(val: int): int {
+    too(val)
+}
+
+struct Foo {}
+
+
+enum any {}
+
+
+extern {
+    fn new_any<T>(value: T, type_id: int): any 
+    fn downcast_any<T>(ptr: any, target: int): Option<T>
+}
+
+
+
+impl any {
+    fn from<T>(value: T): any {
+        new_any(value, type_id::<T>())
+    }
+
+
+    fn cast<T>(self): Option<T> {
+        downcast_any::<T>(self.ptr, type_id::<T>())
+    }
+}
+
+
+fn type_id_of<T>(val: T): int {
+    type_id::<T>()
+}
+
+
 @startup
 fn main() {
-    test::<int, _>(69, 42.0)
+    match any::from(4) {}
 }
  

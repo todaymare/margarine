@@ -26,6 +26,8 @@ pub enum FunctionKind {
     
     UserDefined,
 
+    TypeId,
+
     Enum {
         sym: SymbolId,
         index: usize,
