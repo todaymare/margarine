@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 pub use lexer::lex;
 use parser::nodes::decl::Decl;
 use parser::nodes::AST;
@@ -6,6 +8,7 @@ pub use parser::nodes;
 pub use common::source::{FileData, Extension};
 pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
+use semantic_analysis::syms::sym_map::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 pub use runtime::{VM, opcode, Status, FatalError, Reg};
@@ -99,3 +102,51 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
 }
 
 
+pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
+    hosts.insert("print_raw".to_string(), |vm| {
+        let val = unsafe { vm.stack.reg(0) };
+        let ty_id = unsafe { vm.stack.reg(1).as_int() };
+
+        unsafe {
+        match SymbolId::new_unck(ty_id as u32) {
+            SymbolId::I64 => println!("{}", val.as_int()),
+            SymbolId::F64 => println!("{}", val.as_float()),
+            SymbolId::BOOL => println!("{}", val.as_bool()),
+            SymbolId::STR => println!("{}", vm.objs[val.as_obj() as usize].as_str()),
+
+            //@todo
+            _ => println!("{:?}", vm.objs[val.as_obj() as usize].as_fields())
+        }
+        }
+        Reg::new_unit()
+    });
+
+
+    hosts.insert("new_any".to_string(), |vm| {
+        let value = unsafe { vm.stack.reg(0) };
+        let type_id = unsafe { vm.stack.reg(1) };
+        dbg!(value, type_id);
+
+        let obj = vm.new_obj(runtime::Object::Struct { fields: vec![type_id, value] });
+        obj
+    });
+
+
+    hosts.insert("downcast_any".to_string(), |vm| {
+        let any_value = *unsafe { &vm.stack.reg(0) };
+        let target_ty = *unsafe { &vm.stack.reg(1) };
+
+        let obj = unsafe { any_value.as_obj() };
+        let obj = vm.objs[obj as usize].as_fields();
+
+        unsafe {
+            if obj[0].as_int() == target_ty.as_int() {
+                vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), obj[1]] })
+            } else {
+                vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+            }
+        }
+    });
+
+
+}

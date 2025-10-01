@@ -1,7 +1,10 @@
 extern {
-    fn print(val: int)
-    fn print_str(val: str)
-    fn too<T>(val: T): T
+    fn print_raw<T>(val: T, ty_id: int)
+}
+
+
+fn print<T>(val: T) {
+    print_raw(val, type_id::<T>())
 }
 
 
@@ -20,8 +23,8 @@ impl Range {
 
 fn print_opt<T>(opt: Option<T>) {
     match opt {
-        some => print_str("yay"),
-        none => print_str("nay"),
+        some => print("yay"),
+        none => print("nay"),
     }
 }
 
@@ -66,6 +69,8 @@ fn type_id_of<T>(val: T): int {
 
 @startup
 fn main() {
-    print(any::from(6).cast::<int>()!)
+    print("hello")
+    print(69.5)
+    print(Foo {})
 }
  
