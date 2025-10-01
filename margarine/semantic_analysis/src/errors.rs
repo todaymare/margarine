@@ -212,12 +212,6 @@ pub enum Error {
         func_typ: Sym,
     },
 
-    CyclicType {
-        source: SourceRange,
-        backtrace: std::vec::Vec<StringIndex>,
-        name: StringIndex,
-    },
-
     AssignIsNotLHSValue {
         source: SourceRange,
     },
@@ -644,29 +638,6 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 err.highlight_with_note(*func_source, &msg2);
             }
             
-
-            Error::CyclicType { source, backtrace, name } => {
-                let msg = {
-                    let mut str = "process backtrace: ".to_string();
-
-                    let mut start = true;
-
-                    for s in backtrace {
-                        if !start {
-                            str.push_str(" -> ");
-                        }
-
-                        str.push_str(fmt.string(*s));
-                        start = false;
-                    }
-                    str.push_str(&format!(" -> {}", fmt.string(*name)));
-                    str
-                };
-
-                fmt.error("found cyclic type")
-                    .highlight_with_note(*source, &msg)
-            },
-
 
             Error::AssignIsNotLHSValue { source } => {
                 fmt.error("this is not a valid lhs expression")

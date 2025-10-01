@@ -623,7 +623,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                         let goto = env.loop_brek.unwrap();
                         let mut cont_block = env.next_block();
-                        cont_block.terminator = BlockTerminator::Goto(goto);
+                        cont_block.terminator = block.terminator;
+                        block.terminator = BlockTerminator::Goto(goto);
 
                         core::mem::swap(block, &mut cont_block);
                         env.blocks.push(cont_block);
@@ -954,6 +955,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 |this, env, block| {
                     this.process(env, block, &body)?;
                     block.bytecode.pop();
+
                     match this.ty_info.expr(expr){
                         Ok(e) => e,
                         Err(e) => {

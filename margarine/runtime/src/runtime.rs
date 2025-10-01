@@ -28,7 +28,7 @@ impl<'src> VM<'src> {
         unsafe {
         loop {
             let opcode = self.curr.next();
-            println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
+            //println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
             //println!("{:?}", self.stack);
             
             match opcode {
@@ -176,23 +176,11 @@ impl<'src> VM<'src> {
                     let list = self.stack.pop();
 
                     let list = self.objs[list.as_obj() as usize].as_list();
-                    let value = if index >= 0 {
-                        if index as usize >= list.len() {
-                            return Status::Err(FatalError::new(String::from("out of bounds access")))
-                        }
+                    if index < 0 || index as usize >= list.len() {
+                        return Status::Err(FatalError::new(String::from("out of bounds access")))
+                    }
 
-                        list[index as usize]
-                    } else {
-                        let index = (-index) as usize;
-                        if index >= list.len() {
-                            return Status::Err(FatalError::new(String::from("out of bounds access")))
-                        }
-
-                        list[list.len() - index]
-                    };
-
-
-                    self.stack.push(value);
+                    self.stack.push(list[index as usize]);
                 }
 
 
@@ -202,21 +190,11 @@ impl<'src> VM<'src> {
                     let value = self.stack.pop();
 
                     let list = self.objs[list.as_obj() as usize].as_mut_list();
-                    if index >= 0 {
-                        if index as usize >= list.len() {
-                            return Status::Err(FatalError::new(String::from("out of bounds access")))
-                        }
+                    if index < 0 || index as usize >= list.len() {
+                        return Status::Err(FatalError::new(String::from("out of bounds access")))
+                    }
 
-                        list[index as usize] = value
-                    } else {
-                        let index = (-index) as usize;
-                        if index >= list.len() {
-                            return Status::Err(FatalError::new(String::from("out of bounds access")))
-                        }
-
-                        list[list.len() - index] = value
-                    };
-
+                    list[index as usize] = value
                 }
 
 

@@ -62,6 +62,65 @@ impl any {
 }
 
 
+
+extern {
+    fn push_list<T>(list: [T], value: T)
+    fn pop_list<T>(list: [T]): Option<T>
+    fn len_list<T>(list: [T]): int
+}
+
+
+
+
+impl<T> [T] {
+    fn push(self, value: T) {
+        push_list(self, value)
+    }
+
+
+    fn pop(self): Option<T> {
+        pop_list(self)
+    }
+
+
+    fn len(self): int { len_list(self) }
+
+
+    fn iter(self): ListIterator<T> {
+        ListIterator {
+            list: self,
+            index: 0,
+        }
+    }
+
+}
+
+
+struct ListIterator<T> {
+    list: [T],
+    index: int,
+}
+
+
+impl<T> ListIterator<T> {
+    fn __next__(self): Option<T> {
+        if self.index < self.list.len() {
+            self.index += 1
+            some(self.list[self.index-1])
+        } else {
+            none()
+        }
+    }
+}
+
+
+impl [int] {
+    fn hey(self) {
+        print("hello")
+    }
+}
+
+
 fn type_id_of<T>(val: T): int {
     type_id::<T>()
 }
@@ -71,12 +130,27 @@ fn hey(): [int] {
 }
 
 
+struct A { b: B }
+struct B { a: A }
+
+
 @startup
 fn main() {
     var foo = [69, 420]
     print(foo)
     foo[0] = 2
-    foo[-1] = 5
+    foo.hey()
+
+    foo.push(3)
     print(foo)
+    print(foo.pop()!)
+    
+    for i in 0..10 {
+        foo.push(i)
+    }
+
+    for i in foo.iter() {
+        print(i)
+    }
 }
  

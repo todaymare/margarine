@@ -126,7 +126,6 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
     hosts.insert("new_any".to_string(), |vm| {
         let value = unsafe { vm.stack.reg(0) };
         let type_id = unsafe { vm.stack.reg(1) };
-        dbg!(value, type_id);
 
         let obj = vm.new_obj(runtime::Object::Struct { fields: vec![type_id, value] });
         obj
@@ -134,8 +133,8 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
 
 
     hosts.insert("downcast_any".to_string(), |vm| {
-        let any_value = *unsafe { &vm.stack.reg(0) };
-        let target_ty = *unsafe { &vm.stack.reg(1) };
+        let any_value = unsafe { vm.stack.reg(0) };
+        let target_ty = unsafe { vm.stack.reg(1) };
 
         let obj = unsafe { any_value.as_obj() };
         let obj = vm.objs[obj as usize].as_fields();
@@ -149,5 +148,39 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
         }
     });
 
+    hosts.insert("push_list".to_string(), |vm| {
+        let list = unsafe { vm.stack.reg(0) };
+        let value = unsafe { vm.stack.reg(1) };
 
+        let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
+        match list {
+            runtime::Object::List(regs) => regs.push(value),
+            _ => unreachable!(),
+        }
+
+        Reg::new_unit()
+    });
+
+    hosts.insert("pop_list".to_string(), |vm| {
+        let list = unsafe { vm.stack.reg(0) };
+
+        let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
+        let value = match list {
+            runtime::Object::List(regs) => regs.pop(),
+            _ => unreachable!(),
+        };
+
+        if let Some(value) = value {
+            vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), value] })
+        } else {
+            vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+        }
+    });
+
+    hosts.insert("len_list".to_string(), |vm| {
+        let list = unsafe { vm.stack.reg(0) };
+
+        let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
+        Reg::new_int(list.as_list().len() as i64)
+    });
 }
