@@ -47,6 +47,12 @@ pub enum Decl<'a> {
         functions: &'a [ExternFunction<'a>],
     },
 
+    OpaqueType {
+        name: StringIndex,
+        header: SourceRange,
+        gens: &'a [StringIndex],
+    },
+
     Attribute {
         attr: StringIndex,
         attr_range: SourceRange,

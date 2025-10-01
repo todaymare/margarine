@@ -197,7 +197,7 @@ impl<'src> VM<'src> {
                     
                     let obj = &mut self.objs[var.as_obj() as usize];
 
-                    if obj.as_fields()[0].as_int() != 0 {
+                    if obj.as_fields()[0].as_int() == 1 {
                         return Status::Err(FatalError::new("tried to unwrap an invalid value".to_string()));
                     }
 
@@ -209,7 +209,7 @@ impl<'src> VM<'src> {
                     let val = self.stack.pop();
                     let obj_index = val.as_obj();
                     let obj = &self.objs[obj_index as usize];
-                    if obj.as_fields()[0].as_int() != 0 {
+                    if obj.as_fields()[0].as_int() == 1 {
                         return Status::Err(FatalError::new("tried to unwrap an invalid value".to_string()));
                     }
 

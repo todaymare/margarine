@@ -278,6 +278,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 if let Some(sym) = scope.find_gen(name, &self.scopes) {
                     // @info: i got no idea why i had this error
                     // i have a feeling it might fuck me up later
+                    //
+                    // it did fuck me over
                     //return Err(Error::GenericOnGeneric { source: dt.range() });
                     return Ok(sym)
                 }

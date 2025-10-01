@@ -59,6 +59,7 @@ struct Env<'a> {
     blocks: Vec<Block<'a>>,
     loop_cont: Option<BlockIndex>,
     loop_brek: Option<BlockIndex>,
+    gens: GenListId,
 }
 
 
@@ -292,8 +293,8 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
 
 impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
-    fn get_func(&mut self, sym: SymbolId, gens: GenListId) -> Result<&Function<'me>, ()> {
-        let ty = Sym::Ty(sym, gens);
+    fn get_func(&mut self, sym: SymbolId, gens_id: GenListId) -> Result<&Function<'me>, ()> {
+        let ty = Sym::Ty(sym, gens_id);
         let hash = ty.hash(self.syms);
         if self.funcs.contains_key(&hash) { 
             return Ok(self.funcs.get(&hash).unwrap())
@@ -304,7 +305,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         let SymbolKind::Function(sym_func) = fsym.kind()
         else { unreachable!() };
 
-        let gens = self.syms.gens()[gens];;
+        let gens = self.syms.gens()[gens_id];;
         for g in gens { if g.1.is_err(self.syms) { return Err(()) } }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
@@ -350,6 +351,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     blocks: vec![],
                     loop_brek: None,
                     loop_cont: None,
+                    gens: gens_id,
                 };
 
 
@@ -888,7 +890,22 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 let (sym, gens) = self.ty_info.funcs.get(&expr).unwrap();
                 if *sym == SymbolId::ERR { return Err(()) }
 
-                let func = self.get_func(*sym, *gens)?;
+                let func_gens = self.syms.get_gens(*gens);
+                let env_gens = self.syms.get_gens(env.gens);
+
+                let mut new_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
+                for (name, sym) in func_gens {
+                    let sym =
+                        env_gens.iter().find(|x| x.0 == *name)
+                        .map(|x| x.1).unwrap_or(*sym);
+
+                    new_gens.push((*name, sym));
+                }
+
+                dbg!(gens, &new_gens);
+                let gens = self.syms.add_gens(new_gens.leak());
+
+                let func = self.get_func(*sym, gens)?;
                 if let Some(err) = func.error {
                     generate_error(env, block, err);
                     block.bytecode.unit();

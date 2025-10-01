@@ -18,6 +18,7 @@ pub struct Symbol<'me> {
 pub enum SymbolKind<'me> {
     Function(FunctionTy<'me>),
     Container(Container<'me>),
+    Opaque,
 }
 
 

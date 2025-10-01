@@ -44,8 +44,9 @@ fn main() {
 
 
     hosts.insert("new_any".to_string(), |vm| {
-        let value = *unsafe { &vm.stack.reg(0) };
+        let value = unsafe { vm.stack.reg(0) };
         let type_id = unsafe { vm.stack.reg(1) };
+        dbg!(value, type_id);
 
         let obj = vm.new_obj(runtime::Object::Struct { fields: vec![type_id, value] });
         obj
@@ -58,6 +59,9 @@ fn main() {
 
         let obj = unsafe { any_value.as_obj() };
         let obj = vm.objs[obj as usize].as_fields();
+
+        dbg!(obj);
+        dbg!(target_ty);
 
         unsafe {
             if obj[0].as_int() == target_ty.as_int() {

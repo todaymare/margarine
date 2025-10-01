@@ -445,6 +445,18 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Extern) => self.extern_declaration(settings)?.into(),
             TokenKind::Keyword(Keyword::Enum) => self.enum_declaration()?.into(),
             TokenKind::Keyword(Keyword::Use) => self.using_declaration()?.into(),
+            TokenKind::Keyword(Keyword::Type) => {
+                let start = self.current_range().start();
+                self.advance();
+                let ident = self.expect_identifier()?;
+                let gens = self.generic_decl()?;
+
+                let range = SourceRange::new(start, self.current_range().end());
+                self.ast.add_decl(
+                    Decl::OpaqueType { name: ident, header: range, gens },
+                    range,
+                ).into()
+            },
 
 
             TokenKind::Keyword(Keyword::Var) => self.let_statement()?.into(),

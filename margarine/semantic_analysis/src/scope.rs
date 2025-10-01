@@ -138,6 +138,25 @@ impl<'me> Scope<'me> {
         })
     }
 
+
+
+    pub fn over_gens(
+        self,
+        scope_map: &ScopeMap<'me>,
+        mut func: impl FnMut(GenericsScope) 
+    ) {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::Generics(generics_scope) = scope.kind {
+                func(generics_scope);
+            }
+
+            Some(())
+        });
+
+        
+    }
+
+
     fn over<T>(self, scope_map: &ScopeMap<'me>, mut func: impl FnMut(Scope<'me>) -> Option<T>) -> Option<T> {
         let mut this = Some(self);
         while let Some(scope) = this {
@@ -168,7 +187,7 @@ impl VariableScope {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, ImmutableData, Clone, Copy)]
 pub struct GenericsScope<'me> {
     generics: &'me [(StringIndex, Sym)],
 }

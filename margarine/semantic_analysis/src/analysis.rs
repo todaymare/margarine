@@ -56,6 +56,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             match decl {
                 | Decl::Enum { name, header, generics, .. } 
                 | Decl::Struct { name, header, generics, .. }
+                | Decl::OpaqueType { name, header, gens: generics, .. }
                 | Decl::Function { sig: FunctionSignature { name, source: header, generics, .. }, .. }=> {
                     if let Some(sym) = ns.get_sym(name) {
                         if sym.is_ok() { ns.set_err_sym(name) }
@@ -321,6 +322,21 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 },
 
 
+                Decl::OpaqueType { name, gens, .. } => {
+                    let ns = self.namespaces.get_ns(ns);
+                    let Ok(tsi) = ns.get_sym(name).unwrap()
+                    else { continue };
+
+
+                    let generics = copy_slice_in(self.output, gens);
+                    let sym_name = self.string_map.concat(path, name);
+                    let kind = SymbolKind::Opaque;
+
+                    let sym = Symbol::new(sym_name, generics, kind);
+                    self.syms.add_sym(tsi, sym);
+                }
+
+
                 Decl::Enum { name, mappings, generics, .. } => {
                     let ns = self.namespaces.get_ns(ns);
                     let mut enum_mappings = Buffer::new(self.output, mappings.len());
@@ -529,6 +545,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
         match decl {
             Decl::Struct { .. } => (),
             Decl::Enum { .. } => (),
+            Decl::OpaqueType { .. } => (),
 
             
             Decl::Function { sig, body, .. } => {
