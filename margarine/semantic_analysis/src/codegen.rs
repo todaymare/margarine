@@ -902,7 +902,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     new_gens.push((*name, sym));
                 }
 
-                dbg!(gens, &new_gens);
                 let gens = self.syms.add_gens(new_gens.leak());
 
                 let func = self.get_func(*sym, gens)?;
@@ -916,6 +915,26 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 block.bytecode.call(func.index.0, args.len().try_into().unwrap());
             },
+
+
+            parser::nodes::expr::Expr::CreateList { exprs } => {
+                for &expr in exprs {
+                    self.expr(env, block, expr)?;
+                }
+
+                out_if_err!();
+
+                block.bytecode.create_list(exprs.len().try_into().unwrap())
+            }
+
+
+            parser::nodes::expr::Expr::IndexList { list, index } => {
+                self.expr(env, block, list)?;
+                self.expr(env, block, index)?;
+                out_if_err!();
+
+                block.bytecode.index_list();
+            }
 
 
             parser::nodes::expr::Expr::WithinNamespace { action, .. } => {
@@ -1165,6 +1184,13 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             },
 
 
+            parser::nodes::expr::Expr::IndexList { list, index } => {
+                self.expr(env, block, list)?;
+                self.expr(env, block, index)?;
+                block.bytecode.store_list();
+            }
+
+
             parser::nodes::expr::Expr::AccessField { val, field_name } => {
                 self.expr(env, block, val)?;
 
@@ -1258,21 +1284,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     }
 
 
-                    parser::nodes::expr::Expr::Unwrap(_) => {
+                    _ => {
                         self.expr(env, block, expr_id)?;
                         block.bytecode.unwrap_store();
-
                     }
-
-
-                    parser::nodes::expr::Expr::OrReturn(_) => {
-                        self.expr(env, block, expr_id)?;
-                        block.bytecode.unwrap_store();
-
-                    }
-
-
-                    _ => unreachable!()
                 }
             },
 
@@ -1384,7 +1399,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     },
 
 
-                    parser::nodes::expr::Expr::Unwrap(_) => {
+                   _ => {
                         self.expr(env, block, expr_id)?;
                         block.bytecode.copy();
                         block.bytecode.load_field(0); // the tag
@@ -1409,38 +1424,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         })?;
 
                     }
-
-
-                    parser::nodes::expr::Expr::OrReturn(_) => {
-                        self.expr(env, block, expr_id)?;
-                        block.bytecode.copy();
-                        block.bytecode.load_field(0); // the tag
-
-                        block.bytecode.const_int(0);
-                        block.bytecode.eq_int();
-
-                        self.build_ite(env, block,
-                        |_, _, block| {
-                            block.bytecode.store_field(1);
-                            Ok(())
-                        },
-                        |_, env, block| {
-                            let mut cont_block = env.next_block();
-                            cont_block.terminator = block.terminator;
-                            block.terminator = BlockTerminator::Ret;
-
-                            core::mem::swap(block, &mut cont_block);
-                            env.blocks.push(cont_block);
-
-                            Ok(())
-                        })?;
-
-
-
-                    }
-
-
-                    _ => unreachable!()
                 }
 
             },

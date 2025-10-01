@@ -51,6 +51,10 @@ pub enum Object {
         fields: Vec<Reg>,
     },
 
+
+    List(Vec<Reg>),
+
+
     String(Box<str>),
 }
 
@@ -738,6 +742,20 @@ impl Object {
     pub fn as_str(&self) -> &str {
         match self {
             Object::String(str) => &str,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn as_list(&self) -> &[Reg] {
+        match self {
+            Object::List(vals) => &vals,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn as_mut_list(&mut self) -> &mut [Reg] {
+        match self {
+            Object::List(vals) => vals,
             _ => unreachable!(),
         }
     }

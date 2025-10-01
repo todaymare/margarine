@@ -14,8 +14,11 @@ spec = {
   "Pop": {},
   "Copy": {},
 
+  "CreateList": { "elem_count": "u32" },
   "CreateStruct": { "field_count": "u8" },
   "LoadField": { "field_index": "u8" },
+  "IndexList": { },
+  "StoreList": { },
   "StoreField": { "field_index": "u8" },
   "LoadEnumField": { "enum_index": "u32" },
 

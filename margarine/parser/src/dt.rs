@@ -20,6 +20,7 @@ pub enum DataTypeKind<'a> {
     Never,
     Hole,
     Tuple(&'a [(OptStringIndex, DataType<'a>)]),
+    List(&'a DataType<'a>),
     Within(StringIndex, &'a DataType<'a>),
     CustomType(StringIndex, &'a [DataType<'a>]),
 }
@@ -60,6 +61,13 @@ impl std::hash::Hash for DataTypeKind<'_> {
                     x.1.kind().hash(state);
                 });
             },
+
+            DataTypeKind::List(dt) => {
+                206.hash(state);
+                dt.kind().hash(state);
+            },
+
+
         }
     }
 }

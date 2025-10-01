@@ -209,6 +209,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
+            DataTypeKind::List(ty) => {
+                let ty = self.dt_to_gen(scope, *ty, gens)?;
+                let gens = self.output.alloc_new([ty]);
+
+                Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::LIST, gens)))
+            },
+
+
             DataTypeKind::Within(ns, dt) => {
                 let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces, &self.syms)
                 else { return Err(Error::NamespaceNotFound { namespace: ns, source: dt.range() }) };
@@ -313,6 +321,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let ty = self.syms.get_ty(base, &*generics);
                 Ok(ty)
+            },
+
+
+            DataTypeKind::List(ty) => {
+                let ty = self.dt_to_ty(scope_id, id, *ty)?;
+
+                let gens = self.syms.add_gens(self.output.alloc_new([(StringMap::T, ty)]));
+                Ok(Sym::Ty(SymbolId::LIST, gens))
             },
 
 

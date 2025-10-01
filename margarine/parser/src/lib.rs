@@ -8,7 +8,7 @@ use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
-use sti::{arena::Arena, vec::Vec, keyed::KVec};
+use sti::{alloc::Alloc, arena::Arena, keyed::KVec, vec::Vec};
 
 use crate::nodes::expr::{BinaryOperator, ExprId};
 
@@ -171,8 +171,19 @@ impl<'out> Parser<'_, 'out, '_> {
         let start = self.current_range().start();
         let result = if self.current_is(TokenKind::Bang) {
             DataType::new(self.current_range(), DataTypeKind::Never)
+
         } else if self.current_is(TokenKind::Underscore) {
             DataType::new(self.current_range(), DataTypeKind::Hole)
+
+        } else if self.current_is(TokenKind::LeftSquare) {
+            self.advance();
+
+            let ty = self.expect_type()?;
+            self.advance();
+
+            self.expect(TokenKind::RightSquare)?;
+            DataType::new(SourceRange::new(start, self.current_range().end()), DataTypeKind::List(self.arena.alloc_new(ty)))
+
         } else if self.current_is(TokenKind::LeftParenthesis) { 
             self.advance();
             if self.current_is(TokenKind::RightParenthesis) {
@@ -1275,7 +1286,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
         while 
             self.peek_kind() == Some(TokenKind::Dot) 
             || self.peek_kind() == Some(TokenKind::Bang)
-            || self.peek_kind() == Some(TokenKind::QuestionMark) {
+            || self.peek_kind() == Some(TokenKind::QuestionMark)
+            || self.peek_kind() == Some(TokenKind::LeftSquare) {
             self.advance();
 
             if self.current_is(TokenKind::Bang) {
@@ -1290,6 +1302,18 @@ impl<'ta> Parser<'_, 'ta, '_> {
             if self.current_is(TokenKind::QuestionMark) {
                 let source = SourceRange::new(self.ast.range(result).start(), self.current_range().end());
                 result = self.ast.add_expr(Expr::OrReturn(result), source);
+                continue
+            }
+            
+            if self.current_is(TokenKind::LeftSquare) {
+                self.advance();
+                let index = self.expression(&ParserSettings::default())?;
+                self.advance();
+
+                self.expect(TokenKind::RightSquare)?;
+
+                let source = SourceRange::new(self.ast.range(result).start(), self.current_range().end());
+                result = self.ast.add_expr(Expr::IndexList { list: result, index }, source);
                 continue
             }
             
@@ -1534,23 +1558,18 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 let start = self.current_range().start();
                 self.advance();
 
-                let typ = self.expect_type()?;
-                self.advance();
+                let exprs = self.list(
+                    TokenKind::RightSquare,
+                    Some(TokenKind::Comma),
+                    |parser, _| {
+                        parser.expression(&ParserSettings::default())
+                    }
+                )?;
 
-                self.expect(TokenKind::RightSquare)?;
-                self.advance();
-
-                self.expect(TokenKind::DoubleColon)?;
-                self.advance();
-
-                let expr = self.expression(&ParserSettings::default())?;
 
                 Ok(self.ast.add_expr(
-                    Expr::WithinTypeNamespace { 
-                        namespace: typ, 
-                        action: expr 
-                    },
-                    SourceRange::new(start, self.current_range().end())
+                    Expr::CreateList { exprs },
+                    SourceRange::new(start, self.current_range().end()),
                 ))
             }
 

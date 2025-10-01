@@ -154,6 +154,72 @@ impl<'src> VM<'src> {
                 }
 
 
+                consts::CreateList => {
+                    let field_count = self.curr.next_u32();
+                    let mut vec = Vec::with_capacity(field_count as usize);
+
+                    for _ in 0..field_count {
+                        vec.push(self.stack.pop());
+                    }
+
+                    vec.reverse();
+
+                    let obj = Object::List(vec);
+
+                    let reg = self.new_obj(obj);
+                    self.stack.push(reg);
+                }
+
+
+                consts::IndexList => {
+                    let index = self.stack.pop().as_int();
+                    let list = self.stack.pop();
+
+                    let list = self.objs[list.as_obj() as usize].as_list();
+                    let value = if index >= 0 {
+                        if index as usize >= list.len() {
+                            return Status::Err(FatalError::new(String::from("out of bounds access")))
+                        }
+
+                        list[index as usize]
+                    } else {
+                        let index = (-index) as usize;
+                        if index >= list.len() {
+                            return Status::Err(FatalError::new(String::from("out of bounds access")))
+                        }
+
+                        list[list.len() - index]
+                    };
+
+
+                    self.stack.push(value);
+                }
+
+
+                consts::StoreList => {
+                    let index = self.stack.pop().as_int();
+                    let list = self.stack.pop();
+                    let value = self.stack.pop();
+
+                    let list = self.objs[list.as_obj() as usize].as_mut_list();
+                    if index >= 0 {
+                        if index as usize >= list.len() {
+                            return Status::Err(FatalError::new(String::from("out of bounds access")))
+                        }
+
+                        list[index as usize] = value
+                    } else {
+                        let index = (-index) as usize;
+                        if index >= list.len() {
+                            return Status::Err(FatalError::new(String::from("out of bounds access")))
+                        }
+
+                        list[list.len() - index] = value
+                    };
+
+                }
+
+
                 consts::LoadField => {
                     let index = self.curr.next();
                     let val = self.stack.pop();

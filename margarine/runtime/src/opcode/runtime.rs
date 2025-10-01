@@ -13,8 +13,11 @@ pub enum OpCode {
     Call,
     Pop,
     Copy,
+    CreateList,
     CreateStruct,
     LoadField,
+    IndexList,
+    StoreList,
     StoreField,
     LoadEnumField,
     Unwrap,
@@ -76,8 +79,11 @@ pub mod consts {
     pub const Call: u8 = super::OpCode::Call as u8;
     pub const Pop: u8 = super::OpCode::Pop as u8;
     pub const Copy: u8 = super::OpCode::Copy as u8;
+    pub const CreateList: u8 = super::OpCode::CreateList as u8;
     pub const CreateStruct: u8 = super::OpCode::CreateStruct as u8;
     pub const LoadField: u8 = super::OpCode::LoadField as u8;
+    pub const IndexList: u8 = super::OpCode::IndexList as u8;
+    pub const StoreList: u8 = super::OpCode::StoreList as u8;
     pub const StoreField: u8 = super::OpCode::StoreField as u8;
     pub const LoadEnumField: u8 = super::OpCode::LoadEnumField as u8;
     pub const Unwrap: u8 = super::OpCode::Unwrap as u8;
@@ -201,6 +207,11 @@ pub mod builder {
             self.bytecode.push(super::OpCode::Copy.as_u8());
         }
 
+        pub fn create_list(&mut self, elem_count: u32) {
+            self.bytecode.push(super::OpCode::CreateList.as_u8());
+            self.bytecode.extend_from_slice(&elem_count.to_le_bytes());
+        }
+
         pub fn create_struct(&mut self, field_count: u8) {
             self.bytecode.push(super::OpCode::CreateStruct.as_u8());
             self.bytecode.extend_from_slice(&field_count.to_le_bytes());
@@ -209,6 +220,14 @@ pub mod builder {
         pub fn load_field(&mut self, field_index: u8) {
             self.bytecode.push(super::OpCode::LoadField.as_u8());
             self.bytecode.extend_from_slice(&field_index.to_le_bytes());
+        }
+
+        pub fn index_list(&mut self) {
+            self.bytecode.push(super::OpCode::IndexList.as_u8());
+        }
+
+        pub fn store_list(&mut self) {
+            self.bytecode.push(super::OpCode::StoreList.as_u8());
         }
 
         pub fn store_field(&mut self, field_index: u8) {
@@ -482,6 +501,13 @@ pub mod builder {
             let mut _offset = 1;
         }
 
+        pub fn create_list_at(&mut self, _at: usize, elem_count: u32) {
+            self.bytecode[_at] = super::OpCode::CreateList.as_u8();
+            let mut _offset = 1;
+            self.bytecode[_at+_offset.._at+_offset+core::mem::size_of_val(&elem_count)].copy_from_slice(&elem_count.to_le_bytes());
+            _offset += core::mem::size_of_val(&elem_count);
+        }
+
         pub fn create_struct_at(&mut self, _at: usize, field_count: u8) {
             self.bytecode[_at] = super::OpCode::CreateStruct.as_u8();
             let mut _offset = 1;
@@ -494,6 +520,16 @@ pub mod builder {
             let mut _offset = 1;
             self.bytecode[_at+_offset.._at+_offset+core::mem::size_of_val(&field_index)].copy_from_slice(&field_index.to_le_bytes());
             _offset += core::mem::size_of_val(&field_index);
+        }
+
+        pub fn index_list_at(&mut self, _at: usize, ) {
+            self.bytecode[_at] = super::OpCode::IndexList.as_u8();
+            let mut _offset = 1;
+        }
+
+        pub fn store_list_at(&mut self, _at: usize, ) {
+            self.bytecode[_at] = super::OpCode::StoreList.as_u8();
+            let mut _offset = 1;
         }
 
         pub fn store_field_at(&mut self, _at: usize, field_index: u8) {
@@ -1010,6 +1046,28 @@ pub mod builder {
                             "Copy({fields})",
                         ));
                     }
+                    super::OpCode::CreateList => {
+                        let mut fields = String::new();
+                        unsafe {
+                            {
+                                if !fields.is_empty() {
+                                    fields.push_str(", ");
+                                }
+                                write!(
+                                    &mut fields,
+                                    "elem_count: {}",
+                                    <u32>::from_le_bytes(
+                                        iter.next_n::<{{ core::mem::size_of::<u32>() }}>()
+                                    )
+                                ).unwrap();
+                            }
+
+                        }
+                        strct.entry(&offset,
+                            &format!(
+                            "CreateList({fields})",
+                        ));
+                    }
                     super::OpCode::CreateStruct => {
                         let mut fields = String::new();
                         unsafe {
@@ -1052,6 +1110,26 @@ pub mod builder {
                         strct.entry(&offset,
                             &format!(
                             "LoadField({fields})",
+                        ));
+                    }
+                    super::OpCode::IndexList => {
+                        let mut fields = String::new();
+                        unsafe {
+
+                        }
+                        strct.entry(&offset,
+                            &format!(
+                            "IndexList({fields})",
+                        ));
+                    }
+                    super::OpCode::StoreList => {
+                        let mut fields = String::new();
+                        unsafe {
+
+                        }
+                        strct.entry(&offset,
+                            &format!(
+                            "StoreList({fields})",
                         ));
                     }
                     super::OpCode::StoreField => {
@@ -1627,8 +1705,11 @@ impl OpCode {
             consts::Call => Some(Self::Call),
             consts::Pop => Some(Self::Pop),
             consts::Copy => Some(Self::Copy),
+            consts::CreateList => Some(Self::CreateList),
             consts::CreateStruct => Some(Self::CreateStruct),
             consts::LoadField => Some(Self::LoadField),
+            consts::IndexList => Some(Self::IndexList),
+            consts::StoreList => Some(Self::StoreList),
             consts::StoreField => Some(Self::StoreField),
             consts::LoadEnumField => Some(Self::LoadEnumField),
             consts::Unwrap => Some(Self::Unwrap),

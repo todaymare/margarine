@@ -46,7 +46,14 @@ impl Sym {
 
                     str.push_char(')');
 
-                } else {
+                }
+                else if matches!(sym.kind, SymbolKind::Opaque) && sym.name == StringMap::LIST {
+                    str.push_char('[');
+                    let ty = gens[0].1;
+                    str.push(ty.display(string_map, map));
+                    str.push_char(']');
+                }
+                else {
                     str.push(string_map.get(sym.name));
                     if !gens.is_empty() {
                         str.push_char('<');

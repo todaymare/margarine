@@ -29,6 +29,11 @@ pub enum Expr<'a> {
         rhs: ExprId,
     },
 
+    IndexList {
+        list : ExprId,
+        index: ExprId,
+    },
+
     UnaryOp {
         operator: UnaryOperator,
         rhs: ExprId,
@@ -90,6 +95,10 @@ pub enum Expr<'a> {
     AsCast {
         lhs: ExprId,
         data_type: DataType<'a>,
+    },
+
+    CreateList {
+        exprs: &'a [ExprId],
     },
 
     Unwrap(ExprId),

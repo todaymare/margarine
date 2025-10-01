@@ -233,13 +233,13 @@ pub enum Error {
 
     GenericLenMismatch { source: SourceRange, found: usize, expected: usize },
 
-    GenericOnGeneric { source: SourceRange },
-
     CantUseHoleHere { source: SourceRange },
 
     NameIsReservedForFunctions { source: SourceRange },
 
     InvalidSystem(SourceRange),
+
+    IndexOnNonList(SourceRange, Sym),
 
     Bypass,
 
@@ -669,7 +669,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
 
 
             Error::AssignIsNotLHSValue { source } => {
-                fmt.error("assign value is not a valid lhs value")
+                fmt.error("this is not a valid lhs expression")
                     .highlight(*source);
             },
 
@@ -745,11 +745,6 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*source, &msg)
             },
 
-            Error::GenericOnGeneric { source } => {
-                fmt.error("generics on a generic")
-                    .highlight(*source)
-            },
-
             Error::NameIsReservedForFunctions { source } => {
                 fmt.error("this name is reserved for an overwritable function")
                     .highlight(*source);
@@ -758,6 +753,12 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::InvalidSystem(v) => {
                 fmt.error("system functions must be outside of an impl block & not have any generics")
                     .highlight(*v)
+            },
+
+            Error::IndexOnNonList(range, sym) => {
+                let msg = format!("indexing is not available on '{}'", sym.display(fmt.string_map(), types));
+                fmt.error("indexing on non-list value")
+                    .highlight_with_note(*range, &msg)
             },
 
             Error::VariableTupleAndHintTupleSizeMismatch(range, exp, given) => {

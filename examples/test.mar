@@ -67,10 +67,16 @@ fn type_id_of<T>(val: T): int {
 }
 
 
+fn hey(): [int] {
+}
+
+
 @startup
 fn main() {
-    print("hello")
-    print(69.5)
-    print(Foo {})
+    var foo = [69, 420]
+    print(foo)
+    foo[0] = 2
+    foo[-1] = 5
+    print(foo)
 }
  

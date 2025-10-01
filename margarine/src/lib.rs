@@ -113,6 +113,7 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
             SymbolId::F64 => println!("{}", val.as_float()),
             SymbolId::BOOL => println!("{}", val.as_bool()),
             SymbolId::STR => println!("{}", vm.objs[val.as_obj() as usize].as_str()),
+            SymbolId::LIST => println!("{:?}", vm.objs[val.as_obj() as usize].as_list()),
 
             //@todo
             _ => println!("{:?}", vm.objs[val.as_obj() as usize].as_fields())

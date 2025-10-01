@@ -348,6 +348,14 @@ impl<'me> SymbolMap<'me> {
             slf.add_sym(pending, sym);
         }
 
+        // list
+        {
+            let pending = slf.pending(ns_map, StringMap::LIST, 1);
+            assert_eq!(pending, SymbolId::LIST);
+            slf.add_sym(pending, Symbol::new(StringMap::LIST, &[StringMap::T], SymbolKind::Opaque));
+        }
+
+
 
         assert_eq!(slf.gens.push(&[]), GenListId::EMPTY);
 
@@ -394,6 +402,7 @@ impl SymbolId {
     pub const RESULT : Self = Self(13); // +2 for variants
     pub const STR    : Self = Self(16);
     pub const TYPE_ID: Self = Self(17);
+    pub const LIST   : Self = Self(18);
 
 
     pub fn supports_arith(self) -> bool {

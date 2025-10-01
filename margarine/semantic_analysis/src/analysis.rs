@@ -785,6 +785,19 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 if !lhs_anal.ty.eq(&mut self.syms, rhs_anal.ty) {
                     self.error(id, Error::InvalidType { source, found: rhs_anal.ty, expected: lhs_anal.ty });
                 }
+
+                match self.ast.expr(lhs) {
+                      Expr::Identifier(_)
+                    | Expr::IndexList { .. }
+                    | Expr::AccessField { .. }
+                    | Expr::Unwrap(_)
+                    | Expr::OrReturn(_) => (),
+
+                    _ => {
+                        let range = self.ast.range(lhs);
+                        self.error(id, Error::AssignIsNotLHSValue { source: range });
+                    }
+                }
             },
 
 
@@ -1426,6 +1439,49 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 AnalysisResult::new(Sym::Ty(sym, gens))
             },
+
+
+            Expr::CreateList { exprs } => {
+                let ty = self.syms.new_var(id, range);
+
+                let mut errored = None;
+                for e in exprs {
+                    let expr = self.expr(path, scope, *e);
+                    if !ty.eq(&mut self.syms, expr.ty) {
+                        let range = self.ast.range(*e);
+                        let e = self.error(*e, Error::InvalidType { source: range, found: expr.ty, expected: ty });
+                        if errored.is_none() {
+                            errored = Some(e);
+                        }
+                    }
+                }
+
+                let gens = self.syms.add_gens(self.output.alloc_new([(StringMap::T, ty)]));
+                AnalysisResult::new(Sym::Ty(SymbolId::LIST, gens))
+            }
+
+
+            Expr::IndexList { list, index } => {
+                let list = self.expr(path, scope, list);
+                let index = self.expr(path, scope, index);
+
+                let sym = list.ty.sym(&mut self.syms)?;
+
+                if sym == SymbolId::NEVER || sym == SymbolId::ERR { return Ok(AnalysisResult::new(list.ty)) }
+
+                if sym != SymbolId::LIST {
+                    return Err(Error::IndexOnNonList(range, list.ty));
+                }
+
+                if !index.ty.is_int(&mut self.syms) {
+                    return Err(Error::InvalidType { source: range, found: index.ty, expected: Sym::I64 })
+                }
+
+                let gens = list.ty.gens(&self.syms);
+                let (_, ty) = self.syms.get_gens(gens)[0];
+
+                AnalysisResult::new(ty)
+            }
 
 
             Expr::AsCast { lhs, data_type  } => {
