@@ -229,7 +229,7 @@ impl<'src> VM<'src> {
         let code_section = &src[offset..];
 
         Ok(Self {
-            stack: Stack::new(1024),
+            stack: Stack::new(16),
             callstack: Callstack::new(256, code_section),
             curr: CallFrame::new(code_section, 0, 0),
             funcs,
@@ -591,6 +591,10 @@ impl Stack {
     unsafe fn pop(&mut self) -> Reg {
         self.curr -= 1;
         let val = self.values[self.curr];
+        #[cfg(debug_assertions)]
+        {
+            self.values[self.curr] = Reg::new_unit();
+        }
         val
     }
 

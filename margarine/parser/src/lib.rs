@@ -144,6 +144,7 @@ impl<'out> Parser<'_, 'out, '_> {
         self.is_error_token()?;
         match self.current_kind() {
             TokenKind::Identifier(v) => Ok(v),
+            TokenKind::Underscore => Ok(StringMap::HOLE),
             _ => Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedIdentifier {
                 source: self.current_range(), 
                 token: self.current_kind()

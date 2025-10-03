@@ -28,26 +28,24 @@ impl<'src> VM<'src> {
         unsafe {
         loop {
             let opcode = self.curr.next();
-            //println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
+            println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
             //println!("{:?}", self.stack);
             
             match opcode {
                 consts::PushLocalSpace => {
-                    self.stack.curr += self.curr.next() as usize;
-                }
-
-
-                consts::PopLocalSpace => {
-                    self.stack.curr -= self.curr.next() as usize;
+                    let amount = self.curr.next();
+                    self.stack.curr += amount as usize;
                 }
 
 
                 consts::Ret => {
+                    let local_count = self.curr.next();
+
                     let Some(prev_frame) = self.callstack.pop()
                     else { break };
 
                     let return_val = self.stack.pop();
-                    self.stack.curr -= self.curr.argc as usize;
+                    self.stack.curr -= self.curr.argc as usize + local_count as usize;
                     self.stack.set_bottom(self.curr.previous_offset);
                     self.stack.push(return_val);
 
@@ -65,6 +63,7 @@ impl<'src> VM<'src> {
                     //
 
                     let func = &self.funcs[func as usize];
+
                     match func.kind {
                         crate::FunctionKind::Code { byte_offset, byte_size } => {
                             let mut call_frame = CallFrame::new(
@@ -101,6 +100,10 @@ impl<'src> VM<'src> {
                     let ty = self.curr.next();
                     let file = self.curr.next_u32();
                     let index = self.curr.next_u32();
+
+                    if ty == 3 {
+                        panic!("a bypass error was reached. uh oh");
+                    }
 
                     let mut reader = Reader::new(self.error_table);
                     for _ in 0..ty {
@@ -327,9 +330,9 @@ impl<'src> VM<'src> {
 
 
                 consts::AddInt => {
-                    let rhs = self.stack.pop().as_int();
-                    let lhs = self.stack.pop().as_int();
-                    self.stack.push(Reg::new_int(lhs + rhs));
+                    let rhs = self.stack.pop();
+                    let lhs = self.stack.pop();
+                    self.stack.push(Reg::new_int(lhs.as_int() + rhs.as_int()));
                 }
 
 

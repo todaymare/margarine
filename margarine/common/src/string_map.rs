@@ -29,20 +29,21 @@ impl<'str> StringMap<'str> {
     pub const SELF : StringIndex = StringIndex(14);
     pub const NEW : StringIndex = StringIndex(15);
     pub const INVALID_IDENT : StringIndex = StringIndex(16);
-    pub const RANGE : StringIndex = StringIndex(17);
-    pub const MIN   : StringIndex = StringIndex(18);
-    pub const MAX  : StringIndex = StringIndex(19);
-    pub const COUNT : StringIndex = StringIndex(20);
-    pub const TUPLE : StringIndex = StringIndex(21);
-    pub const PTR : StringIndex = StringIndex(22);
-    pub const RESULT: StringIndex = StringIndex(23);
-    pub const OPTION: StringIndex = StringIndex(24);
-    pub const T: StringIndex = StringIndex(25);
-    pub const A: StringIndex = StringIndex(26);
+    pub const HOLE : StringIndex = StringIndex(17);
+    pub const RANGE : StringIndex = StringIndex(18);
+    pub const MIN   : StringIndex = StringIndex(19);
+    pub const MAX  : StringIndex = StringIndex(20);
+    pub const COUNT : StringIndex = StringIndex(21);
+    pub const TUPLE : StringIndex = StringIndex(22);
+    pub const PTR : StringIndex = StringIndex(23);
+    pub const RESULT: StringIndex = StringIndex(24);
+    pub const OPTION: StringIndex = StringIndex(25);
+    pub const T: StringIndex = StringIndex(26);
+    pub const A: StringIndex = StringIndex(27);
 
-    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(27);
-    pub const TYPE_ID : StringIndex = StringIndex(28);
-    pub const LIST : StringIndex = StringIndex(29);
+    pub const ITER_NEXT_FUNC : StringIndex = StringIndex(28);
+    pub const TYPE_ID : StringIndex = StringIndex(29);
+    pub const LIST : StringIndex = StringIndex(30);
 
  
     #[inline(always)]
@@ -77,6 +78,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("self"), Self::SELF);
         assert_eq!(s.insert("new"), Self::NEW);
         assert_eq!(s.insert("::"), Self::INVALID_IDENT);
+        assert_eq!(s.insert("_"), Self::HOLE);
 
         assert_eq!(s.insert("Range"), Self::RANGE);
         assert_eq!(s.insert("min"), Self::MIN);

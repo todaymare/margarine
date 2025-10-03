@@ -6,7 +6,7 @@ pub mod err;
 
 use common::source::SourceRange;
 use errors::ErrorId;
-use sti::keyed::{KSlice, KVec};
+use sti::{arena::Arena, keyed::{KSlice, KVec}};
 
 use self::{decl::{Decl, DeclId}, expr::{Expr, ExprId}, stmt::{Stmt, StmtId}};
 
@@ -24,14 +24,16 @@ pub struct AST<'a> {
     stmts: KVec<StmtId, (Stmt<'a>, SourceRange)>,
     exprs: KVec<ExprId, (Expr<'a>, SourceRange)>,
     decls: KVec<DeclId, (Decl<'a>, SourceRange)>,
+    pub arena: &'a Arena,
 }
 
 impl<'a> AST<'a> {
-    pub fn new() -> Self {
+    pub fn new(arena: &'a Arena) -> Self {
         Self {
             stmts: KVec::new(),
             exprs: KVec::new(),
-            decls: KVec::new() 
+            decls: KVec::new(),
+            arena, 
         }
     }
 

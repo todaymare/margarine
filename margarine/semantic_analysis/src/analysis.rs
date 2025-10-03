@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
 use common::{buffer::Buffer, copy_slice_in, string_map::{OptStringIndex, StringIndex, StringMap}};
+use errors::ErrorId;
 use parser::nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
 use sti::{alloc::GlobalAlloc, arena::Arena, vec::Vec, write};
 
@@ -158,6 +159,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                     let ns = self.syms.sym_ns(sym);
 
+                    let path = self.namespaces.get_ns(ns).path;
+
                     self.collect_names(path, ns, &body, gens.len());
                     self.collect_impls(path, scope, ns, &body);
                 }
@@ -231,8 +234,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             UseItemKind::BringName => {
                 if let Some(import_sym) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces) {
                     let ns = self.namespaces.get_ns_mut(ns_id);
+                    if ns.get_sym(item.name()).is_some() {
+                        Self::error_ex(&mut self.errors, &mut self.type_info,
+                                       node, Error::NameIsAlreadyDefined { source: item.range(), name: item.name() });
+                    }
+
+
                     match import_sym {
-                        Ok(v) => ns.add_import_sym(item.name(), v),
+                        Ok(v) => ns.add_import_sym(item.range(), item.name(), v),
                         Err(_) => ns.set_err_sym(item.name()),
                     };
                     return;
@@ -240,7 +249,15 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                 if let Some((import_ns, _)) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms) {
-                    self.namespaces.get_ns_mut(ns_id).add_ns(item.name(), import_ns);
+                    let ns = self.namespaces.get_ns_mut(ns_id);
+                    if ns.get_ns(item.name()).is_none() {
+                        Self::error_ex(&mut self.errors, &mut self.type_info,
+                                       node, Error::NameIsAlreadyDefined { source: item.range(), name: item.name() });
+                        return;
+
+                    }
+
+                    ns.add_import_ns(item.name(), import_ns);
                     return;
                 };
 
@@ -259,18 +276,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let (ns, import_ns) = self.namespaces.get_double(ns_id, import_ns);
 
                 for s in import_ns.syms() {
-                    if ns.get_sym(*s.0).is_some() {
-                        Self::error_ex(&mut self.errors, &mut self.type_info,
-                                       node, Error::NameIsAlreadyDefined { source: item.range(), name: *s.0 });
-                        continue;
-                    }
-
                     let Some(sym) = s.1
                     else { continue };
 
-                    if ns.get_sym(*s.0).is_none() {
-                        ns.add_import_sym(*s.0, *sym)
-                    }
+                    ns.add_import_sym(item.range(), *s.0, *sym);
                 }
 
                 for n in import_ns.nss() {
@@ -427,7 +436,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                     // Finalise
-                    let sym_name = self.string_map.concat(path, sig.name);
+                    let sym_name = self.syms.sym_ns(fid);
+                    let sym_name = self.namespaces.get_ns(sym_name).path;
 
                     let func = FunctionTy::new(args.leak(), ret, FunctionKind::UserDefined, Some(*id));
                     let func = Symbol::new(sym_name, generics, SymbolKind::Function(func));
@@ -809,7 +819,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 else {
                     let range = self.ast.range(expr);
                     self.error(id, Error::ValueIsntAnIterator { ty: anal.ty, range });
-                    for n in body.iter() { self.error(*n, Error::Bypass) }
+
+                    let vs = VariableScope::new(binding.0, Sym::ERROR);
+                    let scope = self.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
+
+                    let _ = self.block(path, scope, &body);
+
+
 
                     return;
                 };
@@ -820,7 +836,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 else { 
                     let range = self.ast.range(expr);
                     self.error(id, Error::ValueIsntAnIterator { ty: anal.ty, range });
-                    for n in body.iter() { self.error(*n, Error::Bypass) }
+
+
+                    let vs = VariableScope::new(binding.0, Sym::ERROR);
+                    let scope = self.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
+
+                    let _ = self.block(path, scope, &body);
+
                     return;
                 };
 
@@ -882,6 +904,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 AnalysisResult::new(variable.ty())
             },
+
+
+            Expr::Closure { args, body } => {
+                todo!()
+            }
 
 
             Expr::Range { lhs, rhs  } => {
@@ -1262,7 +1289,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let ns = self.namespaces.get_ns(ns);
                         ns.get_sym(name)
                     } else {
-                        self.scopes.get(scope).find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
+                        self.scopes.get(scope)
+                            .find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
                     }
                 };
 
@@ -1270,8 +1298,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let Some(sym_id) = func
                 else { return Err(Error::FunctionNotFound { source: range, name }) };
 
-                let Ok(sym_id) = sym_id
-                else { return Err(Error::Bypass) };
+                let sym_id = sym_id?;
+
 
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
@@ -1591,6 +1619,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
             Err(v) => {
+                println!("{:?}", self.ast.expr(id));
+                println!("{v:?}");
                 self.error(id, v);
                 AnalysisResult::error()
             },

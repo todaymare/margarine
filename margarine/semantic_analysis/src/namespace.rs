@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use common::string_map::StringIndex;
+use common::{source::SourceRange, string_map::StringIndex};
+use errors::{ErrorId, SemaError};
 use sti::{define_key, keyed::{KVec, Key}};
 
 use crate::{errors::Error, syms::sym_map::SymbolId};
@@ -11,7 +12,7 @@ define_key!(u32, pub NamespaceId);
 #[derive(Debug)]
 pub struct Namespace {
     symbols  : HashMap<StringIndex, Option<SymbolId>>,
-    imported_symbols: HashMap<StringIndex, Option<SymbolId>>,
+    imported_symbols: HashMap<StringIndex, Result<SymbolId, Error>>,
     namespaces  : HashMap<StringIndex, NamespaceId>,
     imported_namespaces: HashMap<StringIndex, NamespaceId>,
     pub path: StringIndex,
@@ -74,10 +75,11 @@ impl Namespace {
     }
 
 
-    pub fn add_import_sym(&mut self, name: StringIndex, sym: SymbolId) {
-        let old_sym = self.imported_symbols.insert(name, Some(sym));
+    pub fn add_import_sym(&mut self, source: SourceRange, name: StringIndex, sym: SymbolId) {
+        let old_sym = self.imported_symbols.insert(name, Ok(sym));
         if old_sym.is_some() {
-            self.symbols.insert(name, None);
+            let id = Error::NameIsAlreadyDefined { source, name };
+            self.imported_symbols.insert(name, Err(id));
         }
     }
 
@@ -101,9 +103,8 @@ impl Namespace {
         }
 
 
-        if let Some(v) = self.imported_symbols.get(&name).copied() {
-            if let Some(v) = v { return Some(Ok(v)) }
-            return Some(Err(Error::Bypass))
+        if let Some(v) = self.imported_symbols.get(&name).cloned() {
+            return Some(v)
         }
 
         None

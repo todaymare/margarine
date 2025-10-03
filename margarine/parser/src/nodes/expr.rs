@@ -4,7 +4,7 @@ use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
 use lexer::Literal;
 use sti::define_key;
 
-use crate::DataType;
+use crate::{nodes::decl::FunctionArgument, DataType};
 
 use super::NodeId;
 
@@ -69,6 +69,11 @@ pub enum Expr<'a> {
         is_accessor: bool,
         args: &'a [ExprId],
         gens: Option<&'a [DataType<'a>]>,
+    },
+
+    Closure {
+        args: &'a [(StringIndex, Option<DataType<'a>>)],
+        body: ExprId,
     },
 
     WithinNamespace {
@@ -160,7 +165,7 @@ impl<'a> Deref for Block<'a> {
 
 
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinaryOperator {
     /// '+'
     Add,
@@ -326,7 +331,7 @@ impl Display for BinaryOperator {
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOperator {
     Not,
     Neg,

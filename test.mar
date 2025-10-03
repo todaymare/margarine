@@ -1,0 +1,11 @@
+use std::*
+use std::duration::Duration
+
+@startup
+fn main() {
+    var now = duration::Duration::now()
+    var foo = [69, 420]
+    print(foo)
+
+}
+

@@ -7,7 +7,7 @@ use crate::{errors::Error, syms::{containers::ContainerKind, SymbolKind}};
 
 use super::sym_map::{GenListId, SymbolId, SymbolMap, VarId, VarSub};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Sym {
     Ty (SymbolId, GenListId),
     Var(VarId),

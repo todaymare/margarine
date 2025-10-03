@@ -11,6 +11,7 @@ pub enum ErrorId {
     Lexer((u32, LexerError)),
     Parser((u32, ParserError)),
     Sema(SemaError),
+    Bypass,
 }
 
 

@@ -1,7 +1,15 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::time::Duration;
+use std::time::Instant;
 
+use common::string_map::HashStr;
+use common::string_map::StringIndex;
 pub use lexer::lex;
 use parser::nodes::decl::Decl;
+use parser::nodes::decl::DeclId;
+use parser::nodes::expr::Block;
+use parser::nodes::NodeId;
 use parser::nodes::AST;
 pub use parser::parse;
 pub use parser::nodes;
@@ -13,12 +21,13 @@ pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 pub use runtime::{VM, opcode, Status, FatalError, Reg};
 use sti::arena::Arena;
+use sti::hash::fxhash::fxhash64;
 
 
 pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
     let arena = Arena::new();
-    let mut global = AST::new();
-    let mut modules = vec![];
+    let mut global = AST::new(&arena);
+    let mut modules = HashMap::<&[StringIndex], Block>::new();
     let mut lex_errors = vec![];
     let mut parse_errors = vec![];
 
@@ -36,22 +45,93 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
         lex_errors.push(le);
         parse_errors.push(pe);
 
-        modules.push(global.add_decl(
+        let path = {
+            let mut list = sti::vec::Vec::new_in(&arena);
+            let path = string_map.get(f.name()).split('/');
+            for module in path {
+                let id = string_map.insert(module);
+                list.push(id);
+            }
+            list.leak()
+        };
+
+        modules.insert(path, body);
+
+        source_offset += f.read().len() as u32;
+    }
+
+    #[derive(Debug)]
+    struct Module {
+        tree: HashMap<StringIndex, Module>,
+        body: sti::vec::Vec<NodeId>,
+        range: SourceRange,
+    }
+
+    let mut module_tree : HashMap<StringIndex, Module> = HashMap::new();
+
+    let mut depth = 1;
+    let mut active = false;
+    loop {
+        for (path, block) in &modules {
+            if path.len() != depth { continue }
+
+            active = true;
+            let mut module : Option<&mut Module> = None;
+            for path in path.iter().take(path.len() - 1) {
+                let m = match module {
+                    Some(v) => v.tree.get_mut(path).unwrap(),
+                    None => module_tree.get_mut(path).unwrap(),
+                };
+
+                module = Some(m);
+            }
+
+            let curr_module = Module {
+                tree: HashMap::new(),
+                body: sti::vec::Vec::from_slice(block.body()),
+                range: block.range(),
+            };
+
+            match module {
+                Some(module) => {
+                    module.tree.insert(*path.last().unwrap(), curr_module)
+                },
+                None => module_tree.insert(*path.last().unwrap(), curr_module),
+            };
+        }
+        depth += 1;
+
+        if !active {
+            break;
+        }
+        active = false;
+    }
+
+
+    fn register_module(name: StringIndex, module: &mut Module, ast: &mut AST) -> DeclId {
+        for (&name, child) in module.tree.iter_mut() {
+            module.body.push(register_module(name, child, ast).into());
+        }
+
+        ast.add_decl(
             Decl::Module {
-                name: f.name(),
-                body,
-                header: SourceRange::new(0, 0),
-           },
+                name,
+                header: module.range,
+                body: Block::new(module.body.clone_in(ast.arena).leak(), module.range)
+            },
+            module.range
+        )
+    }
 
-           SourceRange::new(source_offset, source_offset + f.read().len() as u32),
-        ).into());
 
-       source_offset += f.read().len() as u32;
+    let mut modules = vec![];
+    for (&name, module) in module_tree.iter_mut() {
+        let decl = register_module(name, module, &mut global);
+        modules.push(decl.into());
     }
 
     assert_eq!(lex_errors.len(), files.len());
     assert_eq!(parse_errors.len(), files.len());
-
 
     let sema_arena = Arena::new();
     let temp = Arena::new();
@@ -88,11 +168,18 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
         parse_error_files.push(file);
     }
 
+    let mut errs = HashSet::new();
     let mut sema_errors = Vec::with_capacity(sema.errors.len());
     for s in sema.errors.iter() {
+        let err = errs.insert(s.1);
         let report = display(s.1, &sema.string_map, &files, &mut sema.syms);
+
         #[cfg(not(feature = "fuzzer"))]
-        println!("{report}");
+        if !err { 
+            println!("{report}");
+        }
+
+
         sema_errors.push(report);
     } 
 
@@ -182,5 +269,29 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
 
         let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
         Reg::new_int(list.as_list().len() as i64)
+    });
+
+    hosts.insert("now_secs".to_string(), |_| {
+        let Ok(time) = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+        else { panic!("failed to get the epoch") };
+
+        let secs = time.as_secs();
+        Reg::new_int(secs as i64)
+    });
+
+    hosts.insert("now_nanos".to_string(), |_| {
+        let Ok(time) = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+        else { panic!("failed to get the epoch") };
+
+        let secs = time.as_nanos();
+        Reg::new_int(secs as i64)
+    });
+
+    hosts.insert("int_to_str".to_string(), |vm| {
+        let int = unsafe { vm.stack.reg(0).as_int() };
+        let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
+        obj
     });
 }

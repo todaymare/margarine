@@ -1,3 +1,4 @@
+#![feature(slice_partition_dedup)]
 use std::{collections::HashMap, fmt::Write};
 
 use common::{buffer::Buffer, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
@@ -6,7 +7,7 @@ use ::errors::{ErrorId, SemaError};
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, keyed::KVec, string::String, vec::Vec, write};
+use sti::{arena::Arena, hash::fxhash::fxhash64, keyed::KVec, string::String, vec::Vec, write};
 use syms::{ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 
 use crate::{scope::ScopeKind, syms::{containers::Container, Symbol}};
@@ -33,7 +34,7 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     type_info   : TyInfo,
     startups    : Vec<SymbolId>,
 
-    pub errors    : KVec<SemaError, Error>,
+    pub errors     : KVec<SemaError, Error>,
 }
 
 

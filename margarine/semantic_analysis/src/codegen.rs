@@ -176,18 +176,20 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
                                 },
 
-
                                 errors::ErrorId::Sema(sema_error) => {
                                     code.err(2, 0, sema_error.inner());
                                 },
+
+
+                                errors::ErrorId::Bypass => {
+                                    code.err(3, 0, 0);
+                                }
                             }
                         }
 
 
                         BlockTerminator::Ret => {
-                            code.pop_local_space(*local_count);
-
-                            code.ret();
+                            code.ret(*local_count);
                         },
                     }
 
@@ -293,7 +295,7 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
 
 impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
-    fn get_func(&mut self, sym: SymbolId, gens_id: GenListId) -> Result<&Function<'me>, ()> {
+    fn get_func(&mut self, sym: SymbolId, gens_id: GenListId) -> Result<&Function<'me>, ErrorId> {
         let ty = Sym::Ty(sym, gens_id);
         let hash = ty.hash(self.syms);
         if self.funcs.contains_key(&hash) { 
@@ -305,16 +307,16 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         let SymbolKind::Function(sym_func) = fsym.kind()
         else { unreachable!() };
 
-        let gens = self.syms.gens()[gens_id];;
-        for g in gens { if g.1.is_err(self.syms) { return Err(()) } }
+        let gens = self.syms.gens()[gens_id];
+        for g in gens { if g.1.is_err(self.syms) { println!("generics errored"); return Err(ErrorId::Bypass) } }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
-        if ret.is_err(self.syms) { return Err(()) }
+        if ret.is_err(self.syms) { println!("return errored"); return Err(ErrorId::Bypass) }
 
         match sym_func.kind() {
             crate::syms::func::FunctionKind::Extern(path) => {
                 let func = Function {
-                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
+                    name: self.string_map.insert(self.string_map.get(path)),
                     index: FuncIndex(self.funcs.len() as u32),
                     kind: FunctionKind::Extern(path),
                     error: self.ty_info.decl(sym_func.decl().unwrap()),
@@ -369,10 +371,13 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 block.bytecode.push_local_space(u8::MAX);
 
-                let _ = self.process(&mut env, &mut block, &*body);
+                let result = self.process(&mut env, &mut block, &*body);
+                if let Err(err) = result {
+                    egenerate_error(&mut env, &mut block, err);
+                }
 
                 if let Some(err) = err {
-                    generate_error(&mut env, &mut block, err);
+                    egenerate_error(&mut env, &mut block, err);
                 }
 
                 env.blocks.push(block);
@@ -467,11 +472,12 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
 
-    pub fn process(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, instrs: &[NodeId]) -> Result<(), ()> {
+    pub fn process(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, instrs: &[NodeId]) -> Result<(), ErrorId> {
         let mut has_ret = false;
 
         for (i, &n) in instrs.iter().enumerate() {
             has_ret = false;
+            println!("{n:?}");
             match n {
                 NodeId::Decl(decl_id) => {
                     continue;
@@ -486,11 +492,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
                 NodeId::Expr(expr_id) => {
-                    if let Err(error_id) = self.ty_info.expr(expr_id) {
-                        generate_error(env, block, error_id);
-                        continue;
-                    }
-
                     has_ret = true;
 
                     self.expr(env, block, expr_id)?;
@@ -501,7 +502,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
                 NodeId::Err(error_id) => {
-                    generate_error(env, block, error_id);
+                    egenerate_error(env, block, error_id);
                 },
             };
 
@@ -516,14 +517,13 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
     }
 
 
-    fn stmt(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, stmt: StmtId) -> Result<(), ()> {
+    fn stmt(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, stmt: StmtId) -> Result<(), ErrorId> {
         macro_rules! out_if_err {
             () => {
                match self.ty_info.stmt(stmt) {
                     None => (),
                     Some(e) => {
-                        generate_error(env, block, e);
-                        return Err(());
+                        return Err(e);
                     },
                }
             };
@@ -532,10 +532,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
         match self.ast.stmt(stmt) {
             parser::nodes::stmt::Stmt::Variable { name, rhs, .. } => {
-                env.alloc_var(name);
                 self.expr(env, block, rhs)?;
                 out_if_err!();
 
+                env.alloc_var(name);
                 let (_, index) = env.vars.iter().rev().find(|x| x.0 == name).unwrap();
                 block.bytecode.store((*index).try_into().unwrap());
             },
@@ -554,13 +554,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
             parser::nodes::stmt::Stmt::UpdateValue { lhs, rhs } => {
-                match self.ty_info.expr(lhs) {
-                     Ok(_) => (),
-                     Err(e) => {
-                         generate_error(env, block, e);
-                         return Err(());
-                     },
-                };
+                self.ty_info.expr(lhs)?;
 
                 self.expr(env, block, rhs)?;
                 out_if_err!();
@@ -581,7 +575,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     let ns = self.ns.get_ns(ns);
 
                     let Ok(sym) = ns.get_sym(StringMap::ITER_NEXT_FUNC).unwrap()
-                    else { return Err(()) };
+                    else { unreachable!() };
 
                     let func = self.get_func(sym, iter_expr.gens(&self.syms))?.index;
                     func
@@ -642,21 +636,22 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
     }
 
 
-    fn expr(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId) -> Result<(), ()> {
+    fn expr(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId) -> Result<(), ErrorId> {
         macro_rules! out_if_err {
             () => {
                match self.ty_info.expr(expr) {
                     Ok(e) => e,
                     Err(e) => {
-                        generate_error(env, block, e);
-                        return Err(());
+                        return Err(e);
                     },
                }
             };
         }
 
 
-        match self.ast.expr(expr) {
+        let val = self.ast.expr(expr);
+
+        match val {
             parser::nodes::expr::Expr::Unit => {
                 block.bytecode.unit();
                 out_if_err!();
@@ -824,7 +819,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::Block { block: instrs } => {
                 let var_len = env.vars.len();
-                self.process(env, block, &instrs).unwrap();
+                self.process(env, block, &instrs)?;
                 out_if_err!();
                 env.vars.truncate(var_len);
             },
@@ -883,13 +878,14 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::CallFunction { args, .. } => {
                 for arg in args {
+                    println!("arg {arg:?}");
                     self.expr(env, block, *arg)?;
                 }
 
-                out_if_err!();
+                out_if_err!(); 
 
                 let (sym, gens) = self.ty_info.funcs.get(&expr).unwrap();
-                if *sym == SymbolId::ERR { return Err(()) }
+                if *sym == SymbolId::ERR { return Err(ErrorId::Bypass) }
 
                 let func_gens = self.syms.get_gens(*gens);
                 let env_gens = self.syms.get_gens(env.gens);
@@ -907,9 +903,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 let func = self.get_func(*sym, gens)?;
                 if let Some(err) = func.error {
-                    generate_error(env, block, err);
-                    block.bytecode.unit();
-                    return Ok(());
+                    return Err(err)
                 }
 
 
@@ -956,13 +950,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     this.process(env, block, &body)?;
                     block.bytecode.pop();
 
-                    match this.ty_info.expr(expr){
-                        Ok(e) => e,
-                        Err(e) => {
-                            generate_error(env, block, e);
-                            return Err(());
-                        },
-                    };
+                    this.ty_info.expr(expr)?;
                     Ok(())
                 })?;
             },
@@ -972,9 +960,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 self.expr(env, block, expr_id)?;
                 out_if_err!();
                 
-                block.bytecode.ret();
                 let mut cont_block = env.next_block();
                 cont_block.terminator = block.terminator;
+                block.terminator = BlockTerminator::Ret;
 
                 core::mem::swap(block, &mut cont_block);
                 env.blocks.push(cont_block);
@@ -1026,10 +1014,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 self.expr(env, block, lhs)?;
 
                 let Ok(lsym) = self.ty_info.expr(lhs).unwrap().sym(self.syms)
-                else { return Err(()) };
+                else { return Err(ErrorId::Bypass) };
 
                 let Ok(ty) = out_if_err!().sym(self.syms)
-                else { return Err(()) };
+                else { return Err(ErrorId::Bypass) };
 
                 if lsym == ty {
                     // no op
@@ -1079,6 +1067,11 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     Ok(())
                 })?;
             },
+
+
+            parser::nodes::expr::Expr::Closure { args, body } => {
+                todo!()
+            }
         };
         Ok(())
     }
@@ -1087,8 +1080,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
     fn build_loop(
         &mut self, env: &mut Env<'me>, block: &mut Block<'me>,
-        f: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ()>
-    ) -> Result<(), ()> {
+        f: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ErrorId>
+    ) -> Result<(), ErrorId> {
 
         let mut loop_block = env.next_block();
 
@@ -1135,9 +1128,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
     fn build_ite(&mut self, env: &mut Env<'me>, block: &mut Block<'me>,
-        t: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ()>,
-        f: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ()>,
-    ) -> Result<(), ()> {
+        t: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ErrorId>,
+        f: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ErrorId>,
+    ) -> Result<(), ErrorId> {
 
         let mut continue_block = env.next_block();
 
@@ -1178,7 +1171,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
 
-    fn update_value(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId) -> Result<(), ()> {
+    fn update_value(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId) -> Result<(), ErrorId> {
         match self.ast.expr(expr) {
             parser::nodes::expr::Expr::Identifier(ident) => {
                 let (_, index) = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
@@ -1472,7 +1465,7 @@ impl<'buf> Env<'buf> {
 
 
 
-fn generate_error<'buf>(env: &mut Env<'buf>, builder: &mut Block<'buf>, err: ErrorId) {
+fn egenerate_error<'buf>(env: &mut Env<'buf>, builder: &mut Block<'buf>, err: ErrorId) {
     let mut cont_block = env.next_block();
     cont_block.terminator = builder.terminator;
     builder.terminator = BlockTerminator::Err(err);

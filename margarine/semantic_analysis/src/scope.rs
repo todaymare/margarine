@@ -1,4 +1,5 @@
 use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
+use errors::{ErrorId, SemaError};
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
 use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{ty::Sym, sym_map::{SymbolId, SymbolMap}}};

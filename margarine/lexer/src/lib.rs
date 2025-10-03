@@ -454,6 +454,7 @@ impl Lexer<'_, '_> {
     fn number(&mut self, begin: usize) -> TokenKind {
         let mut dot_count = 0;
         let value = {
+            let mut value = sti::string::String::from_str_in(self.string_map.arena(), str::from_utf8(&self.reader.original_slice()[begin..self.reader.offset()]).unwrap());
             loop {
                 let Some(x) = self.reader.peek()
                 else { break };
@@ -468,27 +469,31 @@ impl Lexer<'_, '_> {
 
                     dot_count += 1;
                     self.reader.consume(1);
+                    value.push_char(x as char);
                     continue
                 }
 
+                if x == b'_' { self.reader.consume(1); continue };
                 if !x.is_ascii_digit() { break }
 
+                value.push_char(x as char);
                 self.reader.consume(1);
             }
 
-            &self.reader.original_slice()[begin..self.reader.offset()]
+            value.leak()
         };
        
-        let value = unsafe { core::str::from_utf8_unchecked(value) };
-
         let source = SourceRange::new(begin as u32, self.reader.offset() as u32 - 1);
 
         let kind = match dot_count {
             0 => {
                 match value.parse() {
                     Ok(e) => Literal::Integer(e),
-                    Err(_) => return TokenKind::Error(
-                        self.errors.push(Error::NumberTooLarge(source))),
+                    Err(e) => {
+                        dbg!(e, value);
+                        return TokenKind::Error(
+                        self.errors.push(Error::NumberTooLarge(source)))
+                    },
                 }
             },
             1 => {

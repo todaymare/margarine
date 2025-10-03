@@ -7,7 +7,7 @@ use sti::vec::Vec;
 
 use crate::syms::{ty::Sym, sym_map::SymbolMap};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Error {
     IteratorFunctionInvalidSig(SourceRange),
 

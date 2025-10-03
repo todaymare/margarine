@@ -1,5 +1,5 @@
 spec = {
-  "Ret": {},
+  "Ret": { "local_count": "u8" },
   "Unit": {},
   "PushLocalSpace": { "amount": "u8" },
   "PopLocalSpace": { "amount": "u8" },

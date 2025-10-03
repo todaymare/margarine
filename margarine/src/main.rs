@@ -28,9 +28,10 @@ fn main() {
     stdlib(&mut hosts);
 
     let mut vm = VM::new(hosts, &*src).unwrap();
+    dbg!(&vm.funcs);
     {
         let _t = DropTimer::new("runtime");
-        match vm.run("examples/test::main") {
+        match vm.run("test::main") {
             Status::Ok => (),
             Status::Err(fatal_error) => println!("{}", fatal_error.msg),
         }

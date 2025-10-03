@@ -148,8 +148,9 @@ pub mod builder {
             self.bytecode.extend_from_slice(&oth.bytecode);
         }
 
-        pub fn ret(&mut self) {
+        pub fn ret(&mut self, local_count: u8) {
             self.bytecode.push(super::OpCode::Ret.as_u8());
+            self.bytecode.extend_from_slice(&local_count.to_le_bytes());
         }
 
         pub fn unit(&mut self) {
@@ -419,9 +420,11 @@ pub mod builder {
             self.bytecode.extend_from_slice(offsets);
         }
 
-        pub fn ret_at(&mut self, _at: usize, ) {
+        pub fn ret_at(&mut self, _at: usize, local_count: u8) {
             self.bytecode[_at] = super::OpCode::Ret.as_u8();
             let mut _offset = 1;
+            self.bytecode[_at+_offset.._at+_offset+core::mem::size_of_val(&local_count)].copy_from_slice(&local_count.to_le_bytes());
+            _offset += core::mem::size_of_val(&local_count);
         }
 
         pub fn unit_at(&mut self, _at: usize, ) {
@@ -797,6 +800,18 @@ pub mod builder {
                     super::OpCode::Ret => {
                         let mut fields = String::new();
                         unsafe {
+                            {
+                                if !fields.is_empty() {
+                                    fields.push_str(", ");
+                                }
+                                write!(
+                                    &mut fields,
+                                    "local_count: {}",
+                                    <u8>::from_le_bytes(
+                                        iter.next_n::<{{ core::mem::size_of::<u8>() }}>()
+                                    )
+                                ).unwrap();
+                            }
 
                         }
                         strct.entry(&offset,
