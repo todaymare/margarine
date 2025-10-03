@@ -54,16 +54,18 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             let mut ns = self.namespaces.get_ns_mut(ns_id);
             let decl = self.ast.decl(*decl);
+            let range = self.ast.range(*n);
             match decl {
                 | Decl::Enum { name, header, generics, .. } 
                 | Decl::Struct { name, header, generics, .. }
                 | Decl::OpaqueType { name, header, gens: generics, .. }
                 | Decl::Function { sig: FunctionSignature { name, source: header, generics, .. }, .. }=> {
                     if let Some(sym) = ns.get_sym(name) {
-                        if sym.is_ok() { ns.set_err_sym(name) }
+                        let err = Error::NameIsAlreadyDefined {
+                            source: header, name };
+                        if sym.is_ok() { ns.set_err_sym(name, err.clone()) }
 
-                        self.error(*n, Error::NameIsAlreadyDefined {
-                            source: header, name });
+                        self.error(*n, err);
                         continue
                     }
 
@@ -76,16 +78,21 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let pend = self.syms.pending(&mut self.namespaces, path, generics.len() + gen_count);
                     ns = self.namespaces.get_ns_mut(ns_id);
 
-                    ns.add_sym(name, pend);
+                    if let Err(e) = ns.add_sym(range, name, pend) {
+                        self.error(*n, e);
+                    }
                 },
 
 
                 Decl::Extern { functions }=> {
                     for f in functions {
                         if let Some(sym) = ns.get_sym(f.name()) {
-                            if sym.is_ok() { ns.set_err_sym(f.name()) }
-                            self.error(*n, Error::NameIsAlreadyDefined {
-                                source: f.range(), name: f.name() });
+                            let err = Error::NameIsAlreadyDefined {
+                                source: f.range(), name: f.name() };
+
+                            if sym.is_ok() { ns.set_err_sym(f.name(), err.clone()) }
+
+                            self.error(*n, err);
                             ns = self.namespaces.get_ns_mut(ns_id);
                             continue
                         }
@@ -94,15 +101,21 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let pend = self.syms.pending(&mut self.namespaces, path, f.gens().len());
                         ns = self.namespaces.get_ns_mut(ns_id);
 
-                        ns.add_sym(f.name(), pend);
+                        if let Err(e) = ns.add_sym(range, f.name(), pend) {
+                            self.error(*n, e);
+                            ns = self.namespaces.get_ns_mut(ns_id);
+                        }
+
                     }
                 },
 
 
                 Decl::Module { name, header, body } => {
-                    if ns.get_ns(name).is_some() {
+                    if let Some(ns) = ns.get_ns(name) {
                         self.error(*n, Error::NameIsAlreadyDefined {
                             source: header, name });
+
+                        self.collect_names(path, ns, &*body, gen_count);
                         continue
                     }
 
@@ -234,15 +247,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             UseItemKind::BringName => {
                 if let Some(import_sym) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces) {
                     let ns = self.namespaces.get_ns_mut(ns_id);
-                    if ns.get_sym(item.name()).is_some() {
-                        Self::error_ex(&mut self.errors, &mut self.type_info,
-                                       node, Error::NameIsAlreadyDefined { source: item.range(), name: item.name() });
-                    }
-
 
                     match import_sym {
-                        Ok(v) => ns.add_import_sym(item.range(), item.name(), v),
-                        Err(_) => ns.set_err_sym(item.name()),
+                        Ok(v) => {
+                            if let Err(e) = ns.add_sym(item.range(), item.name(), v) {
+                                self.error(node, e);
+                            }
+                        },
+                        Err(e) => ns.set_err_sym(item.name(), e),
                     };
                     return;
                 };
@@ -250,14 +262,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 if let Some((import_ns, _)) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms) {
                     let ns = self.namespaces.get_ns_mut(ns_id);
-                    if ns.get_ns(item.name()).is_none() {
+                    if ns.get_ns(item.name()).is_some() {
                         Self::error_ex(&mut self.errors, &mut self.type_info,
                                        node, Error::NameIsAlreadyDefined { source: item.range(), name: item.name() });
                         return;
-
                     }
 
-                    ns.add_import_ns(item.name(), import_ns);
+                    ns.add_ns(item.name(), import_ns);
                     return;
                 };
 
@@ -276,14 +287,18 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let (ns, import_ns) = self.namespaces.get_double(ns_id, import_ns);
 
                 for s in import_ns.syms() {
-                    let Some(sym) = s.1
-                    else { continue };
-
-                    ns.add_import_sym(item.range(), *s.0, *sym);
+                    match s.1 {
+                        Ok(v) => {
+                            if let Err(e) = ns.add_sym(item.range(), *s.0, *v) {
+                                Self::error_ex(&mut self.errors, &mut self.type_info, node, e);
+                            }
+                        },
+                        Err(e) => ns.set_err_sym(*s.0, e.clone()),
+                    }
                 }
 
                 for n in import_ns.nss() {
-                    ns.add_import_ns(*n.0, *n.1)
+                    ns.add_ns(*n.0, *n.1)
                 }
             },
         };
@@ -303,8 +318,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                  Decl::Struct { name, fields, generics, .. } => {
                     let ns = self.namespaces.get_ns(ns);
                     let mut structure_fields = Buffer::new(self.output, fields.len());
-                    let Ok(tsi) = ns.get_sym(name).unwrap()
-                    else { continue };
+                    let tsi = match ns.get_sym(name).unwrap() {
+                        Ok(e) => e,
+                        Err(e) => {
+                            self.error(*id, e);
+                            continue;
+                        },
+                    };
 
                     for f in fields {
                         let sym = self.dt_to_gen(self.scopes.get(scope), f.1, generics);
@@ -385,7 +405,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         vec.leak()
                     };
 
-                    let Some(Ok(fid)) = self.namespaces.get_ns(ns).get_sym(sig.name)
+                    let ns = self.namespaces.get_ns(ns);
+                    let Some(Ok(fid)) = ns.get_sym(sig.name)
                     else { continue };
 
                     let mut args = Buffer::new(self.output, sig.arguments.len());

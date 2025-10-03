@@ -110,7 +110,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
 
     fn register_module(name: StringIndex, module: &mut Module, ast: &mut AST) -> DeclId {
         for (&name, child) in module.tree.iter_mut() {
-            module.body.push(register_module(name, child, ast).into());
+            module.body.insert(0, register_module(name, child, ast).into());
         }
 
         ast.add_decl(
@@ -127,7 +127,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
     let mut modules = vec![];
     for (&name, module) in module_tree.iter_mut() {
         let decl = register_module(name, module, &mut global);
-        modules.push(decl.into());
+        modules.insert(0, decl.into());
     }
 
     assert_eq!(lex_errors.len(), files.len());
@@ -168,17 +168,12 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
         parse_error_files.push(file);
     }
 
-    let mut errs = HashSet::new();
     let mut sema_errors = Vec::with_capacity(sema.errors.len());
     for s in sema.errors.iter() {
-        let err = errs.insert(s.1);
         let report = display(s.1, &sema.string_map, &files, &mut sema.syms);
 
         #[cfg(not(feature = "fuzzer"))]
-        if !err { 
-            println!("{report}");
-        }
-
+        println!("{report}");
 
         sema_errors.push(report);
     } 

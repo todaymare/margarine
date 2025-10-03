@@ -106,7 +106,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             macro_rules! add_sym {
                 ($n: ident) => {
-                    namespace.add_sym(StringMap::$n, SymbolId::$n);
+                    namespace.add_sym(SourceRange::ZERO, StringMap::$n, SymbolId::$n);
                 };
             }
 
@@ -122,14 +122,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
-                namespace.add_sym(StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap());
-                namespace.add_sym(StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap());
+                namespace.add_sym(SourceRange::ZERO, StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap());
+                namespace.add_sym(SourceRange::ZERO, StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap());
             }
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::RESULT));
-                namespace.add_sym(StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap());
-                namespace.add_sym(StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap());
+                namespace.add_sym(SourceRange::ZERO, StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap());
+                namespace.add_sym(SourceRange::ZERO, StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap());
             }
 
             analyzer.namespaces.push(namespace)

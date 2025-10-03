@@ -90,6 +90,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
             LineAt::ZERO
         ).unwrap();
 
+
         let end_line = line_at(
             source.end() as usize,
             file.read(),

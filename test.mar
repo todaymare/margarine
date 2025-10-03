@@ -3,9 +3,29 @@ use std::duration::Duration
 
 @startup
 fn main() {
-    var now = duration::Duration::now()
+    var now = Duration::now()
     var foo = [69, 420]
     print(foo)
+    foo[0] = 2
 
+    foo.push(3)
+    print(foo)
+    print(foo.pop()!)
+    
+    for i in 0..10 {
+        foo.push(i)
+    }
+
+    print("the list is")
+    for i in foo.iter() {
+        print(i)
+    }
+
+
+    for i in 0..10 {
+        print(i)
+    }
+
+    print((Duration::now().sub(now).as_secs_float()))
 }
 

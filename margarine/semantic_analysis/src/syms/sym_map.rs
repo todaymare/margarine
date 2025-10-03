@@ -94,7 +94,8 @@ impl<'me> SymbolMap<'me> {
             self.add_sym(id, sym);
 
             let ns = ns_map.get_ns_mut(ns);
-            ns.add_sym(mapping_name, id);
+
+            ns.add_sym(range, mapping_name, id).unwrap();
         }
     }
 
