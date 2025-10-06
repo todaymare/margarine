@@ -1,21 +1,31 @@
+use std::collections::HashSet;
+
 use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}, ImmutableData};
 use parser::nodes::{decl::DeclId, NodeId};
 use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind}};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, scope::VariableScope, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind}};
 
 use super::{ty::Sym, Symbol};
 
 define_key!(u32, pub SymbolId);
 define_key!(u32, pub GenListId);
 define_key!(u32, pub VarId);
+define_key!(u32, pub ClosureId);
 
 #[derive(Debug)]
 pub struct SymbolMap<'me> {
     syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId)>,
     gens : KVec<GenListId, &'me [(StringIndex, Sym)]>,
     vars : KVec<VarId, Var>,
+    closures: KVec<ClosureId, Closure>,
     arena: &'me Arena,
+}
+
+
+#[derive(Debug)]
+pub struct Closure {
+    captured_variables: HashSet<StringIndex>,
 }
 
 
@@ -54,6 +64,12 @@ impl<'me> SymbolMap<'me> {
                    path: StringIndex, gen_count: usize) -> SymbolId {
 
         self.syms.push((Err(gen_count), ns_map.push(Namespace::new(path))))
+    }
+
+
+    pub fn insert_closure_capture(&mut self, closure: ClosureId, name: StringIndex) {
+        self.closures[closure].captured_variables.insert(name);
+
     }
 
 
@@ -174,6 +190,10 @@ impl<'me> SymbolMap<'me> {
     pub fn vars_mut(&mut self) -> &mut KVec<VarId, Var> {
         &mut self.vars
     }
+
+    pub fn new_closure(&mut self) -> ClosureId {
+        self.closures.push(Closure { captured_variables: HashSet::new() })
+    }
 }
 
 
@@ -217,7 +237,7 @@ impl<'me> Generic<'me> {
 
 impl<'me> SymbolMap<'me> {
     pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap, string_map: &mut StringMap) -> Self {
-        let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new() };
+        let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new(), closures: KVec::new(), };
         macro_rules! init {
             ($name: ident) => {
                 let pending = slf.pending(ns_map, StringMap::$name, 0);

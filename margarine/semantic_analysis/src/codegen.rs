@@ -465,8 +465,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 self.funcs.insert(hash, func);
                 return Ok(self.funcs.get(&hash).unwrap())
-
             },
+
+
+            crate::syms::func::FunctionKind::Closure(_) => unreachable!(),
         };
     }
 
@@ -676,8 +678,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::Identifier(string_index) => {
                 out_if_err!();
-                let (_, index) = env.vars.iter().rev().find(|x| x.0 == string_index).unwrap();
-                block.bytecode.load((*index).try_into().unwrap());
+                if let Some((_, index)) = env.vars.iter().rev().find(|x| x.0 == string_index) {
+                    block.bytecode.load((*index).try_into().unwrap());
+                    return;
+                }
             },
 
 
@@ -878,7 +882,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::CallFunction { args, .. } => {
                 for arg in args {
-                    println!("arg {arg:?}");
                     self.expr(env, block, *arg)?;
                 }
 

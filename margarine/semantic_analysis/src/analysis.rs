@@ -5,7 +5,7 @@ use errors::ErrorId;
 use parser::nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
 use sti::{alloc::GlobalAlloc, arena::Arena, vec::Vec, write};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{Generic, GenericKind, SymbolId}, ty::Sym, Symbol, SymbolKind}, AnalysisResult, TyChecker};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{GenListId, Generic, GenericKind, SymbolId}, ty::Sym, Symbol, SymbolKind}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
@@ -920,15 +920,81 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             Expr::Identifier(ident) => {
-                let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes)
-                else { return Err(Error::VariableNotFound { name: ident, source: range }) };
+                if let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes, &mut self.syms) {
+                    return Ok(AnalysisResult::new(variable.ty()))
+                }
 
-                AnalysisResult::new(variable.ty())
+                if let Some(sym) = self.scopes.get(scope).find_sym(ident, &self.scopes, &mut self.syms, &self.namespaces) {
+                    let Ok(sym_id) = sym
+                    else { return Err(Error::Bypass) };
+
+                    let sym = self.syms.sym(sym_id);
+
+                    let SymbolKind::Function(func) = sym.kind()
+                    else { return Err(Error::CallOnNonFunction { source: range, name: sym.name() }) };
+
+                    match func.kind() {
+                        FunctionKind::Closure(_) => return Ok(AnalysisResult::new(Sym::Ty(sym_id, GenListId::EMPTY))),
+                        _ => {
+                            let closure = self.syms.new_closure();
+
+                            let mut gens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
+                            for g in sym.generics().iter() {
+                                let var = self.syms.new_var(id, range);
+                                gens.push((*g, var));
+                            }
+
+                            dbg!(&gens);
+                            let gens = self.syms.add_gens(gens.leak());
+
+                            let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
+                            return Ok(AnalysisResult::new(Sym::Ty(sym, gens)))
+                        }
+                    }
+                }
+
+                    return Err(Error::VariableNotFound { name: ident, source: range })
+
             },
 
 
             Expr::Closure { args, body } => {
-                todo!()
+                let closure = self.syms.new_closure();
+                let closure_scope = self.scopes.push(Scope::new(scope.some(), ScopeKind::Closure(closure)));
+                let mut active_scope = closure_scope;
+                let mut sargs = sti::vec::Vec::new_in(self.syms.arena());
+                for arg in args {
+                    let ty = if let Some(ty) = arg.1 {
+                        self.dt_to_ty(scope, id, ty)?
+                    } else {
+                        self.syms.new_var(id, arg.2)
+                    };
+
+                    active_scope = self.scopes.push(Scope::new(
+                        active_scope.some(), 
+                        ScopeKind::VariableScope(VariableScope::new(arg.0, ty))
+                    ));
+
+                    sargs.push((arg.0, ty, arg.2));
+
+                }
+
+
+                let ret = self.expr(path, active_scope, body);
+
+                let mut fargs = sti::vec::Vec::new_in(self.syms.arena());
+                for arg in sargs {
+                    let sym = arg.1.sym(&mut self.syms)?;
+                    fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Sym(sym, &[]))));
+                }
+
+                println!("hi?");
+                let ret = ret.ty.sym(&mut self.syms)?;
+                println!("hi?");
+                let ret = Generic::new(range, GenericKind::Sym(ret, &[]));
+
+                let closure_ty = self.func_sym(closure, fargs.leak(), ret, &[]);
+                AnalysisResult::new(Sym::Ty(closure_ty, GenListId::EMPTY))
             }
 
 
@@ -1310,8 +1376,22 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let ns = self.namespaces.get_ns(ns);
                         ns.get_sym(name)
                     } else {
-                        self.scopes.get(scope)
-                            .find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
+                        let sym = self.scopes.get(scope)
+                            .find_sym(name, &self.scopes, &mut self.syms, &self.namespaces);
+
+                        match sym {
+                            Some(v) => Some(v),
+                            None => {
+                                let val = self.scopes.get(scope)
+                                    .find_var(name, &self.scopes, &mut self.syms);
+
+                                if let Some(val) = val {
+                                    Some(val.ty().sym(&mut self.syms))
+                                } else {
+                                    None
+                                }
+                            },
+                        }
                     }
                 };
 
@@ -1561,6 +1641,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     }
                 }
                 AnalysisResult::new(ty)
+            },
+
+
+            Expr::Closure { args, body } => {
+                todo!()
             },
 
 

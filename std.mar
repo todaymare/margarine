@@ -1,5 +1,4 @@
 use list::*
-use duration
 
 
 extern {
@@ -54,12 +53,14 @@ fn type_id_of<T>(val: T): int {
 
 extern {
     fn int_to_str(value: int): str
+    fn float_to_str(value: float): str
 }
 
 
 impl int {
     fn abs(self): int {
-        if self < 0 { -self } else { self }
+        var mask = self >> 63
+        (self ^ mask) - mask
     }
 
 
@@ -68,3 +69,9 @@ impl int {
     }
 }
 
+
+impl float {
+    fn to_str(self): str {
+        float_to_str(self)
+    }
+}

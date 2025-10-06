@@ -72,7 +72,7 @@ pub enum Expr<'a> {
     },
 
     Closure {
-        args: &'a [(StringIndex, Option<DataType<'a>>)],
+        args: &'a [(StringIndex, Option<DataType<'a>>, SourceRange)],
         body: ExprId,
     },
 

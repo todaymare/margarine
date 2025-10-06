@@ -289,4 +289,10 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
         let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
         obj
     });
+
+    hosts.insert("float_to_str".to_string(), |vm| {
+        let int = unsafe { vm.stack.reg(0).as_float() };
+        let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
+        obj
+    });
 }
