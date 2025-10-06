@@ -10,7 +10,7 @@ use scope::{Scope, ScopeId, ScopeMap};
 use sti::{arena::Arena, hash::fxhash::fxhash64, keyed::KVec, string::String, vec::Vec, write};
 use syms::{ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 
-use crate::{scope::ScopeKind, syms::{containers::Container, Symbol}};
+use crate::{scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::ClosureId, Symbol}};
 
 pub mod scope;
 pub mod namespace;
@@ -385,6 +385,23 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
         self.syms.add_sym(pending, sym);
 
         pending
+    }
+
+
+    fn func_sym(
+        &mut self,
+        closure: ClosureId,
+        fields: &'out [FunctionArgument<'out>],
+        ret: Generic<'out>,
+        gens: &'out [StringIndex],
+    ) -> SymbolId {
+
+        let func = FunctionTy::new(fields, ret, syms::func::FunctionKind::Closure(closure), None);
+        let sym = Symbol::new(StringMap::CLOSURE, &gens, syms::SymbolKind::Function(func));
+        let id = self.syms.pending(&mut self.namespaces, StringMap::CLOSURE, gens.len());
+        self.syms.add_sym(id, sym);
+
+        id
     }
 }
 

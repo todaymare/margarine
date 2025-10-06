@@ -2,7 +2,7 @@ use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
 use errors::{ErrorId, SemaError};
 use sti::{define_key, keyed::KVec, packed_option::PackedOption};
 
-use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{ty::Sym, sym_map::{SymbolId, SymbolMap}}};
+use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{sym_map::{ClosureId, SymbolId, SymbolMap}, ty::Sym}};
 
 define_key!(u32, pub ScopeId);
 
@@ -22,6 +22,7 @@ pub enum ScopeKind<'me> {
     Generics(GenericsScope<'me>),
     Loop,
     Function(FunctionScope),
+    Closure(ClosureId),
     Root,
 }
 
@@ -107,10 +108,19 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_var(self, name: StringIndex, scope_map: &ScopeMap) -> Option<VariableScope> {
-        self.over(scope_map, |scope| {
-            if let ScopeKind::VariableScope(v) = scope.kind {
+    pub fn find_var(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap) -> Option<VariableScope> {
+        self.over(scope_map, |iscope| {
+            if let ScopeKind::VariableScope(v) = iscope.kind {
                 if v.name() == name { return Some(v) }
+                self.over(scope_map, |scope| {
+                    if v.name() == name { return Some(v) }
+                    
+                    if let ScopeKind::Closure(closure) = scope.kind() {
+                        symbols.insert_closure_capture(closure, name);
+                    }
+
+                    None
+                });
             }
 
             None

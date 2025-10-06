@@ -1,6 +1,8 @@
 use common::{string_map::StringIndex, ImmutableData};
 use parser::nodes::decl::DeclId;
 
+use crate::syms::sym_map::ClosureId;
+
 use super::sym_map::{Generic, SymbolId};
 
 #[derive(Debug, Clone, Copy, ImmutableData)]
@@ -20,9 +22,11 @@ pub struct FunctionArgument<'me> {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum FunctionKind {
     Extern(StringIndex),
+
+    Closure(ClosureId),
     
     UserDefined,
 

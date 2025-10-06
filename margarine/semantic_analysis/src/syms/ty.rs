@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use common::string_map::{StringIndex, StringMap};
 use sti::{format_in, hash::fxhash::FxHasher32, traits::FromIn};
 
-use crate::{errors::Error, syms::{containers::ContainerKind, SymbolKind}};
+use crate::{errors::Error, syms::{containers::ContainerKind, func::FunctionKind, SymbolKind}};
 
 use super::sym_map::{GenListId, SymbolId, SymbolMap, VarId, VarSub};
 
@@ -46,6 +46,20 @@ impl Sym {
 
                     str.push_char(')');
 
+                }
+                else if let SymbolKind::Function(func) = sym.kind
+                        && matches!(func.kind(), FunctionKind::Closure(_)) {
+
+                    str.push("fn(");
+                    for (i, f) in func.args().iter().enumerate() {
+                        if i != 0 {
+                            str.push(", ");
+                        }
+
+                        str.push(f.symbol().to_ty(gens, map).unwrap().display(string_map, map));
+                    }
+                    str.push(")");
+                    
                 }
                 else if matches!(sym.kind, SymbolKind::Opaque) && sym.name == StringMap::LIST {
                     str.push_char('[');

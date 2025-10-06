@@ -1232,6 +1232,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 Expr::Literal(Literal::Integer(1)),
                 range,
             );
+
             rhs = self.ast.add_expr(Expr::BinaryOp {
                     operator: BinaryOperator::Add,
                     lhs: rhs,
@@ -1464,6 +1465,55 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             TokenKind::Keyword(Keyword::Match) => self.match_expression(),
             TokenKind::Keyword(Keyword::If) => self.if_expression(),
+
+
+            TokenKind::LogicalOr => {
+                let start = self.current_range().start();
+                self.advance();
+
+                let expr = self.expression(settings)?;
+
+                Ok(self.ast.add_expr(
+                    Expr::Closure { args: &[], body: expr }, 
+                    SourceRange::new(start, self.current_range().end())
+                ))
+            }
+
+
+            TokenKind::BitwiseOr => {
+                let start = self.current_range().start();
+                self.advance();
+
+                let list = self.list(
+                    TokenKind::BitwiseOr,
+                    Some(TokenKind::Comma),
+                    |parser, _| {
+                        let start = parser.current_range().start();
+                        let name = parser.expect_identifier()?;
+
+                        let dt = if parser.peek_is(TokenKind::Colon) {
+                            parser.advance();
+                            parser.advance();
+                            Some(parser.expect_type()?)
+                        } else {
+                            None
+                        };
+
+                        Ok((name, dt, SourceRange::new(start, parser.current_range().end())))
+                    }
+                )?;
+
+                self.advance();
+
+                let expr = self.expression(settings)?;
+
+                Ok(self.ast.add_expr(
+                    Expr::Closure { args: list, body: expr }, 
+                    SourceRange::new(start, self.current_range().end())
+                ))
+            },
+
+
             
             
             // TokenKind::At => self.parse_with_attr(settings, Self::expression),

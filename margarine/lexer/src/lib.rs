@@ -165,6 +165,9 @@ pub enum TokenKind {
 
     /// '=>'
     Arrow,
+
+    /// '|'
+    Pipe,
     
     EndOfFile,
 
@@ -290,7 +293,6 @@ impl Lexer<'_, '_> {
             b'?' => TokenKind::QuestionMark,
             b'~' => TokenKind::SquigglyDash,
             b'^' => TokenKind::BitwiseXor,
-
 
             b'&' => {
                 if self.reader.consume_if_eq(&b'&') { TokenKind::LogicalAnd }
