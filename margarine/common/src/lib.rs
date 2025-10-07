@@ -109,3 +109,10 @@ impl<'a, T> Deref for NonEmpty<'a, T> {
         &self.0
     }
 }
+
+
+#[derive(Clone, Copy, Debug)]
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}

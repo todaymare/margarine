@@ -96,6 +96,60 @@ impl<'src> VM<'src> {
                 },
 
 
+                consts::CallFuncRef => {
+                    let func_ref = self.stack.pop().as_obj();
+                    let Object::FuncRef { func, captures } = &self.objs[func_ref as usize]
+                    else { unreachable!() };
+
+                    let argc = self.curr.next();
+                    
+                    // 
+                    // prepare the call frame
+                    // the arguments should already be ordered at the top of the stack
+                    //
+
+                    let func = &self.funcs[*func as usize];
+
+                    match func.kind {
+                        crate::FunctionKind::Code { byte_offset, byte_size } => {
+                            for capture in captures {
+                                self.stack.push(*capture);
+                            }
+
+                            let argc = argc + captures.len() as u8;
+
+                            let mut call_frame = CallFrame::new(
+                                &self.callstack.src[byte_offset..byte_offset+byte_size],
+                                self.stack.bottom,
+                                argc,
+                            );
+
+                            self.stack.set_bottom(self.stack.curr - argc as usize);
+
+                            core::mem::swap(&mut self.curr, &mut call_frame);
+
+                            self.callstack.push(call_frame);
+                        },
+
+
+                        crate::FunctionKind::Host(f) => {
+                            assert_eq!(captures.len(), 0);
+
+                            let bottom = self.stack.bottom;
+                            self.stack.bottom = self.stack.curr - argc as usize;
+
+                            let start = self.stack.curr;
+                            let ret = f(self);
+                            debug_assert_eq!(self.stack.curr, start);
+
+                            self.stack.curr -= argc as usize;
+                            self.stack.set_bottom(bottom);
+                            self.stack.push(ret);
+                        },
+                    }
+                },
+
+
                 consts::Err => {
                     let ty = self.curr.next();
                     let file = self.curr.next_u32();
@@ -136,6 +190,27 @@ impl<'src> VM<'src> {
 
                     return Status::Err(FatalError::new(format!("{str}")))
                 },
+
+
+                consts::CreateFuncRef => {
+                    let capture_count = self.curr.next();
+                    let func = self.stack.pop().as_int() as u32;
+
+                    let mut vec = Vec::with_capacity(capture_count as usize);
+                    for _ in 0..capture_count {
+                        vec.push(self.stack.pop());
+                    }
+
+                    vec.reverse();
+
+                    let obj = Object::FuncRef {
+                        func,
+                        captures: vec
+                    };
+
+                    let obj = self.new_obj(obj);
+                    self.stack.push(obj);
+                }
 
 
                 consts::CreateStruct => {

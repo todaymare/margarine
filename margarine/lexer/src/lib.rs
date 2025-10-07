@@ -105,6 +105,8 @@ pub enum TokenKind {
     Colon,
     /// '::'
     DoubleColon,
+    /// ':'
+    SemiColon,
     /// ','
     Comma,
     /// '.'
@@ -293,6 +295,7 @@ impl Lexer<'_, '_> {
             b'?' => TokenKind::QuestionMark,
             b'~' => TokenKind::SquigglyDash,
             b'^' => TokenKind::BitwiseXor,
+            b';' => TokenKind::SemiColon,
 
             b'&' => {
                 if self.reader.consume_if_eq(&b'&') { TokenKind::LogicalAnd }
@@ -385,7 +388,7 @@ impl Lexer<'_, '_> {
                 TokenKind::Error(
                 self.errors.push(Error::InvalidCharacter { 
                     character: char, 
-                    position: SourceRange::new(start, start) 
+                    position: SourceRange::new(self.source_offset + start, self.source_offset + start) 
                 }))
             }
         };

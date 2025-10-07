@@ -20,6 +20,8 @@ pub enum OpCode {
     StoreList,
     StoreField,
     LoadEnumField,
+    CreateFuncRef,
+    CallFuncRef,
     Unwrap,
     UnwrapFail,
     CastIntToFloat,
@@ -86,6 +88,8 @@ pub mod consts {
     pub const StoreList: u8 = super::OpCode::StoreList as u8;
     pub const StoreField: u8 = super::OpCode::StoreField as u8;
     pub const LoadEnumField: u8 = super::OpCode::LoadEnumField as u8;
+    pub const CreateFuncRef: u8 = super::OpCode::CreateFuncRef as u8;
+    pub const CallFuncRef: u8 = super::OpCode::CallFuncRef as u8;
     pub const Unwrap: u8 = super::OpCode::Unwrap as u8;
     pub const UnwrapFail: u8 = super::OpCode::UnwrapFail as u8;
     pub const CastIntToFloat: u8 = super::OpCode::CastIntToFloat as u8;
@@ -239,6 +243,16 @@ pub mod builder {
         pub fn load_enum_field(&mut self, enum_index: u32) {
             self.bytecode.push(super::OpCode::LoadEnumField.as_u8());
             self.bytecode.extend_from_slice(&enum_index.to_le_bytes());
+        }
+
+        pub fn create_func_ref(&mut self, capture_count: u8) {
+            self.bytecode.push(super::OpCode::CreateFuncRef.as_u8());
+            self.bytecode.extend_from_slice(&capture_count.to_le_bytes());
+        }
+
+        pub fn call_func_ref(&mut self, argc: u8) {
+            self.bytecode.push(super::OpCode::CallFuncRef.as_u8());
+            self.bytecode.extend_from_slice(&argc.to_le_bytes());
         }
 
         pub fn unwrap(&mut self) {
@@ -547,6 +561,20 @@ pub mod builder {
             let mut _offset = 1;
             self.bytecode[_at+_offset.._at+_offset+core::mem::size_of_val(&enum_index)].copy_from_slice(&enum_index.to_le_bytes());
             _offset += core::mem::size_of_val(&enum_index);
+        }
+
+        pub fn create_func_ref_at(&mut self, _at: usize, capture_count: u8) {
+            self.bytecode[_at] = super::OpCode::CreateFuncRef.as_u8();
+            let mut _offset = 1;
+            self.bytecode[_at+_offset.._at+_offset+core::mem::size_of_val(&capture_count)].copy_from_slice(&capture_count.to_le_bytes());
+            _offset += core::mem::size_of_val(&capture_count);
+        }
+
+        pub fn call_func_ref_at(&mut self, _at: usize, argc: u8) {
+            self.bytecode[_at] = super::OpCode::CallFuncRef.as_u8();
+            let mut _offset = 1;
+            self.bytecode[_at+_offset.._at+_offset+core::mem::size_of_val(&argc)].copy_from_slice(&argc.to_le_bytes());
+            _offset += core::mem::size_of_val(&argc);
         }
 
         pub fn unwrap_at(&mut self, _at: usize, ) {
@@ -1191,6 +1219,50 @@ pub mod builder {
                             "LoadEnumField({fields})",
                         ));
                     }
+                    super::OpCode::CreateFuncRef => {
+                        let mut fields = String::new();
+                        unsafe {
+                            {
+                                if !fields.is_empty() {
+                                    fields.push_str(", ");
+                                }
+                                write!(
+                                    &mut fields,
+                                    "capture_count: {}",
+                                    <u8>::from_le_bytes(
+                                        iter.next_n::<{{ core::mem::size_of::<u8>() }}>()
+                                    )
+                                ).unwrap();
+                            }
+
+                        }
+                        strct.entry(&offset,
+                            &format!(
+                            "CreateFuncRef({fields})",
+                        ));
+                    }
+                    super::OpCode::CallFuncRef => {
+                        let mut fields = String::new();
+                        unsafe {
+                            {
+                                if !fields.is_empty() {
+                                    fields.push_str(", ");
+                                }
+                                write!(
+                                    &mut fields,
+                                    "argc: {}",
+                                    <u8>::from_le_bytes(
+                                        iter.next_n::<{{ core::mem::size_of::<u8>() }}>()
+                                    )
+                                ).unwrap();
+                            }
+
+                        }
+                        strct.entry(&offset,
+                            &format!(
+                            "CallFuncRef({fields})",
+                        ));
+                    }
                     super::OpCode::Unwrap => {
                         let mut fields = String::new();
                         unsafe {
@@ -1727,6 +1799,8 @@ impl OpCode {
             consts::StoreList => Some(Self::StoreList),
             consts::StoreField => Some(Self::StoreField),
             consts::LoadEnumField => Some(Self::LoadEnumField),
+            consts::CreateFuncRef => Some(Self::CreateFuncRef),
+            consts::CallFuncRef => Some(Self::CallFuncRef),
             consts::Unwrap => Some(Self::Unwrap),
             consts::UnwrapFail => Some(Self::UnwrapFail),
             consts::CastIntToFloat => Some(Self::CastIntToFloat),

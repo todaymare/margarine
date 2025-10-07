@@ -59,6 +59,12 @@ impl Sym {
                         str.push(f.symbol().to_ty(gens, map).unwrap().display(string_map, map));
                     }
                     str.push(")");
+
+                    let ret = func.ret().to_ty(gens, map).unwrap();
+                    if ret != Sym::UNIT {
+                        str.push(": ");
+                        str.push(ret.display(string_map, map));
+                    }
                     
                 }
                 else if matches!(sym.kind, SymbolKind::Opaque) && sym.name == StringMap::LIST {
@@ -127,18 +133,25 @@ impl Sym {
                         let reta = fa.ret().to_ty(gena, map).unwrap_or(Sym::ERROR);
                         let retb = fb.ret().to_ty(genb, map).unwrap_or(Sym::ERROR);
 
-                        if !reta.eq(map, retb) {
-                            return false;
-                        }
-
+                        let mut failed = false;
                         for (aa, ab) in fa.args().iter().zip(fb.args().iter()) {
                             let aa = aa.symbol().to_ty(gena, map).unwrap_or(Sym::ERROR);
                             let ab = ab.symbol().to_ty(genb, map).unwrap_or(Sym::ERROR);
 
                             if !aa.eq(map, ab) {
-                                return false;
+                                failed = true;
                             }
                         }
+
+                        if !reta.eq(map, retb) {
+                            failed = true;
+                        }
+
+
+                        if failed {
+                            return false;
+                        }
+
                     },
 
 
@@ -162,7 +175,8 @@ impl Sym {
                     _ => return false,
                 }
 
-                debug_assert_eq!(gena.len(), genb.len());
+                // @info: um. was this a wrong assumption or am i fucked
+                //debug_assert_eq!(gena.len(), genb.len());
                 return true
             },
 

@@ -56,6 +56,12 @@ pub enum Object {
 
 
     String(Box<str>),
+
+
+    FuncRef {
+        func: u32,
+        captures: Vec<Reg>,
+    }
 }
 
 

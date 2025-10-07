@@ -36,7 +36,14 @@ pub fn parse<'a>(
         TokenKind::EndOfFile, 
         0, 
         &ParserSettings::default()
-    ).unwrap();
+    );
+
+    let result = match result {
+        Ok(v) => v,
+        Err(e) => {
+            Block::new(parser.arena.alloc_new([NodeId::Err(e)]), SourceRange::new(file, file))
+        },
+    };
 
     (result, parser.errors)
 }
@@ -184,6 +191,30 @@ impl<'out> Parser<'_, 'out, '_> {
 
             self.expect(TokenKind::RightSquare)?;
             DataType::new(SourceRange::new(start, self.current_range().end()), DataTypeKind::List(self.arena.alloc_new(ty)))
+        } else if self.current_is(TokenKind::Keyword(Keyword::Fn)) {
+            self.advance();
+
+            self.expect(TokenKind::LeftParenthesis)?;
+            self.advance();
+
+            let list = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma),
+            |parser, _| {
+                parser.expect_type()
+            })?;
+
+            let ret = if self.peek_is(TokenKind::Colon) {
+                self.advance();
+                self.advance();
+                self.expect_type()?
+            } else {
+                DataType::new(SourceRange::new(start, self.current_range().end()), DataTypeKind::Unit)
+            };
+            
+
+            DataType::new(
+                SourceRange::new(start, self.current_range().end()),
+                DataTypeKind::Fn(list, self.arena.alloc_new(ret))
+            )
 
         } else if self.current_is(TokenKind::LeftParenthesis) { 
             self.advance();
@@ -342,9 +373,31 @@ impl<'out> Parser<'_, 'out, '_> {
             }
 
 
-            if matches!(self.current_kind(), TokenKind::Keyword(_)) {
+            if !storage.is_empty() && !self.is_in_panic 
+            && !matches!(storage.last().unwrap(), NodeId::Decl(_)) {
+                if let Err(e) = self.expect(TokenKind::SemiColon) {
+                    storage.push(NodeId::Err(e));
+                    self.is_in_panic = true;
+                } else {
+                    storage.push(NodeId::Expr(self.ast.add_expr(Expr::Unit, self.current_range())));
+                    self.advance();
+                }
+            }
+
+
+            if self.current_kind() == TokenKind::EndOfFile {
+                break
+            }
+
+            if self.current_kind() == terminator {
+                break
+            }
+
+
+            if matches!(self.current_kind(), TokenKind::Keyword(_) | TokenKind::SemiColon) {
                 self.is_in_panic = false;
             }
+
             
 
             let statement = self.statement(settings);
@@ -474,6 +527,9 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Var) => self.let_statement()?.into(),
             TokenKind::Keyword(Keyword::For) => self.for_statement()?.into(),
 
+            TokenKind::SemiColon => {
+                return Ok(self.ast.add_expr(Expr::Unit, self.current_range()).into())
+            }
 
             TokenKind::At => {
                 let start = self.current_range().start();
@@ -1371,13 +1427,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 Expr::Literal(l), 
                 self.current_range(),
             )),
-
-            TokenKind::Underscore => {
-                 return Ok(self.ast.add_expr(
-                    Expr::Unit, 
-                    self.current_range(),
-                ))
-            }
 
 
             TokenKind::LeftParenthesis => {
