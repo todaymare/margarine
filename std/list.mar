@@ -38,7 +38,7 @@ struct ListIterator<T> {
 impl<T> ListIterator<T> {
     fn __next__(self): Option<T> {
         if self.index < self.list.len() {
-            self.index += 1
+            self.index += 1;
             some(self.list[self.index-1])
         } else {
             none()

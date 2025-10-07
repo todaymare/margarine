@@ -286,8 +286,8 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
     final_product.extend_from_slice(&errors_table);
     final_product.extend_from_slice(&strs_table);
     final_product.extend_from_slice(&func_sec);
-    dbg!(&code);
     final_product.extend_from_slice(&code.bytecode);
+    dbg!(code);
 
     final_product
 }
@@ -308,10 +308,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         else { unreachable!() };
 
         let gens = self.syms.gens()[gens_id];
-        for g in gens { if g.1.is_err(self.syms) { println!("generics errored"); return Err(ErrorId::Bypass) } }
+        for g in gens { if g.1.is_err(self.syms) { return Err(ErrorId::Bypass) } }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
-        if ret.is_err(self.syms) { println!("return errored"); return Err(ErrorId::Bypass) }
+        if ret.is_err(self.syms) { return Err(ErrorId::Bypass) }
 
         match sym_func.kind() {
             crate::syms::func::FunctionKind::Extern(path) => {
@@ -479,7 +479,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
         for (i, &n) in instrs.iter().enumerate() {
             has_ret = false;
-            println!("{n:?}");
             match n {
                 NodeId::Decl(decl_id) => {
                     continue;
@@ -890,7 +889,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 if let SymbolKind::Function(func) = self.syms.sym(*sym).kind()
                     && let syms::func::FunctionKind::Closure(_) = func.kind() {
-                    dbg!(&env.vars, self.string_map.get(name));
                     let Some(index) = env.find_var(name)
                     else { unreachable!() };
 
@@ -1116,7 +1114,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         env.alloc_var(arg.0);
                     }
 
-                    dbg!(&closure.captured_variables);
                     for capture in &closure.captured_variables {
                         env.alloc_var(*capture);
                     }
@@ -1144,7 +1141,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     env.blocks.sort_by_key(|x| x.index.0);
 
                     let func = Function {
-                        name: StringMap::CLOSURE,
+                        name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                         index: FuncIndex(self.funcs.len() as u32),
                         kind: FunctionKind::Code {
                             local_count: (env.var_counter - argc as u32).try_into().unwrap(),

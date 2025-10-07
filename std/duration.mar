@@ -33,8 +33,8 @@ impl Duration {
 	/// assert(duration.subsec_nanos() == 0)
 	/// ```
 	fn new(secs: int, nanos: int): Duration {
-		var secs = secs + (nanos / 1_000_000_000)
-		var nanos = nanos % 1_000_000_000
+		var secs = secs + (nanos / 1_000_000_000);
+		var nanos = nanos % 1_000_000_000;
 		Duration {
 			secs: secs,
 			nanos: nanos,
@@ -83,8 +83,8 @@ impl Duration {
 	/// assert(duration.subsec_nanos() == 500_000_000)
 	/// ```
 	fn from_millis(millis: int): Duration {
-		var secs = millis / 1_000
-		var nanos = ((millis % 1_000)) * 1_000_000
+		var secs = millis / 1_000;
+		var nanos = ((millis % 1_000)) * 1_000_000;
 		Duration { secs: secs, nanos: nanos }
 	}
 
@@ -99,8 +99,8 @@ impl Duration {
 	/// assert(duration.subsec_nanos() == 320_000)
 	/// ```
 	fn from_micros(micros: int): Duration {
-		var secs = micros / 1_000_000
-		var nanos = ((micros % 1_000_000)) * 1_000
+		var secs = micros / 1_000_000;
+		var nanos = ((micros % 1_000_000)) * 1_000;
 		Duration { secs: secs, nanos: nanos }
 	}
 
@@ -115,8 +115,8 @@ impl Duration {
 	/// assert(duration.subsec_nanos() == 69420)
 	/// ```
 	fn from_nanos(nanos: int): Duration {
-		var secs = (nanos / 1_000_000_000)
-		var nanos = (nanos % 1_000_000_000)
+		var secs = (nanos / 1_000_000_000);
+		var nanos = (nanos % 1_000_000_000);
 		Duration { secs: secs, nanos: nanos }
 	}
 
@@ -182,13 +182,13 @@ impl Duration {
 	/// assert(dur.sub(oth).as_secs() == 5)
 	/// ```
 	fn sub(self, other: Duration): Duration {
-		var duration_nanos = self.nanos - other.nanos
-		var duration_secs = self.secs - other.secs
+		var duration_nanos = self.nanos - other.nanos;
+		var duration_secs = self.secs - other.secs;
 		if duration_nanos < 0 {
-			var nanos = duration_nanos.abs()
+			var nanos = duration_nanos.abs();
 
-			duration_secs = duration_secs - 1
-			duration_nanos = nanos + 1_000_000_000
+			duration_secs = duration_secs - 1;
+			duration_nanos = nanos + 1_000_000_000;
 		}
 
 		Duration { secs: duration_secs, nanos: duration_nanos }
@@ -205,13 +205,13 @@ impl Duration {
 	/// assert(dur.add(oth).as_secs() == 15)
 	/// ```
 	fn add(self, other: Duration): Duration {
-		var duration_nanos = self.nanos + other.nanos
-		var duration_secs = self.secs + other.secs
+		var duration_nanos = self.nanos + other.nanos;
+		var duration_secs = self.secs + other.secs;
 		if duration_nanos >= 1_000_000_000 {
-			var nanos = duration_nanos
+			var nanos = duration_nanos;
 
-			duration_secs = duration_secs + 1
-			duration_nanos = nanos - 1_000_000_000
+			duration_secs = duration_secs + 1;
+			duration_nanos = nanos - 1_000_000_000;
 		}
 
 		Duration { secs: duration_secs, nanos: duration_nanos }

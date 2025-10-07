@@ -215,7 +215,6 @@ impl<'me> Generic<'me> {
     pub fn to_ty(self, gens: &[(StringIndex, Sym)], map: &mut SymbolMap) -> Result<Sym, Error> {
         match self.kind {
             GenericKind::Generic(v) => {
-                println!("{gens:?} {v:?}");
                 Ok(gens.iter()
                                         .find(|x| x.0 == v)
                                         .copied()

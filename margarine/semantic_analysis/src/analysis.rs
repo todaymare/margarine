@@ -1454,7 +1454,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 // ty & inout check args
                 for (a, &fa) in args_anals.iter().zip(func_args.iter()) {
-                    dbg!(a, fa);
                     if !a.1.ty.eq(&mut self.syms, fa) {
                         self.error(a.2, Error::InvalidType {
                             source: a.0, found: a.1.ty, expected: fa })
@@ -1723,8 +1722,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
             Err(v) => {
-                println!("{:?}", self.ast.expr(id));
-                println!("{v:?}");
                 self.error(id, v);
                 AnalysisResult::error()
             },
