@@ -197,7 +197,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let mut fields = Buffer::new(&*self.output, args.len());
                     for (i, ty) in args.iter().enumerate() {
                         let g = self.dt_to_gen(scope, *ty, gens)?;
-                        dbg!(g);
                         let func = FunctionArgument::new(self.string_map.num(i), g);
                         fields.push(func);
                     }

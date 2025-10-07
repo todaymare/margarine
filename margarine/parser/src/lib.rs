@@ -374,7 +374,8 @@ impl<'out> Parser<'_, 'out, '_> {
 
 
             if !storage.is_empty() && !self.is_in_panic 
-            && !matches!(storage.last().unwrap(), NodeId::Decl(_)) {
+            && !matches!(storage.last().unwrap(), NodeId::Decl(_))
+            && !matches!(self.tokens[self.index-1].kind(), TokenKind::SemiColon | TokenKind::RightBracket) {
                 if let Err(e) = self.expect(TokenKind::SemiColon) {
                     storage.push(NodeId::Err(e));
                     self.is_in_panic = true;
