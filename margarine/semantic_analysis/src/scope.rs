@@ -111,9 +111,11 @@ impl<'me> Scope<'me> {
     pub fn find_var(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap) -> Option<VariableScope> {
         self.over(scope_map, |iscope| {
             if let ScopeKind::VariableScope(v) = iscope.kind {
-                if v.name() == name { return Some(v) }
+                if v.name() != name { return None}
                 self.over(scope_map, |scope| {
-                    if v.name() == name { return Some(v) }
+                    if let ScopeKind::VariableScope(v) = scope.kind {
+                        if v.name() == name { return Some(v) }
+                    }
                     
                     if let ScopeKind::Closure(closure) = scope.kind() {
                         symbols.insert_closure_capture(closure, name);
@@ -121,6 +123,8 @@ impl<'me> Scope<'me> {
 
                     None
                 });
+
+                return Some(v)
             }
 
             None

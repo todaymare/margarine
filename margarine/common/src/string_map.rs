@@ -85,7 +85,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("min"), Self::MIN);
         assert_eq!(s.insert("max"), Self::MAX);
         assert_eq!(s.insert("count"), Self::COUNT);
-        assert_eq!(s.insert("tuple"), Self::TUPLE);
+        assert_eq!(s.insert("{tuple}"), Self::TUPLE);
 
         assert_eq!(s.insert("Ptr"), Self::PTR);
         assert_eq!(s.insert("Result"), Self::RESULT);
@@ -96,7 +96,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("__next__"), Self::ITER_NEXT_FUNC);
         assert_eq!(s.insert("type_id"), Self::TYPE_ID);
         assert_eq!(s.insert("List"), Self::LIST);
-        assert_eq!(s.insert("closure"), Self::CLOSURE);
+        assert_eq!(s.insert("{closure}"), Self::CLOSURE);
         s
     }
 

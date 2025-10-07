@@ -1,7 +1,7 @@
 #![feature(slice_partition_dedup)]
 use std::{collections::HashMap, fmt::Write};
 
-use common::{buffer::Buffer, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}};
+use common::{buffer::Buffer, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}, Either};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
 use namespace::{Namespace, NamespaceMap};
@@ -44,6 +44,7 @@ pub struct TyInfo {
     stmts: KVec<StmtId, Option<ErrorId>>,
     decls: KVec<DeclId, Option<ErrorId>>,
     funcs: HashMap<ExprId, (SymbolId, GenListId)>,
+    idents: HashMap<ExprId, Option<SymbolId>>,
 }
 
 
@@ -89,6 +90,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 stmts: KVec::new(),
                 decls: KVec::new(),
                 funcs: HashMap::new(),
+                idents: HashMap::new(),
             },
             ast,
             startups: Vec::new(),
@@ -188,6 +190,33 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]))),
+
+
+            DataTypeKind::Fn(args, ret) => {
+                let fields = {
+                    let mut fields = Buffer::new(&*self.output, args.len());
+                    for (i, ty) in args.iter().enumerate() {
+                        let g = self.dt_to_gen(scope, *ty, gens)?;
+                        dbg!(g);
+                        let func = FunctionArgument::new(self.string_map.num(i), g);
+                        fields.push(func);
+                    }
+
+
+                    fields.leak()
+                };
+
+                let mut gs = Buffer::new(&*self.output, gens.len());
+                for g in gens {
+                    gs.push(Generic::new(dt.range(), GenericKind::Generic(*g)));
+                }
+
+                let ret = self.dt_to_gen(scope, *ret, gens)?;
+
+                let closure = self.syms.new_closure();
+                let sym = self.func_sym(closure, fields, ret, Vec::from_slice_in(self.output, gens).leak());
+                Ok(Generic::new(dt.range(), GenericKind::Sym(sym, gs.leak())))
+            }
 
 
             DataTypeKind::Tuple(tys) => {
@@ -333,6 +362,27 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
+            DataTypeKind::Fn(args, ret) => {
+                let fields = {
+                    let mut fields = Buffer::new(&*self.output, args.len());
+                    for (i, ty) in args.iter().enumerate() {
+                        let g = self.dt_to_gen(self.scopes.get(scope_id), *ty, &[])?;
+                        let func = FunctionArgument::new(self.string_map.num(i), g);
+                        fields.push(func);
+                    }
+
+
+                    fields.leak()
+                };
+
+                let ret = self.dt_to_gen(self.scopes.get(scope_id), *ret, &[])?;
+
+                let closure = self.syms.new_closure();
+                let sym = self.func_sym(closure, fields, ret, &[]);
+                Ok(Sym::Ty(sym, GenListId::EMPTY))
+            }
+
+
             DataTypeKind::Tuple(vals) => {
                 let pool = Arena::tls_get_rec();
                 let (fields, generics) = {
@@ -371,9 +421,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             for (index, name) in fields.iter().enumerate() {
                 str.clear();
                 write!(str, "{index}");
-                let index = self.string_map.insert(&str);
-                gens.push(index);
-                sym_fields.push((*name, Generic::new(range, GenericKind::Generic(index))));
+                let str = self.string_map.insert(&str);
+                gens.push(str);
+
+                let name = name.to_option().unwrap_or_else(|| self.string_map.num(index));
+                sym_fields.push((name, Generic::new(range, GenericKind::Generic(str))));
             }
 
             (sym_fields.leak(), gens.leak())
@@ -432,6 +484,11 @@ impl TyInfo {
 
     pub fn set_func_call(&mut self, expr: ExprId, call: (SymbolId, GenListId)) {
         self.funcs.insert(expr, call);
+    }
+
+
+    pub fn set_ident(&mut self, expr: ExprId, call: Option<SymbolId>) {
+        self.idents.insert(expr, call);
     }
 
 

@@ -1,11 +1,52 @@
-use std::print
+extern {
+    fn print_raw<T>(val: T, ty_id: int)
+}
+
+
+fn print<T>(val: T) {
+    print_raw(val, type_id::<T>())
+}
 
 @startup
 fn main() {
-    var x = |v: float, x: int,| ()
-    var x = foo
-    x
+    var x = foo;
+    x(69);
+
+    x = |hey| {
+        x(hey + 1)
+    };
+
+    test(30, |value: int| x(value + 12));
+
+    var foo = Foo {
+        bar: |value: int| print(value),
+        yay: |value: float| {
+            print("hi");
+            3
+        }
+    };
+
+    var x = foo.yay;
+    print(x(3.0))
+
+
+    // note, you can't do foo.yay(3.0) cos yh
 }
 
-fn foo(a: int) {
+
+struct Foo<T> {
+    bar: fn(int),
+    yay: fn(T): int,
+
 }
+
+
+fn foo(a: int) {
+    print(a)
+}
+
+
+fn test<T>(value: T, func: fn(T)) {
+    func(value)
+}
+

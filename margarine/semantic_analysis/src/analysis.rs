@@ -336,7 +336,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                             },
                         };
 
-                        let field = (f.0.some(), sym);
+                        let field = (f.0, sym);
                         structure_fields.push(field);
                     }
 
@@ -382,7 +382,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                             },
                         };
 
-                        let mapping = (f.name().some(), sym);
+                        let mapping = (f.name(), sym);
                         enum_mappings.push(mapping);
                     }
 
@@ -903,6 +903,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
     pub fn expr(&mut self, path: StringIndex, scope: ScopeId, id: ExprId) -> AnalysisResult {
+        self.expr_ex(path, scope, id, None)
+    }
+
+    pub fn expr_ex(&mut self, path: StringIndex, scope: ScopeId, id: ExprId, expected: Option<Sym>) -> AnalysisResult {
         let range = self.ast.range(id);
         let expr = self.ast.expr(id);
         let result = (|| Ok(match expr {
@@ -933,6 +937,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let SymbolKind::Function(func) = sym.kind()
                     else { return Err(Error::CallOnNonFunction { source: range, name: sym.name() }) };
 
+
+                    self.type_info.set_ident(id, Some(sym_id));
+
                     match func.kind() {
                         FunctionKind::Closure(_) => return Ok(AnalysisResult::new(Sym::Ty(sym_id, GenListId::EMPTY))),
                         _ => {
@@ -944,7 +951,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                                 gens.push((*g, var));
                             }
 
-                            dbg!(&gens);
                             let gens = self.syms.add_gens(gens.leak());
 
                             let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
@@ -982,15 +988,33 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let ret = self.expr(path, active_scope, body);
 
+                if let Some(sym) = expected
+                && let Ok(sym_id) = sym.sym(&mut self.syms)
+                && let SymbolKind::Function(func) = self.syms.sym(sym_id).kind()
+                && let FunctionKind::Closure(_) = func.kind() {
+                    let gens = sym.gens(&self.syms);
+                    let gens = self.syms.get_gens(gens);
+
+                    for (sym_arg, arg) in func.args().iter().zip(sargs.iter()) {
+                        let Ok(sym_arg) = sym_arg.symbol().to_ty(gens, &mut self.syms)
+                        else { continue };
+
+                        sym_arg.eq(&mut self.syms, arg.1);
+                    }
+                    if let Ok(sym_ret) = func.ret().to_ty(gens, &mut self.syms) {
+                        sym_ret.eq(&mut self.syms, ret.ty);
+                    }
+
+
+                }
+
                 let mut fargs = sti::vec::Vec::new_in(self.syms.arena());
                 for arg in sargs {
                     let sym = arg.1.sym(&mut self.syms)?;
                     fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Sym(sym, &[]))));
                 }
 
-                println!("hi?");
                 let ret = ret.ty.sym(&mut self.syms)?;
-                println!("hi?");
                 let ret = Generic::new(range, GenericKind::Sym(ret, &[]));
 
                 let closure_ty = self.func_sym(closure, fargs.leak(), ret, &[]);
@@ -1162,15 +1186,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     return Err(Error::MatchValueIsntEnum { source: range, typ: anal.ty });
                 }
 
-                // asserts assumptions on struct
-                debug_assert!(cont.fields().iter().all(|x| x.0.is_some()));
-
                 // check the mapping names
                 for (i, m) in mappings.iter().enumerate() {
                     let exists = cont.fields().iter().any(|x| {
-                        let Some(name) = x.0.to_option()
-                        else { unreachable!() };
-
+                        let name = x.0;
                         m.variant() == name
                     });
 
@@ -1190,9 +1209,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 
                 let mut missings = Vec::new_in(self.temp);
                 for sm in cont.fields().iter() {
-                    let Some(name) = sm.0.to_option()
-                    else { unreachable!() };
-
+                    let name = sm.0;
                     if !mappings.iter().any(|x| x.variant() == name) {
                         missings.push(name);
                     }
@@ -1244,16 +1261,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     return Err(Error::StructCreationOnNonStruct { source: range, typ: ty });
                 }
 
-                // asserts assumptions on struct
-                debug_assert!(cont.fields().iter().all(|x| x.0.is_some()));
-
-
                 // check if the fields are valid
                 for f in fields.iter() {
                     let exists = cont.fields().iter().any(|x| {
-                        let Some(name) = x.0.to_option()
-                        else { unreachable!() };
-
+                        let name = x.0;
                         name == f.0
                     });
 
@@ -1267,8 +1278,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 // check missing fields
                 let mut missing_fields = Vec::new_in(self.temp);
                 for f in cont.fields().iter() {
-                    let Some(name) = f.0.to_option()
-                    else { unreachable!() };
+                    let name = f.0;
 
                     if !fields.iter().any(|x| x.0 == name) {
                         missing_fields.push(name);
@@ -1295,10 +1305,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 for f in fields.iter() {
                     let expr = self.expr(path, scope, f.2);
-                    let g = sym_fields.iter().find(|x| x.0.unwrap() == f.0).unwrap();
+                    let g = sym_fields.iter().find(|x| x.0 == f.0).unwrap();
 
                     if !expr.ty.eq(&mut self.syms, g.1) {
-                        self.error(id, Error::InvalidType {
+                        self.error(f.2, Error::InvalidType {
                             source: f.1, found: expr.ty, expected: g.1 });
                     }
                 }
@@ -1318,16 +1328,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let mut str = sti::string::String::new_in(self.temp);
                 let field = cont.fields().iter().enumerate().find(|(i, f)| {
-                    let name = match f.0.to_option() {
-                        Some(v) => v,
-                        None => {
-                            str.clear();
-                            write!(str, "{i}");
-                            let index = self.string_map.insert(&str);
-                            index
-                        },
-                    };
-
+                    let name = f.0;
                     field_name == name
                 });
 
@@ -1371,7 +1372,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let func = {
                     if is_accessor {
-                        let sym = args_anals[0].1.ty.sym(&mut self.syms)?;
+                        let ty = args_anals[0].1.ty;
+                        let sym = ty.sym(&mut self.syms)?;
                         let ns = self.syms.sym_ns(sym);
                         let ns = self.namespaces.get_ns(ns);
                         ns.get_sym(name)
@@ -1442,7 +1444,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let func_args = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.args().len());
                     for g in func.args() {
-                        vec.push((g.symbol().to_ty(func_generics, &mut self.syms)?));
+                        vec.push(g.symbol().to_ty(func_generics, &mut self.syms)?);
                     }
 
                     vec
@@ -1451,7 +1453,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let ret = func.ret().to_ty(func_generics, &mut self.syms)?;
 
                 // ty & inout check args
-                for (i, (a, &fa)) in args_anals.iter().zip(func_args.iter()).enumerate() {
+                for (a, &fa) in args_anals.iter().zip(func_args.iter()) {
+                    dbg!(a, fa);
                     if !a.1.ty.eq(&mut self.syms, fa) {
                         self.error(a.2, Error::InvalidType {
                             source: a.0, found: a.1.ty, expected: fa })
@@ -1641,11 +1644,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     }
                 }
                 AnalysisResult::new(ty)
-            },
-
-
-            Expr::Closure { args, body } => {
-                todo!()
             },
 
 

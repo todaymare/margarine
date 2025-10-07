@@ -6,7 +6,7 @@ use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, s
 use runtime::opcode::{self, runtime::{builder::{self, Builder}, consts}, HEADER};
 use sti::{arena::Arena, define_key, keyed::KVec};
 
-use crate::{namespace::NamespaceMap, syms::{containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
+use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
 
 #[derive(Debug)]
 pub struct Conversion<'me, 'out, 'ast, 'str> {
@@ -677,10 +677,16 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
             parser::nodes::expr::Expr::Identifier(string_index) => {
-                out_if_err!();
-                if let Some((_, index)) = env.vars.iter().rev().find(|x| x.0 == string_index) {
-                    block.bytecode.load((*index).try_into().unwrap());
-                    return;
+                let ty = out_if_err!();
+                if let Some(index) = env.find_var(string_index) {
+                    block.bytecode.load(index.try_into().unwrap());
+                    return Ok(());
+                }
+
+                if let Some(Some(func)) = self.ty_info.idents.get(&expr) {
+                    let func = self.get_func(*func, ty.gens(self.syms))?;
+                    block.bytecode.const_int(func.index.0 as i64);
+                    block.bytecode.create_func_ref(0);
                 }
             },
 
@@ -836,7 +842,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 else { unreachable!() };
 
                 for sf in cont.fields() {
-                    let f = fields.iter().find(|f| f.0 == sf.0.unwrap()).unwrap();
+                    let f = fields.iter().find(|f| f.0 == sf.0).unwrap();
 
                     self.expr(env, block, f.2)?;
                 }
@@ -854,16 +860,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
                 else { unreachable!() };
 
-                let mut str = sti::string::String::new_in(self.syms.arena());
                 let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
-                    let name = match f.0.to_option() {
-                        Some(v) => v,
-                        None => {
-                            str.clear();
-                            self.string_map.num(*i)
-                        },
-                    };
-
+                    let name = f.0;
                     field_name == name
                 }).unwrap();
 
@@ -880,7 +878,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             },
 
 
-            parser::nodes::expr::Expr::CallFunction { args, .. } => {
+            parser::nodes::expr::Expr::CallFunction { args, name, .. } => {
                 for arg in args {
                     self.expr(env, block, *arg)?;
                 }
@@ -889,6 +887,17 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 let (sym, gens) = self.ty_info.funcs.get(&expr).unwrap();
                 if *sym == SymbolId::ERR { return Err(ErrorId::Bypass) }
+
+                if let SymbolKind::Function(func) = self.syms.sym(*sym).kind()
+                    && let syms::func::FunctionKind::Closure(_) = func.kind() {
+                    dbg!(&env.vars, self.string_map.get(name));
+                    let Some(index) = env.find_var(name)
+                    else { unreachable!() };
+
+                    block.bytecode.load(index.try_into().unwrap());
+                    block.bytecode.call_func_ref(args.len() as _);
+                    return Ok(());
+                }
 
                 let func_gens = self.syms.get_gens(*gens);
                 let env_gens = self.syms.get_gens(env.gens);
@@ -1073,7 +1082,85 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
             parser::nodes::expr::Expr::Closure { args, body } => {
-                todo!()
+                let ty = out_if_err!();
+                let closure = ty.sym(self.syms).unwrap();
+                let closure = self.syms.sym(closure);
+                let SymbolKind::Function(func_ty) = closure.kind()
+                else { unreachable!() };
+
+                let syms::func::FunctionKind::Closure(closure) = func_ty.kind()
+                else { unreachable!() };
+
+                let hash = ty.hash(self.syms);
+                let closure = self.syms.closure(closure);
+
+                for name in &closure.captured_variables {
+                    let index = env.find_var(*name).unwrap();
+                    block.bytecode.load(index.try_into().unwrap());
+                }
+                
+                let capture_count = closure.captured_variables.len();
+                
+                let func = {
+                    let mut env = Env {
+                        vars: Vec::new(),
+                        var_counter: 0,
+                        block_counter: 0,
+                        blocks: vec![],
+                        loop_brek: None,
+                        loop_cont: None,
+                        gens: GenListId::EMPTY,
+                    };
+
+                    for arg in args {
+                        env.alloc_var(arg.0);
+                    }
+
+                    dbg!(&closure.captured_variables);
+                    for capture in &closure.captured_variables {
+                        env.alloc_var(*capture);
+                    }
+
+                    let argc = args.len() + closure.captured_variables.len();
+
+                    let entry_block = env.next_block_index();
+                    let mut block = Block {
+                        index: entry_block,
+                        bytecode: Builder::new(),
+                        terminator: BlockTerminator::Ret,
+                    };
+
+                    block.bytecode.push_local_space(u8::MAX);
+
+                    let result = self.expr(&mut env, &mut block, body);
+                    if let Err(err) = result {
+                        egenerate_error(&mut env, &mut block, err);
+                    }
+
+                    env.blocks.push(block);
+                    let block = env.blocks.iter_mut().find(|x| x.index == entry_block).unwrap();
+                    block.bytecode.push_local_space_at(0, (env.var_counter - argc as u32).try_into().unwrap());
+
+                    env.blocks.sort_by_key(|x| x.index.0);
+
+                    let func = Function {
+                        name: StringMap::CLOSURE,
+                        index: FuncIndex(self.funcs.len() as u32),
+                        kind: FunctionKind::Code {
+                            local_count: (env.var_counter - argc as u32).try_into().unwrap(),
+                            entry: entry_block,
+                            blocks: env.blocks,
+                        },
+
+                        error: None,
+                    };
+
+                    self.funcs.insert(hash, func);
+                    self.funcs.get(&hash).unwrap()
+                };
+
+                block.bytecode.const_int(func.index.0 as i64);
+                block.bytecode.create_func_ref(capture_count as _);
             }
         };
         Ok(())
@@ -1199,14 +1286,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 let mut str = sti::string::String::new_in(self.syms.arena());
                 let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
-                    let name = match f.0.to_option() {
-                        Some(v) => v,
-                        None => {
-                            str.clear();
-                            self.string_map.num(*i)
-                        },
-                    };
-
+                    let name = f.0;
                     field_name == name
                 }).unwrap();
 
@@ -1242,13 +1322,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         else { unreachable!() };
 
                         let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
-                            let name = match f.0.to_option() {
-                                Some(v) => v,
-                                None => {
-                                    self.string_map.num(*i)
-                                },
-                            };
-
+                            let name = f.0;
                             field_name == name
                         }).unwrap();
 
@@ -1329,12 +1403,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         else { unreachable!() };
 
                         let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
-                            let name = match f.0.to_option() {
-                                Some(v) => v,
-                                None => {
-                                    self.string_map.num(*i)
-                                },
-                            };
+                            let name = f.0;
 
                             field_name == name
                         }).unwrap();
@@ -1463,6 +1532,11 @@ impl<'buf> Env<'buf> {
             bytecode: Builder::new(),
             terminator: BlockTerminator::Ret,
         }
+    }
+
+
+    pub fn find_var(&self, name: StringIndex) -> Option<u32> {
+        self.vars.iter().rev().find(|x| x.0 == name).map(|x| x.1)
     }
 }
 

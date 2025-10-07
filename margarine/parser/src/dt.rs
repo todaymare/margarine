@@ -23,6 +23,7 @@ pub enum DataTypeKind<'a> {
     List(&'a DataType<'a>),
     Within(StringIndex, &'a DataType<'a>),
     CustomType(StringIndex, &'a [DataType<'a>]),
+    Fn(&'a [DataType<'a>], &'a DataType<'a>),
 }
 
 
@@ -65,6 +66,15 @@ impl std::hash::Hash for DataTypeKind<'_> {
             DataTypeKind::List(dt) => {
                 206.hash(state);
                 dt.kind().hash(state);
+            },
+
+
+            DataTypeKind::Fn(args, ret) => {
+                207.hash(state);
+                for a in args.iter() {
+                    a.kind().hash(state);
+                }
+                ret.kind().hash(state);
             },
 
 

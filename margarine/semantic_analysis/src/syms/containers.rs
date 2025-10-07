@@ -1,10 +1,10 @@
-use common::{string_map::OptStringIndex, ImmutableData};
+use common::{string_map::{OptStringIndex, StringIndex}, ImmutableData};
 
 use super::sym_map::Generic;
 
 #[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Container<'me> {
-    fields: &'me [(OptStringIndex, Generic<'me>)],
+    fields: &'me [(StringIndex, Generic<'me>)],
     kind  : ContainerKind,
 }
 
@@ -22,7 +22,7 @@ pub enum ContainerKind {
 
 
 impl<'me> Container<'me> {
-    pub fn new(fields: &'me [(OptStringIndex, Generic<'me>)], kind: ContainerKind) -> Self {
+    pub fn new(fields: &'me [(StringIndex, Generic<'me>)], kind: ContainerKind) -> Self {
         Self {
             fields,
             kind,

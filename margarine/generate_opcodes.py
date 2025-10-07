@@ -22,6 +22,9 @@ spec = {
   "StoreField": { "field_index": "u8" },
   "LoadEnumField": { "enum_index": "u32" },
 
+  "CreateFuncRef": { "capture_count": "u8" },
+  "CallFuncRef": { "argc": "u8" },
+
   "Unwrap": {},
   "UnwrapFail": {},
 
