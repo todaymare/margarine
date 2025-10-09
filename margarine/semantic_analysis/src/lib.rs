@@ -61,10 +61,11 @@ pub enum ExprInfo {
 #[derive(Debug, Clone, Copy)]
 pub struct AnalysisResult {
     ty    : Sym,
+    is_mut: bool,
 }
 
 impl AnalysisResult {
-    pub fn new(ty: Sym) -> Self { Self { ty } }
+    pub fn new(ty: Sym) -> Self { Self { ty, is_mut: true } }
     pub fn error() -> Self { Self::new(Sym::ERROR) }
     pub fn never() -> Self { Self::new(Sym::NEVER) }
 }
@@ -145,7 +146,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
         for v in analyzer.syms.vars().iter() {
             if !matches!(v.1.sub(), syms::sym_map::VarSub::Concrete(_)) {
                 let error = Error::UnableToInfer(analyzer.ast.range(v.1.node()));
-                Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.1.node(), error)
+                Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.1.node(), error);
             }
         }
 
@@ -153,12 +154,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     }
 
 
-    fn error(&mut self, node: impl Into<NodeId>, error: Error) {
+    fn error(&mut self, node: impl Into<NodeId>, error: Error) -> ErrorId {
         Self::error_ex(&mut self.errors, &mut self.type_info, node, error)
     }
 
 
-    fn error_ex(errors: &mut KVec<SemaError, Error>, ty_info: &mut TyInfo, node: impl Into<NodeId>, error: Error) {
+    fn error_ex(errors: &mut KVec<SemaError, Error>, ty_info: &mut TyInfo, node: impl Into<NodeId>, error: Error) -> ErrorId {
         let error = errors.push(error);
         let error = ErrorId::Sema(error);
         match node.into() {
@@ -176,20 +177,22 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             NodeId::Decl(v) => ty_info.set_decl(v, error),
             NodeId::Stmt(v) => ty_info.set_stmt(v, error),
             NodeId::Err(_) => (),
-        }
+        };
+
+        error
     }
     
 
     fn dt_to_gen(&mut self, scope: Scope, dt: DataType,
                  gens: &[StringIndex]) -> Result<Generic<'out>, Error> {
         match dt.kind() {
-            DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::UNIT, &[]))),
+            DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::UNIT, &[]), None)),
 
 
             DataTypeKind::Hole => Err(Error::CantUseHoleHere { source: dt.range() }),
 
 
-            DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]))),
+            DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]), None)),
 
 
             DataTypeKind::Fn(args, ret) => {
@@ -207,14 +210,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let mut gs = Buffer::new(&*self.output, gens.len());
                 for g in gens {
-                    gs.push(Generic::new(dt.range(), GenericKind::Generic(*g)));
+                    gs.push(Generic::new(dt.range(), GenericKind::Generic(*g), None));
                 }
 
                 let ret = self.dt_to_gen(scope, *ret, gens)?;
 
                 let closure = self.syms.new_closure();
                 let sym = self.func_sym(closure, fields, ret, Vec::from_slice_in(self.output, gens).leak());
-                Ok(Generic::new(dt.range(), GenericKind::Sym(sym, gs.leak())))
+                Ok(Generic::new(dt.range(), GenericKind::Sym(sym, gs.leak()), None))
             }
 
 
@@ -234,7 +237,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let sym = self.tuple_sym(dt.range(), fields);
 
-                Ok(Generic::new(dt.range(), GenericKind::Sym(sym, generics)))
+                Ok(Generic::new(dt.range(), GenericKind::Sym(sym, generics), None))
             },
 
 
@@ -242,7 +245,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let ty = self.dt_to_gen(scope, *ty, gens)?;
                 let gens = self.output.alloc_new([ty]);
 
-                Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::LIST, gens)))
+                Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::LIST, gens), None))
             },
 
 
@@ -259,7 +262,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             DataTypeKind::CustomType(name, generics) => {
                 if gens.contains(&name) { return Ok(Generic::new(dt.range(),
-                                                    GenericKind::Generic(name))) }
+                                                    GenericKind::Generic(name), None)) }
 
                 let Some(base) = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
                 else { return Err(Error::UnknownType(name, dt.range())) };
@@ -283,7 +286,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 };
 
                 Ok(Generic::new(dt.range(),
-                                GenericKind::Sym(base, generics.leak())))
+                                GenericKind::Sym(base, generics.leak()), None))
             },
         }
     }
@@ -411,20 +414,16 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
     fn tuple_sym(&mut self, range: SourceRange, fields: &[OptStringIndex]) -> SymbolId {
-        let pool = Arena::tls_get_temp();
         let pending = self.syms.pending(&mut self.namespaces, StringMap::INVALID_IDENT, fields.len());
         let (fields, gens) = {
             let mut sym_fields = Buffer::new(self.output, fields.len());
             let mut gens = Buffer::new(self.output, fields.len());
-            let mut str = String::new_in(&*pool);
             for (index, name) in fields.iter().enumerate() {
-                str.clear();
-                write!(str, "{index}");
-                let str = self.string_map.insert(&str);
+                let str = self.string_map.num(index);
                 gens.push(str);
 
                 let name = name.to_option().unwrap_or_else(|| self.string_map.num(index));
-                sym_fields.push((name, Generic::new(range, GenericKind::Generic(str))));
+                sym_fields.push((name, Generic::new(range, GenericKind::Generic(str), None)));
             }
 
             (sym_fields.leak(), gens.leak())

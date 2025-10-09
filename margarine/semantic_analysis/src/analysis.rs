@@ -331,8 +331,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let sym = match sym {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(*id, v);
-                                Generic::new(f.1.range(), GenericKind::ERROR)
+                                let id = self.error(*id, v);
+                                Generic::new(f.1.range(), GenericKind::ERROR, Some(id))
                             },
                         };
 
@@ -377,8 +377,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let sym = match sym {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(*id, v);
-                                Generic::new(f.data_type().range(), GenericKind::ERROR)
+                                let id = self.error(*id, v);
+                                Generic::new(f.data_type().range(), GenericKind::ERROR, Some(id))
                             },
                         };
 
@@ -416,8 +416,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let sym = match sym {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(*id, v);
-                                Generic::new(a.data_type().range(), GenericKind::ERROR)
+                                let id = self.error(*id, v);
+                                Generic::new(a.data_type().range(), GenericKind::ERROR, Some(id))
                             },
                         };
 
@@ -430,8 +430,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let ret = match ret {
                         Ok(v) => v,
                         Err(v) => {
-                            self.error(*id, v);
-                            Generic::new(sig.return_type.range(), GenericKind::ERROR)
+                            let id = self.error(*id, v);
+                            Generic::new(sig.return_type.range(), GenericKind::ERROR, Some(id))
                         },
                     };
 
@@ -477,8 +477,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                             let sym = match sym {
                                 Ok(v) => v,
                                 Err(v) => {
-                                    self.error(*id, v);
-                                    Generic::new(a.data_type().range(), GenericKind::ERROR)
+                                    let id = self.error(*id, v);
+                                    Generic::new(a.data_type().range(), GenericKind::ERROR, Some(id))
                                 },
                             };
 
@@ -491,8 +491,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let ret = match ret {
                             Ok(v) => v,
                             Err(v) => {
-                                self.error(*id, v);
-                                Generic::new(f.return_type().range(), GenericKind::ERROR)
+                                let id = self.error(*id, v);
+                                Generic::new(f.return_type().range(), GenericKind::ERROR, Some(id))
                             },
                         };
 
@@ -581,11 +581,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             
             Decl::Function { sig, body, .. } => {
                 let ns = self.namespaces.get_ns(ns);
-                let Some(Ok(func)) = ns.get_sym(sig.name)
+                let Some(Ok(func_id)) = ns.get_sym(sig.name)
                 else { return };
 
                 // we need a scope that'd fake the generics
-                let sym = self.syms.sym(func);
+                let sym = self.syms.sym(func_id);
                 let SymbolKind::Function(func) = sym.kind()
                 else { unreachable!() };
 
@@ -601,6 +601,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                     vec
                 };
+
+                if generics.is_empty() {
+                    self.startups.push(func_id);
+                }
                 
                 // fake args
                 let generics = generics.leak();
@@ -644,6 +648,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         header: sig.source, item: body.range(),
                         return_type: ret, body_type: anal.ty });
                 }
+
             },
 
 
@@ -702,7 +707,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                         self.startups.push(func);
                     }
-                    _ => self.error(id, Error::UnknownAttr(attr_range, attr))
+                    _ => {
+                        self.error(id, Error::UnknownAttr(attr_range, attr));;
+                    }
                 }
             },
         }
@@ -822,7 +829,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     | Expr::IndexList { .. }
                     | Expr::AccessField { .. }
                     | Expr::Unwrap(_)
-                    | Expr::OrReturn(_) => (),
+                    | Expr::OrReturn(_) if lhs_anal.is_mut => (),
 
                     _ => {
                         let range = self.ast.range(lhs);
@@ -934,32 +941,39 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                     let sym = self.syms.sym(sym_id);
 
-                    let SymbolKind::Function(func) = sym.kind()
-                    else { return Err(Error::CallOnNonFunction { source: range, name: sym.name() }) };
+                    match sym.kind() {
+                        SymbolKind::Function(func) => {
+                            self.type_info.set_ident(id, Some(sym_id));
 
+                            let mut anal = match func.kind() {
+                                FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, GenListId::EMPTY)),
+                                _ => {
+                                    let closure = self.syms.new_closure();
 
-                    self.type_info.set_ident(id, Some(sym_id));
+                                    let mut gens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
+                                    for g in sym.generics().iter() {
+                                        let var = self.syms.new_var(id, range);
+                                        gens.push((*g, var));
+                                    }
 
-                    match func.kind() {
-                        FunctionKind::Closure(_) => return Ok(AnalysisResult::new(Sym::Ty(sym_id, GenListId::EMPTY))),
-                        _ => {
-                            let closure = self.syms.new_closure();
+                                    let gens = self.syms.add_gens(gens.leak());
 
-                            let mut gens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
-                            for g in sym.generics().iter() {
-                                let var = self.syms.new_var(id, range);
-                                gens.push((*g, var));
-                            }
+                                    let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
+                                    AnalysisResult::new(Sym::Ty(sym, gens))
+                                }
+                            };
 
-                            let gens = self.syms.add_gens(gens.leak());
+                            anal.is_mut = false;
+                            return Ok(anal)
 
-                            let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
-                            return Ok(AnalysisResult::new(Sym::Ty(sym, gens)))
-                        }
+                        },
+
+                        _ => (),
                     }
+
                 }
 
-                    return Err(Error::VariableNotFound { name: ident, source: range })
+                return Err(Error::VariableNotFound { name: ident, source: range })
 
             },
 
@@ -1011,11 +1025,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let mut fargs = sti::vec::Vec::new_in(self.syms.arena());
                 for arg in sargs {
                     let sym = arg.1.sym(&mut self.syms)?;
-                    fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Sym(sym, &[]))));
+                    fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Sym(sym, &[]), None)));
                 }
 
                 let ret = ret.ty.sym(&mut self.syms)?;
-                let ret = Generic::new(range, GenericKind::Sym(ret, &[]));
+                let ret = Generic::new(range, GenericKind::Sym(ret, &[]), None);
 
                 let closure_ty = self.func_sym(closure, fargs.leak(), ret, &[]);
                 AnalysisResult::new(Sym::Ty(closure_ty, GenListId::EMPTY))
@@ -1112,7 +1126,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 match operator {
                     UnaryOperator::Not if sym == SymbolId::BOOL => (),
-                    UnaryOperator::Neg if sym.is_sint() => (),
+                    UnaryOperator::Neg if sym.is_num() => (),
                     
                     _ => return Err(Error::InvalidUnaryOp { operator, rhs: rhs_anal.ty, source: range })
                 }
@@ -1326,8 +1340,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let SymbolKind::Container(cont) = sym.kind()
                 else { return Err(Error::FieldAccessOnNonEnumOrStruct { source: range, typ: expr.ty }) };
 
-                let mut str = sti::string::String::new_in(self.temp);
-                let field = cont.fields().iter().enumerate().find(|(i, f)| {
+                let field = cont.fields().iter().enumerate().find(|(_, f)| {
                     let name = f.0;
                     field_name == name
                 });
@@ -1339,7 +1352,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let gens = expr.ty.gens(&self.syms);
                 let gens = self.syms.get_gens(gens);
 
-                let field_ty = field.1.to_ty(gens, &mut self.syms)?;
+                let field_gen = field.1;
+                let field_ty = field_gen.to_ty(gens, &mut self.syms)?;
 
                 let ty = match cont.kind() {
                     ContainerKind::Struct => field_ty,
@@ -1351,6 +1365,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                     ContainerKind::Tuple => field_ty,
                 };
+
+                if let Some(e) = field_gen.err() {
+                    self.type_info.exprs[id] = Some(crate::ExprInfo::Errored(e));
+                }
 
                 AnalysisResult::new(ty)
             },
@@ -1456,7 +1474,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 for (a, &fa) in args_anals.iter().zip(func_args.iter()) {
                     if !a.1.ty.eq(&mut self.syms, fa) {
                         self.error(a.2, Error::InvalidType {
-                            source: a.0, found: a.1.ty, expected: fa })
+                            source: a.0, found: a.1.ty, expected: fa });
                     }
                 }
 

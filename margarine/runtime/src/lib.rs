@@ -235,7 +235,7 @@ impl<'src> VM<'src> {
         let code_section = &src[offset..];
 
         Ok(Self {
-            stack: Stack::new(16),
+            stack: Stack::new(1024),
             callstack: Callstack::new(256, code_section),
             curr: CallFrame::new(code_section, 0, 0),
             funcs,

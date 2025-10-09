@@ -1,3 +1,5 @@
+pub mod raylib;
+
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Duration;

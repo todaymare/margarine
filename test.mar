@@ -1,11 +1,4 @@
-extern {
-    fn print_raw<T>(val: T, ty_id: int)
-}
-
-
-fn print<T>(val: T) {
-    print_raw(val, type_id::<T>())
-}
+use std::print
 
 @startup
 fn main() {
@@ -23,8 +16,8 @@ fn main() {
         yay: |value: float| {
             print("hi");
             3
-        }
-    };
+
+    }
 
     var x = foo.yay;
     print(x(3.0))

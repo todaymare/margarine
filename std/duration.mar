@@ -42,6 +42,11 @@ impl Duration {
 	}
 
 
+    fn elapsed(self): Duration {
+        Duration::now().sub(self)
+    }
+
+
 	/// Creates a new `Duration` from the given number
 	/// of whole seconds
 	/// 
