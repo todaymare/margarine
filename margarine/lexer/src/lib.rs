@@ -208,6 +208,7 @@ pub enum Keyword {
     As,
     For,
     In,
+    Static,
 }
 
 pub fn lex<'a, 'arena>(

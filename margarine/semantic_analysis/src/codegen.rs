@@ -480,7 +480,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         for (i, &n) in instrs.iter().enumerate() {
             has_ret = false;
             match n {
-                NodeId::Decl(decl_id) => {
+                NodeId::Decl(_) => {
                     continue;
                 },
 

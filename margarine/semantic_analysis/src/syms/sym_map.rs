@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}, ImmutableData};
+use errors::ErrorId;
 use parser::nodes::{decl::DeclId, NodeId};
 use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
 
@@ -48,6 +49,7 @@ pub enum VarSub {
 pub struct Generic<'me> {
     range: SourceRange,
     kind : GenericKind<'me>,
+    err  : Option<ErrorId>,
 }
 
 
@@ -87,11 +89,11 @@ impl<'me> SymbolMap<'me> {
         let ret = {
             let mut vec = sti::vec::Vec::with_cap_in(self.arena, generics.len());
             for g in generics {
-                vec.push(Generic::new(range, GenericKind::Generic(*g)));
+                vec.push(Generic::new(range, GenericKind::Generic(*g), None));
             }
 
             let gens = vec.leak();
-            Generic::new(range, GenericKind::Sym(id, gens))
+            Generic::new(range, GenericKind::Sym(id, gens), None)
         };
 
         for (index, i) in mappings.iter().enumerate() {
@@ -202,7 +204,7 @@ impl<'me> SymbolMap<'me> {
 
 
 impl<'me> Generic<'me> {
-    pub fn new(range: SourceRange, kind: GenericKind<'me>) -> Self { Self { range, kind } }
+    pub fn new(range: SourceRange, kind: GenericKind<'me>, err: Option<ErrorId>) -> Self { Self { range, kind, err } }
 
     pub fn sym(self) -> Option<SymbolId> {
         match self.kind {
@@ -262,8 +264,8 @@ impl<'me> SymbolMap<'me> {
             let pending = slf.pending(ns_map, StringMap::BOOL, 0);
             assert_eq!(pending, SymbolId::BOOL);
             let fields = [
-                (StringMap::TRUE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
-                (StringMap::FALSE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
+                (StringMap::TRUE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None)),
+                (StringMap::FALSE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None)),
             ];
 
             slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO,
@@ -278,8 +280,8 @@ impl<'me> SymbolMap<'me> {
             let pending = slf.pending(ns_map, StringMap::PTR, 1);
             assert_eq!(pending, SymbolId::PTR);
             let fields = [
-                (StringMap::COUNT, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
-                (StringMap::VALUE, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
+                (StringMap::COUNT, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None)),
+                (StringMap::VALUE, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T), None)),
             ];
 
             let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
@@ -293,8 +295,8 @@ impl<'me> SymbolMap<'me> {
             let pending = slf.pending(ns_map, StringMap::RANGE, 0);
             assert_eq!(pending, SymbolId::RANGE);
             let fields = [
-                (StringMap::MIN, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
-                (StringMap::MAX, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]))),
+                (StringMap::MIN, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None)),
+                (StringMap::MAX, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None)),
             ];
 
             let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
@@ -309,8 +311,8 @@ impl<'me> SymbolMap<'me> {
             let pending = slf.pending(ns_map, StringMap::OPTION, 1);
             assert_eq!(pending, SymbolId::OPTION);
             let fields = [
-                (StringMap::SOME, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
-                (StringMap::NONE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]))),
+                (StringMap::SOME, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T), None)),
+                (StringMap::NONE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None)),
             ];
 
             let gens = slf.arena.alloc_new([StringMap::T]);
@@ -325,8 +327,8 @@ impl<'me> SymbolMap<'me> {
             let pending = slf.pending(ns_map, StringMap::RESULT, 2);
             assert_eq!(pending, SymbolId::RESULT);
             let fields = [
-                (StringMap::OK , Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T))),
-                (StringMap::ERR, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A))),
+                (StringMap::OK , Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T), None)),
+                (StringMap::ERR, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A), None)),
             ];
 
             let gens = slf.arena.alloc_new([StringMap::T, StringMap::A]);
@@ -357,7 +359,7 @@ impl<'me> SymbolMap<'me> {
                 &[StringMap::T],
                 SymbolKind::Function(FunctionTy::new(
                         &[],
-                        Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[])),
+                        Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None),
                         FunctionKind::TypeId,
                         None,
                 )));

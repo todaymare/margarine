@@ -1,0 +1,145 @@
+use std::print
+use std::duration::Duration
+
+
+extern {
+    fn RaylibInitWindow(width: int, height: int, title: str)
+    fn RaylibWindowShouldClose(): bool
+
+    fn RaylibSetTargetFPS(fps: int)
+    fn RaylibBeginDrawing()
+    fn RaylibEndDrawing()
+    fn RaylibClearBackground(color: Color)
+    fn RaylibDrawText(text: str, pos_x: int, pos_y: int, font_size: int, color: Color)
+    fn RaylibDrawRectangle(pos_x: int, pos_y: int, w: int, h: int, color: Color)
+    fn RaylibDrawFPS(pos_x: int, pos_y: int)
+    fn RaylibIsKeyPressed(key: int): bool
+
+    fn RaylibCloseWindow()
+}
+
+
+struct Color {
+    r: float,
+    g: float,
+    b: float,
+    a: float,
+}
+
+
+enum Key {
+    Space,
+}
+
+
+impl Key {
+    fn as_int(self): int {
+        match self {
+            Space => 32,
+        }
+    }
+}
+
+
+fn main() {
+    RaylibInitWindow(500, 600, "hello");
+    var bird = Bird {
+        position: Vec2 { x: 250.0 - 16.0, y: 100.0 },
+        velocity: Vec2 { x: 0.0, y: 0.0 },
+    };
+
+    var pipe = Pipe {
+        position: Vec2 { x: 0.0, y: 300.0 },
+    };
+
+    var updateables = [];
+    var drawables = [];
+
+    updateables.push(|dt| bird.update(dt));
+    updateables.push(|dt| pipe.update(dt));
+    drawables.push(|| bird.draw());
+    drawables.push(|| pipe.draw());
+
+    RaylibSetTargetFPS(60);
+
+    var last_frame = Duration::now();
+    while !RaylibWindowShouldClose(){
+        var dt = last_frame.elapsed().as_secs_float();
+        last_frame = Duration::now();
+
+        dt = 1.0/60.0;
+
+        for updateable in updateables.iter() {
+            updateable(dt)
+        }
+
+        if RaylibIsKeyPressed(Key::Space().as_int()) {
+            bird.velocity.y = -200.0;
+        }
+
+        // draw
+        RaylibBeginDrawing();
+
+        RaylibDrawFPS(0, 0);
+        RaylibClearBackground(Color { r: 0.0, g: 0.0, a: 1.0, b: 0.0 });
+
+        for drawable in drawables.iter() {
+            drawable()
+        }
+
+        RaylibEndDrawing();
+    }
+
+    RaylibCloseWindow();
+}
+
+
+struct Bird {
+    position: Vec2,
+    velocity: Vec2,
+}
+
+struct Pipe {
+    position: Vec2,
+}
+
+
+struct Vec2 {
+    x: float,
+    y: float,
+}
+
+
+impl Bird {
+    fn update(self, dt: float) {
+        self.velocity.y += 180.0 * dt;
+
+        self.position.x += self.velocity.x * dt;
+        self.position.y += self.velocity.y * dt;
+    }
+
+
+    fn draw(self) {
+        RaylibDrawRectangle(self.position.x as int, self.position.y as int,
+                            32, 32, Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+    }
+}
+
+impl Pipe {
+    fn update(self, dt: float) {
+        self.position.x -= 180.0 * dt;
+        if self.position.x < -16.0 {
+            self.position.x = 500.0;
+        }
+    }
+
+
+    fn draw(self) {
+        var gap = 50;
+
+        RaylibDrawRectangle(self.position.x as int, self.position.y as int - 320 - gap,
+                            32, 320, Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+        RaylibDrawRectangle(self.position.x as int, self.position.y as int + gap,
+                            32, 320, Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+    }
+}

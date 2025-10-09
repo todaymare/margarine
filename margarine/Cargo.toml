@@ -18,3 +18,4 @@ errors = { path = "./errors" }
 
 sti = { git = "https://github.com/leddoo/sti" }
 
+raylib = "*"
