@@ -92,7 +92,7 @@ fn tokens() {
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table, 0);
-        assert!(matches!(tokens.1.inner()[0], Error::InvalidCharacter { .. }));
+        assert!(matches!(tokens.1.as_slice()[0], Error::InvalidCharacter { .. }));
     }
 }
 
@@ -154,7 +154,7 @@ fn numbers() {
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table, 0);
-        assert!(matches!(tokens.1.inner()[0], Error::TooManyDots(..)))
+        assert!(matches!(tokens.1.as_slice()[0], Error::TooManyDots(..)))
     }
 }
 
@@ -220,7 +220,7 @@ fn string() {
         let file_data = FileData::new(data.to_string(), file, Extension::None);
 
         let tokens = lex(&file_data, &mut symbol_table, 0);
-        assert!(matches!(tokens.1.inner()[0], Error::UnterminatedString(..)));
+        assert!(matches!(tokens.1.as_slice()[0], Error::UnterminatedString(..)));
     }
 }
 

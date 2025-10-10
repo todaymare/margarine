@@ -1,4 +1,4 @@
-use common::{source::SourceRange, string_map::{OptStringIndex, StringIndex}, ImmutableData};
+use common::{source::SourceRange, string_map::{StringIndex}, ImmutableData};
 
 #[derive(Debug, PartialEq, Clone, Copy, ImmutableData)]
 pub struct DataType<'a> {
@@ -19,7 +19,7 @@ pub enum DataTypeKind<'a> {
     Unit,
     Never,
     Hole,
-    Tuple(&'a [(OptStringIndex, DataType<'a>)]),
+    Tuple(&'a [(Option<StringIndex>, DataType<'a>)]),
     List(&'a DataType<'a>),
     Within(StringIndex, &'a DataType<'a>),
     CustomType(StringIndex, &'a [DataType<'a>]),

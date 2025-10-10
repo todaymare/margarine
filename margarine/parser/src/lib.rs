@@ -8,7 +8,7 @@ use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
-use sti::{alloc::Alloc, arena::Arena, keyed::KVec, vec::Vec};
+use sti::{alloc::Alloc, arena::Arena, vec::{KVec, Vec}};
 
 use crate::nodes::expr::{BinaryOperator, ExprId};
 
@@ -222,9 +222,8 @@ impl<'out> Parser<'_, 'out, '_> {
                 DataType::new(self.current_range(), DataTypeKind::Unit)
             } else {
                 let start = self.current_range().start();
-                let pool = Arena::tls_get_rec();
 
-                let mut vec = Vec::new_in(&*pool);
+                let mut vec = Vec::new_in(self.arena);
                 loop {
                     if self.current_is(TokenKind::RightParenthesis) {
                         break
@@ -248,8 +247,8 @@ impl<'out> Parser<'_, 'out, '_> {
                         self.expect(TokenKind::Colon)?;
                         self.advance();
 
-                        ident.some()
-                    } else { None.into() };
+                        Some(ident)
+                    } else { None };
 
                     let typ = self.expect_type()?;
                     vec.push((name, typ));
@@ -260,7 +259,7 @@ impl<'out> Parser<'_, 'out, '_> {
 
                 DataType::new(
                     SourceRange::new(start, self.current_range().end()),
-                    DataTypeKind::Tuple(vec.move_into(self.arena).leak())
+                    DataTypeKind::Tuple(vec.leak())
                 )
             }
         } else {
@@ -404,7 +403,9 @@ impl<'out> Parser<'_, 'out, '_> {
             let statement = self.statement(settings);
 
             match statement {
-                Ok (e) => storage.push(e.into()),
+                Ok (e) => {
+                    storage.push(e.into());
+                },
                 Err(e) => {
                     storage.push(NodeId::Err(e));
 
@@ -763,14 +764,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
             parser.expect(TokenKind::Keyword(Keyword::Fn))?;
             parser.advance();
 
+            let path = if let Some(path) = parser.is_literal_str() { parser.advance(); Some(path) }
+            else { None };
+
             let name = parser.expect_identifier()?;
+            let path = match path {
+                Some(v) => v,
+                None => name,
+            };
             
             parser.advance();
-
             let gens = parser.generic_decl()?;
-
-            let path = if let Some(path) = parser.is_literal_str() { parser.advance(); path }
-            else { name };
 
             parser.expect(TokenKind::LeftParenthesis)?;
             parser.advance();
@@ -1003,8 +1007,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Var))?;
         self.advance();
 
-        let pool = Arena::tls_get_temp();
-        let mut bindings = Vec::new_in(&*pool);
+        let mut bindings = Vec::new_in(self.arena);
         loop {
             if !bindings.is_empty() {
                 self.expect(TokenKind::Comma)?;
@@ -1043,7 +1046,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             Stmt::Variable { name: b, hint, rhs }
         } else {
             Stmt::VariableTuple {
-                names: bindings.move_into(self.arena).leak(), 
+                names: bindings.leak(), 
                 hint, rhs
             }
         }, source))
@@ -1445,8 +1448,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 self.advance();
 
                 if self.current_is(TokenKind::Comma) {
-                    let pool = Arena::tls_get_rec();
-                    let mut vec = Vec::new_in(&*pool);
+                    let mut vec = Vec::new_in(&*self.arena);
                     vec.push(expr);
                     while self.current_is(TokenKind::Comma) {
                         self.advance();
@@ -1457,7 +1459,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     }
                     self.expect(TokenKind::RightParenthesis)?;
                     return Ok(self.ast.add_expr(
-                        Expr::Tuple(vec.move_into(self.arena).leak()), 
+                        Expr::Tuple(vec.leak()), 
                         SourceRange::new(start, self.current_range().end())
                     ));
                 }
@@ -1830,8 +1832,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         associated: Option<ExprId>
     ) -> Result<&'ta mut [ExprId], ErrorId> {
 
-        let binding = Arena::tls_get_rec();
-        let mut args = Vec::new_in(&*binding);
+        let mut args = Vec::new_in(&*self.arena);
 
         if let Some(node) = associated {
             args.push(node);
@@ -1868,7 +1869,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         }
         self.expect(TokenKind::RightParenthesis)?;
 
-        Ok(args.move_into(self.arena).leak())
+        Ok(args.leak_slice())
     }
 
 
@@ -1884,6 +1885,15 @@ impl<'ta> Parser<'_, 'ta, '_> {
         |parser, _| {
             let start = parser.current_range().start();
             let name = parser.expect_identifier()?;
+
+            if parser.peek_is(TokenKind::Comma) || parser.peek_is(TokenKind::RightBracket) {
+                return Ok((
+                    name,
+                    parser.current_range(),
+                    parser.ast.add_expr(Expr::Identifier(name), parser.current_range())
+                ));
+            }
+
             parser.advance();
 
             parser.expect(TokenKind::Colon)?;

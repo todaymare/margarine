@@ -28,7 +28,7 @@ impl<'src> VM<'src> {
         unsafe {
         loop {
             let opcode = self.curr.next();
-            //println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
+            println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
             //println!("{:?}", self.stack);
             
             match opcode {

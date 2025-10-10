@@ -2,6 +2,7 @@ pub mod string_map;
 pub mod hashables;
 pub mod source;
 pub mod buffer;
+pub mod utf8;
 
 use std::{ops::Deref, time::Instant};
 
@@ -64,7 +65,7 @@ pub fn find_duplicate<'a, T: PartialEq, A: Alloc>(
     for i in 0..fields.len() {
         for j in 0..i {
             if fields[i] == fields[j] {
-                buff.push((&fields[i], &fields[j]))
+                buff.push((&fields[i], &fields[j]));
             }
         }
     }

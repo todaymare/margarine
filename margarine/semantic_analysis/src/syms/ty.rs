@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 
 use common::string_map::{StringIndex, StringMap};
-use sti::{format_in, hash::fxhash::FxHasher32, traits::FromIn};
+use sti::{format_in, hash::fxhash::FxHasher32, ext::FromIn};
 
 use crate::{errors::Error, syms::{containers::ContainerKind, func::FunctionKind, SymbolKind}};
 

@@ -15,9 +15,9 @@ pub enum ErrorId {
 }
 
 
-define_key!(u32, pub LexerError);
-define_key!(u32, pub ParserError);
-define_key!(u32, pub SemaError);
+define_key!(pub LexerError(pub u32));
+define_key!(pub ParserError(pub u32));
+define_key!(pub SemaError(pub u32));
 
 pub trait ErrorType<T> {
     fn display(&self, fmt: &mut ErrorFormatter, data: &mut T);

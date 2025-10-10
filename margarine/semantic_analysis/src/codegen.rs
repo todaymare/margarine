@@ -4,11 +4,10 @@ use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, stmt::StmtId, NodeId, AST};
 use runtime::opcode::{self, runtime::{builder::{self, Builder}, consts}, HEADER};
-use sti::{arena::Arena, define_key, keyed::KVec};
+use sti::{arena::Arena, define_key, vec::KVec};
 
 use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
 
-#[derive(Debug)]
 pub struct Conversion<'me, 'out, 'ast, 'str> {
     string_map: &'me mut StringMap<'str>,
     syms: &'me mut SymbolMap<'out>,
@@ -96,8 +95,8 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
 
     // create IR
-    for sym in &ty_checker.startups {
-        conv.get_func(*sym, GenListId::EMPTY).unwrap();
+    for (_, sym) in &ty_checker.startups {
+        let _ = conv.get_func(*sym, GenListId::EMPTY);
     }
 
     // do the codegen
@@ -167,17 +166,17 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
                         BlockTerminator::Err(err) => {
                             match err {
                                 errors::ErrorId::Lexer(error) => {
-                                    code.err(0, error.0, error.1.inner());
+                                    code.err(0, error.0, error.1.0);
                                 },
 
 
                                 errors::ErrorId::Parser(error) => {
-                                    code.err(1, error.0, error.1.inner());
+                                    code.err(1, error.0, error.1.0);
 
                                 },
 
                                 errors::ErrorId::Sema(sema_error) => {
-                                    code.err(2, 0, sema_error.inner());
+                                    code.err(2, 0, sema_error.0);
                                 },
 
 
@@ -406,7 +405,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 };
 
                 let id = gens[0].1.sym(self.syms).unwrap();
-                block.bytecode.const_int(id.inner() as i64);
+                block.bytecode.const_int(id.0 as i64);
 
                 let func = Function {
                     name: self.string_map.insert(ty.display(self.string_map, self.syms)),

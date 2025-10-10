@@ -1,0 +1,3 @@
+extern {
+    fn random(): float
+}

@@ -9,6 +9,6 @@ fuzzer = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sti = { git = "https://github.com/leddoo/sti"}
+sti = { path = "../../vendor/sti" }
 colourful = { git = "https://github.com/rookieCookies/colourful" }
 derive = { path = "./derive" }

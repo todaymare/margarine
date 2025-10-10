@@ -189,12 +189,10 @@ impl Duration {
 	fn sub(self, other: Duration): Duration {
 		var duration_nanos = self.nanos - other.nanos;
 		var duration_secs = self.secs - other.secs;
-		if duration_nanos < 0 {
-			var nanos = duration_nanos.abs();
-
-			duration_secs = duration_secs - 1;
-			duration_nanos = nanos + 1_000_000_000;
-		}
+        if duration_nanos < 0 {
+            duration_secs = duration_secs - 1;
+            duration_nanos = 1_000_000_000 + duration_nanos;
+        }
 
 		Duration { secs: duration_secs, nanos: duration_nanos }
 	}
@@ -213,10 +211,8 @@ impl Duration {
 		var duration_nanos = self.nanos + other.nanos;
 		var duration_secs = self.secs + other.secs;
 		if duration_nanos >= 1_000_000_000 {
-			var nanos = duration_nanos;
-
-			duration_secs = duration_secs + 1;
-			duration_nanos = nanos - 1_000_000_000;
+            duration_secs = duration_secs + 1;
+            duration_nanos = duration_nanos - 1_000_000_000;
 		}
 
 		Duration { secs: duration_secs, nanos: duration_nanos }

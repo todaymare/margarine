@@ -1,11 +1,7 @@
 pub mod raylib;
 
 use std::collections::HashMap;
-use std::collections::HashSet;
-use std::time::Duration;
-use std::time::Instant;
 
-use common::string_map::HashStr;
 use common::string_map::StringIndex;
 pub use lexer::lex;
 use parser::nodes::decl::Decl;
@@ -22,7 +18,7 @@ use semantic_analysis::syms::sym_map::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 pub use runtime::{VM, opcode, Status, FatalError, Reg};
-use sti::arena::Arena;
+pub use sti::arena::Arena;
 use sti::hash::fxhash::fxhash64;
 
 
@@ -148,7 +144,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
     for l in lex_errors {
         let mut file = Vec::with_capacity(l.len());
         for e in l.iter() {
-            let report = display(e.1, &sema.string_map, &files, &mut ());
+            let report = display(e, &sema.string_map, &files, &mut ());
             #[cfg(not(feature = "fuzzer"))]
             println!("{report}");
             file.push(report);
@@ -161,7 +157,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
     for l in parse_errors {
         let mut file = Vec::with_capacity(l.len());
         for e in l.iter() {
-            let report = display(e.1, &sema.string_map, &files, &mut ());
+            let report = display(e, &sema.string_map, &files, &mut ());
             #[cfg(not(feature = "fuzzer"))]
             println!("{report}");
             file.push(report);
@@ -172,7 +168,7 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
 
     let mut sema_errors = Vec::with_capacity(sema.errors.len());
     for s in sema.errors.iter() {
-        let report = display(s.1, &sema.string_map, &files, &mut sema.syms);
+        let report = display(s, &sema.string_map, &files, &mut sema.syms);
 
         #[cfg(not(feature = "fuzzer"))]
         println!("{report}");
@@ -192,7 +188,7 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
         let ty_id = unsafe { vm.stack.reg(1).as_int() };
 
         unsafe {
-        match SymbolId::new_unck(ty_id as u32) {
+        match SymbolId(ty_id as u32) {
             SymbolId::I64 => println!("{}", val.as_int()),
             SymbolId::F64 => println!("{}", val.as_float()),
             SymbolId::BOOL => println!("{}", val.as_bool()),
@@ -282,7 +278,7 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
             .duration_since(std::time::UNIX_EPOCH)
         else { panic!("failed to get the epoch") };
 
-        let secs = time.as_nanos();
+        let secs = time.subsec_nanos();
         Reg::new_int(secs as i64)
     });
 
@@ -296,5 +292,9 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
         let int = unsafe { vm.stack.reg(0).as_float() };
         let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
         obj
+    });
+
+    hosts.insert("random".to_string(), |_| {
+        Reg::new_float(rand::random())
     });
 }

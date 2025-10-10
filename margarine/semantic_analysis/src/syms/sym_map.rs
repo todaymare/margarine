@@ -1,20 +1,19 @@
 use std::collections::HashSet;
 
-use common::{copy_slice_in, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}, ImmutableData};
+use common::{copy_slice_in, source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use errors::ErrorId;
 use parser::nodes::{decl::DeclId, NodeId};
-use sti::{arena::Arena, define_key, keyed::KVec, traits::FromIn};
+use sti::{arena::Arena, define_key, ext::FromIn, vec::KVec};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, scope::VariableScope, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind}};
 
 use super::{ty::Sym, Symbol};
 
-define_key!(u32, pub SymbolId);
-define_key!(u32, pub GenListId);
-define_key!(u32, pub VarId);
-define_key!(u32, pub ClosureId);
+define_key!(pub SymbolId(pub u32));
+define_key!(pub GenListId(pub u32));
+define_key!(pub VarId(pub u32));
+define_key!(pub ClosureId(pub u32));
 
-#[derive(Debug)]
 pub struct SymbolMap<'me> {
     syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId)>,
     gens : KVec<GenListId, &'me [(StringIndex, Sym)]>,
@@ -227,7 +226,7 @@ impl<'me> Generic<'me> {
 
 
             GenericKind::Sym(symbol, generics) => {
-                let pool = Arena::tls_get_rec();
+                let pool = map.arena();
                 let generics = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, generics.len());
                     for g in generics {

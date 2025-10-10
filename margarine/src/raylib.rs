@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ffi::CString, str::FromStr};
 
-use raylib::color;
+use raylib::{color, ffi::KeyboardKey};
 use runtime::{Reg, VM};
 
 pub fn raylib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
@@ -130,6 +130,12 @@ pub fn raylib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
     |vm| { unsafe {
         let x = vm.stack.reg(0).as_int();
         Reg::new_bool(raylib::ffi::IsKeyPressed(x as _))
+    } });
+
+
+    hosts.insert("RaylibFrameTime".to_string(),
+    |_| { unsafe {
+        Reg::new_float(raylib::ffi::GetFrameTime() as _)
     } });
 
 
