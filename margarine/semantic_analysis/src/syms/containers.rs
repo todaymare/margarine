@@ -1,4 +1,4 @@
-use common::{string_map::{OptStringIndex, StringIndex}, ImmutableData};
+use common::{string_map::{StringIndex}, ImmutableData};
 
 use super::sym_map::Generic;
 

@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
-use sti::{arena::{Arena, ArenaStats}, define_key, format_in, hash::{fxhash::FxHasher32, HashFn, HashMapF}};
+use sti::{alloc::GlobalAlloc, arena::{Arena, ArenaStats}, define_key, format_in, hash::{fxhash::{fxhash32, FxHasher32}, hash_map::Hash32, HashFn, HashMap}};
 
-define_key!(u32, pub StringIndex, opt: pub OptStringIndex);
+define_key!(pub StringIndex(u32));
 
 pub struct StringMap<'a> {
     arena: &'a Arena,
-    map: sti::hash::HashMapF<HashStr<'a>, StringIndex, HashStrHashFn>,
+    map: HashMap<HashStr<'a>, StringIndex, GlobalAlloc, HashStrHashFn>,
     vec: Vec<&'a str>,
 }
 
@@ -56,8 +56,7 @@ impl<'str> StringMap<'str> {
     #[inline(always)]
     pub fn with_capacity(cap: usize, arena: &'str Arena) -> Self {
         let mut s = Self {
-            map: HashMapF::fwith_cap(cap),
-            // map: FuckMap::with_capacity(cap),
+            map: HashMap::with_hash_and_cap_in(GlobalAlloc, HashStrHashFn, cap),
             vec: Vec::with_capacity(cap),
             arena,
         };
@@ -104,32 +103,28 @@ impl<'str> StringMap<'str> {
     #[inline(always)]
     pub fn insert(&mut self, value: &str) -> StringIndex {
         let key = HashStr::new(unsafe { std::mem::transmute(value) });
-        *self.map.get_or_insert_with_key(&key, |_| {
-            debug_assert!(self.vec.len() < u32::MAX as usize);
+        let (exists, slot) = self.map.entry_for_insert(&key);
 
-            let alloc = self.arena.alloc_str(value);
+        if exists {
+            return *self.map.slot(slot).1
+        }
 
-            let index = StringIndex(self.vec.len() as u32);
-            self.vec.push(alloc);
+        debug_assert!(self.vec.len() < u32::MAX as usize);
 
-            (HashStr::with_hash(alloc, key.hash()), index)
-        })
+        let alloc = self.arena.alloc_str(value);
+
+        let index = StringIndex(self.vec.len() as u32);
+        self.vec.push(alloc);
+
+        self.map.insert_at(slot, Hash32(key.hash()), key, index);
+        index
     }
 
 
     #[inline(always)]
     pub fn num(&mut self, num: usize) -> StringIndex {
         let value = format_in!(self.arena, "{num}").leak();
-
-        let key = HashStr::new(&value);
-        *self.map.get_or_insert_with_key(&key, |_| {
-            debug_assert!(self.vec.len() < u32::MAX as usize);
-
-            let index = StringIndex(self.vec.len() as u32);
-            self.vec.push(value);
-
-            (HashStr::with_hash(value, key.hash()), index)
-        })
+        self.insert(value)
     }
 
 
@@ -176,7 +171,7 @@ impl<'str> StringMap<'str> {
 
         let b = self.get(b);
 
-        let temp = Arena::tls_get_temp();
+        let temp = self.arena();
         let str = format_in!(&*temp, "{}::{}", a, b);
         self.insert(&*str)
     }
@@ -217,7 +212,7 @@ impl<'a> HashStr<'a> {
     pub fn new(str: &'a str) -> Self {
         let ptr = str.as_ptr();
         let len = str.len().try_into().unwrap();
-        let hash = FxHasher32::hash_bytes(str.as_bytes());
+        let hash = fxhash32(str.as_bytes());
         Self { ptr, len, hash, phantom: PhantomData }
     }
 
@@ -266,14 +261,8 @@ impl<'a> Eq for HashStr<'a> {}
 
 struct HashStrHashFn;
 
-impl<'a> HashFn<HashStr<'a>> for HashStrHashFn {
-    type Seed = ();
-    type Hash = u32;
-
-    const DEFAULT_SEED: () = ();
-
-    #[inline(always)]
-    fn hash_with_seed(_: (), value: &HashStr<'a>) -> u32 {
-        value.hash
+impl<'a> HashFn<HashStr<'a>, u32> for HashStrHashFn {
+    fn hash(&self, value: &HashStr) -> u32 {
+        value.hash()
     }
 }

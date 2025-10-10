@@ -5,7 +5,7 @@ use crate::{DataType, Block};
 
 use super::expr::ExprId;
 
-define_key!(u32, pub StmtId);
+define_key!(pub StmtId(u32));
 
 
 #[derive(Debug, PartialEq, Clone, Copy)]

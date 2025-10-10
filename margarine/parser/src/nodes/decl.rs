@@ -3,7 +3,7 @@ use sti::define_key;
 
 use crate::{DataType, Block};
 
-define_key!(u32, pub DeclId);
+define_key!(pub DeclId(u32));
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Decl<'a> {

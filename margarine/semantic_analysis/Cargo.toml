@@ -8,6 +8,6 @@ common = { path = "../common" }
 errors = { path = "../errors" }
 parser = { path = "../parser" }
 lexer  = { path = "../lexer" }
-sti = { git = "https://github.com/leddoo/sti" }
+sti = { path = "../../vendor/sti" }
 
 runtime = { path = "../runtime" }

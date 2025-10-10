@@ -43,7 +43,7 @@ impl<T, A: Alloc> Buffer<T, A> {
     /// The returned slice isn't guaranteed to be
     /// as big as the initial buffer
     pub fn leak<'a>(self) -> &'a mut [T] where A: 'a {
-        self.internal.leak()
+        self.internal.leak_slice()
     }
 
     pub fn extend_from_slice<'a>(&mut self, vals: &'a [T]) -> Option<&'a [T]> where T: Copy {

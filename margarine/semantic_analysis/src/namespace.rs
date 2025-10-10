@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use common::{source::SourceRange, string_map::StringIndex};
 use errors::{ErrorId, SemaError};
-use sti::{define_key, keyed::{KVec, Key}};
+use sti::{define_key, vec::{KVec}};
 
 use crate::{errors::Error, syms::sym_map::SymbolId};
 
-define_key!(u32, pub NamespaceId);
+define_key!(pub NamespaceId(u32));
 
 
 #[derive(Debug)]
@@ -38,7 +38,7 @@ impl NamespaceMap {
 
     pub fn get_double(&mut self, ns1: NamespaceId, ns2: NamespaceId) -> (&mut Namespace, &mut Namespace) {
         assert_ne!(ns1, ns2);
-        let arr = self.map.inner_mut().get_disjoint_mut([ns1.usize(), ns2.usize()]).unwrap();
+        let arr = self.map.as_mut_slice().get_disjoint_mut([ns1.usize(), ns2.usize()]).unwrap();
         let ptr = arr.as_ptr();
         unsafe { (ptr.read(), ptr.add(1).read()) }
     }
@@ -102,4 +102,9 @@ impl Namespace {
     pub fn nss(&self) -> &HashMap<StringIndex, NamespaceId> {
         &self.namespaces
     }
+}
+
+
+impl NamespaceId {
+    pub fn usize(self) -> usize { self.0 as usize }
 }

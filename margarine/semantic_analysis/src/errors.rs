@@ -525,7 +525,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::MissingFields { source, fields } => {
                 let mut msg = format!("missing fields: ");
                 let mut is_first = true;
-                for n in fields {
+                for (_, n) in fields {
                     if !is_first {
                         let _ = write!(msg, ", ");
                     }

@@ -1,13 +1,13 @@
 #![feature(slice_partition_dedup)]
 use std::{collections::HashMap, fmt::Write};
 
-use common::{buffer::Buffer, source::SourceRange, string_map::{OptStringIndex, StringIndex, StringMap}, Either};
+use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}, Either};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, hash::fxhash::fxhash64, keyed::KVec, string::String, vec::Vec, write};
+use sti::{arena::Arena, hash::fxhash::fxhash64, vec::KVec, string::String, vec::Vec, write};
 use syms::{ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 
 use crate::{scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::ClosureId, Symbol}};
@@ -21,7 +21,6 @@ pub mod global;
 pub mod syms;
 pub mod codegen;
 
-#[derive(Debug)]
 pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     output      : &'out Arena,
     temp        : &'temp Arena,
@@ -99,9 +98,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
         };
 
         {
-            analyzer.type_info.exprs.inner_mut_unck().resize(analyzer.ast.exprs().len(), None);
-            analyzer.type_info.stmts.inner_mut_unck().resize(analyzer.ast.stmts().len(), None);
-            analyzer.type_info.decls.inner_mut_unck().resize(analyzer.ast.decls().len(), None);
+            analyzer.type_info.exprs.resize(analyzer.ast.exprs().len(), None);
+            analyzer.type_info.stmts.resize(analyzer.ast.stmts().len(), None);
+            analyzer.type_info.decls.resize(analyzer.ast.decls().len(), None);
         }
 
         let core_ns = {
@@ -144,9 +143,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
         analyzer.block(empty, scope, block);
 
         for v in analyzer.syms.vars().iter() {
-            if !matches!(v.1.sub(), syms::sym_map::VarSub::Concrete(_)) {
-                let error = Error::UnableToInfer(analyzer.ast.range(v.1.node()));
-                Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.1.node(), error);
+            if !matches!(v.sub(), syms::sym_map::VarSub::Concrete(_)) {
+                let error = Error::UnableToInfer(analyzer.ast.range(v.node()));
+                Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.node(), error);
             }
         }
 
@@ -222,7 +221,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             DataTypeKind::Tuple(tys) => {
-                let pool = Arena::tls_get_rec();
+                let pool = self.output;
                 let (fields, generics) = {
                     let mut fields = Buffer::new(&*pool, tys.len());
                     let mut generics = Buffer::new(self.output, tys.len());
@@ -332,7 +331,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let base_sym = self.syms.sym(base);
 
-                let pool = Arena::tls_get_temp();
+                let pool = self.output;
                 let mut generics = Buffer::new(&*pool, base_sym.generics().len());
                 if generics_list.is_empty() {
                     for _ in base_sym.generics() {
@@ -386,15 +385,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             DataTypeKind::Tuple(vals) => {
-                let pool = Arena::tls_get_rec();
+                let pool = self.output;
                 let (fields, generics) = {
                     let mut fields = Buffer::new(&*pool, vals.len());
                     let mut generics = Buffer::new(self.output, vals.len());
-                    let mut str = String::new_in(&*pool);
                     for (index, ty) in vals.iter().enumerate() {
-                        str.clear();
-                        write!(str, "{index}");
-                        let index = self.string_map.insert(&str);
+                        let index = self.string_map.num(index);
 
                         let g = self.dt_to_ty(scope_id, id, ty.1)?;
                         fields.push(ty.0);
@@ -413,7 +409,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     }
 
 
-    fn tuple_sym(&mut self, range: SourceRange, fields: &[OptStringIndex]) -> SymbolId {
+    fn tuple_sym(&mut self, range: SourceRange, fields: &[Option<StringIndex>]) -> SymbolId {
         let pending = self.syms.pending(&mut self.namespaces, StringMap::INVALID_IDENT, fields.len());
         let (fields, gens) = {
             let mut sym_fields = Buffer::new(self.output, fields.len());
@@ -422,7 +418,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let str = self.string_map.num(index);
                 gens.push(str);
 
-                let name = name.to_option().unwrap_or_else(|| self.string_map.num(index));
+                let name = name.unwrap_or_else(|| self.string_map.num(index));
                 sym_fields.push((name, Generic::new(range, GenericKind::Generic(str), None)));
             }
 

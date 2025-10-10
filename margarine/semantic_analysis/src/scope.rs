@@ -1,15 +1,15 @@
 use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
 use errors::{ErrorId, SemaError};
-use sti::{define_key, keyed::KVec, packed_option::PackedOption};
+use sti::{define_key, vec::KVec};
 
 use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{sym_map::{ClosureId, SymbolId, SymbolMap}, ty::Sym}};
 
-define_key!(u32, pub ScopeId);
+define_key!(pub ScopeId(u32));
 
 
 #[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Scope<'me> {
-    parent: PackedOption<ScopeId>,
+    parent: Option<ScopeId>,
     kind  : ScopeKind<'me>,
 }
 
@@ -49,7 +49,7 @@ impl<'me> ScopeMap<'me> {
 
 
 impl<'me> Scope<'me> {
-    pub fn new(parent: impl Into<PackedOption<ScopeId>>, kind: ScopeKind<'me>) -> Self { Self { parent: parent.into(), kind } }
+    pub fn new(parent: impl Into<Option<ScopeId>>, kind: ScopeKind<'me>) -> Self { Self { parent: parent.into(), kind } }
 
     pub fn find_sym(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<Result<SymbolId, Error>> {
         self.over(scope_map, |scope| {
@@ -177,7 +177,7 @@ impl<'me> Scope<'me> {
         while let Some(scope) = this {
             if let Some(val) = func(scope) { return Some(val) }
 
-            this = scope.parent.to_option()
+            this = scope.parent
                 .map(|x| scope_map.get(x))
         }
         None

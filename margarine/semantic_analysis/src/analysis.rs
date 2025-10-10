@@ -1,9 +1,9 @@
 use std::fmt::Write;
 
-use common::{buffer::Buffer, copy_slice_in, string_map::{OptStringIndex, StringIndex, StringMap}};
+use common::{buffer::Buffer, copy_slice_in, string_map::{StringIndex, StringMap}};
 use errors::ErrorId;
 use parser::nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
-use sti::{alloc::GlobalAlloc, arena::Arena, vec::Vec, write};
+use sti::{alloc::GlobalAlloc, arena::Arena, vec::{KVec, Vec}, write};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{GenListId, Generic, GenericKind, SymbolId}, ty::Sym, Symbol, SymbolKind}, AnalysisResult, TyChecker};
 
@@ -18,7 +18,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
         // Update the current scope so the following functions
         // are able to see the namespace
-        let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(namespace));
+        let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(namespace));
         let mut scope = self.scopes.push(scope);
 
         // Collect impls
@@ -146,7 +146,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             match decl {
                 Decl::Module { name, body, .. } => {
                     let module_ns = self.namespaces.get_ns(ns_id).get_ns(name).unwrap();
-                    let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(module_ns));
+                    let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(module_ns));
                     let scope = self.scopes.push(scope);
                     self.collect_impls(path, scope, module_ns, &*body);
                 }
@@ -196,7 +196,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             match self.ast.decl(id) {
                 Decl::Module { name, body, .. } => {
                     let module_ns = self.namespaces.get_ns(ns_id).get_ns(name).unwrap();
-                    let scope = Scope::new(scope_id.some(), ScopeKind::ImplicitNamespace(module_ns));
+                    let scope = Scope::new(Some(scope_id), ScopeKind::ImplicitNamespace(module_ns));
                     let scope = self.scopes.push(scope);
                     self.collect_uses(scope, module_ns, &body);
                 }
@@ -517,7 +517,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     else { continue };
 
                     let scope = self.scopes.push(self.scopes.get(scope));
-                    let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(module_ns));
+                    let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(module_ns));
                     let scope = self.scopes.push(scope);
 
                     let path = self.namespaces.get_ns(module_ns).path;
@@ -609,7 +609,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 // fake args
                 let generics = generics.leak();
                 let gscope = GenericsScope::new(generics);
-                let mut scope = Scope::new(scope.some(), ScopeKind::Generics(gscope));
+                let mut scope = Scope::new(*scope, ScopeKind::Generics(gscope));
 
                 for a in func.args() {
                     let ty = a.symbol().to_ty(&generics, &mut self.syms);
@@ -622,7 +622,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     };
 
                     let vs = VariableScope::new(a.name(), ty);
-                    scope = Scope::new(self.scopes.push(scope).some(), ScopeKind::VariableScope(vs))
+                    scope = Scope::new(Some(self.scopes.push(scope)), ScopeKind::VariableScope(vs))
                 }
 
                 let ret = func.ret().to_ty(&generics, &mut self.syms);
@@ -636,7 +636,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 // func scope
                 let fs = FunctionScope::new(ret, sig.return_type.range());
-                scope = Scope::new(self.scopes.push(scope).some(), ScopeKind::Function(fs));
+                scope = Scope::new(Some(self.scopes.push(scope)), ScopeKind::Function(fs));
 
                 let scope = self.scopes.push(scope);
 
@@ -675,7 +675,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let Some(module_ns) = ns.get_ns(name)
                 else { return };
                 
-                let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(module_ns));
+                let scope = Scope::new(*scope, ScopeKind::ImplicitNamespace(module_ns));
                 let mut scope = self.scopes.push(scope);
 
                 let path = self.namespaces.get_ns(module_ns).path;
@@ -726,7 +726,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 
                 let place_dummy = |slf: &mut TyChecker<'_, 'out, '_, '_, '_>, scope: &mut ScopeId| {
                     let vs = VariableScope::new(name, Sym::ERROR);
-                    *scope = slf.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
+                    *scope = slf.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
                 };
 
                 // Validation
@@ -750,7 +750,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                     if !rhs_anal.ty.eq(&mut self.syms, hint) {
                         let vs = VariableScope::new(name, hint);
-                        *scope = self.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
+                        *scope = self.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
 
                         self.error(id, Error::VariableValueAndHintDiffer {
                             value_type: rhs_anal.ty, hint_type: hint, source });
@@ -762,7 +762,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 // finalise
                 let vs = VariableScope::new(name, ty);
-                *scope = self.scopes.push(Scope::new(scope.some(),
+                *scope = self.scopes.push(Scope::new(*scope,
                                           ScopeKind::VariableScope(vs)));
             },
 
@@ -773,7 +773,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let place_dummy = |slf: &mut TyChecker<'_, 'out, '_, '_, '_>, scope: &mut ScopeId| {
                     for n in names {
                         let vs = VariableScope::new(*n, Sym::ERROR);
-                        *scope = slf.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
+                        *scope = slf.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
                     }
                 };
 
@@ -849,7 +849,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     self.error(id, Error::ValueIsntAnIterator { ty: anal.ty, range });
 
                     let vs = VariableScope::new(binding.0, Sym::ERROR);
-                    let scope = self.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
+                    let scope = self.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
 
                     let _ = self.block(path, scope, &body);
 
@@ -867,7 +867,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                     let vs = VariableScope::new(binding.0, Sym::ERROR);
-                    let scope = self.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
+                    let scope = self.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
 
                     let _ = self.block(path, scope, &body);
 
@@ -900,7 +900,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let binding_ty = binding_ty[0].1;
 
                 let vs = VariableScope::new(binding.0, binding_ty);
-                let scope = self.scopes.push(Scope::new(scope.some(), ScopeKind::VariableScope(vs)));
+                let scope = self.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
 
                 let _ = self.block(path, scope, &body);
 
@@ -980,7 +980,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             Expr::Closure { args, body } => {
                 let closure = self.syms.new_closure();
-                let closure_scope = self.scopes.push(Scope::new(scope.some(), ScopeKind::Closure(closure)));
+                let closure_scope = self.scopes.push(Scope::new(Some(scope), ScopeKind::Closure(closure)));
                 let mut active_scope = closure_scope;
                 let mut sargs = sti::vec::Vec::new_in(self.syms.arena());
                 for arg in args {
@@ -991,7 +991,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     };
 
                     active_scope = self.scopes.push(Scope::new(
-                        active_scope.some(), 
+                        Some(active_scope), 
                         ScopeKind::VariableScope(VariableScope::new(arg.0, ty))
                     ));
 
@@ -1023,7 +1023,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 }
 
                 let mut fargs = sti::vec::Vec::new_in(self.syms.arena());
-                for arg in sargs {
+                for (_, arg) in sargs {
                     let sym = arg.1.sym(&mut self.syms)?;
                     fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Sym(sym, &[]), None)));
                 }
@@ -1230,7 +1230,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 }
 
                 if !missings.is_empty() {
-                    return Err(Error::MissingMatch { name: missings.move_into(GlobalAlloc), range });
+                    return Err(Error::MissingMatch { name: KVec::from_slice(&missings), range });
                 }
 
 
@@ -1241,7 +1241,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let gens = self.syms.get_gens(gens);
                     let vs = VariableScope::new(m.binding(), f.1.to_ty(gens, &mut self.syms)?);
 
-                    let scope = Scope::new(scope.some(), ScopeKind::VariableScope(vs));
+                    let scope = Scope::new(Some(scope), ScopeKind::VariableScope(vs));
                     let scope = self.scopes.push(scope);
 
                     let anal = self.expr(path, scope, m.expr());
@@ -1300,7 +1300,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 }
 
                 if !missing_fields.is_empty() {
-                    return Err(Error::MissingFields { source: range, fields: missing_fields.move_into(GlobalAlloc) });
+                    return Err(Error::MissingFields { source: range, fields: missing_fields.clone_in(GlobalAlloc) });
                 }
 
 
@@ -1375,7 +1375,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             Expr::CallFunction { name, is_accessor, args, gens } => {
-                let pool = Arena::tls_get_rec();
+                let pool = self.ast.arena;
                 let args_anals = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, args.len());
 
@@ -1492,7 +1492,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 if ns.1 { return Err(Error::Bypass) }
 
-                let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(ns.0));
+                let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(ns.0));
                 let scope = self.scopes.push(scope);
 
                 self.expr(path, scope, action)
@@ -1504,7 +1504,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let sym = ty.sym(&mut self.syms)?;
                 let ns = self.syms.sym_ns(sym);
 
-                let scope = Scope::new(scope.some(), ScopeKind::ImplicitNamespace(ns));
+                let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(ns));
                 let scope = self.scopes.push(scope);
 
                 self.expr(path, scope, action)
@@ -1512,7 +1512,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             Expr::Loop { body } => {
-                let scope = Scope::new(scope.some(), ScopeKind::Loop);
+                let scope = Scope::new(Some(scope), ScopeKind::Loop);
                 let scope = self.scopes.push(scope);
                 self.block(path, scope, &*body);
 
@@ -1557,12 +1557,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             Expr::Tuple(values) => {
-                let pool = Arena::tls_get_rec();
+                let pool = self.ast.arena;
 
                 let fields = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, values.len());
                     for _ in 0..values.len() {
-                        vec.push(OptStringIndex::NONE);
+                        vec.push(None);
                     }
 
                     vec.leak()
@@ -1572,12 +1572,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let gens = {
                     let mut vec = sti::vec::Vec::with_cap_in(self.output, values.len());
-                    let mut str = sti::string::String::new_in(&*pool);
                     for (index, value) in values.iter().enumerate() {
-                        str.clear();
-                        write!(str, "{index}");
+                        let str = self.string_map.num(index);
                         let ty = self.expr(path, scope, *value);
-                        let str = self.string_map.insert(&str);
                         vec.push((str, ty.ty));
                     }
 

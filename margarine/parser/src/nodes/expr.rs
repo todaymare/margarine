@@ -8,7 +8,7 @@ use crate::{nodes::decl::FunctionArgument, DataType};
 
 use super::NodeId;
 
-define_key!(u32, pub ExprId);
+define_key!(pub ExprId(u32));
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Expr<'a> {

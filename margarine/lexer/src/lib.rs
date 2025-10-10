@@ -4,7 +4,7 @@ use ::errors::LexerError;
 use common::{string_map::{StringMap, StringIndex},
     source::{SourceRange, FileData}, hashables::NonNaNF64};
 use crate::errors::Error;
-use sti::{reader::Reader, keyed::KVec};
+use sti::{reader::Reader, vec::KVec};
 
 mod tests;
 pub mod errors;
@@ -376,7 +376,7 @@ impl Lexer<'_, '_> {
 
             _ => {
                 let slice = &self.reader.original_slice()[self.reader.offset()-1..];
-                let char = sti::utf8::check_1(slice);
+                let char = common::utf8::check_1(slice);
                 let len = val.leading_ones().max(1);
                 let char = if let Ok(char) = char {
                     let char = &slice[..(slice.len()-char.len())];

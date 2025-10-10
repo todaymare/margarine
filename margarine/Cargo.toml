@@ -16,6 +16,7 @@ common = { path = "./common" }
 runtime = { path = "./runtime" }
 errors = { path = "./errors" }
 
-sti = { git = "https://github.com/leddoo/sti" }
+sti = { path = "../vendor/sti" }
 
 raylib = "*"
+rand = "*"

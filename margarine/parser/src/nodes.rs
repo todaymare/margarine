@@ -6,7 +6,7 @@ pub mod err;
 
 use common::source::SourceRange;
 use errors::ErrorId;
-use sti::{arena::Arena, keyed::{KSlice, KVec}};
+use sti::{arena::Arena, slice::KSlice, vec::KVec};
 
 use self::{decl::{Decl, DeclId}, expr::{Expr, ExprId}, stmt::{Stmt, StmtId}};
 
@@ -19,7 +19,6 @@ pub enum NodeId {
 }
 
 
-#[derive(Debug)]
 pub struct AST<'a> {
     stmts: KVec<StmtId, (Stmt<'a>, SourceRange)>,
     exprs: KVec<ExprId, (Expr<'a>, SourceRange)>,
@@ -69,15 +68,15 @@ impl<'a> AST<'a> {
 
 
     pub fn stmts(&self) -> &KSlice<StmtId, (Stmt<'a>, SourceRange)> {
-        self.stmts.as_slice()
+        self.stmts.as_kslice()
     }
 
     pub fn exprs(&self) -> &KSlice<ExprId, (Expr<'a>, SourceRange)> {
-        self.exprs.as_slice()
+        self.exprs.as_kslice()
     }
 
     pub fn decls(&self) -> &KSlice<DeclId, (Decl<'a>, SourceRange)> {
-        self.decls.as_slice()
+        self.decls.as_kslice()
     }
 }
 
