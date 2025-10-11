@@ -1,6 +1,6 @@
 use std::hint::select_unpredictable;
 
-use crate::{jit::{self, attempt_jit}, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
+use crate::{opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
 impl<'src> VM<'src> {
     pub fn run(&mut self, func: &str) -> Status {
@@ -37,7 +37,7 @@ impl<'src> VM<'src> {
         unsafe {
         loop {
             let opcode = self.curr.next();
-            println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
+            //println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
             //println!("{:?}", self.stack);
             
             match opcode {
