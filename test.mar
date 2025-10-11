@@ -1,45 +1,41 @@
-use std::print
+extern {
+    fn print_raw<T>(val: T, ty_id: int)
+}
 
-@startup
+
+fn print<T>(val: T) {
+    print_raw(val, type_id::<T>())
+}
+
+
+
 fn main() {
-    var x = foo;
-    x(69);
+    print(fib(60.0));
+    print(test(30));
+}
 
-    x = |hey| {
-        x(hey + 1)
-    };
 
-    test(30, |value: int| x(value + 12));
+fn test(value: int): float {
+    var x = (30,);
+    30.0
+}
 
-    var foo = Foo {
-        bar: |value: int| print(value),
-        yay: |value: float| {
-            print("hi");
-            3
 
+fn fib(n: float): float {
+    if n <= 1.0 {
+        return n
     }
 
-    var x = foo.yay;
-    print(x(3.0))
+    var a = 0.2;
+    var b = 1.0;
+    var i = 2.0;
 
+    while i <= n {
+        var tmp = a + b;
+        a = b;
+        b = tmp;
+        i = i + 1.0;
+    }
 
-    // note, you can't do foo.yay(3.0) cos yh
+    return b
 }
-
-
-struct Foo<T> {
-    bar: fn(int),
-    yay: fn(T): int,
-
-}
-
-
-fn foo(a: int) {
-    print(a)
-}
-
-
-fn test<T>(value: T, func: fn(T)) {
-    func(value)
-}
-

@@ -3,8 +3,8 @@ use std::{collections::HashMap, fmt::Write, fs};
 use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, stmt::StmtId, NodeId, AST};
-use runtime::opcode::{self, runtime::{builder::{self, Builder}, consts}, HEADER};
-use sti::{arena::Arena, define_key, vec::KVec};
+use runtime::opcode::{self, runtime::{builder::{self, Builder}, consts, OpCode}, HEADER};
+use sti::{arena::Arena, define_key, reader::Reader, vec::KVec};
 
 use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
 
@@ -32,6 +32,8 @@ struct BlockIndex(u32);
 struct Function<'a> {
     name: StringIndex,
     index: FuncIndex,
+    args: Vec<u32>,
+    ret: u32,
 
     kind: FunctionKind<'a>,
     error: Option<ErrorId>,
@@ -104,13 +106,19 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
     let mut code = Builder::new();
     let mut funcs = conv.funcs.iter().collect::<Vec<_>>();
     funcs.sort_by_key(|x| x.1.index.0);
-    for (_, func) in funcs {
+    for (_, func) in &funcs {
         func_sec.push(opcode::func::consts::Func);
 
         let name = conv.string_map.get(func.name);
         // func meta
         func_sec.extend_from_slice(&(name.len() as u32).to_le_bytes());
         func_sec.extend_from_slice(name.as_bytes());
+        func_sec.push(func.args.len().try_into().unwrap());
+        func_sec.extend_from_slice(&func.ret.to_le_bytes());
+
+        for arg in &func.args {
+            func_sec.extend_from_slice(&arg.to_le_bytes());
+        }
 
         match &func.kind {
             FunctionKind::Code { local_count, entry, blocks } => {
@@ -286,7 +294,8 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
     final_product.extend_from_slice(&strs_table);
     final_product.extend_from_slice(&func_sec);
     final_product.extend_from_slice(&code.bytecode);
-    dbg!(code);
+    dbg!(&funcs);
+    dbg!(&code);
 
     final_product
 }
@@ -312,6 +321,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
         if ret.is_err(self.syms) { return Err(ErrorId::Bypass) }
 
+        let ret = ret.sym(self.syms).unwrap();
+        let args = sym_func.args().iter().map(|x| x.symbol().to_ty(gens, self.syms).unwrap().sym(self.syms).unwrap().0).collect();
+
         match sym_func.kind() {
             crate::syms::func::FunctionKind::Extern(path) => {
                 let func = Function {
@@ -319,6 +331,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     index: FuncIndex(self.funcs.len() as u32),
                     kind: FunctionKind::Extern(path),
                     error: self.ty_info.decl(sym_func.decl().unwrap()),
+                    args,
+                    ret: ret.0,
                 };
 
                 self.funcs.insert(hash, func);
@@ -340,6 +354,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         blocks: vec![],
                     },
                     error: err,
+                    ret: ret.0,
+                    args,
 
                 };
 
@@ -418,6 +434,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     },
 
                     error: None,
+                    args,
+                    ret: ret.0,
                 };
 
                 self.funcs.insert(hash, func);
@@ -460,6 +478,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         }]
                     },
                     error: err,
+                    args,
+                    ret: ret.0,
                 };
 
                 self.funcs.insert(hash, func);
@@ -1149,6 +1169,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         },
 
                         error: None,
+                        args: todo!(),
+                        ret: self.ty_info.expr(body).unwrap().sym(self.syms).unwrap().0,
                     };
 
                     self.funcs.insert(hash, func);
@@ -1219,13 +1241,14 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
     ) -> Result<(), ErrorId> {
 
         let mut continue_block = env.next_block();
+        let var = env.alloc_anon_var();
 
         let true_case = {
             let mut body_block = env.next_block();
             let body_block_entry = body_block.index;
 
-
             t(self, env, &mut body_block)?;
+            body_block.bytecode.store(var as u8);
 
             body_block.terminator = BlockTerminator::Goto(continue_block.index);
             env.blocks.push(body_block);
@@ -1239,6 +1262,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
             f(self, env, &mut body_block)?;
+            body_block.bytecode.store(var as u8);
 
             body_block.terminator = BlockTerminator::Goto(continue_block.index);
             env.blocks.push(body_block);
@@ -1249,6 +1273,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         block.terminator = BlockTerminator::SwitchBool { op1: true_case, op2: false_case };
 
         core::mem::swap(block, &mut continue_block);
+
+        block.bytecode.load(var as u8);
         env.blocks.push(continue_block);
         Ok(())
 

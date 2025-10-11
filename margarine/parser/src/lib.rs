@@ -1199,7 +1199,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn comparisson(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
         self.binary_operation(
             Self::bitwise_or, 
-            Self::expression, 
+            Self::bitwise_or, 
             &[
                 TokenKind::LeftAngle, TokenKind::RightAngle,
                 TokenKind::GreaterEquals, TokenKind::LesserEquals,
