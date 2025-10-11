@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-margarine = { path = "../margarine" }
+margarine = { path = "../margarine", features=["fuzzer"] }
 afl = "*"
 sti = { git = "https://github.com/leddoo/sti" }
