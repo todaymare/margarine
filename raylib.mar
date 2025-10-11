@@ -1,0 +1,117 @@
+mod ffi {
+    extern {
+        fn RaylibInitWindow(width: int, height: int, title: str) 
+        fn RaylibWindowShouldClose(): bool
+
+        fn RaylibSetTargetFPS(fps: int)
+        fn RaylibBeginDrawing()
+        fn RaylibEndDrawing()
+        fn RaylibClearBackground(color: Color)
+        fn RaylibDrawText(text: str, pos_x: int, pos_y: int, font_size: int, color: Color)
+        fn RaylibDrawRectangle(pos_x: int, pos_y: int, w: int, h: int, color: Color)
+        fn RaylibDrawFPS(pos_x: int, pos_y: int)
+        fn RaylibIsKeyPressed(key: int): bool
+
+        fn RaylibCloseWindow()
+        fn RaylibFrameTime(): float
+    }
+}
+
+
+struct Raylib {
+    frame: int,
+}
+
+
+struct Frame {
+    raylib: Raylib,
+    frame: int,
+}
+
+
+struct Color {
+    r: float,
+    g: float,
+    b: float,
+    a: float,
+}
+
+
+enum Key {
+    Space,
+}
+
+
+impl Raylib {
+    fn new(width: int, height: int, title: str): Raylib {
+        ffi::RaylibInitWindow(width, height, title);
+        Raylib {
+            frame: 0,
+        }
+    }
+
+
+    fn set_target_fps(self, fps: int) {
+        ffi::RaylibSetTargetFPS(fps)
+    }
+
+
+    fn frame(self, frame: fn(Frame)) {
+        ffi::RaylibBeginDrawing();
+        frame(Frame { raylib: self, frame: self.frame });
+        ffi::RaylibEndDrawing();
+
+        self.frame += 1;
+    }
+
+
+    fn window_should_close(self): bool {
+        ffi::RaylibWindowShouldClose()
+    }
+
+
+    fn frame_time(self): float {
+        ffi::RaylibFrameTime()
+    }
+
+
+    fn is_key_pressed(self, key: Key): bool {
+        ffi::RaylibIsKeyPressed(key.as_int())
+    }
+
+}
+
+
+impl Frame {
+    fn clear_background(self, colour: Color) {
+        ffi::RaylibClearBackground(colour);
+    }
+
+    fn draw_fps(self, x: int, y: int) {
+        ffi::RaylibDrawFPS(x, y);
+    }
+
+    fn draw_rect(self, x: int, y: int, w: int, h: int, colour: Color) {
+        ffi::RaylibDrawRectangle(x, y, w, h, colour)
+    }
+}
+
+
+impl Color {
+    fn new(r: float, g: float, b: float, a: float): Color {
+        Color {
+            r, g, b, a,
+        }
+    }
+}
+
+
+impl Key {
+    fn as_int(self): int {
+        match self {
+            Space => 32,
+        }
+    }
+}
+
+

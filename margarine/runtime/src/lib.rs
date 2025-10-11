@@ -89,6 +89,7 @@ pub enum FunctionKind<'src> {
 }
 
 
+#[repr(C)]
 pub struct Status {
     status: u64,
     kind: StatusKind,

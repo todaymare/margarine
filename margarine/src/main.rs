@@ -26,6 +26,7 @@ fn main() {
 
     let mut hosts : HashMap<String, _>= HashMap::new();
     stdlib(&mut hosts);
+    raylib(&mut hosts);
 
     let mut vm = VM::new(hosts, &*src).unwrap();
     dbg!(&vm.funcs);
