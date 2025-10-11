@@ -5,12 +5,12 @@ use std::marker::PhantomData;
 
 use std::{collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
 
-use crate::jit::JIT;
+//use crate::jit::JIT;
 
 pub mod runtime;
 pub mod opcode;
 pub mod alloc;
-pub mod jit;
+//pub mod jit;
 
 
 #[derive(Clone, Copy)]
@@ -44,7 +44,7 @@ pub struct VM<'src> {
     pub funcs: Vec<Function<'src>>,
     error_table: &'src [u8],
     pub objs: Vec<Object>,
-    jit: JIT,
+    //jit: JIT,
 }
 
 
@@ -265,7 +265,7 @@ impl<'src> VM<'src> {
             funcs,
             error_table: errs,
             objs,
-            jit: JIT::default(),
+            //jit: JIT::default(),
         })
     }
 
