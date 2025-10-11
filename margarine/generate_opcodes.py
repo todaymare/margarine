@@ -262,8 +262,62 @@ impl {enum_name} {{
     }}
 }}"""
 
-    return "\n\n".join([enum_def, consts_mod, builder_mod, impl_block])
+    # --- Decoded enum + decode() ---
+    decoded_variants = []
+    decode_arms = []
 
+    for name, fields in spec.items():
+        # lifetime-aware field defs
+        field_defs = ", ".join(
+            f"{ident}: {('&\'src [u8]' if ty == '&[u8]' else ty)}"
+            for ident, ty in fields.items()
+        )
+        decoded_variants.append(f"    {name} {{ {field_defs} }},")
+
+        # decode body
+        decode_body = []
+        for ident, ty in fields.items():
+            if ty == "&[u8]":
+                decode_body.append(f"        let _len = <u32>::from_le_bytes(reader.next_n::<4>());")
+                decode_body.append(f"        let {ident} = reader.next_slice(_len as usize);")
+            else:
+                decode_body.append(f"        let {ident} = <{ty}>::from_le_bytes(reader.next_n::<{{ core::mem::size_of::<{ty}>() }}>());")
+
+        decode_arms.append(f"""\
+            Self::{name} => {{
+{chr(10).join(decode_body)}
+                Some((opcode, Decoded::{name} {{ {', '.join(fields.keys())} }}))
+            }}""")
+
+    decoded_enum = f"""\
+#[derive(Debug, Clone, Copy)]
+pub enum Decoded<'src> {{
+{chr(10).join(decoded_variants)}
+}}"""
+
+    decode_fn = f"""\
+impl {enum_name} {{
+    pub fn decode<'src>(reader: &mut crate::Reader<'src>) -> Option<(Self, Decoded<'src>)> {{
+        unsafe {{
+        let [opcode] = reader.try_next_n::<1>()?;
+        let opcode = Self::from_u8(opcode)?;
+
+        match opcode {{
+{chr(10).join(decode_arms)}
+            _ => None,
+        }}
+        }}
+    }}
+}}"""
+
+    return "\n\n".join([
+        enum_def,
+        consts_mod,
+        builder_mod,
+        impl_block,
+        decoded_enum,
+        decode_fn,
+    ])
 
 # Example usage
 if __name__ == "__main__":

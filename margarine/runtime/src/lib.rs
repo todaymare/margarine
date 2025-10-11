@@ -3,16 +3,19 @@
 #[cfg(not(debug_assertions))]
 use std::marker::PhantomData;
 
-use std::{collections::HashMap, convert::Infallible, ops::{Deref, DerefMut, FromResidual}};
+use std::{collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
+
+use crate::jit::JIT;
 
 pub mod runtime;
 pub mod opcode;
 pub mod alloc;
+pub mod jit;
 
 
 #[derive(Clone, Copy)]
 pub struct Reg {
-    kind: u8,
+    kind: u64,
     data: RegData,
 }
 
@@ -27,9 +30,8 @@ union RegData {
 }
 
 
-#[derive(Debug)]
 pub struct Stack {
-    pub values: Vec<Reg>,
+    pub values: Buffer<Reg>,
     pub bottom: usize,
     curr      : usize,
 }
@@ -40,9 +42,9 @@ pub struct VM<'src> {
     callstack: Callstack<'src>,
     curr: CallFrame<'src>,
     pub funcs: Vec<Function<'src>>,
-    host_fns: HashMap<String, fn(&mut VM<'src>) -> Reg>,
     error_table: &'src [u8],
     pub objs: Vec<Object>,
+    jit: JIT,
 }
 
 
@@ -68,6 +70,9 @@ pub enum Object {
 #[derive(Debug)]
 pub struct Function<'src> {
     name: &'src str,
+    argc: u8,
+    args: &'src [u8],
+    ret: u32,
     kind: FunctionKind<'src>
 }
 
@@ -80,14 +85,20 @@ pub enum FunctionKind<'src> {
     },
 
 
-    Host(fn(&mut VM<'src>) -> Reg),
+    Host(unsafe extern "C" fn(&mut VM<'src>, &mut Reg)),
 }
 
 
-#[derive(Debug)]
-pub enum Status {
-    Ok,
-    Err(FatalError),
+pub struct Status {
+    status: u64,
+    kind: StatusKind,
+}
+
+
+#[repr(C)]
+union StatusKind {
+    ok: (),
+    err: ManuallyDrop<FatalError>,
 }
 
 
@@ -98,13 +109,15 @@ struct Callstack<'me> {
 
 
 
+
 ///
 /// A program error that can not be recovered from.
 /// This error could be caused by a variety of runtime issues 
 ///
 #[derive(Debug)]
+#[repr(C)]
 pub struct FatalError {
-    pub msg: String,
+    pub msg: &'static CStr,
 }
 
 
@@ -122,7 +135,7 @@ struct CallFrame<'me> {
 }
 
 
-struct Reader<'me> {
+pub struct Reader<'me> {
     /// The source code
     /// Note: This pointer is only valid in the range given at creation
     src: *const u8,
@@ -135,7 +148,7 @@ struct Reader<'me> {
 
 
 impl<'src> VM<'src> {
-    pub fn new(hosts: HashMap<String, fn(&mut VM<'src>) -> Reg>, src: &'src [u8]) -> Result<Self, FatalError> {
+    pub fn new(hosts: HashMap<String, unsafe extern "C" fn(&mut VM<'src>, &mut Reg)>, src: &'src [u8]) -> Result<Self, FatalError> {
         let mut reader = Reader::new(src);
         let Some(b"BUTTERY") = reader.try_next_n().as_ref()
         else { return Err(FatalError::new(String::from("invalid header"))) };
@@ -164,7 +177,6 @@ impl<'src> VM<'src> {
             let mut reader = Reader::new(strs);
             let Some(count) = reader.try_next_u32()
             else { return Err(FatalError::new(String::from("str count is invalid"))) };
-            dbg!(count);
 
             for _ in 0..count {
                 let Some(str) = reader.try_next_str()
@@ -193,7 +205,13 @@ impl<'src> VM<'src> {
 
                 opcode::func::consts::Func => {
                     let name = funcs_reader.next_str();
+                    let argc = funcs_reader.next();
+                    let ret = funcs_reader.next_u32();
+
+                    let args = funcs_reader.next_slice(argc as usize * 4);
+
                     let kind = funcs_reader.next();
+
 
                     match kind {
                         0 => {
@@ -205,7 +223,10 @@ impl<'src> VM<'src> {
                                 kind: FunctionKind::Code {
                                     byte_offset: code as usize,
                                     byte_size: size as usize,
-                                }
+                                },
+                                argc,
+                                ret,
+                                args,
                             });
                         }
                         1 => {
@@ -217,7 +238,10 @@ impl<'src> VM<'src> {
 
                             funcs.push(Function {
                                 name,
-                                kind: FunctionKind::Host(*host_fn)
+                                kind: FunctionKind::Host(*host_fn),
+                                argc,
+                                ret,
+                                args,
                             });
                         }
                         _ => return Err(FatalError::new(String::from("invalid func kind")))
@@ -240,8 +264,8 @@ impl<'src> VM<'src> {
             curr: CallFrame::new(code_section, 0, 0),
             funcs,
             error_table: errs,
-            host_fns: hosts,
             objs,
+            jit: JIT::default(),
         })
     }
 
@@ -280,6 +304,12 @@ impl<'me> Reader<'me> {
             #[cfg(not(debug_assertions))]
             _phantom: PhantomData,
         }
+    }
+
+
+    pub fn offset_from_start(&self) -> usize {
+        let offset = unsafe { self.src.offset_from(self.bounds.as_ptr()) };
+        offset as usize
     }
 
 
@@ -492,8 +522,9 @@ impl<'me> Reader<'me> {
 
 impl Stack {
     pub fn new(cap: usize) -> Self {
+        let data = Vec::from_iter((0..cap).map(|_| Reg::new_unit()));
         Self {
-            values: Vec::from_iter((0..cap).map(|_| Reg::new_unit())),
+            values: Buffer::new(data),
             bottom: 0,
             curr: 0,
         }
@@ -510,19 +541,6 @@ impl Stack {
     #[inline(always)]
     #[must_use]
     pub unsafe fn reg(&self, reg: u8) -> Reg {
-        /*
-        let abs_offset = self.bottom + reg as usize;
-        debug_assert!(
-            abs_offset < self.top, 
-            "failed to fetch reg '{reg}' relative to offset '{}' \
-            because it overflows the specified top of the stack top '{}'",
-            self.bottom,
-            self.top
-        );
-
-
-        debug_assert!((reg as usize + self.bottom) < self.top, "{reg} {} {}", self.bottom, self.top);
-        */
         self.values[reg as usize + self.bottom]
     }
 
@@ -619,9 +637,48 @@ impl Stack {
 }
 
 
+#[repr(C)]
+pub struct Buffer<T> {
+    ptr: *mut T,
+    len: usize,
+}
+
+
+impl<T> Buffer<T> {
+    pub fn new(vec: Vec<T>) -> Buffer<T> {
+        let vec = vec.leak();
+        Buffer {
+            ptr: vec.as_mut_ptr(),
+            len: vec.len(),
+        }
+    }
+}
+
+
+impl<T> Index<usize> for Buffer<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        debug_assert!(index < self.len);
+        unsafe { &*self.ptr.add(index) }
+    }
+}
+
+
+impl<T> IndexMut<usize> for Buffer<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        debug_assert!(index < self.len);
+        unsafe { &mut *self.ptr.add(index) }
+    }
+}
+
+
 impl FatalError {
     pub fn new(msg: String) -> Self {
-        Self { msg }
+        let cstr = ManuallyDrop::new(CString::new(msg).unwrap());
+        let cstr = cstr.as_ptr();
+        let cstr = unsafe { CStr::from_ptr(cstr) };
+        Self { msg: cstr }
     }
 }
 
@@ -674,29 +731,34 @@ impl Reg {
 }
 
 
-impl FromResidual<std::result::Result<Infallible, FatalError>> for Status {
-    fn from_residual(residual: std::result::Result<Infallible, FatalError>) -> Self {
-        match residual {
-            Ok(_) => Self::Ok,
-            Err(e) => Self::Err(e),
+impl Status {
+    pub fn err(err: FatalError) -> Self {
+        Self {
+            status: 1,
+            kind: StatusKind { err: ManuallyDrop::new(err) }
         }
+    }
+
+    pub fn ok() -> Self {
+        Self { status: 0, kind: StatusKind { ok: () } }
+    }
+
+
+    pub fn as_err(&self) -> Option<&CStr> {
+        if self.status == 0 {
+            return None
+        }
+
+        Some(unsafe { self.kind.err.msg })
     }
 }
 
 
-impl std::ops::Try for Status {
-    type Output = ();
-
-    type Residual = std::result::Result<Infallible, FatalError>;
-
-    fn from_output(_: Self::Output) -> Self {
-        Self::Ok
-    }
-
-    fn branch(self) -> std::ops::ControlFlow<Self::Residual, Self::Output> {
-        match self {
-            Status::Ok => std::ops::ControlFlow::Continue(()),
-            Status::Err(fatal_error) => std::ops::ControlFlow::Break(Err(fatal_error)),
+impl FromResidual<std::result::Result<Infallible, FatalError>> for Status {
+    fn from_residual(residual: std::result::Result<Infallible, FatalError>) -> Self {
+        match residual {
+            Ok(_) => Self::ok(),
+            Err(e) => Self::err(e),
         }
     }
 }
@@ -718,11 +780,11 @@ impl<'src> DerefMut for CallFrame<'src> {
 
 
 impl Reg {
-    pub const TAG_INT   : u8 = 0;
-    pub const TAG_FLOAT : u8 = 1;
-    pub const TAG_BOOL  : u8 = 2;
-    pub const TAG_UNIT  : u8 = 3;
-    pub const TAG_OBJ   : u8 = 4;
+    pub const TAG_UNIT  : u64 = 0;
+    pub const TAG_INT   : u64 = 1;
+    pub const TAG_FLOAT : u64 = 2;
+    pub const TAG_BOOL  : u64 = 3;
+    pub const TAG_OBJ   : u64 = 4;
 
 
     pub fn new_int(data: i64) -> Self { Reg { kind: Self::TAG_INT, data: RegData { as_int: data }} }

@@ -1,12 +1,19 @@
 use std::hint::select_unpredictable;
 
-use crate::{opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
+use crate::{jit::{self, attempt_jit}, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
 impl<'src> VM<'src> {
     pub fn run(&mut self, func: &str) -> Status {
-        let Some(func) = &self.funcs.iter().find(|x| x.name == func)
-        else { return Status::Err(FatalError::new(format!("invalid entry function '{func}'"))) };
+        let Some((index, _)) = &self.funcs.iter().enumerate().find(|x| x.1.name == func)
+        else { return Status::err(FatalError::new(format!("invalid entry function '{func}'"))) };
 
+        self.run_func(*index)
+    }
+
+    pub extern "C" fn run_func(&mut self, index: usize) -> Status {
+        //dbg!(jit::attempt_jit(self, index));
+
+        let func = &self.funcs[index];
         match func.kind {
             crate::FunctionKind::Code { byte_offset, byte_size } => {
                 assert!(self.callstack.stack.is_empty());
@@ -15,12 +22,14 @@ impl<'src> VM<'src> {
                     0,
                     0,
                 );
+
             },
 
 
             crate::FunctionKind::Host(f) => {
-                f(self);
-                return Status::Ok
+                let mut reg = Reg::new_unit();
+                unsafe { f(self, &mut reg) };
+                return Status::ok()
             },
         };
 
@@ -28,7 +37,7 @@ impl<'src> VM<'src> {
         unsafe {
         loop {
             let opcode = self.curr.next();
-            //println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
+            println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
             //println!("{:?}", self.stack);
             
             match opcode {
@@ -62,6 +71,8 @@ impl<'src> VM<'src> {
                     // the arguments should already be ordered at the top of the stack
                     //
 
+                    //dbg!(attempt_jit(self, func as _));
+
                     let func = &self.funcs[func as usize];
 
                     match func.kind {
@@ -85,7 +96,8 @@ impl<'src> VM<'src> {
                             self.stack.bottom = self.stack.curr - argc as usize;
 
                             let start = self.stack.curr;
-                            let ret = f(self);
+                            let mut ret = Reg::new_unit();
+                            f(self, &mut ret);
                             debug_assert_eq!(self.stack.curr, start);
 
                             self.stack.curr -= argc as usize;
@@ -139,7 +151,8 @@ impl<'src> VM<'src> {
                             self.stack.bottom = self.stack.curr - argc as usize;
 
                             let start = self.stack.curr;
-                            let ret = f(self);
+                            let mut ret = Reg::new_unit();
+                            f(self, &mut ret);
                             debug_assert_eq!(self.stack.curr, start);
 
                             self.stack.curr -= argc as usize;
@@ -188,7 +201,7 @@ impl<'src> VM<'src> {
 
                     let str = reader.next_str();
 
-                    return Status::Err(FatalError::new(format!("{str}")))
+                    return Status::err(FatalError::new(format!("{str}")))
                 },
 
 
@@ -255,7 +268,7 @@ impl<'src> VM<'src> {
 
                     let list = self.objs[list.as_obj() as usize].as_list();
                     if index < 0 || index as usize >= list.len() {
-                        return Status::Err(FatalError::new(String::from("out of bounds access")))
+                        return Status::err(FatalError::new(String::from("out of bounds access")))
                     }
 
                     self.stack.push(list[index as usize]);
@@ -269,7 +282,7 @@ impl<'src> VM<'src> {
 
                     let list = self.objs[list.as_obj() as usize].as_mut_list();
                     if index < 0 || index as usize >= list.len() {
-                        return Status::Err(FatalError::new(String::from("out of bounds access")))
+                        return Status::err(FatalError::new(String::from("out of bounds access")))
                     }
 
                     list[index as usize] = value
@@ -320,7 +333,7 @@ impl<'src> VM<'src> {
                     let obj = &mut self.objs[var.as_obj() as usize];
 
                     if obj.as_fields()[0].as_int() == 1 {
-                        return Status::Err(FatalError::new("tried to unwrap an invalid value".to_string()));
+                        return Status::err(FatalError::new("tried to unwrap an invalid value".to_string()));
                     }
 
                     obj.as_mut_fields()[1] = val;
@@ -332,7 +345,7 @@ impl<'src> VM<'src> {
                     let obj_index = val.as_obj();
                     let obj = &self.objs[obj_index as usize];
                     if obj.as_fields()[0].as_int() == 1 {
-                        return Status::Err(FatalError::new("tried to unwrap an invalid value".to_string()));
+                        return Status::err(FatalError::new("tried to unwrap an invalid value".to_string()));
                     }
 
                     self.stack.push(obj.as_fields()[1])
@@ -340,7 +353,7 @@ impl<'src> VM<'src> {
 
 
                 consts::UnwrapFail => {
-                    return Status::Err(FatalError::new("tried to unwrap an invalid value".to_string()));
+                    return Status::err(FatalError::new("tried to unwrap an invalid value".to_string()));
                 }
 
 
@@ -679,7 +692,7 @@ impl<'src> VM<'src> {
         debug_assert!(self.stack.bottom == 0);
 
 
-        Status::Ok
+        Status::ok()
     }
 }
 

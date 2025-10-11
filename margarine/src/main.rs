@@ -24,17 +24,15 @@ fn main() {
 
 
 
-    let mut hosts : HashMap<String, fn(&mut VM) -> Reg>= HashMap::new();
+    let mut hosts : HashMap<String, _>= HashMap::new();
     stdlib(&mut hosts);
-    raylib(&mut hosts);
 
     let mut vm = VM::new(hosts, &*src).unwrap();
     dbg!(&vm.funcs);
     {
         let _t = DropTimer::new("runtime");
-        match vm.run("flappy_bird::main") {
-            Status::Ok => (),
-            Status::Err(fatal_error) => println!("{}", fatal_error.msg),
+        if let Some(e) = vm.run("test::main").as_err() {
+            println!("{}", e.to_str().unwrap());
         }
     }
 }

@@ -182,7 +182,32 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
 }
 
 
-pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
+pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg)>) {
+
+    unsafe extern "C" fn print_raw(vm: &mut VM, _: &mut Reg) {
+        let val = unsafe { vm.stack.reg(0) };
+        let ty_id = unsafe { vm.stack.reg(1).as_int() };
+
+        unsafe {
+        match SymbolId(ty_id as u32) {
+            SymbolId::I64 => println!("{}", val.as_int()),
+            SymbolId::F64 => println!("{}", val.as_float()),
+            SymbolId::BOOL => println!("{}", val.as_bool()),
+            SymbolId::STR => println!("{}", vm.objs[val.as_obj() as usize].as_str()),
+            SymbolId::LIST => println!("{:?}", vm.objs[val.as_obj() as usize].as_list()),
+
+            //@todo
+            _ => println!("{:?}", vm.objs[val.as_obj() as usize].as_fields())
+        }
+        }
+    }
+
+    hosts.insert("print_raw".to_string(), print_raw);
+
+
+
+
+    /*
     hosts.insert("print_raw".to_string(), |vm| {
         let val = unsafe { vm.stack.reg(0) };
         let ty_id = unsafe { vm.stack.reg(1).as_int() };
@@ -296,5 +321,5 @@ pub fn stdlib(hosts: &mut HashMap<String, fn(&mut VM) -> Reg>) {
 
     hosts.insert("random".to_string(), |_| {
         Reg::new_float(rand::random())
-    });
+    });*/
 }

@@ -1848,3 +1848,345 @@ impl OpCode {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum Decoded<'src> {
+    Ret { local_count: u8 },
+    Unit {  },
+    PushLocalSpace { amount: u8 },
+    PopLocalSpace { amount: u8 },
+    Err { ty: u8, file: u32, index: u32 },
+    ConstInt { val: i64 },
+    ConstFloat { val: f64 },
+    ConstBool { val: u8 },
+    ConstStr { val: u32 },
+    Call { func: u32, argc: u8 },
+    Pop {  },
+    Copy {  },
+    CreateList { elem_count: u32 },
+    CreateStruct { field_count: u8 },
+    LoadField { field_index: u8 },
+    IndexList {  },
+    StoreList {  },
+    StoreField { field_index: u8 },
+    LoadEnumField { enum_index: u32 },
+    CreateFuncRef { capture_count: u8 },
+    CallFuncRef { argc: u8 },
+    Unwrap {  },
+    UnwrapFail {  },
+    CastIntToFloat {  },
+    CastFloatToInt {  },
+    CastBoolToInt {  },
+    NegInt {  },
+    AddInt {  },
+    SubInt {  },
+    MulInt {  },
+    DivInt {  },
+    RemInt {  },
+    EqInt {  },
+    NeInt {  },
+    GtInt {  },
+    GeInt {  },
+    LtInt {  },
+    LeInt {  },
+    BitwiseOr {  },
+    BitwiseAnd {  },
+    BitwiseXor {  },
+    BitshiftLeft {  },
+    BitshiftRight {  },
+    NegFloat {  },
+    AddFloat {  },
+    SubFloat {  },
+    MulFloat {  },
+    DivFloat {  },
+    RemFloat {  },
+    EqFloat {  },
+    NeFloat {  },
+    GtFloat {  },
+    GeFloat {  },
+    LtFloat {  },
+    LeFloat {  },
+    EqBool {  },
+    NeBool {  },
+    NotBool {  },
+    Load { index: u8 },
+    Store { index: u8 },
+    UnwrapStore {  },
+    Jump { offset: i32 },
+    SwitchOn { true_offset: i32, false_offset: i32 },
+    Switch { offsets: &'src [u8] },
+}
+
+impl OpCode {
+    pub fn decode<'src>(reader: &mut crate::Reader<'src>) -> Option<(Self, Decoded<'src>)> {
+        unsafe {
+        let [opcode] = reader.try_next_n::<1>()?;
+        let opcode = Self::from_u8(opcode)?;
+
+        match opcode {
+            Self::Ret => {
+        let local_count = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::Ret { local_count }))
+            }
+            Self::Unit => {
+
+                Some((opcode, Decoded::Unit {  }))
+            }
+            Self::PushLocalSpace => {
+        let amount = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::PushLocalSpace { amount }))
+            }
+            Self::PopLocalSpace => {
+        let amount = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::PopLocalSpace { amount }))
+            }
+            Self::Err => {
+        let ty = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+        let file = <u32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u32>() }>());
+        let index = <u32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u32>() }>());
+                Some((opcode, Decoded::Err { ty, file, index }))
+            }
+            Self::ConstInt => {
+        let val = <i64>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<i64>() }>());
+                Some((opcode, Decoded::ConstInt { val }))
+            }
+            Self::ConstFloat => {
+        let val = <f64>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<f64>() }>());
+                Some((opcode, Decoded::ConstFloat { val }))
+            }
+            Self::ConstBool => {
+        let val = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::ConstBool { val }))
+            }
+            Self::ConstStr => {
+        let val = <u32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u32>() }>());
+                Some((opcode, Decoded::ConstStr { val }))
+            }
+            Self::Call => {
+        let func = <u32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u32>() }>());
+        let argc = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::Call { func, argc }))
+            }
+            Self::Pop => {
+
+                Some((opcode, Decoded::Pop {  }))
+            }
+            Self::Copy => {
+
+                Some((opcode, Decoded::Copy {  }))
+            }
+            Self::CreateList => {
+        let elem_count = <u32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u32>() }>());
+                Some((opcode, Decoded::CreateList { elem_count }))
+            }
+            Self::CreateStruct => {
+        let field_count = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::CreateStruct { field_count }))
+            }
+            Self::LoadField => {
+        let field_index = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::LoadField { field_index }))
+            }
+            Self::IndexList => {
+
+                Some((opcode, Decoded::IndexList {  }))
+            }
+            Self::StoreList => {
+
+                Some((opcode, Decoded::StoreList {  }))
+            }
+            Self::StoreField => {
+        let field_index = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::StoreField { field_index }))
+            }
+            Self::LoadEnumField => {
+        let enum_index = <u32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u32>() }>());
+                Some((opcode, Decoded::LoadEnumField { enum_index }))
+            }
+            Self::CreateFuncRef => {
+        let capture_count = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::CreateFuncRef { capture_count }))
+            }
+            Self::CallFuncRef => {
+        let argc = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::CallFuncRef { argc }))
+            }
+            Self::Unwrap => {
+
+                Some((opcode, Decoded::Unwrap {  }))
+            }
+            Self::UnwrapFail => {
+
+                Some((opcode, Decoded::UnwrapFail {  }))
+            }
+            Self::CastIntToFloat => {
+
+                Some((opcode, Decoded::CastIntToFloat {  }))
+            }
+            Self::CastFloatToInt => {
+
+                Some((opcode, Decoded::CastFloatToInt {  }))
+            }
+            Self::CastBoolToInt => {
+
+                Some((opcode, Decoded::CastBoolToInt {  }))
+            }
+            Self::NegInt => {
+
+                Some((opcode, Decoded::NegInt {  }))
+            }
+            Self::AddInt => {
+
+                Some((opcode, Decoded::AddInt {  }))
+            }
+            Self::SubInt => {
+
+                Some((opcode, Decoded::SubInt {  }))
+            }
+            Self::MulInt => {
+
+                Some((opcode, Decoded::MulInt {  }))
+            }
+            Self::DivInt => {
+
+                Some((opcode, Decoded::DivInt {  }))
+            }
+            Self::RemInt => {
+
+                Some((opcode, Decoded::RemInt {  }))
+            }
+            Self::EqInt => {
+
+                Some((opcode, Decoded::EqInt {  }))
+            }
+            Self::NeInt => {
+
+                Some((opcode, Decoded::NeInt {  }))
+            }
+            Self::GtInt => {
+
+                Some((opcode, Decoded::GtInt {  }))
+            }
+            Self::GeInt => {
+
+                Some((opcode, Decoded::GeInt {  }))
+            }
+            Self::LtInt => {
+
+                Some((opcode, Decoded::LtInt {  }))
+            }
+            Self::LeInt => {
+
+                Some((opcode, Decoded::LeInt {  }))
+            }
+            Self::BitwiseOr => {
+
+                Some((opcode, Decoded::BitwiseOr {  }))
+            }
+            Self::BitwiseAnd => {
+
+                Some((opcode, Decoded::BitwiseAnd {  }))
+            }
+            Self::BitwiseXor => {
+
+                Some((opcode, Decoded::BitwiseXor {  }))
+            }
+            Self::BitshiftLeft => {
+
+                Some((opcode, Decoded::BitshiftLeft {  }))
+            }
+            Self::BitshiftRight => {
+
+                Some((opcode, Decoded::BitshiftRight {  }))
+            }
+            Self::NegFloat => {
+
+                Some((opcode, Decoded::NegFloat {  }))
+            }
+            Self::AddFloat => {
+
+                Some((opcode, Decoded::AddFloat {  }))
+            }
+            Self::SubFloat => {
+
+                Some((opcode, Decoded::SubFloat {  }))
+            }
+            Self::MulFloat => {
+
+                Some((opcode, Decoded::MulFloat {  }))
+            }
+            Self::DivFloat => {
+
+                Some((opcode, Decoded::DivFloat {  }))
+            }
+            Self::RemFloat => {
+
+                Some((opcode, Decoded::RemFloat {  }))
+            }
+            Self::EqFloat => {
+
+                Some((opcode, Decoded::EqFloat {  }))
+            }
+            Self::NeFloat => {
+
+                Some((opcode, Decoded::NeFloat {  }))
+            }
+            Self::GtFloat => {
+
+                Some((opcode, Decoded::GtFloat {  }))
+            }
+            Self::GeFloat => {
+
+                Some((opcode, Decoded::GeFloat {  }))
+            }
+            Self::LtFloat => {
+
+                Some((opcode, Decoded::LtFloat {  }))
+            }
+            Self::LeFloat => {
+
+                Some((opcode, Decoded::LeFloat {  }))
+            }
+            Self::EqBool => {
+
+                Some((opcode, Decoded::EqBool {  }))
+            }
+            Self::NeBool => {
+
+                Some((opcode, Decoded::NeBool {  }))
+            }
+            Self::NotBool => {
+
+                Some((opcode, Decoded::NotBool {  }))
+            }
+            Self::Load => {
+        let index = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::Load { index }))
+            }
+            Self::Store => {
+        let index = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
+                Some((opcode, Decoded::Store { index }))
+            }
+            Self::UnwrapStore => {
+
+                Some((opcode, Decoded::UnwrapStore {  }))
+            }
+            Self::Jump => {
+        let offset = <i32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<i32>() }>());
+                Some((opcode, Decoded::Jump { offset }))
+            }
+            Self::SwitchOn => {
+        let true_offset = <i32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<i32>() }>());
+        let false_offset = <i32>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<i32>() }>());
+                Some((opcode, Decoded::SwitchOn { true_offset, false_offset }))
+            }
+            Self::Switch => {
+        let _len = <u32>::from_le_bytes(reader.next_n::<4>());
+        let offsets = reader.next_slice(_len as usize);
+                Some((opcode, Decoded::Switch { offsets }))
+            }
+            _ => None,
+        }
+        }
+    }
+}
