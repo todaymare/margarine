@@ -19,7 +19,6 @@ pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 pub use runtime::{VM, opcode, Status, FatalError, Reg};
 pub use sti::arena::Arena;
-use sti::hash::fxhash::fxhash64;
 
 
 pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
@@ -202,58 +201,34 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         }
     }
 
-    hosts.insert("print_raw".to_string(), print_raw);
-
-
-
-
-    /*
-    hosts.insert("print_raw".to_string(), |vm| {
-        let val = unsafe { vm.stack.reg(0) };
-        let ty_id = unsafe { vm.stack.reg(1).as_int() };
-
-        unsafe {
-        match SymbolId(ty_id as u32) {
-            SymbolId::I64 => println!("{}", val.as_int()),
-            SymbolId::F64 => println!("{}", val.as_float()),
-            SymbolId::BOOL => println!("{}", val.as_bool()),
-            SymbolId::STR => println!("{}", vm.objs[val.as_obj() as usize].as_str()),
-            SymbolId::LIST => println!("{:?}", vm.objs[val.as_obj() as usize].as_list()),
-
-            //@todo
-            _ => println!("{:?}", vm.objs[val.as_obj() as usize].as_fields())
-        }
-        }
-        Reg::new_unit()
-    });
-
-
-    hosts.insert("new_any".to_string(), |vm| {
+    unsafe extern "C" fn new_any(vm: &mut VM, ret: &mut Reg) {
         let value = unsafe { vm.stack.reg(0) };
         let type_id = unsafe { vm.stack.reg(1) };
 
-        let obj = vm.new_obj(runtime::Object::Struct { fields: vec![type_id, value] });
-        obj
-    });
+        *ret = vm.new_obj(runtime::Object::Struct { fields: vec![type_id, value] });
+
+    }
 
 
-    hosts.insert("downcast_any".to_string(), |vm| {
+    unsafe extern "C" fn downcast_any(vm: &mut VM, ret: &mut Reg) {
         let any_value = unsafe { vm.stack.reg(0) };
         let target_ty = unsafe { vm.stack.reg(1) };
 
         let obj = unsafe { any_value.as_obj() };
         let obj = vm.objs[obj as usize].as_fields();
 
-        unsafe {
+        *ret = unsafe {
             if obj[0].as_int() == target_ty.as_int() {
                 vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), obj[1]] })
             } else {
                 vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
             }
         }
-    });
 
-    hosts.insert("push_list".to_string(), |vm| {
+    }
+
+
+    unsafe extern "C" fn push_list(vm: &mut VM, _: &mut Reg) {
         let list = unsafe { vm.stack.reg(0) };
         let value = unsafe { vm.stack.reg(1) };
 
@@ -262,11 +237,10 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
             runtime::Object::List(regs) => regs.push(value),
             _ => unreachable!(),
         }
+    }
 
-        Reg::new_unit()
-    });
 
-    hosts.insert("pop_list".to_string(), |vm| {
+    unsafe extern "C" fn pop_list(vm: &mut VM, ret: &mut Reg) {
         let list = unsafe { vm.stack.reg(0) };
 
         let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
@@ -275,51 +249,71 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
             _ => unreachable!(),
         };
 
-        if let Some(value) = value {
+        *ret = if let Some(value) = value {
             vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), value] })
         } else {
             vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
         }
-    });
+    }
 
-    hosts.insert("len_list".to_string(), |vm| {
+
+    unsafe extern "C" fn len_list(vm: &mut VM, ret: &mut Reg) {
         let list = unsafe { vm.stack.reg(0) };
-
         let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
-        Reg::new_int(list.as_list().len() as i64)
-    });
+        *ret = Reg::new_int(list.as_list().len() as i64);
+    }
 
-    hosts.insert("now_secs".to_string(), |_| {
+
+    unsafe extern "C" fn now_secs(_: &mut VM, ret: &mut Reg) {
         let Ok(time) = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
         else { panic!("failed to get the epoch") };
 
         let secs = time.as_secs();
-        Reg::new_int(secs as i64)
-    });
+        *ret = Reg::new_int(secs as i64)
+    }
 
-    hosts.insert("now_nanos".to_string(), |_| {
+
+    unsafe extern "C" fn now_nanos(_: &mut VM, ret: &mut Reg) {
         let Ok(time) = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
         else { panic!("failed to get the epoch") };
 
         let secs = time.subsec_nanos();
-        Reg::new_int(secs as i64)
-    });
+        *ret = Reg::new_int(secs as i64)
+    }
 
-    hosts.insert("int_to_str".to_string(), |vm| {
+
+    unsafe extern "C" fn int_to_str(vm: &mut VM, ret: &mut Reg) {
         let int = unsafe { vm.stack.reg(0).as_int() };
         let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
-        obj
-    });
+        *ret = obj
+    }
 
-    hosts.insert("float_to_str".to_string(), |vm| {
+
+    unsafe extern "C" fn float_to_str(vm: &mut VM, ret: &mut Reg) {
         let int = unsafe { vm.stack.reg(0).as_float() };
         let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
-        obj
-    });
+        *ret = obj
+    }
 
-    hosts.insert("random".to_string(), |_| {
-        Reg::new_float(rand::random())
-    });*/
+
+    unsafe extern "C" fn random(_: &mut VM, ret: &mut Reg) {
+        let obj = Reg::new_float(rand::random());
+        *ret = obj
+    }
+
+
+    hosts.insert("print_raw".to_string(), print_raw);
+    hosts.insert("new_any".to_string(), new_any);
+    hosts.insert("downcast_any".to_string(), downcast_any);
+    hosts.insert("push_list".to_string(), push_list);
+    hosts.insert("pop_list".to_string(), pop_list);
+    hosts.insert("len_list".to_string(), len_list);
+    hosts.insert("now_secs".to_string(), now_secs);
+    hosts.insert("now_nanos".to_string(), now_nanos);
+    hosts.insert("int_to_str".to_string(), int_to_str);
+    hosts.insert("float_to_str".to_string(), float_to_str);
+    hosts.insert("random".to_string(), random);
+
 }
