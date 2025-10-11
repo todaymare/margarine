@@ -1,5 +1,4 @@
-use margarine::{FileData, StringMap};
-use sti::arena::Arena;
+use margarine::{FileData, StringMap, Arena};
 
 #[macro_use]
 extern crate afl;
