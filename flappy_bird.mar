@@ -1,143 +1,131 @@
+use std::rand::random
+use std::hashmap::HashMap
 use std::print
-use std::duration::Duration
-
-
-extern {
-    fn RaylibInitWindow(width: int, height: int, title: str)
-    fn RaylibWindowShouldClose(): bool
-
-    fn RaylibSetTargetFPS(fps: int)
-    fn RaylibBeginDrawing()
-    fn RaylibEndDrawing()
-    fn RaylibClearBackground(color: Color)
-    fn RaylibDrawText(text: str, pos_x: int, pos_y: int, font_size: int, color: Color)
-    fn RaylibDrawRectangle(pos_x: int, pos_y: int, w: int, h: int, color: Color)
-    fn RaylibDrawFPS(pos_x: int, pos_y: int)
-    fn RaylibIsKeyPressed(key: int): bool
-
-    fn RaylibCloseWindow()
-}
-
-
-struct Color {
-    r: float,
-    g: float,
-    b: float,
-    a: float,
-}
-
-
-enum Key {
-    Space,
-}
-
-
-impl Key {
-    fn as_int(self): int {
-        match self {
-            Space => 32,
-        }
-    }
-}
-
+use raylib::*
 
 fn main() {
-    RaylibInitWindow(500, 600, "hello");
+    var raylib = Raylib::new(600, 400, "flappy bird");
+    raylib.set_target_fps(60);
+
     var bird = Bird {
-        position: Vec2 { x: 250.0 - 16.0, y: 100.0 },
-        velocity: Vec2 { x: 0.0, y: 0.0 },
+        position: (300.0, 200.0),
+        velocity: (0.0, 0.0),
     };
 
-    var pipe = Pipe {
-        position: Vec2 { x: 0.0, y: 300.0 },
+   var pipe = Pipe {
+        position: (300.0, 200.0),
+        velocity: (0.0, 0.0),
     };
 
-    var updateables = [];
-    var drawables = [];
+    var objs = [];
 
-    updateables.push(|dt| bird.update(dt));
-    updateables.push(|dt| pipe.update(dt));
-    drawables.push(|| bird.draw());
-    drawables.push(|| pipe.draw());
+    objs.push((
+        |raylib, dt| bird.update(raylib, dt),
+        |frame| bird.draw(frame),
+    ));
 
-    RaylibSetTargetFPS(60);
+    objs.push((
+        |_, dt| pipe.update(dt),
+        |frame| pipe.draw(frame),
+    ));
 
-    var last_frame = Duration::now();
-    while !RaylibWindowShouldClose(){
-        var dt = last_frame.elapsed().as_secs_float();
-        last_frame = Duration::now();
 
-        for updateable in updateables.iter() {
-            updateable(dt)
+    var x = std::iter::Iter {
+        next: || some(5)
+    };
+
+    var map = HashMap::new();
+    map.insert(50, 30);
+    print(map);
+
+    while !raylib.window_should_close() {
+        var it = [10, 20, 30].iter().enumerate();
+
+        for i in it {
+            print(i);
         }
 
-        if RaylibIsKeyPressed(Key::Space().as_int()) {
-            bird.velocity.y = -200.0;
+        var dt = raylib.frame_time();
+
+        for obj in objs.iter().enumerate() {
+            print(obj.0);
+            var func = (obj.1).0;
+            func(raylib, dt);
         }
 
-        // draw
-        RaylibBeginDrawing();
 
-        RaylibDrawFPS(0, 0);
-        RaylibClearBackground(Color { r: 0.0, g: 0.0, a: 1.0, b: 0.0 });
+        raylib.frame(
+        |frame: Frame| {
+            frame.clear_background(Color::new(0.1, 0.1, 0.1, 1.0));
 
-        for drawable in drawables.iter() {
-            drawable()
-        }
+            for obj in objs.iter() {
+                var func = obj.1;
+                func(frame);
+            }
 
-        RaylibEndDrawing();
+            frame.draw_fps(0, 0);
+
+        });
     }
-
-    RaylibCloseWindow();
 }
 
 
 struct Bird {
-    position: Vec2,
-    velocity: Vec2,
-}
-
-struct Pipe {
-    position: Vec2,
-}
-
-
-struct Vec2 {
-    x: float,
-    y: float,
+    position: (x: float, y: float),
+    velocity: (float, float),
 }
 
 
 impl Bird {
-    fn update(self, dt: float) {
-        self.velocity.y += 180.0 * dt;
+    fn update(self, raylib: Raylib, dt: float) {
+        self.velocity.1 += 270.8 * dt;
+        if raylib.is_key_pressed(Key::Space()) {
+            std::print("hi");
+            self.velocity.1 = -180.0;
+        }
 
-        self.position.x += self.velocity.x * dt;
-        self.position.y += self.velocity.y * dt;
+        self.position.y += self.velocity.1 * dt;
     }
 
 
-    fn draw(self) {
-        RaylibDrawRectangle(self.position.x as int, self.position.y as int,
-                            32, 32, Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+    fn draw(self, frame: Frame) {
+        frame.draw_rect(
+            self.position.x as int - 8,
+            self.position.y as int - 8,
+            16, 16, Color::new(1.0, 1.0, 1.0, 1.0),
+        );
     }
 }
 
+
+struct Pipe {
+    position: (x: float, y: float),
+    velocity: (float, float),
+}
+
+
 impl Pipe {
     fn update(self, dt: float) {
-        self.position.x -= 180.0 * dt;
-        if self.position.x < -16.0 {
-            self.position.x = 500.0;
+        self.position.x += -180.0 * dt;
+
+        if self.position.x < -8.0 {
+            self.position.x = 608.0;
+            self.position.y = random() * 380.0 + 10.0;
         }
     }
 
 
-    fn draw(self) {
-        var gap = 50;
-
-        RaylibDrawRectangle(self.position.x as int, self.position.y as int - 320 - gap,
-                            32, 320, Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
-        RaylibDrawRectangle(self.position.x as int, self.position.y as int + gap,
-                            32, 320, Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+    fn draw(self, frame: Frame) {
+        var gap = 30;
+        frame.draw_rect(
+            self.position.x as int - 8,
+            self.position.y as int - 360 - gap,
+            16, 360, Color::new(1.0, 0.0, 1.0, 1.0),
+        );
+        frame.draw_rect(
+            self.position.x as int - 8,
+            self.position.y as int + gap,
+            16, 360, Color::new(1.0, 1.0, 1.0, 1.0),
+        );
     }
 }

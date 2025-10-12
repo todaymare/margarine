@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Write, fs};
+use std::{collections::HashMap, fmt::Write, fs, hash::Hash};
 
 use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
@@ -18,7 +18,8 @@ pub struct Conversion<'me, 'out, 'ast, 'str> {
 
     funcs: HashMap<TypeHash, Function<'me>>,
     const_strs: Vec<StringIndex>,
-    buf: &'me Arena,
+
+    func_counter: u32,
 }
 
 
@@ -91,8 +92,8 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
         ast: ty_checker.ast,
         ty_info: &ty_checker.type_info,
         funcs: HashMap::new(),
-        buf: &out,
         const_strs: Vec::new(),
+        func_counter: 0,
     };
 
 
@@ -294,8 +295,17 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
     final_product.extend_from_slice(&strs_table);
     final_product.extend_from_slice(&func_sec);
     final_product.extend_from_slice(&code.bytecode);
-    dbg!(&funcs);
-    dbg!(&code);
+
+    for f in funcs {
+        println!("{} - {}:", conv.string_map.get(f.1.name), f.1.index.0);
+        match &f.1.kind {
+            FunctionKind::Code { local_count, entry, blocks } => {
+            },
+            FunctionKind::Extern(..) => {
+                println!("extern {}", conv.string_map.get(f.1.name))
+            },
+        }
+    }
 
     final_product
 }
@@ -303,6 +313,12 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
 
 impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
+    fn next_func_id(&mut self) -> FuncIndex {
+        self.func_counter += 1;
+        FuncIndex(self.func_counter-1)
+    }
+
+
     fn get_func(&mut self, sym: SymbolId, gens_id: GenListId) -> Result<&Function<'me>, ErrorId> {
         let ty = Sym::Ty(sym, gens_id);
         let hash = ty.hash(self.syms);
@@ -328,14 +344,14 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             crate::syms::func::FunctionKind::Extern(path) => {
                 let func = Function {
                     name: self.string_map.insert(self.string_map.get(path)),
-                    index: FuncIndex(self.funcs.len() as u32),
+                    index: self.next_func_id(),
                     kind: FunctionKind::Extern(path),
                     error: self.ty_info.decl(sym_func.decl().unwrap()),
                     args,
                     ret: ret.0,
                 };
 
-                self.funcs.insert(hash, func);
+                assert!(self.funcs.insert(hash, func).is_none());
                 return Ok(self.funcs.get(&hash).unwrap())
             },
 
@@ -347,7 +363,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 let err = self.ty_info.decl(sym_func.decl().unwrap());
                 let func = Function {
                     name: self.string_map.insert(ty.display(self.string_map, self.syms)),
-                    index: FuncIndex(self.funcs.len() as u32),
+                    index: self.next_func_id(),
                     kind: FunctionKind::Code {
                         local_count: 0,
                         entry: BlockIndex(0),
@@ -359,7 +375,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 };
 
-                self.funcs.insert(hash, func);
+                assert!(self.funcs.insert(hash, func).is_none());
 
                 let mut env = Env {
                     vars: Vec::new(),
@@ -425,7 +441,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 let func = Function {
                     name: self.string_map.insert(ty.display(self.string_map, self.syms)),
-                    index: FuncIndex(self.funcs.len().try_into().unwrap()),
+                    index: self.next_func_id(),
 
                     kind: FunctionKind::Code {
                         local_count: 0,
@@ -438,7 +454,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     ret: ret.0,
                 };
 
-                self.funcs.insert(hash, func);
+                assert!(self.funcs.insert(hash, func).is_none());
                 return Ok(self.funcs.get(&hash).unwrap())
             }
 
@@ -467,7 +483,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 let err = sym_func.decl().map(|t| self.ty_info.decl(t)).flatten();
                 let func = Function {
                     name: sym.name(),
-                    index: FuncIndex(self.funcs.len() as u32),
+                    index: self.next_func_id(),
                     kind: FunctionKind::Code {
                         local_count: 0,
                         entry: BlockIndex(0),
@@ -482,7 +498,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     ret: ret.0,
                 };
 
-                self.funcs.insert(hash, func);
+                assert!(self.funcs.insert(hash, func).is_none());
                 return Ok(self.funcs.get(&hash).unwrap())
             },
 
@@ -935,8 +951,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     return Err(err)
                 }
 
-
-
                 block.bytecode.call(func.index.0, args.len().try_into().unwrap());
             },
 
@@ -1108,7 +1122,24 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 let syms::func::FunctionKind::Closure(closure) = func_ty.kind()
                 else { unreachable!() };
 
-                let hash = ty.hash(self.syms);
+                let func_gens = self.syms.get_gens(ty.gens(self.syms));
+                let env_gens = self.syms.get_gens(env.gens);
+
+                let mut new_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
+                for (name, sym) in func_gens {
+                    let sym =
+                        env_gens.iter().find(|x| x.0 == *name)
+                        .map(|x| x.1).unwrap_or(*sym);
+
+                    new_gens.push((*name, sym));
+                }
+
+                let gens = self.syms.add_gens(new_gens.leak());
+                let sym = ty.sym(self.syms).unwrap();
+
+                let ty = Sym::Ty(sym, gens);
+
+                let hash = ty.hash_fn(self.syms, |h| expr.hash(h));
                 let closure = self.syms.closure(closure);
 
                 for name in &closure.captured_variables {
@@ -1161,7 +1192,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                     let func = Function {
                         name: self.string_map.insert(ty.display(self.string_map, self.syms)),
-                        index: FuncIndex(self.funcs.len() as u32),
+                        index: self.next_func_id(),
                         kind: FunctionKind::Code {
                             local_count: (env.var_counter - argc as u32).try_into().unwrap(),
                             entry: entry_block,
@@ -1173,7 +1204,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         ret: self.ty_info.expr(body).unwrap().sym(self.syms).unwrap().0,
                     };
 
-                    self.funcs.insert(hash, func);
+                    dbg!(&func);
+                    let ret = self.funcs.insert(hash, func);
+                    dbg!(&ret);
+                    assert!(ret.is_none());
                     self.funcs.get(&hash).unwrap()
                 };
 

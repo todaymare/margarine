@@ -19,31 +19,18 @@ impl<T> [T] {
     fn len(self): int { len_list(self) }
 
 
-    fn iter(self): ListIterator<T> {
-        ListIterator {
-            list: self,
-            index: 0,
-        }
-    }
-
-}
-
-
-struct ListIterator<T> {
-    list: [T],
-    index: int,
-}
-
-
-impl<T> ListIterator<T> {
-    fn __next__(self): Option<T> {
-        if self.index < self.list.len() {
-            self.index += 1;
-            some(self.list[self.index-1])
-        } else {
-            none()
+    fn iter(self): std::iter::Iter<T> {
+        var index = Box::new(0);
+        std::iter::Iter {
+            next: || {
+                if index.value < self.len() {
+                    index.value += 1;
+                    some(self[index.value-1])
+                } else {
+                    none()
+                }
+            }
         }
     }
 }
-
 

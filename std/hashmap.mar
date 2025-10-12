@@ -1,0 +1,13 @@
+type HashMap<K, V>
+
+
+impl<K, V> HashMap<K, V> {
+    extern {
+        fn "hashmap_new" new<K, V>(): HashMap<K, V>
+        fn "hashmap_insert" insert<K, V>(hashmap: HashMap<K, V>, key: K, value: V)
+        fn "hashmap_clear" clear<K, V>(hashmap: HashMap<K, V>)
+        fn "hashmap_contains_key" contains_key<K, V>(hashmap: HashMap<K, V>, key: K): bool
+        fn "hashmap_retain" remove<K, V>(hashmap: HashMap<K, V>, key: K): Option<V>
+    }
+}
+

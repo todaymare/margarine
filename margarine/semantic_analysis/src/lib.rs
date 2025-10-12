@@ -306,7 +306,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 if ns.1 { return Err(Error::Bypass) }
 
-                let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns.0));
+                let scope = Scope::new(scope_id, ScopeKind::ImplicitNamespace(ns.0));
                 let scope = self.scopes.push(scope);
                 self.dt_to_ty(scope, id, *dt)
             },

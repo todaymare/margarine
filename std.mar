@@ -24,6 +24,14 @@ impl Range {
 }
 
 
+struct Box<T> { value: T }
+
+
+impl<T> Box<T> {
+    fn new(value: T): Box<T> { Box { value } }
+}
+
+
 type any
 
 
@@ -73,5 +81,20 @@ impl int {
 impl float {
     fn to_str(self): str {
         float_to_str(self)
+    }
+}
+
+
+impl<T> Option<T> {
+    fn map<A>(self, f: fn(T): A): Option<A> {
+        match self {
+            some: val => {
+                some(f(val))
+            },
+
+            none => {
+                none()
+            }
+        }
     }
 }

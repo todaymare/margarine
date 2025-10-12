@@ -48,6 +48,7 @@ pub struct VM<'src> {
 }
 
 
+#[derive(Debug)]
 pub enum Object {
     Struct {
         fields: Vec<Reg>,
@@ -58,6 +59,9 @@ pub enum Object {
 
 
     String(Box<str>),
+
+
+    Dict(HashMap<Reg, Reg>),
 
 
     FuncRef {
@@ -136,6 +140,7 @@ struct CallFrame<'me> {
 }
 
 
+#[derive(Clone)]
 pub struct Reader<'me> {
     /// The source code
     /// Note: This pointer is only valid in the range given at creation
@@ -212,6 +217,7 @@ impl<'src> VM<'src> {
                     let args = funcs_reader.next_slice(argc as usize * 4);
 
                     let kind = funcs_reader.next();
+                    println!("{name} {}", funcs.len());
 
 
                     match kind {
@@ -832,6 +838,13 @@ impl Object {
             _ => unreachable!(),
         }
     }
+
+    pub fn as_hm(&mut self) -> &mut HashMap<Reg, Reg> {
+        match self {
+            Object::Dict(vals) => vals,
+            _ => unreachable!(),
+        }
+    }
 }
 
 
@@ -857,5 +870,24 @@ impl core::fmt::Debug for Reg {
         };
 
         strct.finish()
+    }
+}
+
+
+impl PartialEq for Reg {
+    fn eq(&self, other: &Self) -> bool {
+        if self.kind != other.kind { return false };
+        unsafe { self.data.as_int == other.data.as_int }
+    }
+}
+
+
+impl Eq for Reg {}
+
+
+impl std::hash::Hash for Reg {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.kind);
+        state.write_i64(unsafe { self.data.as_int });
     }
 }

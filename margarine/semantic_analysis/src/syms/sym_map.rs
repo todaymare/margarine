@@ -217,11 +217,11 @@ impl<'me> Generic<'me> {
         match self.kind {
             GenericKind::Generic(v) => {
                 Ok(gens.iter()
-                                        .find(|x| x.0 == v)
-                                        .copied()
-                                        .map(|x| x.1)
-                                        .expect("COMPILER ERROR: a generic name can't be missing as \
-                                                if it was the case it would've been a custom type"))
+                    .find(|x| x.0 == v)
+                    .copied()
+                    .map(|x| x.1)
+                    .expect("COMPILER ERROR: a generic name can't be missing as \
+                            if it was the case it would've been a custom type"))
             },
 
 
