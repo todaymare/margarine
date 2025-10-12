@@ -13,6 +13,7 @@ impl<'src> VM<'src> {
     pub extern "C" fn run_func(&mut self, index: usize) -> Status {
         //dbg!(jit::attempt_jit(self, index));
 
+        let bottom = self.callstack.stack.len();
         let func = &self.funcs[index];
         match func.kind {
             crate::FunctionKind::Code { byte_offset, byte_size } => {
@@ -36,8 +37,9 @@ impl<'src> VM<'src> {
 
         unsafe {
         loop {
+            //println!(" - {} ", self.stack.curr);
+            //print!("{:?}", crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()));
             let opcode = self.curr.next();
-            //println!("{:?}", crate::opcode::runtime::OpCode::from_u8(opcode));
             //println!("{:?}", self.stack);
             
             match opcode {

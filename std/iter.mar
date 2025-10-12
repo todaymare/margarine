@@ -1,0 +1,31 @@
+struct Iter<T> {
+    next: fn(): Option<T>
+}
+
+
+impl<T> Iter<T> {
+    fn __next__(self): Option<T> {
+        var next_fn = self.next;
+        next_fn()
+    }
+
+
+    fn enumerate(self): Iter<(int, T)> {
+        var counter = Box::new(0);
+        Iter {
+            next: || {
+                var result = self.next;
+                var result = result();
+
+                match result {
+                    some: result => {
+                        counter.value += 1;
+                        some((counter.value - 1, result))
+                    },
+
+                    none => none(),
+                }
+            }
+        }
+    }
+}

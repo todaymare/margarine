@@ -196,7 +196,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
             SymbolId::LIST => println!("{:?}", vm.objs[val.as_obj() as usize].as_list()),
 
             //@todo
-            _ => println!("{:?}", vm.objs[val.as_obj() as usize].as_fields())
+            _ => println!("{:?}", vm.objs[val.as_obj() as usize])
         }
         }
     }
@@ -304,6 +304,55 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
+    unsafe extern "C" fn hashmap_new(vm: &mut VM, ret: &mut Reg) {
+        let obj = vm.new_obj(runtime::Object::Dict(HashMap::new()));
+        *ret = obj
+    }
+
+
+    unsafe extern "C" fn hashmap_insert(vm: &mut VM, _: &mut Reg) {
+        let hm = vm.stack.reg(0).as_obj();
+        let key = vm.stack.reg(1);
+        let value = vm.stack.reg(2);
+
+        let hm = vm.objs[hm as usize].as_hm();
+        hm.insert(key, value);
+    }
+
+
+    unsafe extern "C" fn hashmap_clear(vm: &mut VM, _: &mut Reg) {
+        let hm = vm.stack.reg(0).as_obj();
+        let hm = vm.objs[hm as usize].as_hm();
+
+        hm.clear();
+    }
+
+
+    unsafe extern "C" fn hashmap_contains_key(vm: &mut VM, ret: &mut Reg) {
+        let hm = vm.stack.reg(0).as_obj();
+        let hm = vm.objs[hm as usize].as_hm();
+        let key = vm.stack.reg(1);
+
+        let val = hm.contains_key(&key);
+        *ret = Reg::new_bool(val)
+    }
+
+
+    unsafe extern "C" fn hashmap_remove(vm: &mut VM, ret: &mut Reg) {
+        let hm = vm.stack.reg(0).as_obj();
+        let hm = vm.objs[hm as usize].as_hm();
+        let key = vm.stack.reg(1);
+
+        let value = hm.remove(&key);
+
+        *ret = if let Some(value) = value {
+            vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), value] })
+        } else {
+            vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+        }
+    }
+
+
     hosts.insert("print_raw".to_string(), print_raw);
     hosts.insert("new_any".to_string(), new_any);
     hosts.insert("downcast_any".to_string(), downcast_any);
@@ -315,5 +364,10 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("int_to_str".to_string(), int_to_str);
     hosts.insert("float_to_str".to_string(), float_to_str);
     hosts.insert("random".to_string(), random);
+    hosts.insert("hashmap_new".to_string(), hashmap_new);
+    hosts.insert("hashmap_insert".to_string(), hashmap_insert);
+    hosts.insert("hashmap_clear".to_string(), hashmap_clear);
+    hosts.insert("hashmap_contains_key".to_string(), hashmap_contains_key);
+    hosts.insert("hashmap_remove".to_string(), hashmap_remove);
 
 }

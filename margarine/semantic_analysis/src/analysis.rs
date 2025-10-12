@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{any::Any, fmt::Write};
 
 use common::{buffer::Buffer, copy_slice_in, string_map::{StringIndex, StringMap}};
 use errors::ErrorId;
@@ -341,7 +341,15 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     }
 
                     // finalise
-                    let generics = copy_slice_in(self.output, generics);
+                    let generics = {
+                        let impl_gens = impl_block.unwrap_or(&[]);
+                        let mut vec = Buffer::new(self.output, impl_gens.len() + generics.len());
+                        vec.extend_from_slice(impl_gens);
+                        vec.extend_from_slice(generics);
+                        vec.leak()
+                    };
+
+
                     let sym_name = self.string_map.concat(path, name);
                     let cont = Container::new(structure_fields.leak(), ContainerKind::Struct);
                     let kind = SymbolKind::Container(cont);
@@ -357,7 +365,15 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     else { continue };
 
 
-                    let generics = copy_slice_in(self.output, gens);
+                    let generics = {
+                        let impl_gens = impl_block.unwrap_or(&[]);
+                        let mut vec = Buffer::new(self.output, impl_gens.len() + gens.len());
+                        vec.extend_from_slice(impl_gens);
+                        vec.extend_from_slice(gens);
+                        vec.leak()
+                    };
+
+
                     let sym_name = self.string_map.concat(path, name);
                     let kind = SymbolKind::Opaque;
 
@@ -387,7 +403,15 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     }
 
                     // finalise
-                    let generics = copy_slice_in(self.output, generics);
+                    let generics = {
+                        let impl_gens = impl_block.unwrap_or(&[]);
+                        let mut vec = Buffer::new(self.output, impl_gens.len() + generics.len());
+                        vec.extend_from_slice(impl_gens);
+                        vec.extend_from_slice(generics);
+                        vec.leak()
+                    };
+
+
                     let name = self.string_map.concat(path, name);
                     let source = self.ast.range(*id);
                     self.syms.add_enum(tsi, &mut self.namespaces, self.string_map,
@@ -945,18 +969,19 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         SymbolKind::Function(func) => {
                             self.type_info.set_ident(id, Some(sym_id));
 
+
+                            let mut gens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
+                            for g in sym.generics().iter() {
+                                let var = self.syms.new_var(id, range);
+                                gens.push((*g, var));
+                            }
+
+                            let gens = self.syms.add_gens(gens.leak());
+
                             let mut anal = match func.kind() {
-                                FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, GenListId::EMPTY)),
+                                FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, gens)),
                                 _ => {
                                     let closure = self.syms.new_closure();
-
-                                    let mut gens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
-                                    for g in sym.generics().iter() {
-                                        let var = self.syms.new_var(id, range);
-                                        gens.push((*g, var));
-                                    }
-
-                                    let gens = self.syms.add_gens(gens.leak());
 
                                     let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
                                     AnalysisResult::new(Sym::Ty(sym, gens))
@@ -980,7 +1005,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             Expr::Closure { args, body } => {
                 let closure = self.syms.new_closure();
-                let closure_scope = self.scopes.push(Scope::new(Some(scope), ScopeKind::Closure(closure)));
+                let ret_var = self.syms.new_var(id, range);
+
+                let closure_scope = self.scopes.push(Scope::new(Some(scope), ScopeKind::Function(FunctionScope { ret: ret_var, ret_source: range })));
+                let closure_scope = self.scopes.push(Scope::new(Some(closure_scope), ScopeKind::Closure(closure)));
                 let mut active_scope = closure_scope;
                 let mut sargs = sti::vec::Vec::new_in(self.syms.arena());
                 for arg in args {
@@ -999,8 +1027,31 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 }
 
+                if let Some(sym) = expected
+                && let Ok(sym_id) = sym.sym(&mut self.syms)
+                && let SymbolKind::Function(func) = self.syms.sym(sym_id).kind()
+                && let FunctionKind::Closure(_) = func.kind() {
+                    let gens = sym.gens(&self.syms);
+                    let gens = self.syms.get_gens(gens);
+
+                    for (sym_arg, arg) in func.args().iter().zip(sargs.iter()) {
+                        let Ok(sym_arg) = sym_arg.symbol().to_ty(gens, &mut self.syms)
+                        else { continue };
+
+                        sym_arg.eq(&mut self.syms, arg.1);
+                    }
+
+                    if let Ok(sym_ret) = func.ret().to_ty(gens, &mut self.syms) {
+                        sym_ret.eq(&mut self.syms, ret_var);
+                    }
+                }
+
 
                 let ret = self.expr(path, active_scope, body);
+                if !ret.ty.eq(&mut self.syms, ret_var) {
+                    let source = self.ast.range(body);
+                    return Err(Error::InvalidType { source, found: ret.ty, expected: ret_var });
+                }
 
                 if let Some(sym) = expected
                 && let Ok(sym_id) = sym.sym(&mut self.syms)
@@ -1015,24 +1066,31 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                         sym_arg.eq(&mut self.syms, arg.1);
                     }
+
                     if let Ok(sym_ret) = func.ret().to_ty(gens, &mut self.syms) {
                         sym_ret.eq(&mut self.syms, ret.ty);
                     }
-
-
                 }
 
                 let mut fargs = sti::vec::Vec::new_in(self.syms.arena());
-                for (_, arg) in sargs {
-                    let sym = arg.1.sym(&mut self.syms)?;
-                    fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Sym(sym, &[]), None)));
+                let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
+                let mut gen_list = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
+                gens.push((StringMap::T, ret.ty));
+                gen_list.push(StringMap::T);
+                for (i, arg) in sargs.iter().enumerate() {
+                    let sym = arg.1;
+                    let g = self.string_map.num(i);
+                    gens.push((g, sym));
+                    gen_list.push(g);
+                    fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Generic(g), None)));
                 }
 
-                let ret = ret.ty.sym(&mut self.syms)?;
-                let ret = Generic::new(range, GenericKind::Sym(ret, &[]), None);
+                let ret = Generic::new(range, GenericKind::Generic(StringMap::T), None);
 
-                let closure_ty = self.func_sym(closure, fargs.leak(), ret, &[]);
-                AnalysisResult::new(Sym::Ty(closure_ty, GenListId::EMPTY))
+                let closure_ty = self.func_sym(closure, fargs.leak(), ret, gen_list.leak());
+                let gens = self.syms.add_gens(gens.leak());
+
+                AnalysisResult::new(Sym::Ty(closure_ty, gens))
             }
 
 
@@ -1388,6 +1446,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 };
 
 
+                let mut gen_info = None;
                 let func = {
                     if is_accessor {
                         let ty = args_anals[0].1.ty;
@@ -1406,7 +1465,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                                     .find_var(name, &self.scopes, &mut self.syms);
 
                                 if let Some(val) = val {
-                                    Some(val.ty().sym(&mut self.syms))
+                                    gen_info = Some(val.ty().gens(&self.syms));
+                                    Some(Ok(val.ty().sym(&mut self.syms).unwrap()))
                                 } else {
                                     None
                                 }
@@ -1475,6 +1535,17 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     if !a.1.ty.eq(&mut self.syms, fa) {
                         self.error(a.2, Error::InvalidType {
                             source: a.0, found: a.1.ty, expected: fa });
+                    }
+                }
+
+
+                if let Some(gen_info) = gen_info {
+                    let gens = self.syms.get_gens(gen_info);
+                    for (fa, g) in func_generics.iter().zip(gens.iter()) {
+                        if !fa.1.eq(&mut self.syms, g.1) {
+                            self.error(id, Error::InvalidType {
+                                source: range, found: fa.1, expected: g.1 });
+                        }
                     }
                 }
 

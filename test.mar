@@ -1,41 +1,8 @@
-extern {
-    fn print_raw<T>(val: T, ty_id: int)
-}
-
-
-fn print<T>(val: T) {
-    print_raw(val, type_id::<T>())
-}
-
-
+use std::print
 
 fn main() {
-    print(fib(60.0));
-    print(test(30));
+
+    print((3, 2));
 }
 
 
-fn test(value: int): float {
-    var x = (30,);
-    30.0
-}
-
-
-fn fib(n: float): float {
-    if n <= 1.0 {
-        return n
-    }
-
-    var a = 0.2;
-    var b = 1.0;
-    var i = 2.0;
-
-    while i <= n {
-        var tmp = a + b;
-        a = b;
-        b = tmp;
-        i = i + 1.0;
-    }
-
-    return b
-}

@@ -284,8 +284,14 @@ impl Sym {
 
 
     pub fn hash(self, map: &mut SymbolMap) -> TypeHash {
+        self.hash_fn(map, |_| ())
+    }
+
+
+    pub fn hash_fn(self, map: &mut SymbolMap, f: impl Fn(&mut FxHasher32)) -> TypeHash {
         let mut hasher = FxHasher32::new();
         self.hash_ex(map, &mut hasher);
+        f(&mut hasher);
         TypeHash(hasher.hash)
     }
 
@@ -298,6 +304,7 @@ impl Sym {
 
                 let arr = map.gens()[g];
                 for g in arr.iter() {
+                    g.0.hash(hasher);
                     g.1.hash_ex(map, hasher)
                 }
             },
@@ -350,7 +357,7 @@ impl Sym {
 
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct TypeHash(u32);
+pub struct TypeHash(pub u32);
 
 
 fn instantiate_gens(map: &mut SymbolMap, g: GenListId) -> GenListId {
