@@ -623,13 +623,19 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 block.bytecode.store(iterable.try_into().unwrap());
 
 
+                let func = env.alloc_anon_var();
                 let value = env.alloc_var(binding.0);
+
+                block.bytecode.const_int(iter_fn.0 as i64);
+                block.bytecode.create_func_ref(0);
+                block.bytecode.store(func as u8);
+
 
                 self.build_loop(env, block,
                 |this, env, block| {
-
                     block.bytecode.load(iterable as u8);
-                    block.bytecode.call(iter_fn.0, 1);
+                    block.bytecode.load(func as u8);
+                    block.bytecode.call_func_ref(1);
 
                     block.bytecode.copy();
 
@@ -911,13 +917,20 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 let val = self.ty_info.expr(val).unwrap();
                 let ty = val.sym(self.syms).unwrap();
-                let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
-                else { unreachable!() };
-
-                let Some((i, _)) = cont.fields().iter().enumerate().find(|(_, f)| {
+                if let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
+                && let Some((i, _)) = cont.fields().iter().enumerate().find(|(_, f)| {
                     let name = f.0;
                     field_name == name
-                }) else {
+                }) {
+                    match cont.kind() {
+                          ContainerKind::Tuple
+                        | ContainerKind::Struct => block.bytecode.load_field(i.try_into().unwrap()),
+
+                        ContainerKind::Enum => {
+                            block.bytecode.load_enum_field(i.try_into().unwrap());
+                        },
+                    }
+                } else {
                     let ns = self.syms.sym_ns(ty);
                     let ns = self.ns.get_ns(ns);
 
@@ -933,16 +946,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     block.bytecode.create_func_ref(0);
                     return Ok(())
                 };
-
-                match cont.kind() {
-                      ContainerKind::Tuple
-                    | ContainerKind::Struct => block.bytecode.load_field(i.try_into().unwrap()),
-
-                    ContainerKind::Enum => {
-                        block.bytecode.load_enum_field(i.try_into().unwrap());
-                    },
-                }
-
 
             },
 

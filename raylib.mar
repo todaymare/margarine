@@ -19,7 +19,7 @@ mod ffi {
 
 
 struct Raylib {
-    frame: int,
+    frame_index: int,
 }
 
 
@@ -46,7 +46,7 @@ impl Raylib {
     fn new(width: int, height: int, title: str): Raylib {
         ffi::RaylibInitWindow(width, height, title);
         Raylib {
-            frame: 0,
+            frame_index: 0,
         }
     }
 
@@ -58,10 +58,10 @@ impl Raylib {
 
     fn frame(self, frame: fn(Frame)) {
         ffi::RaylibBeginDrawing();
-        frame(Frame { raylib: self, frame: self.frame });
+        frame(Frame { raylib: self, frame: self.frame_index });
         ffi::RaylibEndDrawing();
 
-        self.frame += 1;
+        self.frame_index += 1;
     }
 
 
