@@ -31,7 +31,7 @@ fn main() {
     let mut vm = VM::new(hosts, &*src).unwrap();
     {
         let _t = DropTimer::new("runtime");
-        if let Some(e) = vm.run("test::main").as_err() {
+        if let Some(e) = vm.run("flappy_bird::main").as_err() {
             println!("{}", e.to_str().unwrap());
         }
     }

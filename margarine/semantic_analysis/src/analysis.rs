@@ -1484,6 +1484,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             Expr::CallFunction { lhs: lhs_expr, args } => {
                 let lhs = self.expr(path, scope, lhs_expr);
+                let lhs_range = self.ast.range(lhs_expr);
                 let sym_id = lhs.ty.sym(&mut self.syms)?;
 
                 let pool = self.ast.arena;
@@ -1505,7 +1506,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
-                else { return Err(Error::CallOnNonFunction { source: range }) };
+                else { return Err(Error::CallOnNonFunction { source: lhs_range }) };
 
 
                 let f_gens = lhs.ty.gens(&self.syms);
