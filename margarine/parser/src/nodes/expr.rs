@@ -16,7 +16,7 @@ pub enum Expr<'a> {
     
     Literal(Literal),
 
-    Identifier(StringIndex),
+    Identifier(StringIndex, Option<&'a [DataType<'a>]>),
 
     Range {
         lhs: ExprId,
@@ -65,10 +65,8 @@ pub enum Expr<'a> {
     },
 
     CallFunction {
-        name: StringIndex,
-        is_accessor: bool,
+        lhs: ExprId,
         args: &'a [ExprId],
-        gens: Option<&'a [DataType<'a>]>,
     },
 
     Closure {

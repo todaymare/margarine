@@ -1356,7 +1356,9 @@ impl<'ta> Parser<'_, 'ta, '_> {
             self.peek_kind() == Some(TokenKind::Dot) 
             || self.peek_kind() == Some(TokenKind::Bang)
             || self.peek_kind() == Some(TokenKind::QuestionMark)
-            || self.peek_kind() == Some(TokenKind::LeftSquare) {
+            || self.peek_kind() == Some(TokenKind::LeftSquare)
+            || self.peek_kind() == Some(TokenKind::LeftParenthesis) {
+
             self.advance();
 
             if self.current_is(TokenKind::Bang) {
@@ -1386,6 +1388,25 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 continue
             }
             
+            if self.current_is(TokenKind::LeftParenthesis)
+                || self.peek_is(TokenKind::DoubleColon) {
+                let start = self.current_range().start();
+                self.advance();
+
+                let args = self.parse_function_call_args(None)?;
+
+                result = self.ast.add_expr(
+                    Expr::CallFunction {
+                        lhs: result,
+                        args,
+                    },
+                    SourceRange::new(start, self.current_range().end())
+                );
+
+                continue;
+                
+            } 
+
             self.advance();
             
             let start = self.current_range().start();
@@ -1395,35 +1416,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 _ => self.expect_identifier()?,
             };
 
-            if self.peek_is(TokenKind::LeftParenthesis)
-                || self.peek_is(TokenKind::DoubleColon) {
-                self.advance();
-
-                let gens = self.parse_generic_usage()?;
-                self.advance();
-
-                let args = self.parse_function_call_args(Some(result))?;
-
-                result = self.ast.add_expr(
-                    Expr::CallFunction {
-                        name: ident, 
-                        args,
-                        is_accessor: true,
-                        gens, 
-                    },
-                    SourceRange::new(start, self.current_range().end())
-                )
-
-                
-            } else {
-                result = self.ast.add_expr(
-                    Expr::AccessField { 
-                        val: result, 
-                        field_name: ident,
-                    },
-                    SourceRange::new(start, self.current_range().end())
-                )
-            }
+            result = self.ast.add_expr(
+                Expr::AccessField { 
+                    val: result, 
+                    field_name: ident,
+                },
+                SourceRange::new(start, self.current_range().end())
+            )
         }
 
         Ok(result)
@@ -1481,10 +1480,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
             TokenKind::Identifier(v) => {
-                if self.peek_kind() == Some(TokenKind::LeftParenthesis) {
-                    return self.function_call_expression()
-                }
-
 
                 if settings.can_parse_struct_creation 
                     && (
@@ -1495,11 +1490,20 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
                 if self.peek_kind() == Some(TokenKind::DoubleColon) {
-                    if self.peek_n(2).map(|x| x.kind()) == Some(TokenKind::LeftAngle) {
-                        return self.function_call_expression()
-                    }
                     let source = self.current_range();
                     let start = self.current_range().start();
+
+                    if self.peek_n(2).map(|t| t.kind()) == Some(TokenKind::LeftAngle) {
+                        self.advance();
+
+                        let gens = self.parse_generic_usage()?;
+                        self.index -= 1;
+
+                        return Ok(self.ast.add_expr(
+                            Expr::Identifier(v, gens),
+                            SourceRange::new(start, self.current_range().end()),
+                        ))
+                    }
 
                     self.advance();
                     self.advance();
@@ -1516,7 +1520,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 }
                 
                 Ok(self.ast.add_expr(
-                    Expr::Identifier(v),
+                    Expr::Identifier(v, None),
                     self.current_range(),
                 ))
             }
@@ -1813,27 +1817,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn function_call_expression(&mut self) -> ExprResult<'ta> {
-        let start = self.current_range().start();
-        let name = self.expect_identifier()?;
-        self.advance();
-
-        let gens = self.parse_generic_usage()?;
-
-        self.expect(TokenKind::LeftParenthesis)?;
-        self.advance();
-
-        let args = self.parse_function_call_args(None)?;
-        let end = self.current_range().end();
-
-        Ok(self.ast.add_expr(
-            Expr::CallFunction { name, args, is_accessor: false, gens },
-            SourceRange::new(start, end)
-        ))
-        
-    }
-
-
     fn parse_function_call_args(
         &mut self, 
         associated: Option<ExprId>
@@ -1897,7 +1880,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 return Ok((
                     name,
                     parser.current_range(),
-                    parser.ast.add_expr(Expr::Identifier(name), parser.current_range())
+                    parser.ast.add_expr(Expr::Identifier(name, None), parser.current_range())
                 ));
             }
 

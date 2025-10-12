@@ -23,6 +23,7 @@ pub enum OpCode {
     CreateFuncRef,
     CallFuncRef,
     Unwrap,
+    Swap,
     UnwrapFail,
     CastIntToFloat,
     CastFloatToInt,
@@ -91,6 +92,7 @@ pub mod consts {
     pub const CreateFuncRef: u8 = super::OpCode::CreateFuncRef as u8;
     pub const CallFuncRef: u8 = super::OpCode::CallFuncRef as u8;
     pub const Unwrap: u8 = super::OpCode::Unwrap as u8;
+    pub const Swap: u8 = super::OpCode::Swap as u8;
     pub const UnwrapFail: u8 = super::OpCode::UnwrapFail as u8;
     pub const CastIntToFloat: u8 = super::OpCode::CastIntToFloat as u8;
     pub const CastFloatToInt: u8 = super::OpCode::CastFloatToInt as u8;
@@ -257,6 +259,10 @@ pub mod builder {
 
         pub fn unwrap(&mut self) {
             self.bytecode.push(super::OpCode::Unwrap.as_u8());
+        }
+
+        pub fn swap(&mut self) {
+            self.bytecode.push(super::OpCode::Swap.as_u8());
         }
 
         pub fn unwrap_fail(&mut self) {
@@ -579,6 +585,11 @@ pub mod builder {
 
         pub fn unwrap_at(&mut self, _at: usize, ) {
             self.bytecode[_at] = super::OpCode::Unwrap.as_u8();
+            let mut _offset = 1;
+        }
+
+        pub fn swap_at(&mut self, _at: usize, ) {
+            self.bytecode[_at] = super::OpCode::Swap.as_u8();
             let mut _offset = 1;
         }
 
@@ -1273,6 +1284,16 @@ pub mod builder {
                             "Unwrap({fields})",
                         ));
                     }
+                    super::OpCode::Swap => {
+                        let mut fields = String::new();
+                        unsafe {
+
+                        }
+                        strct.entry(&offset,
+                            &format!(
+                            "Swap({fields})",
+                        ));
+                    }
                     super::OpCode::UnwrapFail => {
                         let mut fields = String::new();
                         unsafe {
@@ -1802,6 +1823,7 @@ impl OpCode {
             consts::CreateFuncRef => Some(Self::CreateFuncRef),
             consts::CallFuncRef => Some(Self::CallFuncRef),
             consts::Unwrap => Some(Self::Unwrap),
+            consts::Swap => Some(Self::Swap),
             consts::UnwrapFail => Some(Self::UnwrapFail),
             consts::CastIntToFloat => Some(Self::CastIntToFloat),
             consts::CastFloatToInt => Some(Self::CastFloatToInt),
@@ -1873,6 +1895,7 @@ pub enum Decoded<'src> {
     CreateFuncRef { capture_count: u8 },
     CallFuncRef { argc: u8 },
     Unwrap {  },
+    Swap {  },
     UnwrapFail {  },
     CastIntToFloat {  },
     CastFloatToInt {  },
@@ -2014,6 +2037,10 @@ impl OpCode {
             Self::Unwrap => {
 
                 Some((opcode, Decoded::Unwrap {  }))
+            }
+            Self::Swap => {
+
+                Some((opcode, Decoded::Swap {  }))
             }
             Self::UnwrapFail => {
 

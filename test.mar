@@ -1,8 +1,24 @@
-use std::print
-
-fn main() {
-
-    print((3, 2));
+extern {
+    fn print_raw<T>(val: T, tyid: int)
 }
 
 
+fn print<T>(val: T) {
+    print_raw(val, type_id::<T>())
+}
+
+
+fn main() {
+    print(add(12)(30)(21)(69));
+}
+
+
+fn add(x: int): fn(int): fn(int): fn(int): int {
+    |y| {
+        |z| {
+            |t| {
+                x + y + z + t
+            }
+        }
+    }
+}

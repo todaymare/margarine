@@ -13,7 +13,6 @@ impl<'src> VM<'src> {
     pub extern "C" fn run_func(&mut self, index: usize) -> Status {
         //dbg!(jit::attempt_jit(self, index));
 
-        let bottom = self.callstack.stack.len();
         let func = &self.funcs[index];
         match func.kind {
             crate::FunctionKind::Code { byte_offset, byte_size } => {
@@ -38,7 +37,7 @@ impl<'src> VM<'src> {
         unsafe {
         loop {
             //println!(" - {} ", self.stack.curr);
-            //print!("{:?}", crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()));
+            //println!("{:?}", crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()));
             let opcode = self.curr.next();
             //println!("{:?}", self.stack);
             
@@ -61,52 +60,6 @@ impl<'src> VM<'src> {
                     self.stack.push(return_val);
 
                     self.curr = prev_frame;
-                },
-
-
-                consts::Call => {
-                    let func = self.curr.next_u32();
-                    let argc = self.curr.next();
-                    
-                    // 
-                    // prepare the call frame
-                    // the arguments should already be ordered at the top of the stack
-                    //
-
-                    //dbg!(attempt_jit(self, func as _));
-
-                    let func = &self.funcs[func as usize];
-
-                    match func.kind {
-                        crate::FunctionKind::Code { byte_offset, byte_size } => {
-                            let mut call_frame = CallFrame::new(
-                                &self.callstack.src[byte_offset..byte_offset+byte_size],
-                                self.stack.bottom,
-                                argc,
-                            );
-
-                            self.stack.set_bottom(self.stack.curr - argc as usize);
-
-                            core::mem::swap(&mut self.curr, &mut call_frame);
-
-                            self.callstack.push(call_frame);
-                        },
-
-
-                        crate::FunctionKind::Host(f) => {
-                            let bottom = self.stack.bottom;
-                            self.stack.bottom = self.stack.curr - argc as usize;
-
-                            let start = self.stack.curr;
-                            let mut ret = Reg::new_unit();
-                            f(self, &mut ret);
-                            debug_assert_eq!(self.stack.curr, start);
-
-                            self.stack.curr -= argc as usize;
-                            self.stack.set_bottom(bottom);
-                            self.stack.push(ret);
-                        },
-                    }
                 },
 
 

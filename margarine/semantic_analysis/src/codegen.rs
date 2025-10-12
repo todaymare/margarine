@@ -1,6 +1,6 @@
-use std::{collections::HashMap, fmt::Write, fs, hash::Hash};
+use std::{any::Any, collections::HashMap, fmt::Write, fs, hash::Hash};
 
-use common::string_map::{StringIndex, StringMap};
+use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, stmt::StmtId, NodeId, AST};
 use runtime::opcode::{self, runtime::{builder::{self, Builder}, consts, OpCode}, HEADER};
@@ -332,10 +332,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         else { unreachable!() };
 
         let gens = self.syms.gens()[gens_id];
-        for g in gens { if g.1.is_err(self.syms) { return Err(ErrorId::Bypass) } }
+        //for g in gens { if g.1.is_err(self.syms) { return Err(ErrorId::Bypass) } }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
-        if ret.is_err(self.syms) { return Err(ErrorId::Bypass) }
+        //if ret.is_err(self.syms) { return Err(ErrorId::Bypass) }
 
         let ret = ret.sym(self.syms).unwrap();
         let args = sym_func.args().iter().map(|x| x.symbol().to_ty(gens, self.syms).unwrap().sym(self.syms).unwrap().0).collect();
@@ -673,6 +673,11 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
     fn expr(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId) -> Result<(), ErrorId> {
+        self.expr_ex(env, block, expr, false)
+    }
+
+
+    fn expr_ex(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId, is_fn_call_accessor: bool) -> Result<(), ErrorId> {
         macro_rules! out_if_err {
             () => {
                match self.ty_info.expr(expr) {
@@ -710,7 +715,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             },
 
 
-            parser::nodes::expr::Expr::Identifier(string_index) => {
+            parser::nodes::expr::Expr::Identifier(string_index, _) => {
                 let ty = out_if_err!();
                 if let Some(index) = env.find_var(string_index) {
                     block.bytecode.load(index.try_into().unwrap());
@@ -718,7 +723,22 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 }
 
                 if let Some(Some(func)) = self.ty_info.idents.get(&expr) {
-                    let func = self.get_func(*func, ty.gens(self.syms))?;
+                    let func_gens = ty.gens(self.syms);
+                    let func_gens = self.syms.get_gens(func_gens);
+                    let env_gens = self.syms.get_gens(env.gens);
+
+                    let mut new_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
+                    for (name, sym) in func_gens {
+                        let sym =
+                            env_gens.iter().find(|x| x.0 == *name)
+                            .map(|x| x.1).unwrap_or(*sym);
+
+                        new_gens.push((*name, sym));
+                    }
+
+                    let gens = self.syms.add_gens(new_gens.leak());
+
+                    let func = self.get_func(*func, gens).unwrap();
                     block.bytecode.const_int(func.index.0 as i64);
                     block.bytecode.create_func_ref(0);
                 }
@@ -887,17 +907,32 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::AccessField { val, field_name } => {
                 self.expr(env, block, val)?;
-                out_if_err!();
+                let _ = out_if_err!();
 
                 let val = self.ty_info.expr(val).unwrap();
                 let ty = val.sym(self.syms).unwrap();
                 let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
                 else { unreachable!() };
 
-                let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
+                let Some((i, _)) = cont.fields().iter().enumerate().find(|(_, f)| {
                     let name = f.0;
                     field_name == name
-                }).unwrap();
+                }) else {
+                    let ns = self.syms.sym_ns(ty);
+                    let ns = self.ns.get_ns(ns);
+
+                    let sym = ns.get_sym(field_name).unwrap().unwrap();
+                    let gens = val.gens(self.syms);
+
+                    let func = self.get_func(sym, gens)?;
+
+                    if !is_fn_call_accessor {
+                        block.bytecode.pop();
+                    }
+                    block.bytecode.const_int(func.index.0 as i64);
+                    block.bytecode.create_func_ref(0);
+                    return Ok(())
+                };
 
                 match cont.kind() {
                       ContainerKind::Tuple
@@ -912,46 +947,27 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             },
 
 
-            parser::nodes::expr::Expr::CallFunction { args, name, .. } => {
+            parser::nodes::expr::Expr::CallFunction { args, lhs, .. } => {
+                self.expr_ex(env, block, lhs, true)?;
+                out_if_err!();
+
+                let closure_var = env.alloc_anon_var();
+                block.bytecode.store(closure_var.try_into().unwrap());
+
+                let mut argc = args.len();
+                if matches!(self.ast.expr(lhs), parser::nodes::expr::Expr::AccessField { .. }) {
+                    argc += 1;
+                }
+
                 for arg in args {
                     self.expr(env, block, *arg)?;
                 }
 
+                block.bytecode.load(closure_var.try_into().unwrap());
+
                 out_if_err!(); 
 
-                let (sym, gens) = self.ty_info.funcs.get(&expr).unwrap();
-                if *sym == SymbolId::ERR { return Err(ErrorId::Bypass) }
-
-                if let SymbolKind::Function(func) = self.syms.sym(*sym).kind()
-                    && let syms::func::FunctionKind::Closure(_) = func.kind() {
-                    let Some(index) = env.find_var(name)
-                    else { unreachable!() };
-
-                    block.bytecode.load(index.try_into().unwrap());
-                    block.bytecode.call_func_ref(args.len() as _);
-                    return Ok(());
-                }
-
-                let func_gens = self.syms.get_gens(*gens);
-                let env_gens = self.syms.get_gens(env.gens);
-
-                let mut new_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
-                for (name, sym) in func_gens {
-                    let sym =
-                        env_gens.iter().find(|x| x.0 == *name)
-                        .map(|x| x.1).unwrap_or(*sym);
-
-                    new_gens.push((*name, sym));
-                }
-
-                let gens = self.syms.add_gens(new_gens.leak());
-
-                let func = self.get_func(*sym, gens)?;
-                if let Some(err) = func.error {
-                    return Err(err)
-                }
-
-                block.bytecode.call(func.index.0, args.len().try_into().unwrap());
+                block.bytecode.call_func_ref(argc as _);
             },
 
 
@@ -1204,10 +1220,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         ret: self.ty_info.expr(body).unwrap().sym(self.syms).unwrap().0,
                     };
 
-                    dbg!(&func);
                     let ret = self.funcs.insert(hash, func);
-                    dbg!(&ret);
                     assert!(ret.is_none());
+
                     self.funcs.get(&hash).unwrap()
                 };
 
@@ -1319,7 +1334,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
     fn update_value(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId) -> Result<(), ErrorId> {
         match self.ast.expr(expr) {
-            parser::nodes::expr::Expr::Identifier(ident) => {
+            parser::nodes::expr::Expr::Identifier(ident, _) => {
                 let (_, index) = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
                 block.bytecode.store((*index).try_into().unwrap());
             },
@@ -1362,7 +1377,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::Unwrap(expr_id) => {
                 match self.ast.expr(expr_id) {
-                    parser::nodes::expr::Expr::Identifier(ident) => {
+                    parser::nodes::expr::Expr::Identifier(ident, _) => {
                         let (_, index) = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
                         block.bytecode.load((*index).try_into().unwrap());
                         block.bytecode.unwrap_store();
@@ -1422,7 +1437,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::OrReturn(expr_id) => {
                 match self.ast.expr(expr_id) {
-                    parser::nodes::expr::Expr::Identifier(ident) => {
+                    parser::nodes::expr::Expr::Identifier(ident, _) => {
                         let (_, index) = env.vars.iter().rev().find(|x| x.0 == ident).unwrap();
 
                         block.bytecode.load((*index).try_into().unwrap());
