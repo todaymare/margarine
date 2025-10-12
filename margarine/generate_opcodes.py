@@ -26,6 +26,7 @@ spec = {
   "CallFuncRef": { "argc": "u8" },
 
   "Unwrap": {},
+  "Swap": {},
   "UnwrapFail": {},
 
   "CastIntToFloat": {},

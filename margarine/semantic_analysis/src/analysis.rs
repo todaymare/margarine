@@ -849,7 +849,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 }
 
                 match self.ast.expr(lhs) {
-                      Expr::Identifier(_)
+                      Expr::Identifier(_, _)
                     | Expr::IndexList { .. }
                     | Expr::AccessField { .. }
                     | Expr::Unwrap(_)
@@ -940,7 +940,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub fn expr_ex(&mut self, path: StringIndex, scope: ScopeId, id: ExprId, expected: Option<Sym>) -> AnalysisResult {
         let range = self.ast.range(id);
         let expr = self.ast.expr(id);
-        let result = (|| Ok(match expr {
+        let result = (|| -> Result<AnalysisResult, Error> {Ok(match expr {
             Expr::Unit => AnalysisResult::new(Sym::UNIT),
 
 
@@ -954,8 +954,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
-            Expr::Identifier(ident) => {
+            Expr::Identifier(ident, gens) => {
                 if let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes, &mut self.syms) {
+                    if gens.is_some() {
+                        return Err(Error::GenericLenMismatch { source: range, found: gens.map(|gs| gs.len()).unwrap_or(0), expected: 0 })
+                    }
+
+
                     return Ok(AnalysisResult::new(variable.ty()))
                 }
 
@@ -970,13 +975,27 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                             self.type_info.set_ident(id, Some(sym_id));
 
 
-                            let mut gens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
-                            for g in sym.generics().iter() {
-                                let var = self.syms.new_var(id, range);
-                                gens.push((*g, var));
+                            if let Some(gens) = gens
+                            && sym.generics().len() != gens.len() {
+                                return Err(Error::GenericLenMismatch { source: range, found: gens.len(), expected: sym.generics().len() })
                             }
 
-                            let gens = self.syms.add_gens(gens.leak());
+                            let mut vgens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
+
+                            if let Some(gens) = gens {
+                                for (g, dt) in sym.generics().iter().zip(gens.iter()) {
+                                    let sym = self.dt_to_ty(scope, id, *dt)?;
+                                    vgens.push((*g, sym));
+                                }
+
+                            } else {
+                                for g in sym.generics().iter() {
+                                    let var = self.syms.new_var(id, range);
+                                    vgens.push((*g, var));
+                                }
+                            }
+
+                            let gens = self.syms.add_gens(vgens.leak());
 
                             let mut anal = match func.kind() {
                                 FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, gens)),
@@ -1392,20 +1411,51 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             Expr::AccessField { val, field_name  } => {
                 let expr = self.expr(path, scope, val);
 
-                let sym = expr.ty.sym(&mut self.syms)?;
-                let sym = self.syms.sym(sym);
+                let sym_id = expr.ty.sym(&mut self.syms)?;
+                let sym = self.syms.sym(sym_id);
 
-                let SymbolKind::Container(cont) = sym.kind()
-                else { return Err(Error::FieldAccessOnNonEnumOrStruct { source: range, typ: expr.ty }) };
+                let field_check = || {
+                    let SymbolKind::Container(cont) = sym.kind()
+                    else { return Err(Error::FieldAccessOnNonEnumOrStruct { source: range, typ: expr.ty }) };
 
-                let field = cont.fields().iter().enumerate().find(|(_, f)| {
-                    let name = f.0;
-                    field_name == name
-                });
+                    let field = cont.fields().iter().enumerate().find(|(_, f)| {
+                        let name = f.0;
+                        field_name == name
+                    });
 
-                let Some((_, field)) = field
-                else { return Err(Error::FieldDoesntExist {
-                    source: range, field: field_name, typ: expr.ty }) };
+                    let Some((_, field)) = field
+                    else { return Err(Error::FieldDoesntExist {
+                        source: range, field: field_name, typ: expr.ty }) };
+                    Ok((field, cont))
+                };
+
+                let (field, cont) = match field_check() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let ns = self.syms.sym_ns(sym_id);
+                        let ns = self.namespaces.get_ns(ns);
+                        let Some(sym) = ns.get_sym(field_name)
+                        else { return Err(e) };
+
+                        let sym_id = sym?;
+
+                        let sym = self.syms.sym(sym_id);
+                        let SymbolKind::Function(func) = sym.kind()
+                        else { return Err(e); };
+
+                        let anal = match func.kind() {
+                            FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, expr.ty.gens(&self.syms))),
+                            _ => {
+                                let closure = self.syms.new_closure();
+
+                                let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
+                                AnalysisResult::new(Sym::Ty(sym, expr.ty.gens(&self.syms)))
+                            }
+                        };
+
+                        return Ok(anal);
+                    },
+                };
 
                 let gens = expr.ty.gens(&self.syms);
                 let gens = self.syms.get_gens(gens);
@@ -1432,10 +1482,18 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
-            Expr::CallFunction { name, is_accessor, args, gens } => {
+            Expr::CallFunction { lhs: lhs_expr, args } => {
+                let lhs = self.expr(path, scope, lhs_expr);
+                let sym_id = lhs.ty.sym(&mut self.syms)?;
+
                 let pool = self.ast.arena;
                 let args_anals = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, args.len());
+
+                    if let Expr::AccessField { val, .. } = self.ast.expr(lhs_expr) {
+                        let range = self.ast.range(val);
+                        vec.push((range, self.expr(path, scope, val), val));
+                    }
 
                     for &expr in args {
                         let range = self.ast.range(expr);
@@ -1445,90 +1503,31 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     vec.leak()
                 };
 
-
-                let mut gen_info = None;
-                let func = {
-                    if is_accessor {
-                        let ty = args_anals[0].1.ty;
-                        let sym = ty.sym(&mut self.syms)?;
-                        let ns = self.syms.sym_ns(sym);
-                        let ns = self.namespaces.get_ns(ns);
-                        ns.get_sym(name)
-                    } else {
-                        let sym = self.scopes.get(scope)
-                            .find_sym(name, &self.scopes, &mut self.syms, &self.namespaces);
-
-                        match sym {
-                            Some(v) => Some(v),
-                            None => {
-                                let val = self.scopes.get(scope)
-                                    .find_var(name, &self.scopes, &mut self.syms);
-
-                                if let Some(val) = val {
-                                    gen_info = Some(val.ty().gens(&self.syms));
-                                    Some(Ok(val.ty().sym(&mut self.syms).unwrap()))
-                                } else {
-                                    None
-                                }
-                            },
-                        }
-                    }
-                };
-
-
-                let Some(sym_id) = func
-                else { return Err(Error::FunctionNotFound { source: range, name }) };
-
-                let sym_id = sym_id?;
-
-
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
-                else { return Err(Error::CallOnNonFunction { source: range, name }) };
+                else { return Err(Error::CallOnNonFunction { source: range }) };
+
+
+                let f_gens = lhs.ty.gens(&self.syms);
+                let gens = self.syms.get_gens(f_gens);
 
                 // check arg len
-                if func.args().len() != args.len() {
+                if func.args().len() != args_anals.len() {
                     return Err(Error::FunctionArgsMismatch {
                         source: range, sig_len: func.args().len(), call_len: args.len() });
                 }
-
-
-                if let Some(gens) = gens && gens.len() != sym.generics().len() {
-                    return Err(Error::GenericLenMismatch { 
-                        source: range, found: gens.len(), expected: sym.generics().len() });
-                }
-
-
-                // create gens
-                let func_generics = if let Some(gens) = gens {
-                    let mut vec = sti::vec::Vec::with_cap_in(self.output, sym.generics().len());
-                    for (g, dt) in sym.generics().iter().zip(gens.iter()) {
-                        let sym = self.dt_to_ty(scope, id, *dt)?;
-                        vec.push((*g, sym));
-                    }
-
-                    vec.leak()
-                } else {
-                    let mut vec = sti::vec::Vec::with_cap_in(self.output, sym.generics().len());
-                    for g in sym.generics() {
-                        vec.push((*g, self.syms.new_var(id, range)));
-                    }
-
-                    vec.leak()
-                };
-
 
                 // find out the args
                 let func_args = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.args().len());
                     for g in func.args() {
-                        vec.push(g.symbol().to_ty(func_generics, &mut self.syms)?);
+                        vec.push(g.symbol().to_ty(gens, &mut self.syms)?);
                     }
 
                     vec
                 };
 
-                let ret = func.ret().to_ty(func_generics, &mut self.syms)?;
+                let ret = func.ret().to_ty(gens, &mut self.syms)?;
 
                 // ty & inout check args
                 for (a, &fa) in args_anals.iter().zip(func_args.iter()) {
@@ -1538,20 +1537,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     }
                 }
 
-
-                if let Some(gen_info) = gen_info {
-                    let gens = self.syms.get_gens(gen_info);
-                    for (fa, g) in func_generics.iter().zip(gens.iter()) {
-                        if !fa.1.eq(&mut self.syms, g.1) {
-                            self.error(id, Error::InvalidType {
-                                source: range, found: fa.1, expected: g.1 });
-                        }
-                    }
-                }
-
-
-                let gens = self.syms.add_gens(func_generics);
-                self.type_info.set_func_call(id, (sym_id, gens));
+                self.type_info.set_func_call(id, (sym_id, f_gens));
                 AnalysisResult::new(ret)
             },
 
@@ -1799,7 +1785,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
-        }))();
+        })})();
 
         match result {
             Ok(v) => {

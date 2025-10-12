@@ -237,7 +237,7 @@ pub enum Error {
 
     Bypass,
 
-    CallOnNonFunction { source: SourceRange, name: StringIndex },
+    CallOnNonFunction { source: SourceRange },
 }
 
 
@@ -414,10 +414,8 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*source, &msg)
             },
 
-            Error::CallOnNonFunction { name, source } => {
-                let msg = format!("the symbol named '{}' isn't a function",
-                    fmt.string(*name),
-                );
+            Error::CallOnNonFunction { source } => {
+                let msg = format!("the symbol isn't a function");
 
                 fmt.error("call on non-function")
                     .highlight_with_note(*source, &msg)
