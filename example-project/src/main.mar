@@ -1,0 +1,7 @@
+use std::print
+
+// Hosts don't HAVE to call this function but the default CLI tool uses this
+// as the entry point.
+fn main() {
+    print("hello world"); // semi-colons are mandatory
+}

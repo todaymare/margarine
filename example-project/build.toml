@@ -1,0 +1,2 @@
+[dependencies]
+std = "https://github.com/todaymare/margarine-std"
