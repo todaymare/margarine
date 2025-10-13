@@ -2,7 +2,7 @@ use std::path::Path;
 
 use derive::ImmutableData;
 
-use crate::string_map::{StringIndex, StringMap};
+use crate::string_map::{self, StringIndex, StringMap};
 
 ///
 /// A single (immutable) unit of a file
@@ -22,23 +22,28 @@ impl FileData {
     }
 
 
-    pub fn open<P: AsRef<Path>>(path: P, symbol_map: &mut StringMap) -> Result<Self, std::io::Error> {
-        let data = std::fs::read_to_string(&path)?;
+    pub fn open<P: AsRef<Path>>(path: P, string_map: &mut StringMap) -> Result<Self, std::io::Error> {
         let new_path = path.as_ref().with_extension("");
         let name = new_path.to_string_lossy();
 
+        Self::open_ex(path, string_map.insert(&name), string_map)
+    }
+
+
+    pub fn open_ex<P: AsRef<Path>>(path: P, name: StringIndex, string_map: &mut StringMap) -> Result<Self, std::io::Error> {
+        let data = std::fs::read_to_string(&path)?;
         let extension = match path.as_ref().extension() {
             Some(v) => {
                 match v.to_str() {
                     Some("mar") => Extension::Mar,
-                    Some(val) => Extension::Other(symbol_map.insert(val)),
+                    Some(val) => Extension::Other(string_map.insert(val)),
                     _ => Extension::None,
                 }
             },
             None => Extension::None,
         };
 
-        Ok(Self::new(data, symbol_map.insert(&name), extension))
+        Ok(Self::new(data, name, extension))
     }
 
 
