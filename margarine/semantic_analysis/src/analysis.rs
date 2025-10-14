@@ -872,8 +872,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let range = self.ast.range(expr);
                     self.error(id, Error::ValueIsntAnIterator { ty: anal.ty, range });
 
+                    let scope = Scope::new(*scope, ScopeKind::Loop);
+                    let scope = self.scopes.push(scope);
+
                     let vs = VariableScope::new(binding.0, Sym::ERROR);
-                    let scope = self.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
+                    let scope = self.scopes.push(Scope::new(scope, ScopeKind::VariableScope(vs)));
 
                     let _ = self.block(path, scope, &body);
 
@@ -889,9 +892,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let range = self.ast.range(expr);
                     self.error(id, Error::ValueIsntAnIterator { ty: anal.ty, range });
 
+                    let scope = Scope::new(*scope, ScopeKind::Loop);
+                    let scope = self.scopes.push(scope);
 
                     let vs = VariableScope::new(binding.0, Sym::ERROR);
-                    let scope = self.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
+                    let scope = self.scopes.push(Scope::new(scope, ScopeKind::VariableScope(vs)));
 
                     let _ = self.block(path, scope, &body);
 
@@ -923,8 +928,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let binding_ty = self.syms.get_gens(binding_ty);
                 let binding_ty = binding_ty[0].1;
 
+                let scope = Scope::new(*scope, ScopeKind::Loop);
+                let scope = self.scopes.push(scope);
+
                 let vs = VariableScope::new(binding.0, binding_ty);
-                let scope = self.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
+                let scope = self.scopes.push(Scope::new(scope, ScopeKind::VariableScope(vs)));
 
                 let _ = self.block(path, scope, &body);
 
@@ -1607,7 +1615,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             Expr::Break => {
                 if self.scopes.get(scope).find_loop(&self.scopes).is_none() { 
-                    return Err(Error::ContinueOutsideOfLoop(range)) 
+                    return Err(Error::BreakOutsideOfLoop(range)) 
                 }
 
                 AnalysisResult::new(Sym::NEVER)
