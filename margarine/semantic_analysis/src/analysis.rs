@@ -1,8 +1,8 @@
-use std::{any::Any, fmt::Write};
+use std::{any::Any, env::var, fmt::Write};
 
 use common::{buffer::Buffer, copy_slice_in, string_map::{StringIndex, StringMap}};
 use errors::ErrorId;
-use parser::nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId};
+use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId}};
 use sti::{alloc::GlobalAlloc, arena::Arena, vec::{KVec, Vec}, write};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{GenListId, Generic, GenericKind, SymbolId}, ty::Sym, Symbol, SymbolKind}, AnalysisResult, TyChecker};
@@ -716,21 +716,54 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 self.decl(scope, ns, decl_id);
 
                 match self.string_map.get(attr) {
-                    "startup" => {
+                    "test" => {
                         let decl = self.ast.decl(decl_id);
-                        let Decl::Function { sig, .. } = decl
+                        let Decl::Function { 
+                            sig: FunctionSignature {
+                                name,
+                                arguments: &[], 
+                                generics: &[],
+                                return_type: DataType { kind: DataTypeKind::Unit, .. },
+                                ..
+                            }, 
+                            .. 
+                        } = decl
                         else {
                             let range = self.ast.range(decl_id);
                             self.error(id, Error::InvalidValueForAttr {
-                                attr: (attr_range, attr), value: range, expected: "a system function" });
+                                attr: (attr_range, attr), value: range, expected: "'fn()'" });
                             return;
                         };
 
-                        let Ok(func) = self.namespaces.get_ns(ns).get_sym(sig.name).unwrap()
+                        let Ok(func) = self.namespaces.get_ns(ns).get_sym(name).unwrap()
                         else { return };
 
-                        self.startups.push(func);
+                        self.tests.push(func);
+                    },
+
+
+                    "cached" => {
+                        let decl = self.ast.decl(decl_id);
+                        let Decl::Function { 
+                            sig: FunctionSignature {
+                                name,
+                                ..
+                            }, 
+                            .. 
+                        } = decl
+                        else {
+                            let range = self.ast.range(decl_id);
+                            self.error(id, Error::InvalidValueForAttr {
+                                attr: (attr_range, attr), value: range, expected: "'a function'" });
+                            return;
+                        };
+
+                        let Ok(func) = self.namespaces.get_ns(ns).get_sym(name).unwrap()
+                        else { unreachable!() };
+
+                        self.syms.cached_fn(func);
                     }
+
                     _ => {
                         self.error(id, Error::UnknownAttr(attr_range, attr));;
                     }
@@ -963,70 +996,76 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             Expr::Identifier(ident, gens) => {
-                if let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes, &mut self.syms) {
-                    if gens.is_some() {
-                        return Err(Error::GenericLenMismatch { source: range, found: gens.map(|gs| gs.len()).unwrap_or(0), expected: 0 })
-                    }
+                let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes, &self.namespaces, &mut self.syms)
+                else {
+                    return Err(Error::VariableNotFound { name: ident, source: range })
+                };
+
+                match variable {
+                    Ok(variable) => {
+                        if gens.is_some() {
+                            return Err(Error::GenericLenMismatch { source: range, found: gens.map(|gs| gs.len()).unwrap_or(0), expected: 0 })
+                        }
+                        return Ok(AnalysisResult::new(variable.ty()))
+                    },
 
 
-                    return Ok(AnalysisResult::new(variable.ty()))
-                }
+                    Err(sym) => {
+                        let Ok(sym_id) = sym
+                        else { return Err(Error::Bypass) };
 
-                if let Some(sym) = self.scopes.get(scope).find_sym(ident, &self.scopes, &mut self.syms, &self.namespaces) {
-                    let Ok(sym_id) = sym
-                    else { return Err(Error::Bypass) };
+                        let sym = self.syms.sym(sym_id);
 
-                    let sym = self.syms.sym(sym_id);
-
-                    match sym.kind() {
-                        SymbolKind::Function(func) => {
-                            self.type_info.set_ident(id, Some(sym_id));
+                        match sym.kind() {
+                            SymbolKind::Function(func) => {
+                                self.type_info.set_ident(id, Some(sym_id));
 
 
-                            if let Some(gens) = gens
-                            && sym.generics().len() != gens.len() {
-                                return Err(Error::GenericLenMismatch { source: range, found: gens.len(), expected: sym.generics().len() })
-                            }
-
-                            let mut vgens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
-
-                            if let Some(gens) = gens {
-                                for (g, dt) in sym.generics().iter().zip(gens.iter()) {
-                                    let sym = self.dt_to_ty(scope, id, *dt)?;
-                                    vgens.push((*g, sym));
+                                if let Some(gens) = gens
+                                && sym.generics().len() != gens.len() {
+                                    return Err(Error::GenericLenMismatch { source: range, found: gens.len(), expected: sym.generics().len() })
                                 }
 
-                            } else {
-                                for g in sym.generics().iter() {
-                                    let var = self.syms.new_var(id, range);
-                                    vgens.push((*g, var));
+                                let mut vgens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
+
+                                if let Some(gens) = gens {
+                                    for (g, dt) in sym.generics().iter().zip(gens.iter()) {
+                                        let sym = self.dt_to_ty(scope, id, *dt)?;
+                                        vgens.push((*g, sym));
+                                    }
+
+                                } else {
+                                    for g in sym.generics().iter() {
+                                        let var = self.syms.new_var(id, range);
+                                        vgens.push((*g, var));
+                                    }
                                 }
-                            }
 
-                            let gens = self.syms.add_gens(vgens.leak());
+                                let gens = self.syms.add_gens(vgens.leak());
 
-                            let mut anal = match func.kind() {
-                                FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, gens)),
-                                _ => {
-                                    let closure = self.syms.new_closure();
+                                let mut anal = match func.kind() {
+                                    FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, gens)),
+                                    _ => {
+                                        let closure = self.syms.new_closure();
 
-                                    let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
-                                    AnalysisResult::new(Sym::Ty(sym, gens))
-                                }
-                            };
+                                        let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
+                                        AnalysisResult::new(Sym::Ty(sym, gens))
+                                    }
+                                };
 
-                            anal.is_mut = false;
-                            return Ok(anal)
+                                anal.is_mut = false;
+                                return Ok(anal)
 
-                        },
+                            },
 
-                        _ => (),
-                    }
+                            _ => (),
+                        }
 
-                }
+
+                    },
+                };
 
                 return Err(Error::VariableNotFound { name: ident, source: range })
-
             },
 
 
@@ -1514,7 +1553,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
-                else { return Err(Error::CallOnNonFunction { source: lhs_range }) };
+                else { dbg!(sym); return Err(Error::CallOnNonFunction { source: lhs_range }) };
 
 
                 let f_gens = lhs.ty.gens(&self.syms);
@@ -1558,7 +1597,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 if ns.1 { return Err(Error::Bypass) }
 
-                let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(ns.0));
+                let scope = Scope::new(scope, ScopeKind::ImplicitNamespace(ns.0));
                 let scope = self.scopes.push(scope);
 
                 self.expr(path, scope, action)

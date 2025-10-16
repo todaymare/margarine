@@ -1,11 +1,11 @@
-use std::hint::select_unpredictable;
+use std::{hint::select_unpredictable, ops::Deref};
 
 use crate::{opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
 impl<'src> VM<'src> {
     pub fn run(&mut self, func: &str) -> Status {
         let Some((index, _)) = &self.funcs.iter().enumerate().find(|x| x.1.name == func)
-        else { return Status::err(FatalError::new(format!("invalid entry function '{func}'"))) };
+        else { return Status::err(FatalError::new("invalid entry function '{func}'")) };
 
         self.run_func(*index)
     }
@@ -21,6 +21,7 @@ impl<'src> VM<'src> {
                     &self.callstack.src[byte_offset..byte_offset + byte_size],
                     0,
                     0,
+                    index as _,
                 );
 
             },
@@ -28,8 +29,9 @@ impl<'src> VM<'src> {
 
             crate::FunctionKind::Host(f) => {
                 let mut reg = Reg::new_unit();
-                unsafe { f(self, &mut reg) };
-                return Status::ok()
+                let mut status = Status::ok();
+                unsafe { f(self, &mut reg, &mut status) };
+                return status
             },
         };
 
@@ -55,6 +57,14 @@ impl<'src> VM<'src> {
                     else { break };
 
                     let return_val = self.stack.pop();
+
+                    if let Some(cache) = &mut self.funcs[self.curr.func as usize].cache {
+                        let args = &self.stack.values.deref()[self.stack.bottom..self.stack.bottom + self.curr.argc as usize];
+                        let args = Vec::from(args).leak();
+                        cache.insert(args, return_val);
+                    }
+
+
                     self.stack.curr -= self.curr.argc as usize + local_count as usize;
                     self.stack.set_bottom(self.curr.previous_offset);
                     self.stack.push(return_val);
@@ -65,7 +75,7 @@ impl<'src> VM<'src> {
 
                 consts::CallFuncRef => {
                     let func_ref = self.stack.pop().as_obj();
-                    let Object::FuncRef { func, captures } = &self.objs[func_ref as usize]
+                    let Object::FuncRef { func: func_index, captures } = &self.objs[func_ref as usize]
                     else { unreachable!() };
 
                     let argc = self.curr.next();
@@ -75,7 +85,7 @@ impl<'src> VM<'src> {
                     // the arguments should already be ordered at the top of the stack
                     //
 
-                    let func = &self.funcs[*func as usize];
+                    let func = &self.funcs[*func_index as usize];
 
                     match func.kind {
                         crate::FunctionKind::Code { byte_offset, byte_size } => {
@@ -85,10 +95,21 @@ impl<'src> VM<'src> {
 
                             let argc = argc + captures.len() as u8;
 
+                            if let Some(cache) = &func.cache {
+                                let curr = self.stack.curr;
+                                let args : &[Reg] = &self.stack.values.deref()[curr-argc as usize..curr];
+                                if let Some(result) = cache.get(&args) {
+                                    self.stack.curr -= argc as usize;
+                                    self.stack.push(*result);
+                                    continue;
+                                }
+                            }
+
                             let mut call_frame = CallFrame::new(
                                 &self.callstack.src[byte_offset..byte_offset+byte_size],
                                 self.stack.bottom,
                                 argc,
+                                *func_index,
                             );
 
                             self.stack.set_bottom(self.stack.curr - argc as usize);
@@ -107,7 +128,13 @@ impl<'src> VM<'src> {
 
                             let start = self.stack.curr;
                             let mut ret = Reg::new_unit();
-                            f(self, &mut ret);
+                            let mut status = Status::ok();
+                            f(self, &mut ret, &mut status);
+
+                            if status.as_err().is_some() {
+                                return status;
+                            }
+
                             debug_assert_eq!(self.stack.curr, start);
 
                             self.stack.curr -= argc as usize;
@@ -156,7 +183,7 @@ impl<'src> VM<'src> {
 
                     let str = reader.next_str();
 
-                    return Status::err(FatalError::new(format!("{str}")))
+                    return Status::err(FatalError::new(str))
                 },
 
 
@@ -223,7 +250,7 @@ impl<'src> VM<'src> {
 
                     let list = self.objs[list.as_obj() as usize].as_list();
                     if index < 0 || index as usize >= list.len() {
-                        return Status::err(FatalError::new(String::from("out of bounds access")))
+                        return Status::err(FatalError::new("out of bounds access"))
                     }
 
                     self.stack.push(list[index as usize]);
@@ -237,7 +264,7 @@ impl<'src> VM<'src> {
 
                     let list = self.objs[list.as_obj() as usize].as_mut_list();
                     if index < 0 || index as usize >= list.len() {
-                        return Status::err(FatalError::new(String::from("out of bounds access")))
+                        return Status::err(FatalError::new("out of bounds access"))
                     }
 
                     list[index as usize] = value
@@ -288,7 +315,7 @@ impl<'src> VM<'src> {
                     let obj = &mut self.objs[var.as_obj() as usize];
 
                     if obj.as_fields()[0].as_int() == 1 {
-                        return Status::err(FatalError::new("tried to unwrap an invalid value".to_string()));
+                        return Status::err(FatalError::new("tried to unwrap an invalid value"));
                     }
 
                     obj.as_mut_fields()[1] = val;
@@ -300,7 +327,7 @@ impl<'src> VM<'src> {
                     let obj_index = val.as_obj();
                     let obj = &self.objs[obj_index as usize];
                     if obj.as_fields()[0].as_int() == 1 {
-                        return Status::err(FatalError::new("tried to unwrap an invalid value".to_string()));
+                        return Status::err(FatalError::new("tried to unwrap an invalid value"));
                     }
 
                     self.stack.push(obj.as_fields()[1])
@@ -308,7 +335,7 @@ impl<'src> VM<'src> {
 
 
                 consts::UnwrapFail => {
-                    return Status::err(FatalError::new("tried to unwrap an invalid value".to_string()));
+                    return Status::err(FatalError::new("tried to unwrap an invalid value"));
                 }
 
 

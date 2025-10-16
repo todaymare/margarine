@@ -108,13 +108,20 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_var(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap) -> Option<VariableScope> {
-        self.over(scope_map, |iscope| {
-            if let ScopeKind::VariableScope(v) = iscope.kind {
+    pub fn find_var(
+        self,
+        name: StringIndex,
+        scope_map: &ScopeMap,
+        namespaces: &NamespaceMap,
+        symbols: &mut SymbolMap
+    ) -> Option<Result<VariableScope, Result<SymbolId, Error>>> {
+
+        self.over(scope_map, |scope| {
+            if let ScopeKind::VariableScope(v) = scope.kind {
                 if v.name() != name { return None}
                 self.over(scope_map, |scope| {
                     if let ScopeKind::VariableScope(v) = scope.kind {
-                        if v.name() == name { return Some(v) }
+                        if v.name() == name { return Some(()) }
                     }
                     
                     if let ScopeKind::Closure(closure) = scope.kind() {
@@ -124,8 +131,23 @@ impl<'me> Scope<'me> {
                     None
                 });
 
-                return Some(v)
+                return Some(Ok(v))
             }
+
+            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
+                let ns = namespaces.get_ns(ns);
+                if let Some(ty) = ns.get_sym(name) {
+                    return Some(Err(ty))
+                }
+            }
+
+            if let ScopeKind::Generics(generics_scope) = scope.kind {
+                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0 == name) {
+                    return Some(Err(Ok(ty.1.sym(symbols).expect("please work"))))
+                }
+            }
+
+
 
             None
         })

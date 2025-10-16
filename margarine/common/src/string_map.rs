@@ -42,9 +42,10 @@ impl<'str> StringMap<'str> {
     pub const A: StringIndex = StringIndex(27);
 
     pub const ITER_NEXT_FUNC : StringIndex = StringIndex(28);
-    pub const TYPE_ID : StringIndex = StringIndex(29);
-    pub const LIST : StringIndex = StringIndex(30);
-    pub const CLOSURE : StringIndex = StringIndex(31);
+    pub const TO_STR_FUNC : StringIndex = StringIndex(29);
+    pub const TYPE_ID : StringIndex = StringIndex(30);
+    pub const LIST : StringIndex = StringIndex(31);
+    pub const CLOSURE : StringIndex = StringIndex(32);
 
  
     #[inline(always)]
@@ -93,6 +94,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("A"), Self::A);
 
         assert_eq!(s.insert("__next__"), Self::ITER_NEXT_FUNC);
+        assert_eq!(s.insert("__to_str__"), Self::TO_STR_FUNC);
         assert_eq!(s.insert("type_id"), Self::TYPE_ID);
         assert_eq!(s.insert("List"), Self::LIST);
         assert_eq!(s.insert("{closure}"), Self::CLOSURE);

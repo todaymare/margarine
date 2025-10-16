@@ -123,8 +123,16 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn sym(&mut self, id: SymbolId) -> Symbol<'me> { 
+    pub fn sym(&self, id: SymbolId) -> Symbol<'me> { 
         self.syms[id].0.unwrap()
+    }
+
+
+    pub fn cached_fn(&mut self, id: SymbolId) { 
+        let SymbolKind::Function(func) = &mut self.syms[id].0.as_mut().unwrap().kind
+        else { unreachable!() };
+
+        func.cached = true;
     }
 
 

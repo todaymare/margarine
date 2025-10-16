@@ -38,6 +38,8 @@ struct Function<'a> {
 
     kind: FunctionKind<'a>,
     error: Option<ErrorId>,
+
+    cached: bool,
 }
 
 
@@ -102,6 +104,7 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
         let _ = conv.get_func(*sym, GenListId::EMPTY);
     }
 
+
     // do the codegen
     let mut func_sec = vec![];
     let mut code = Builder::new();
@@ -116,6 +119,9 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
         func_sec.extend_from_slice(name.as_bytes());
         func_sec.push(func.args.len().try_into().unwrap());
         func_sec.extend_from_slice(&func.ret.to_le_bytes());
+
+        dbg!(func.cached);
+        func_sec.push(func.cached as u8);
 
         for arg in &func.args {
             func_sec.extend_from_slice(&arg.to_le_bytes());
@@ -296,17 +302,6 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
     final_product.extend_from_slice(&func_sec);
     final_product.extend_from_slice(&code.bytecode);
 
-    for f in funcs {
-        println!("{} - {}:", conv.string_map.get(f.1.name), f.1.index.0);
-        match &f.1.kind {
-            FunctionKind::Code { local_count, entry, blocks } => {
-            },
-            FunctionKind::Extern(..) => {
-                println!("extern {}", conv.string_map.get(f.1.name))
-            },
-        }
-    }
-
     final_product
 }
 
@@ -349,6 +344,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     error: self.ty_info.decl(sym_func.decl().unwrap()),
                     args,
                     ret: ret.0,
+                    cached: sym_func.cached,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -372,6 +368,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     error: err,
                     ret: ret.0,
                     args,
+                    cached: sym_func.cached,
 
                 };
 
@@ -452,6 +449,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     error: None,
                     args,
                     ret: ret.0,
+                    cached: false,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -496,6 +494,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     error: err,
                     args,
                     ret: ret.0,
+                    cached: false,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -723,11 +722,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::Identifier(string_index, _) => {
                 let ty = out_if_err!();
-                if let Some(index) = env.find_var(string_index) {
-                    block.bytecode.load(index.try_into().unwrap());
-                    return Ok(());
-                }
-
                 if let Some(Some(func)) = self.ty_info.idents.get(&expr) {
                     let func_gens = ty.gens(self.syms);
                     let func_gens = self.syms.get_gens(func_gens);
@@ -747,7 +741,16 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     let func = self.get_func(*func, gens).unwrap();
                     block.bytecode.const_int(func.index.0 as i64);
                     block.bytecode.create_func_ref(0);
+
+                    return Ok(());
                 }
+
+                if let Some(index) = env.find_var(string_index) {
+                    block.bytecode.load(index.try_into().unwrap());
+                    return Ok(());
+                }
+
+
             },
 
 
@@ -1221,6 +1224,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         error: None,
                         args: vec![0; argc],
                         ret: self.ty_info.expr(body).unwrap().sym(self.syms).unwrap().0,
+                        cached: false,
                     };
 
                     let ret = self.funcs.insert(hash, func);
