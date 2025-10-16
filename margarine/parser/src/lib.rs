@@ -752,7 +752,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(self.ast.add_decl(
-            Decl::Module { name, body, header: SourceRange::new(start, header_end) },
+            Decl::Module { name, body, header: SourceRange::new(start, header_end), user_defined: true },
             SourceRange::new(start, end)
         ))
     }

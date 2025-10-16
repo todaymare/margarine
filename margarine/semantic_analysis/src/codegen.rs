@@ -120,7 +120,6 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
         func_sec.push(func.args.len().try_into().unwrap());
         func_sec.extend_from_slice(&func.ret.to_le_bytes());
 
-        dbg!(func.cached);
         func_sec.push(func.cached as u8);
 
         for arg in &func.args {

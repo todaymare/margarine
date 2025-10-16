@@ -115,7 +115,8 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: Vec<FileData>) -> (Vec
             Decl::Module {
                 name,
                 header: module.range,
-                body: Block::new(module.body.clone_in(ast.arena).leak(), module.range)
+                body: Block::new(module.body.clone_in(ast.arena).leak(), module.range),
+                user_defined: true,
             },
             module.range
         )

@@ -41,6 +41,7 @@ pub enum Decl<'a> {
         name: StringIndex,
         header: SourceRange,
         body: Block<'a>,
+        user_defined: bool,
     },
 
     Extern {

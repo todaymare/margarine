@@ -7,7 +7,7 @@ use ::errors::{ErrorId, SemaError};
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, hash::fxhash::fxhash64, vec::KVec, string::String, vec::Vec, write};
+use sti::{arena::Arena, hash::fxhash::fxhash64, key::Key, string::String, vec::{KVec, Vec}, write};
 use syms::{ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 
 use crate::{scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::ClosureId, Symbol}};
@@ -35,6 +35,7 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub tests   : Vec<SymbolId>,
 
     pub errors     : KVec<SemaError, Error>,
+    base_scope  : ScopeId,
 }
 
 
@@ -97,6 +98,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             startups: Vec::new(),
             tests: Vec::new(),
             temp,
+            base_scope: ScopeId::MIN,
         };
 
         {
@@ -141,6 +143,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
         let scope = Scope::new(None, ScopeKind::ImplicitNamespace(core_ns));
         let scope = analyzer.scopes.push(scope);
+        analyzer.base_scope = scope;
         let empty = analyzer.string_map.insert("");
         analyzer.block(empty, scope, block);
 
