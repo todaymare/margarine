@@ -3,7 +3,7 @@ use common::{source::SourceRange, string_map::{StringIndex}, ImmutableData};
 #[derive(Debug, PartialEq, Clone, Copy, ImmutableData)]
 pub struct DataType<'a> {
     range: SourceRange,
-    kind: DataTypeKind<'a>, 
+    pub kind: DataTypeKind<'a>, 
 }
 
 

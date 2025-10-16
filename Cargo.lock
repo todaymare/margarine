@@ -1053,6 +1053,7 @@ dependencies = [
 name = "margarine"
 version = "0.1.0"
 dependencies = [
+ "colourful",
  "common",
  "errors",
  "git2",

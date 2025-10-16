@@ -31,7 +31,8 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     namespaces  : NamespaceMap,
     pub syms    : SymbolMap<'out>,
     type_info   : TyInfo,
-    startups    : Vec<SymbolId>,
+    pub startups: Vec<SymbolId>,
+    pub tests   : Vec<SymbolId>,
 
     pub errors     : KVec<SemaError, Error>,
 }
@@ -94,6 +95,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
             ast,
             startups: Vec::new(),
+            tests: Vec::new(),
             temp,
         };
 

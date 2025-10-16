@@ -18,6 +18,8 @@ errors = { path = "./errors" }
 
 sti = { path = "../vendor/sti" }
 
+colourful = { git = "https://github.com/rookieCookies/colourful" }
+
 raylib = "*"
 rand = "*"
 

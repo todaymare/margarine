@@ -1,6 +1,7 @@
 pub mod raylib;
 
 use std::collections::HashMap;
+use std::ffi::CString;
 
 use common::string_map::StringIndex;
 pub use lexer::lex;
@@ -21,7 +22,7 @@ pub use runtime::{VM, opcode, Status, FatalError, Reg};
 pub use sti::arena::Arena;
 
 
-pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
+pub fn run<'str>(string_map: &mut StringMap<'str>, files: Vec<FileData>) -> (Vec<u8>, Vec<String>) {
     let arena = Arena::new();
     let mut global = AST::new(&arena);
     let mut modules = HashMap::<&[StringIndex], Block>::new();
@@ -177,13 +178,20 @@ pub fn run(string_map: &mut StringMap<'_>, files: Vec<FileData>) -> Vec<u8> {
 
 
     let src = semantic_analysis::codegen::run(&mut sema, [lex_error_files, parse_error_files, vec![sema_errors]]);
-    src
+    let mut tests = Vec::with_capacity(sema.startups.len());
+
+    for t in sema.tests {
+        let name = sema.syms.sym(t.1).name();
+        tests.push(sema.string_map.get(name).to_string());
+    }
+
+    (src, tests)
 }
 
 
-pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg)>) {
+pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg, &mut Status)>) {
 
-    unsafe extern "C" fn print_raw(vm: &mut VM, _: &mut Reg) {
+    unsafe extern "C" fn print_raw(vm: &mut VM, _: &mut Reg, _: &mut Status) {
         let val = unsafe { vm.stack.reg(0) };
         let ty_id = unsafe { vm.stack.reg(1).as_int() };
 
@@ -201,7 +209,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         }
     }
 
-    unsafe extern "C" fn new_any(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn new_any(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let value = unsafe { vm.stack.reg(0) };
         let type_id = unsafe { vm.stack.reg(1) };
 
@@ -210,7 +218,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn downcast_any(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn downcast_any(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let any_value = unsafe { vm.stack.reg(0) };
         let target_ty = unsafe { vm.stack.reg(1) };
 
@@ -228,7 +236,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn push_list(vm: &mut VM, _: &mut Reg) {
+    unsafe extern "C" fn push_list(vm: &mut VM, _: &mut Reg, _: &mut Status) {
         let list = unsafe { vm.stack.reg(0) };
         let value = unsafe { vm.stack.reg(1) };
 
@@ -240,7 +248,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn pop_list(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn pop_list(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let list = unsafe { vm.stack.reg(0) };
 
         let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
@@ -257,14 +265,14 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn len_list(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn len_list(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let list = unsafe { vm.stack.reg(0) };
         let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
         *ret = Reg::new_int(list.as_list().len() as i64);
     }
 
 
-    unsafe extern "C" fn now_secs(_: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn now_secs(_: &mut VM, ret: &mut Reg, _: &mut Status) {
         let Ok(time) = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
         else { panic!("failed to get the epoch") };
@@ -274,7 +282,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn now_nanos(_: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn now_nanos(_: &mut VM, ret: &mut Reg, _: &mut Status) {
         let Ok(time) = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
         else { panic!("failed to get the epoch") };
@@ -284,33 +292,33 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn int_to_str(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn int_to_str(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let int = unsafe { vm.stack.reg(0).as_int() };
         let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
         *ret = obj
     }
 
 
-    unsafe extern "C" fn float_to_str(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn float_to_str(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let int = unsafe { vm.stack.reg(0).as_float() };
         let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
         *ret = obj
     }
 
 
-    unsafe extern "C" fn random(_: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn random(_: &mut VM, ret: &mut Reg, _: &mut Status) {
         let obj = Reg::new_float(rand::random());
         *ret = obj
     }
 
 
-    unsafe extern "C" fn hashmap_new(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn hashmap_new(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let obj = vm.new_obj(runtime::Object::Dict(HashMap::new()));
         *ret = obj
     }
 
 
-    unsafe extern "C" fn hashmap_insert(vm: &mut VM, _: &mut Reg) {
+    unsafe extern "C" fn hashmap_insert(vm: &mut VM, _: &mut Reg, _: &mut Status) {
         let hm = vm.stack.reg(0).as_obj();
         let key = vm.stack.reg(1);
         let value = vm.stack.reg(2);
@@ -320,7 +328,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn hashmap_clear(vm: &mut VM, _: &mut Reg) {
+    unsafe extern "C" fn hashmap_clear(vm: &mut VM, _: &mut Reg, _: &mut Status) {
         let hm = vm.stack.reg(0).as_obj();
         let hm = vm.objs[hm as usize].as_hm();
 
@@ -328,7 +336,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn hashmap_contains_key(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn hashmap_contains_key(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let hm = vm.stack.reg(0).as_obj();
         let hm = vm.objs[hm as usize].as_hm();
         let key = vm.stack.reg(1);
@@ -338,7 +346,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn hashmap_remove(vm: &mut VM, ret: &mut Reg) {
+    unsafe extern "C" fn hashmap_remove(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let hm = vm.stack.reg(0).as_obj();
         let hm = vm.objs[hm as usize].as_hm();
         let key = vm.stack.reg(1);
@@ -350,6 +358,14 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         } else {
             vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
         }
+    }
+
+
+    unsafe extern "C" fn panic(vm: &mut VM, _: &mut Reg, status: &mut Status) {
+        let str = vm.stack.reg(0).as_obj();
+        let str = vm.objs[str as usize].as_str();
+
+        *status = Status::err(FatalError::new(str))
     }
 
 
@@ -369,5 +385,6 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("hashmap_clear".to_string(), hashmap_clear);
     hosts.insert("hashmap_contains_key".to_string(), hashmap_contains_key);
     hosts.insert("hashmap_remove".to_string(), hashmap_remove);
+    hosts.insert("panic".to_string(), panic);
 
 }

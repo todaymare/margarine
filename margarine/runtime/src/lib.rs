@@ -77,7 +77,9 @@ pub struct Function<'src> {
     argc: u8,
     args: &'src [u8],
     ret: u32,
-    kind: FunctionKind<'src>
+    kind: FunctionKind<'src>,
+
+    cache: Option<HashMap<&'static [Reg], Reg>>,
 }
 
 
@@ -89,7 +91,7 @@ pub enum FunctionKind<'src> {
     },
 
 
-    Host(unsafe extern "C" fn(&mut VM<'src>, &mut Reg)),
+    Host(unsafe extern "C" fn(&mut VM<'src>, &mut Reg, &mut Status)),
 }
 
 
@@ -135,6 +137,8 @@ struct CallFrame<'me> {
     /// The bottom of the previous frame's stack.
     previous_offset: usize,
 
+    func: u32,
+
     argc: u8,
 
 }
@@ -154,39 +158,39 @@ pub struct Reader<'me> {
 
 
 impl<'src> VM<'src> {
-    pub fn new(hosts: HashMap<String, unsafe extern "C" fn(&mut VM<'src>, &mut Reg)>, src: &'src [u8]) -> Result<Self, FatalError> {
+    pub fn new(hosts: HashMap<String, unsafe extern "C" fn(&mut VM<'src>, &mut Reg, &mut Status)>, src: &'src [u8]) -> Result<Self, FatalError> {
         let mut reader = Reader::new(src);
         let Some(b"BUTTERY") = reader.try_next_n().as_ref()
-        else { return Err(FatalError::new(String::from("invalid header"))) };
+        else { return Err(FatalError::new("invalid header")) };
 
         let mut objs = vec![];
 
 
         // table sizes
         let Some(funcs_size) = reader.try_next_u32()
-        else { return Err(FatalError::new(String::from("invalid func block size"))) };
+        else { return Err(FatalError::new("invalid func block size")) };
 
         let Some(errs_size) = reader.try_next_u32()
-        else { return Err(FatalError::new(String::from("invalid err block size"))) };
+        else { return Err(FatalError::new("invalid err block size")) };
 
         let Some(strs_size) = reader.try_next_u32()
-        else { return Err(FatalError::new(String::from("invalid str block size"))) };
+        else { return Err(FatalError::new("invalid str block size")) };
 
         let Some(errs) = reader.try_next_slice(errs_size as usize)
-        else { return Err(FatalError::new(String::from("invalid errs block"))) };
+        else { return Err(FatalError::new("invalid errs block")) };
 
 
         let Some(strs) = reader.try_next_slice(strs_size as usize)
-        else { return Err(FatalError::new(String::from("invalid strs block"))) };
+        else { return Err(FatalError::new("invalid strs block")) };
 
         {
             let mut reader = Reader::new(strs);
             let Some(count) = reader.try_next_u32()
-            else { return Err(FatalError::new(String::from("str count is invalid"))) };
+            else { return Err(FatalError::new("str count is invalid")) };
 
             for _ in 0..count {
                 let Some(str) = reader.try_next_str()
-                else { return Err(FatalError::new(String::from("invalid str"))) };
+                else { return Err(FatalError::new("invalid str")) };
 
                 objs.push(Object::String(str.to_string().into_boxed_str()));
             }
@@ -195,7 +199,7 @@ impl<'src> VM<'src> {
 
         // func metadata
         let Some(funcs_data) = reader.try_next_slice(funcs_size as usize)
-        else { return Err(FatalError::new(String::from("invalid funcs metadata block"))) };
+        else { return Err(FatalError::new("invalid funcs metadata block")) };
 
         let mut funcs_reader = Reader::new(funcs_data);
 
@@ -213,12 +217,18 @@ impl<'src> VM<'src> {
                     let name = funcs_reader.next_str();
                     let argc = funcs_reader.next();
                     let ret = funcs_reader.next_u32();
+                    let is_cached = funcs_reader.next();
 
                     let args = funcs_reader.next_slice(argc as usize * 4);
 
                     let kind = funcs_reader.next();
-                    println!("{name} {}", funcs.len());
+                    if is_cached != 0 {
+                        println!("oh my god its cached");
+                    }
 
+                    let cache =
+                    if is_cached == 1 { Some(HashMap::new()) }
+                    else { None };
 
                     match kind {
                         0 => {
@@ -234,13 +244,14 @@ impl<'src> VM<'src> {
                                 argc,
                                 ret,
                                 args,
+                                cache,
                             });
                         }
                         1 => {
                             let path = funcs_reader.next_str();
                             let Some(host_fn) = hosts.get(path)
                             else {
-                                return Err(FatalError::new(format!("invalid host function: '{path}'")));
+                                return Err(FatalError::new(&format!("invalid host function: '{path}'")));
                             };
 
                             funcs.push(Function {
@@ -249,9 +260,10 @@ impl<'src> VM<'src> {
                                 argc,
                                 ret,
                                 args,
+                                cache,
                             });
                         }
-                        _ => return Err(FatalError::new(String::from("invalid func kind")))
+                        _ => return Err(FatalError::new("invalid func kind"))
                     }
 
                 }
@@ -268,12 +280,19 @@ impl<'src> VM<'src> {
         Ok(Self {
             stack: Stack::new(1024),
             callstack: Callstack::new(256, code_section),
-            curr: CallFrame::new(code_section, 0, 0),
+            curr: CallFrame::new(code_section, 0, 0, 0),
             funcs,
             error_table: errs,
             objs,
             //jit: JIT::default(),
         })
+    }
+
+
+    pub fn reset(&mut self) {
+        while let Some(_) = self.callstack.pop() {}
+        self.stack.curr = 0;
+        self.stack.bottom = 0;
     }
 
 
@@ -290,12 +309,14 @@ impl<'me> CallFrame<'me> {
         code: &'me [u8],
         previous_offset: usize,
         argc: u8,
+        func: u32,
     ) -> Self {
 
         Self {
             reader: Reader::new(code),
             previous_offset,
             argc,
+            func,
         }
     }
 }
@@ -681,7 +702,7 @@ impl<T> IndexMut<usize> for Buffer<T> {
 
 
 impl FatalError {
-    pub fn new(msg: String) -> Self {
+    pub fn new(msg: &str) -> Self {
         let cstr = ManuallyDrop::new(CString::new(msg).unwrap());
         let cstr = cstr.as_ptr();
         let cstr = unsafe { CStr::from_ptr(cstr) };
@@ -889,5 +910,14 @@ impl std::hash::Hash for Reg {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u64(self.kind);
         state.write_i64(unsafe { self.data.as_int });
+    }
+}
+
+
+impl<T> Deref for Buffer<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
 }
