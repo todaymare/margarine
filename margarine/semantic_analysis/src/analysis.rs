@@ -110,7 +110,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 },
 
 
-                Decl::Module { name, header, body } => {
+                Decl::Module { name, header, body, .. } => {
                     if let Some(ns) = ns.get_ns(name) {
                         self.error(*n, Error::NameIsAlreadyDefined {
                             source: header, name });
@@ -144,9 +144,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             let decl = self.ast.decl(*decl);
             match decl {
-                Decl::Module { name, body, .. } => {
+                Decl::Module { name, body, user_defined, .. } => {
                     let module_ns = self.namespaces.get_ns(ns_id).get_ns(name).unwrap();
-                    let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(module_ns));
+                    let scope = Scope::new(if !user_defined { self.base_scope } else { scope }, ScopeKind::ImplicitNamespace(module_ns));
                     let scope = self.scopes.push(scope);
                     self.collect_impls(path, scope, module_ns, &*body);
                 }
@@ -535,13 +535,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 }
 
 
-                Decl::Module { name, body, .. } => {
+                Decl::Module { name, body, user_defined, .. } => {
                     let ns = self.namespaces.get_ns(ns);
                     let Some(module_ns) = ns.get_ns(name)
                     else { continue };
 
                     let scope = self.scopes.push(self.scopes.get(scope));
-                    let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(module_ns));
+                    let scope = Scope::new(if !user_defined { self.base_scope } else { scope }, ScopeKind::ImplicitNamespace(module_ns));
                     let scope = self.scopes.push(scope);
 
                     let path = self.namespaces.get_ns(module_ns).path;
@@ -694,12 +694,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
-            Decl::Module { name, body, .. } => {
+            Decl::Module { name, body, user_defined, .. } => {
                 let ns = self.namespaces.get_ns(ns);
                 let Some(module_ns) = ns.get_ns(name)
                 else { return };
                 
-                let scope = Scope::new(*scope, ScopeKind::ImplicitNamespace(module_ns));
+                let scope = Scope::new(if !user_defined { self.base_scope } else { *scope }, ScopeKind::ImplicitNamespace(module_ns));
                 let mut scope = self.scopes.push(scope);
 
                 let path = self.namespaces.get_ns(module_ns).path;
@@ -959,6 +959,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 // unwrap the option
                 let binding_ty = binding_ty.gens(&self.syms);
                 let binding_ty = self.syms.get_gens(binding_ty);
+                if binding_ty.is_empty() { return; }
                 let binding_ty = binding_ty[0].1;
 
                 let scope = Scope::new(*scope, ScopeKind::Loop);
