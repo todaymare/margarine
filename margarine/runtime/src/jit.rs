@@ -1,6 +1,6 @@
 use std::{collections::HashMap, mem::offset_of};
 
-use cranelift::prelude::*;
+use cranelift::prelude::{isa::CallConv, *};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, Linkage, Module};
 use crate::{opcode::runtime::{Decoded, OpCode}, Function, FunctionKind, Reader, Reg, Stack, VM};

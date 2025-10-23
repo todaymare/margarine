@@ -5,15 +5,19 @@ use std::marker::PhantomData;
 
 use std::{collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
 
+use crate::jitty::JIT;
+
 //use crate::jit::JIT;
 
 pub mod runtime;
 pub mod opcode;
 pub mod alloc;
+pub mod jitty;
 //pub mod jit;
 
 
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub struct Reg {
     kind: u64,
     data: RegData,
@@ -21,6 +25,7 @@ pub struct Reg {
 
 
 #[derive(Clone, Copy)]
+#[repr(C)]
 union RegData {
     as_int: i64,
     as_float: f64,
@@ -44,7 +49,7 @@ pub struct VM<'src> {
     pub funcs: Vec<Function<'src>>,
     error_table: &'src [u8],
     pub objs: Vec<Object>,
-    //jit: JIT,
+    jit: JIT,
 }
 
 
@@ -89,6 +94,9 @@ pub enum FunctionKind<'src> {
         byte_offset: usize,
         byte_size: usize,
     },
+
+
+    Jit(unsafe extern "C" fn(&mut VM<'src>)),
 
 
     Host(unsafe extern "C" fn(&mut VM<'src>, &mut Reg, &mut Status)),
@@ -284,7 +292,7 @@ impl<'src> VM<'src> {
             funcs,
             error_table: errs,
             objs,
-            //jit: JIT::default(),
+            jit: JIT::default(),
         })
     }
 

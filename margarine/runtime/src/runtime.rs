@@ -1,6 +1,6 @@
 use std::{hint::select_unpredictable, ops::Deref};
 
-use crate::{opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
+use crate::{jitty, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
 impl<'src> VM<'src> {
     pub fn run(&mut self, func: &str) -> Status {
@@ -53,23 +53,13 @@ impl<'src> VM<'src> {
                 consts::Ret => {
                     let local_count = self.curr.next();
 
-                    let Some(prev_frame) = self.callstack.pop()
-                    else { break };
+                    let mut should_ret = 0;
+                    ret_instr(self, local_count as _, &mut should_ret);
 
-                    let return_val = self.stack.pop();
-
-                    if let Some(cache) = &mut self.funcs[self.curr.func as usize].cache {
-                        let args = &self.stack.values.deref()[self.stack.bottom..self.stack.bottom + self.curr.argc as usize];
-                        let args = Vec::from(args).leak();
-                        cache.insert(args, return_val);
+                    if should_ret == 1 {
+                        break;
                     }
 
-
-                    self.stack.curr -= self.curr.argc as usize + local_count as usize;
-                    self.stack.set_bottom(self.curr.previous_offset);
-                    self.stack.push(return_val);
-
-                    self.curr = prev_frame;
                 },
 
 
@@ -85,7 +75,14 @@ impl<'src> VM<'src> {
                     // the arguments should already be ordered at the top of the stack
                     //
 
-                    let func = &self.funcs[*func_index as usize];
+
+                    dbg!(jitty::attempt_jit(self, *func_index as _));
+
+                    let Object::FuncRef { func: func_index, captures } = &self.objs[func_ref as usize]
+                    else { unreachable!() };
+
+                    let func_index = *func_index;
+                    let func = &self.funcs[func_index as usize];
 
                     match func.kind {
                         crate::FunctionKind::Code { byte_offset, byte_size } => {
@@ -109,7 +106,7 @@ impl<'src> VM<'src> {
                                 &self.callstack.src[byte_offset..byte_offset+byte_size],
                                 self.stack.bottom,
                                 argc,
-                                *func_index,
+                                func_index,
                             );
 
                             self.stack.set_bottom(self.stack.curr - argc as usize);
@@ -678,3 +675,26 @@ impl<'src> VM<'src> {
     }
 }
 
+
+
+pub extern "C" fn ret_instr(vm: &mut VM, local_count: i64, ret: &mut i64) {
+    unsafe { 
+    let Some(prev_frame) = vm.callstack.pop()
+    else { *ret = 1; return; };
+
+    let return_val = vm.stack.pop();
+
+    if let Some(cache) = &mut vm.funcs[vm.curr.func as usize].cache {
+        let args = &vm.stack.values.deref()[vm.stack.bottom..vm.stack.bottom + vm.curr.argc as usize];
+        let args = Vec::from(args).leak();
+        cache.insert(args, return_val);
+    }
+
+
+    vm.stack.curr -= vm.curr.argc as usize + local_count as usize;
+    vm.stack.set_bottom(vm.curr.previous_offset);
+    vm.stack.push(return_val);
+
+    vm.curr = prev_frame; 
+    }
+}
