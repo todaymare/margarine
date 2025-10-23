@@ -1,11 +1,11 @@
 use std::{hint::select_unpredictable, ops::Deref};
 
-use crate::{jitty, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
+use crate::{opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
 impl<'src> VM<'src> {
     pub fn run(&mut self, func: &str) -> Status {
         let Some((index, _)) = &self.funcs.iter().enumerate().find(|x| x.1.name == func)
-        else { return Status::err(FatalError::new("invalid entry function '{func}'")) };
+        else { return Status::err(FatalError::new(&format!("invalid entry function '{func}'"))) };
 
         self.run_func(*index)
     }
@@ -53,12 +53,19 @@ impl<'src> VM<'src> {
                 consts::Ret => {
                     let local_count = self.curr.next();
 
-                    let mut should_ret = 0;
-                    ret_instr(self, local_count as _, &mut should_ret);
+                    let mut ret_value = Reg::new_unit();
+                    ret_instr(self, local_count as _, &mut ret_value);
 
-                    if should_ret == 1 {
-                        break;
-                    }
+                    let Some(prev_frame) = self.callstack.pop()
+                    else { break; };
+
+                    self.stack.set_bottom(self.curr.previous_offset);
+
+                    self.stack.curr -= self.curr.argc as usize;
+
+                    self.stack.push(ret_value);
+
+                    self.curr = prev_frame; 
 
                 },
 
@@ -76,7 +83,7 @@ impl<'src> VM<'src> {
                     //
 
 
-                    dbg!(jitty::attempt_jit(self, *func_index as _));
+                    //dbg!(jitty::attempt_jit(self, *func_index as _));
 
                     let Object::FuncRef { func: func_index, captures } = &self.objs[func_ref as usize]
                     else { unreachable!() };
@@ -123,9 +130,11 @@ impl<'src> VM<'src> {
                             let bottom = self.stack.bottom;
                             self.stack.bottom = self.stack.curr - argc as usize;
 
+
                             let start = self.stack.curr;
                             let mut ret = Reg::new_unit();
                             let mut status = Status::ok();
+
                             f(self, &mut ret, &mut status);
 
                             if status.as_err().is_some() {
@@ -677,12 +686,10 @@ impl<'src> VM<'src> {
 
 
 
-pub extern "C" fn ret_instr(vm: &mut VM, local_count: i64, ret: &mut i64) {
+pub extern "C" fn ret_instr(vm: &mut VM, local_count: i64, ret: &mut Reg) {
     unsafe { 
-    let Some(prev_frame) = vm.callstack.pop()
-    else { *ret = 1; return; };
-
     let return_val = vm.stack.pop();
+    //dbg!(return_val);
 
     if let Some(cache) = &mut vm.funcs[vm.curr.func as usize].cache {
         let args = &vm.stack.values.deref()[vm.stack.bottom..vm.stack.bottom + vm.curr.argc as usize];
@@ -690,11 +697,9 @@ pub extern "C" fn ret_instr(vm: &mut VM, local_count: i64, ret: &mut i64) {
         cache.insert(args, return_val);
     }
 
+    vm.stack.curr -= local_count as usize;
+    *ret = return_val;
 
-    vm.stack.curr -= vm.curr.argc as usize + local_count as usize;
-    vm.stack.set_bottom(vm.curr.previous_offset);
-    vm.stack.push(return_val);
 
-    vm.curr = prev_frame; 
     }
 }

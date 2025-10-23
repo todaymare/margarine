@@ -2,8 +2,12 @@ pub mod raylib;
 
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::ffi::OsStr;
+use std::path::Path;
+use std::sync::Mutex;
 
 use common::string_map::StringIndex;
+use git2::Repository;
 pub use lexer::lex;
 use parser::nodes::decl::Decl;
 use parser::nodes::decl::DeclId;
@@ -187,6 +191,165 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: Vec<FileData>) -> (Vec
     }
 
     (src, tests)
+}
+
+
+#[derive(Default)]
+pub struct CompilationUnit {
+    imports: HashMap<String, String>,
+    output: String,
+}
+
+
+impl CompilationUnit {
+    pub fn import_repo(&mut self, name: &str, repo: &str) {
+        self.imports.insert(name.to_string(), repo.to_string());
+    }
+
+
+    pub fn build(&mut self, string_map: &mut StringMap, mut files: Vec<FileData>) -> (Vec<u8>, Vec<String>) {
+        let mut stack = vec![];
+        let artifacts_path = Path::new("artifacts");
+
+        if !std::fs::exists("artifacts").unwrap() {
+            std::fs::create_dir("artifacts").unwrap();
+        }
+
+
+        for value in &self.imports {
+            let path = artifacts_path.join(&value.0);
+
+            if !std::fs::exists(&path).unwrap() {
+                println!("fetching '{}'", value.1.as_str());
+                let _ = git2::Repository::clone(value.1.as_str(), &path).unwrap();
+            }
+
+            let dir = std::fs::read_dir(&path).unwrap();
+            let path = artifacts_path.join(&value.0).join("src");
+
+            let name = string_map.insert(value.0);
+            stack.push(dir);
+            while let Some(dir) = stack.pop() {
+                for file in dir {
+                    let file = file.unwrap();
+
+                    if file.path() == path.join("lib.mar") {
+                        files.push(FileData::open_ex(file.path(), name, string_map).unwrap())
+                    } else if file.path().extension() == Some(OsStr::new("mar")) {
+                        let name = file.file_name();
+                        let name = name.to_string_lossy();
+                        let path = string_map.insert(
+                            &format!("{}/{}", value.0,
+                                &name[..name.len()-4]
+                            )
+                        );
+
+                        files.push(FileData::open_ex(file.path(), path, string_map).unwrap());
+                    } else if file.metadata().unwrap().is_dir() {
+                        stack.push(std::fs::read_dir(file.path()).unwrap());
+                    }
+                }
+            }
+        }
+
+
+        stack.push(std::fs::read_dir("src").unwrap());
+
+        run(string_map, files)
+    }
+
+
+    fn build_curr_project(&mut self) {
+        println!("building project");
+
+        let string_map_arena = Arena::new();
+        let mut string_map = StringMap::new(&string_map_arena);
+
+        let mut stack = vec![];
+        let mut files = vec![];
+        stack.push(std::fs::read_dir("src").unwrap());
+
+        let name = string_map.insert("self");
+        let src_dir = Path::new("src");
+        while let Some(dir) = stack.pop() {
+            for file in dir {
+                let file = file.unwrap();
+
+                if file.path() == src_dir.join("main.mar") {
+                    files.push(FileData::open_ex(file.path(), name, &mut string_map).unwrap())
+                } else if file.path().extension() == Some(OsStr::new("mar")) {
+                    let name = file.file_name();
+                    let name = name.to_string_lossy();
+                    let path = string_map.insert(
+                        &format!("self/{}",
+                            &name[..name.len()-4]
+                        )
+                    );
+
+                    files.push(FileData::open_ex(file.path(), path, &mut string_map).unwrap());
+                } else if file.metadata().unwrap().is_dir() {
+                    stack.push(std::fs::read_dir(file.path()).unwrap());
+                }
+            }
+        }
+
+        let (code, _) = self.build(&mut string_map, files);
+
+        let mut hosts : HashMap<String, _>= HashMap::new();
+
+        stdlib(&mut hosts);
+        build_system(&mut hosts);
+        raylib::raylib(&mut hosts);
+
+        let mut vm = VM::new(hosts, &*code).unwrap();
+        {
+            let _t = DropTimer::new("runtime");
+            if let Some(e) = vm.run("self::main").as_err() {
+                println!("{}", e.to_str().unwrap());
+            }
+        }
+
+    }
+}
+
+
+pub fn build_system(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg, &mut Status)>) {
+    static ACTIVE_UNITS : Mutex<Vec<Option<CompilationUnit>>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn init_compilation_unit(_: &mut VM, ret: &mut Reg, _: &mut Status) {
+        let mut lock = ACTIVE_UNITS.lock().unwrap();
+        lock.push(Some(CompilationUnit::default()));
+        *ret = Reg::new_int(lock.len() as i64 - 1);
+    }
+
+
+    unsafe extern "C" fn compilation_unit_import_repo(vm: &mut VM, _: &mut Reg, _: &mut Status) {
+        unsafe {
+        let compilation_unit = vm.stack.reg(0).as_int();
+        let name = vm.stack.reg(1).as_obj();
+        let name = vm.objs[name as usize].as_str();
+        let path = vm.stack.reg(2).as_obj();
+        let path = vm.objs[path as usize].as_str();
+        let mut lock = ACTIVE_UNITS.lock().unwrap();
+        let compilation_unit = lock.get_mut(compilation_unit as usize).unwrap().as_mut().unwrap();
+        compilation_unit.import_repo(name, path);
+        }
+    }
+
+
+    unsafe extern "C" fn compilation_unit_build(vm: &mut VM, _: &mut Reg, _: &mut Status) {
+        unsafe {
+        let compilation_unit = vm.stack.reg(0).as_int();
+        let mut lock = ACTIVE_UNITS.lock().unwrap();
+        let compilation_unit = lock.get_mut(compilation_unit as usize).unwrap().as_mut().unwrap();
+        compilation_unit.build_curr_project();
+        }
+    }
+
+
+    hosts.insert("compilation_unit_init".into(), init_compilation_unit);
+    hosts.insert("compilation_unit_import_repo".into(), compilation_unit_import_repo);
+    hosts.insert("compilation_unit_build".into(), compilation_unit_build);
 }
 
 
@@ -387,5 +550,4 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("hashmap_contains_key".to_string(), hashmap_contains_key);
     hosts.insert("hashmap_remove".to_string(), hashmap_remove);
     hosts.insert("panic".to_string(), panic);
-
 }

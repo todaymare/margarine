@@ -5,14 +5,13 @@ use std::marker::PhantomData;
 
 use std::{collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
 
-use crate::jitty::JIT;
-
+//use crate::jitty::JIT;
 //use crate::jit::JIT;
 
 pub mod runtime;
 pub mod opcode;
 pub mod alloc;
-pub mod jitty;
+//pub mod jitty;
 //pub mod jit;
 
 
@@ -29,9 +28,9 @@ pub struct Reg {
 union RegData {
     as_int: i64,
     as_float: f64,
-    as_bool: bool,
+    as_bool: i64,
     as_obj: u64,
-    as_unit: (),
+    as_unit: i64,
 }
 
 
@@ -49,7 +48,7 @@ pub struct VM<'src> {
     pub funcs: Vec<Function<'src>>,
     error_table: &'src [u8],
     pub objs: Vec<Object>,
-    jit: JIT,
+    //jit: JIT,
 }
 
 
@@ -94,9 +93,6 @@ pub enum FunctionKind<'src> {
         byte_offset: usize,
         byte_size: usize,
     },
-
-
-    Jit(unsafe extern "C" fn(&mut VM<'src>)),
 
 
     Host(unsafe extern "C" fn(&mut VM<'src>, &mut Reg, &mut Status)),
@@ -292,7 +288,7 @@ impl<'src> VM<'src> {
             funcs,
             error_table: errs,
             objs,
-            jit: JIT::default(),
+            //jit: JIT::default(),
         })
     }
 
@@ -748,7 +744,7 @@ impl Reg {
 
     pub unsafe fn as_bool(self) -> bool {
         debug_assert_eq!(self.kind, Self::TAG_BOOL);
-        unsafe { self.data.as_bool }
+        unsafe { self.data.as_bool != 0 }
     }
 
 
@@ -825,8 +821,8 @@ impl Reg {
 
     pub fn new_int(data: i64) -> Self { Reg { kind: Self::TAG_INT, data: RegData { as_int: data }} }
     pub fn new_float(data: f64) -> Self { Reg { kind: Self::TAG_FLOAT, data: RegData { as_float: data } } }
-    pub fn new_bool(data: bool) -> Self { Reg { kind: Self::TAG_BOOL, data: RegData { as_bool: data } } }
-    pub fn new_unit() -> Self { Reg { kind: Self::TAG_UNIT, data: RegData { as_unit: () } } }
+    pub fn new_bool(data: bool) -> Self { Reg { kind: Self::TAG_BOOL, data: RegData { as_bool: data as _ } } }
+    pub fn new_unit() -> Self { Reg { kind: Self::TAG_UNIT, data: RegData { as_unit: 0 } } }
     pub fn new_obj(data: u64) -> Self { Reg { kind: Self::TAG_OBJ, data: RegData { as_obj: data } } }
 }
 
