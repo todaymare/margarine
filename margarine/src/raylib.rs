@@ -8,7 +8,7 @@ pub fn raylib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         let width = vm.stack.reg(0).as_int();
         let height = vm.stack.reg(1).as_int();
         let title = vm.stack.reg(2).as_obj();
-        let title = vm.objs[title as usize].as_str();
+        let title = vm.objs[title].as_str();
 
         raylib::ffi::InitWindow(
             width as _,
@@ -36,7 +36,7 @@ pub fn raylib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
 
     unsafe extern "C" fn clear_background(vm: &mut VM, _: &mut Reg, _: &mut Status) {
         let colour = vm.stack.reg(0).as_obj();
-        let colour = vm.objs[colour as usize].as_fields();
+        let colour = vm.objs[colour].as_fields();
         let r = (colour[0].as_float() * 255.999) as u8;
         let g = (colour[1].as_float() * 255.999) as u8;
         let b = (colour[2].as_float() * 255.999) as u8;
@@ -51,12 +51,12 @@ pub fn raylib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
 
     unsafe extern "C" fn draw_text(vm: &mut VM, _: &mut Reg, _: &mut Status) {
         let text = vm.stack.reg(0).as_obj();
-        let text = vm.objs[text as usize].as_str();
+        let text = vm.objs[text].as_str();
         let pos_x = vm.stack.reg(1).as_int();
         let pos_y = vm.stack.reg(2).as_int();
         let font_size = vm.stack.reg(3).as_int();
         let colour = vm.stack.reg(4).as_obj();
-        let colour = vm.objs[colour as usize].as_fields();
+        let colour = vm.objs[colour].as_fields();
         let r = (colour[0].as_float() * 255.999) as u8;
         let g = (colour[1].as_float() * 255.999) as u8;
         let b = (colour[2].as_float() * 255.999) as u8;
@@ -77,7 +77,7 @@ pub fn raylib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         let w = vm.stack.reg(2).as_int();
         let h = vm.stack.reg(3).as_int();
         let colour = vm.stack.reg(4).as_obj();
-        let colour = vm.objs[colour as usize].as_fields();
+        let colour = vm.objs[colour].as_fields();
         let r = (colour[0].as_float() * 255.999) as u8;
         let g = (colour[1].as_float() * 255.999) as u8;
         let b = (colour[2].as_float() * 255.999) as u8;

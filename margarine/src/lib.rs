@@ -327,9 +327,9 @@ pub fn build_system(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &m
         unsafe {
         let compilation_unit = vm.stack.reg(0).as_int();
         let name = vm.stack.reg(1).as_obj();
-        let name = vm.objs[name as usize].as_str();
+        let name = vm.objs[name].as_str();
         let path = vm.stack.reg(2).as_obj();
-        let path = vm.objs[path as usize].as_str();
+        let path = vm.objs[path].as_str();
         let mut lock = ACTIVE_UNITS.lock().unwrap();
         let compilation_unit = lock.get_mut(compilation_unit as usize).unwrap().as_mut().unwrap();
         compilation_unit.import_repo(name, path);
@@ -364,38 +364,50 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
             SymbolId::I64 => println!("{}", val.as_int()),
             SymbolId::F64 => println!("{}", val.as_float()),
             SymbolId::BOOL => println!("{}", val.as_bool()),
-            SymbolId::STR => println!("{}", vm.objs[val.as_obj() as usize].as_str()),
-            SymbolId::LIST => println!("{:?}", vm.objs[val.as_obj() as usize].as_list()),
+            SymbolId::STR => println!("{}", vm.objs[val.as_obj()].as_str()),
+            SymbolId::LIST => println!("{:?}", vm.objs[val.as_obj()].as_list()),
 
             //@todo
-            _ => println!("{:?}", vm.objs[val.as_obj() as usize])
+            _ => println!("{:?}", vm.objs[val.as_obj()])
         }
         }
     }
 
-    unsafe extern "C" fn new_any(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
+    unsafe extern "C" fn new_any(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let value = unsafe { vm.stack.reg(0) };
         let type_id = unsafe { vm.stack.reg(1) };
 
-        *ret = vm.new_obj(runtime::Object::Struct { fields: vec![type_id, value] });
+        let obj = vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![type_id, value] });
+
+        match obj {
+            Ok(v) => *ret = v,
+            Err(e) => *status = Status::err(e),
+        }
 
     }
 
 
-    unsafe extern "C" fn downcast_any(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
+    unsafe extern "C" fn downcast_any(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let any_value = unsafe { vm.stack.reg(0) };
         let target_ty = unsafe { vm.stack.reg(1) };
 
         let obj = unsafe { any_value.as_obj() };
-        let obj = vm.objs[obj as usize].as_fields();
+        let obj = vm.objs[obj].as_fields();
 
-        *ret = unsafe {
+        let obj = unsafe {
             if obj[0].as_int() == target_ty.as_int() {
-                vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), obj[1]] })
+                vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(0), obj[1]] })
             } else {
-                vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+                vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
             }
+        };
+
+        match obj {
+            Ok(v) => *ret = v,
+            Err(e) => *status = Status::err(e),
         }
+
+
 
     }
 
@@ -404,34 +416,35 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         let list = unsafe { vm.stack.reg(0) };
         let value = unsafe { vm.stack.reg(1) };
 
-        let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
-        match list {
-            runtime::Object::List(regs) => regs.push(value),
-            _ => unreachable!(),
-        }
+        let list = unsafe { &mut vm.objs[list.as_obj()] };
+        list.as_mut_list().push(value);
     }
 
 
-    unsafe extern "C" fn pop_list(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
+    unsafe extern "C" fn pop_list(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let list = unsafe { vm.stack.reg(0) };
 
-        let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
-        let value = match list {
-            runtime::Object::List(regs) => regs.pop(),
-            _ => unreachable!(),
+        let list = unsafe { &mut vm.objs[list.as_obj()] };
+        let value = list.as_mut_list().pop();
+
+        let obj = if let Some(value) = value {
+            vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(0), value] })
+        } else {
+            vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
         };
 
-        *ret = if let Some(value) = value {
-            vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), value] })
-        } else {
-            vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+        match obj {
+            Ok(v) => *ret = v,
+            Err(e) => *status = Status::err(e),
         }
+
+
     }
 
 
     unsafe extern "C" fn len_list(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let list = unsafe { vm.stack.reg(0) };
-        let list = unsafe { &mut vm.objs[list.as_obj() as usize] };
+        let list = unsafe { &mut vm.objs[list.as_obj()] };
         *ret = Reg::new_int(list.as_list().len() as i64);
     }
 
@@ -456,17 +469,27 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn int_to_str(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
+    unsafe extern "C" fn int_to_str(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let int = unsafe { vm.stack.reg(0).as_int() };
-        let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
-        *ret = obj
+        let obj = vm.new_obj(runtime::obj_map::ObjectData::String(int.to_string().into()));
+
+        match obj {
+            Ok(v) => *ret = v,
+            Err(e) => *status = Status::err(e),
+        }
+
     }
 
 
-    unsafe extern "C" fn float_to_str(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
+    unsafe extern "C" fn float_to_str(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let int = unsafe { vm.stack.reg(0).as_float() };
-        let obj = vm.new_obj(runtime::Object::String(int.to_string().into()));
-        *ret = obj
+        let obj = vm.new_obj(runtime::obj_map::ObjectData::String(int.to_string().into()));
+
+        match obj {
+            Ok(v) => *ret = v,
+            Err(e) => *status = Status::err(e),
+        }
+
     }
 
 
@@ -476,9 +499,14 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn hashmap_new(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
-        let obj = vm.new_obj(runtime::Object::Dict(HashMap::new()));
-        *ret = obj
+    unsafe extern "C" fn hashmap_new(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let obj = vm.new_obj(runtime::obj_map::ObjectData::Dict(HashMap::new()));
+
+        match obj {
+            Ok(v) => *ret = v,
+            Err(e) => *status = Status::err(e),
+        }
+
     }
 
 
@@ -487,14 +515,14 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         let key = vm.stack.reg(1);
         let value = vm.stack.reg(2);
 
-        let hm = vm.objs[hm as usize].as_hm();
+        let hm = vm.objs[hm].as_hm();
         hm.insert(key, value);
     }
 
 
     unsafe extern "C" fn hashmap_clear(vm: &mut VM, _: &mut Reg, _: &mut Status) {
         let hm = vm.stack.reg(0).as_obj();
-        let hm = vm.objs[hm as usize].as_hm();
+        let hm = vm.objs[hm].as_hm();
 
         hm.clear();
     }
@@ -502,7 +530,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
 
     unsafe extern "C" fn hashmap_contains_key(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let hm = vm.stack.reg(0).as_obj();
-        let hm = vm.objs[hm as usize].as_hm();
+        let hm = vm.objs[hm].as_hm();
         let key = vm.stack.reg(1);
 
         let val = hm.contains_key(&key);
@@ -510,24 +538,30 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn hashmap_remove(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
+    unsafe extern "C" fn hashmap_remove(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let hm = vm.stack.reg(0).as_obj();
-        let hm = vm.objs[hm as usize].as_hm();
+        let hm = vm.objs[hm].as_hm();
         let key = vm.stack.reg(1);
 
         let value = hm.remove(&key);
 
-        *ret = if let Some(value) = value {
-            vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(0), value] })
+        let obj = if let Some(value) = value {
+            vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(0), value] })
         } else {
-            vm.new_obj(runtime::Object::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+            vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+        };
+
+
+        match obj {
+            Ok(v) => *ret = v,
+            Err(e) => *status = Status::err(e),
         }
     }
 
 
     unsafe extern "C" fn panic(vm: &mut VM, _: &mut Reg, status: &mut Status) {
         let str = vm.stack.reg(0).as_obj();
-        let str = vm.objs[str as usize].as_str();
+        let str = vm.objs[str].as_str();
 
         *status = Status::err(FatalError::new(str))
     }

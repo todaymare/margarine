@@ -1,6 +1,6 @@
 use std::{hint::select_unpredictable, ops::Deref};
 
-use crate::{opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
+use crate::{obj_map::{ObjectData, ObjectIndex}, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
 impl<'src> VM<'src> {
     pub fn run(&mut self, func: &str) -> Status {
@@ -72,7 +72,7 @@ impl<'src> VM<'src> {
 
                 consts::CallFuncRef => {
                     let func_ref = self.stack.pop().as_obj();
-                    let Object::FuncRef { func: func_index, captures } = &self.objs[func_ref as usize]
+                    let ObjectData::FuncRef { func: func_index, captures } = &self.objs[func_ref].data
                     else { unreachable!() };
 
                     let argc = self.curr.next();
@@ -84,9 +84,6 @@ impl<'src> VM<'src> {
 
 
                     //dbg!(jitty::attempt_jit(self, *func_index as _));
-
-                    let Object::FuncRef { func: func_index, captures } = &self.objs[func_ref as usize]
-                    else { unreachable!() };
 
                     let func_index = *func_index;
                     let func = &self.funcs[func_index as usize];
@@ -204,12 +201,12 @@ impl<'src> VM<'src> {
 
                     vec.reverse();
 
-                    let obj = Object::FuncRef {
+                    let obj = ObjectData::FuncRef {
                         func,
                         captures: vec
                     };
 
-                    let obj = self.new_obj(obj);
+                    let obj = self.new_obj(obj)?;
                     self.stack.push(obj);
                 }
 
@@ -224,11 +221,11 @@ impl<'src> VM<'src> {
 
                     vec.reverse();
 
-                    let obj = Object::Struct {
+                    let obj = ObjectData::Struct {
                         fields: vec,
                     };
 
-                    let reg = self.new_obj(obj);
+                    let reg = self.new_obj(obj)?;
                     self.stack.push(reg);
                 }
 
@@ -243,9 +240,9 @@ impl<'src> VM<'src> {
 
                     vec.reverse();
 
-                    let obj = Object::List(vec);
+                    let obj = ObjectData::List(vec);
 
-                    let reg = self.new_obj(obj);
+                    let reg = self.new_obj(obj)?;
                     self.stack.push(reg);
                 }
 
@@ -254,7 +251,7 @@ impl<'src> VM<'src> {
                     let index = self.stack.pop().as_int();
                     let list = self.stack.pop();
 
-                    let list = self.objs[list.as_obj() as usize].as_list();
+                    let list = self.objs[list.as_obj()].as_list();
                     if index < 0 || index as usize >= list.len() {
                         return Status::err(FatalError::new("out of bounds access"))
                     }
@@ -268,7 +265,7 @@ impl<'src> VM<'src> {
                     let list = self.stack.pop();
                     let value = self.stack.pop();
 
-                    let list = self.objs[list.as_obj() as usize].as_mut_list();
+                    let list = self.objs[list.as_obj()].as_mut_list();
                     if index < 0 || index as usize >= list.len() {
                         return Status::err(FatalError::new("out of bounds access"))
                     }
@@ -281,7 +278,7 @@ impl<'src> VM<'src> {
                     let index = self.curr.next();
                     let val = self.stack.pop();
                     let obj_index = val.as_obj();
-                    let obj = &self.objs[obj_index as usize];
+                    let obj = &self.objs[obj_index];
                     self.stack.push(obj.as_fields()[index as usize])
                 }
 
@@ -291,7 +288,7 @@ impl<'src> VM<'src> {
                     let target = self.stack.pop();
                     let val = self.stack.pop();
                     let obj_index = target.as_obj();
-                    let obj = &mut self.objs[obj_index as usize];
+                    let obj = &mut self.objs[obj_index];
                     obj.as_mut_fields()[index as usize] = val;
                 }
 
@@ -318,7 +315,7 @@ impl<'src> VM<'src> {
                     let var = self.stack.pop();
                     let val = self.stack.pop();
                     
-                    let obj = &mut self.objs[var.as_obj() as usize];
+                    let obj = &mut self.objs[var.as_obj()];
 
                     if obj.as_fields()[0].as_int() == 1 {
                         return Status::err(FatalError::new("tried to unwrap an invalid value"));
@@ -331,7 +328,7 @@ impl<'src> VM<'src> {
                 consts::Unwrap => {
                     let val = self.stack.pop();
                     let obj_index = val.as_obj();
-                    let obj = &self.objs[obj_index as usize];
+                    let obj = &self.objs[obj_index];
                     if obj.as_fields()[0].as_int() == 1 {
                         return Status::err(FatalError::new("tried to unwrap an invalid value"));
                     }
@@ -349,18 +346,18 @@ impl<'src> VM<'src> {
                     let index = self.curr.next_u32();
                     let val = self.stack.pop();
                     let obj_index = val.as_obj();
-                    let obj = &self.objs[obj_index as usize];
+                    let obj = &self.objs[obj_index];
 
                     let tag = obj.as_fields()[0].as_int();
                     let val = if tag as u32 == index {
-                        self.new_obj(Object::Struct {
+                        self.new_obj(ObjectData::Struct {
                             fields: vec![Reg::new_int(0), obj.as_fields()[1]],
                         })
                     } else {
-                        self.new_obj(Object::Struct {
+                        self.new_obj(ObjectData::Struct {
                             fields: vec![Reg::new_int(1), Reg::new_unit()],
                         })
-                    };
+                    }?;
 
 
                     self.stack.push(val);
@@ -395,7 +392,7 @@ impl<'src> VM<'src> {
 
                 consts::ConstStr => {
                     let index = self.curr.next_u32();
-                    self.stack.push(Reg::new_obj(index as u64));
+                    self.stack.push(Reg::new_obj(ObjectIndex::new(index as _)));
                 }
 
 

@@ -7,6 +7,10 @@ use fib::fib
 fn main() {
     intro();
     assert(fib(30.0) == 832040.0);
+
+    loop {
+        1.to_str()
+    }
 }
 
 
