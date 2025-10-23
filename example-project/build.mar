@@ -1,0 +1,22 @@
+extern {
+    fn init_compilation_unit(): CompilationUnit
+    fn compilation_unit_import_repo(compilation_unit: CompilationUnit, repo: str)
+}
+
+
+type CompilationUnit
+
+
+impl CompilationUnit {
+    pub fn init(): CompilationUnit {
+        init_compilation_unit()
+    }
+}
+
+
+fn main() {
+    var unit = CompilationUnit::init();
+    unit.import("https://github.com/todaymare/margarine-std");
+    unit.set_dir("src/");
+    unit.run();
+}

@@ -1,0 +1,32 @@
+fn main() {
+    var time = std::duration::Duration::now();
+
+    std::print(fib(30.0));
+
+    std::print(time.elapsed().as_secs_float());
+
+}
+
+fn fib(n: float): float {
+    if n <= 1.0 {
+        return n
+    }
+
+    var a = 0.0;
+    var b = 1.0;
+    var i = 2.0;
+
+
+    while i <= n {
+        var tmp = a + b;
+        a = b;
+        b = tmp;
+        i = i + 1.0;
+    }
+
+    return b
+}
+
+
+fn hey(): int {
+}
