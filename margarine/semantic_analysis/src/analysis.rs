@@ -1536,12 +1536,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let sym_id = lhs.ty.sym(&mut self.syms)?;
 
                 let pool = self.ast.arena;
+                let mut is_accessor = false;
                 let args_anals = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, args.len());
 
                     if let Expr::AccessField { val, .. } = self.ast.expr(lhs_expr) {
                         let range = self.ast.range(val);
                         vec.push((range, self.expr(path, scope, val), val));
+                        is_accessor = true;
                     }
 
                     for &expr in args {
@@ -1563,7 +1565,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 // check arg len
                 if func.args().len() != args_anals.len() {
                     return Err(Error::FunctionArgsMismatch {
-                        source: range, sig_len: func.args().len(), call_len: args.len() });
+                        source: range, sig_len: func.args().len() - if is_accessor { 1 } else { 0 }, call_len: args.len() });
                 }
 
                 // find out the args

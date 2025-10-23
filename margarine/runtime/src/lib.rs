@@ -3,7 +3,9 @@
 #[cfg(not(debug_assertions))]
 use std::marker::PhantomData;
 
-use std::{collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
+use std::{cell::Cell, collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}, thread::JoinHandle};
+
+use crate::obj_map::{Object, ObjectData, ObjectIndex, ObjectMap};
 
 //use crate::jitty::JIT;
 //use crate::jit::JIT;
@@ -11,6 +13,8 @@ use std::{collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::
 pub mod runtime;
 pub mod opcode;
 pub mod alloc;
+pub mod obj_map;
+pub mod gc;
 //pub mod jitty;
 //pub mod jit;
 
@@ -29,7 +33,7 @@ union RegData {
     as_int: i64,
     as_float: f64,
     as_bool: i64,
-    as_obj: u64,
+    as_obj: ObjectIndex,
     as_unit: i64,
 }
 
@@ -47,32 +51,11 @@ pub struct VM<'src> {
     curr: CallFrame<'src>,
     pub funcs: Vec<Function<'src>>,
     error_table: &'src [u8],
-    pub objs: Vec<Object>,
+    pub objs: ObjectMap,
+    gc_handle: Option<JoinHandle<ObjectIndex>>,
     //jit: JIT,
 }
 
-
-#[derive(Debug)]
-pub enum Object {
-    Struct {
-        fields: Vec<Reg>,
-    },
-
-
-    List(Vec<Reg>),
-
-
-    String(Box<str>),
-
-
-    Dict(HashMap<Reg, Reg>),
-
-
-    FuncRef {
-        func: u32,
-        captures: Vec<Reg>,
-    }
-}
 
 
 #[derive(Debug)]
@@ -167,7 +150,7 @@ impl<'src> VM<'src> {
         let Some(b"BUTTERY") = reader.try_next_n().as_ref()
         else { return Err(FatalError::new("invalid header")) };
 
-        let mut objs = vec![];
+        let mut objs = ObjectMap::new(1024 * 1024);
 
 
         // table sizes
@@ -196,7 +179,11 @@ impl<'src> VM<'src> {
                 let Some(str) = reader.try_next_str()
                 else { return Err(FatalError::new("invalid str")) };
 
-                objs.push(Object::String(str.to_string().into_boxed_str()));
+                objs.put(Object {
+                    liveliness: Cell::new(false),
+                    leaked: true,
+                    data: obj_map::ObjectData::String(str.to_string().into_boxed_str()),
+                }).unwrap();
             }
         }
 
@@ -251,6 +238,7 @@ impl<'src> VM<'src> {
                                 cache,
                             });
                         }
+
                         1 => {
                             let path = funcs_reader.next_str();
                             let Some(host_fn) = hosts.get(path)
@@ -288,6 +276,7 @@ impl<'src> VM<'src> {
             funcs,
             error_table: errs,
             objs,
+            gc_handle: None,
             //jit: JIT::default(),
         })
     }
@@ -300,10 +289,19 @@ impl<'src> VM<'src> {
     }
 
 
-    pub fn new_obj(&mut self, obj: Object) -> Reg {
-        let id = self.objs.len();
-        self.objs.push(obj);
-        Reg { kind: Reg::TAG_OBJ, data: RegData { as_obj: id as u64 } }
+    pub fn new_obj(&mut self, obj: ObjectData) -> Result<Reg, FatalError> {
+        let id = self.objs.put(Object::new(obj));
+        match id {
+            Ok(v) => Ok(Reg::new_obj(v)),
+            Err(obj) => {
+                self.run_garbage_collection();
+
+                match self.objs.put(obj) {
+                    Ok(v) => Ok(Reg::new_obj(v)),
+                    Err(_) => Err(FatalError::new("out of memory")),
+                }
+            },
+        }
     }
 }
 
@@ -754,11 +752,13 @@ impl Reg {
     }
 
 
-    pub unsafe fn as_obj(self) -> u64 {
-        debug_assert_eq!(self.kind, Self::TAG_OBJ);
+    pub unsafe fn as_obj(self) -> ObjectIndex {
+        debug_assert!(self.is_obj());
         unsafe { self.data.as_obj }
-
     }
+
+
+    pub fn is_obj(self) -> bool { self.kind == Self::TAG_OBJ }
 
 }
 
@@ -823,53 +823,7 @@ impl Reg {
     pub fn new_float(data: f64) -> Self { Reg { kind: Self::TAG_FLOAT, data: RegData { as_float: data } } }
     pub fn new_bool(data: bool) -> Self { Reg { kind: Self::TAG_BOOL, data: RegData { as_bool: data as _ } } }
     pub fn new_unit() -> Self { Reg { kind: Self::TAG_UNIT, data: RegData { as_unit: 0 } } }
-    pub fn new_obj(data: u64) -> Self { Reg { kind: Self::TAG_OBJ, data: RegData { as_obj: data } } }
-}
-
-
-impl Object {
-    pub fn as_fields(&self) -> &[Reg] {
-        match self {
-            Object::Struct { fields } => &fields,
-            _ => unreachable!(),
-        }
-    }
-
-
-    pub fn as_mut_fields(&mut self) -> &mut [Reg] {
-        match self {
-            Object::Struct { fields } => &mut *fields,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            Object::String(str) => &str,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn as_list(&self) -> &[Reg] {
-        match self {
-            Object::List(vals) => &vals,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn as_mut_list(&mut self) -> &mut [Reg] {
-        match self {
-            Object::List(vals) => vals,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn as_hm(&mut self) -> &mut HashMap<Reg, Reg> {
-        match self {
-            Object::Dict(vals) => vals,
-            _ => unreachable!(),
-        }
-    }
+    pub fn new_obj(data: ObjectIndex) -> Self { Reg { kind: Self::TAG_OBJ, data: RegData { as_obj: data } } }
 }
 
 

@@ -132,6 +132,8 @@ fn main() {
 
 
 fn compile_curr_project() -> (Vec<u8>, Vec<String>) {
+    println!("{} 'build.mar'", "compiling".green());
+
     let mut unit = CompilationUnit::default();
     unit.import_repo("std", "https://github.com/todaymare/margarine-std");
 
