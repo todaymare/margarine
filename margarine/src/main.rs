@@ -2,7 +2,7 @@ use std::{collections::HashMap, ffi::OsStr, fmt::Write, path::{Path, PathBuf}};
 
 use colourful::ColourBrush;
 use common::{source::FileData, string_map::StringMap, DropTimer};
-use margarine::{build_system, raylib::raylib, stdlib, CompilationUnit};
+use margarine::{build_system, init_compilation_unit_id, raylib::raylib, stdlib, CompilationUnit, ACTIVE_UNITS};
 use runtime::{Reg, Status, VM};
 use sti::arena::Arena;
 use toml::Table;
@@ -20,6 +20,7 @@ fn main() {
         "run" => {
             let (code, _) = compile_curr_project();
 
+            println!("running");
             let mut hosts : HashMap<String, _>= HashMap::new();
             stdlib(&mut hosts);
             build_system(&mut hosts);
@@ -28,7 +29,7 @@ fn main() {
             let mut vm = VM::new(hosts, &*code).unwrap();
             {
                 let _t = DropTimer::new("runtime");
-                if let Some(e) = vm.run("build::main").as_err() {
+                if let Some(e) = vm.run("self::main", &[]).as_err() {
                     println!("{}", e.to_str().unwrap());
                 }
             }
@@ -143,5 +144,23 @@ fn compile_curr_project() -> (Vec<u8>, Vec<String>) {
     let mut files = vec![];
     files.push(FileData::open("build.mar", &mut string_map).unwrap());
 
-    unit.build(&mut string_map, files)
+    let (code, _) = unit.build(&mut string_map, files);
+
+    let mut hosts : HashMap<String, _>= HashMap::new();
+    stdlib(&mut hosts);
+    build_system(&mut hosts);
+
+
+    let mut vm = VM::new(hosts, &*code).unwrap();
+    let id = init_compilation_unit_id();
+
+    {
+        let _t = DropTimer::new("runtime");
+        if let Some(e) = vm.run("build::build", &[Reg::new_int(id as i64)]).as_err() {
+            println!("{}", e.to_str().unwrap());
+        }
+    }
+
+    let mut lock = ACTIVE_UNITS.lock().unwrap();
+    lock.get_mut(id).unwrap().as_mut().unwrap().build_curr_project()
 }

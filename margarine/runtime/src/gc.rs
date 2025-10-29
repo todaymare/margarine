@@ -69,6 +69,9 @@ impl Object {
                     .for_each(|x| objects.get(unsafe { x.as_obj() }).mark(mark_as, objects));
             }
 
+
+            ObjectData::Ptr(_) => {}
+
             
             | ObjectData::String(_)
             | ObjectData::Free { .. } => (),

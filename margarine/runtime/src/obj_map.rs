@@ -43,6 +43,9 @@ pub enum ObjectData {
     },
 
 
+    Ptr(*mut ()),
+
+
     Free(ObjectIndex),
 }
 
@@ -66,6 +69,13 @@ impl Object {
     pub fn as_str(&self) -> &str {
         match &self.data {
             ObjectData::String(str) => &str,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn as_ptr(&self) -> *mut () {
+        match &self.data {
+            ObjectData::Ptr(ptr) => *ptr,
             _ => unreachable!(),
         }
     }
