@@ -1,4 +1,5 @@
 pub mod raylib;
+pub mod compilation_unit;
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -253,13 +254,11 @@ impl CompilationUnit {
         }
 
 
-        stack.push(std::fs::read_dir("src").unwrap());
-
         run(string_map, files)
     }
 
 
-    fn build_curr_project(&mut self) {
+    pub fn build_curr_project(&mut self) -> (Vec<u8>, Vec<String>) {
         println!("building project");
 
         let string_map_arena = Arena::new();
@@ -293,59 +292,67 @@ impl CompilationUnit {
             }
         }
 
-        let (code, _) = self.build(&mut string_map, files);
-
-        let mut hosts : HashMap<String, _>= HashMap::new();
-
-        stdlib(&mut hosts);
-        build_system(&mut hosts);
-        raylib::raylib(&mut hosts);
-
-        let mut vm = VM::new(hosts, &*code).unwrap();
-        {
-            let _t = DropTimer::new("runtime");
-            if let Some(e) = vm.run("self::main").as_err() {
-                println!("{}", e.to_str().unwrap());
-            }
-        }
+        self.build(&mut string_map, files)
 
     }
 }
 
 
+unsafe extern "C" fn init_compilation_unit(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
+    let ptr = CompilationUnit::default();
+    let ptr = Box::into_raw(Box::new(ptr));
+    let obj = vm.new_obj(runtime::obj_map::ObjectData::Ptr(ptr.cast())).unwrap();
+    *ret = obj;
+}
+
+
+unsafe extern "C" fn compilation_unit_import_repo(vm: &mut VM, _: &mut Reg, status: &mut Status) {
+    unsafe {
+    let compilation_unit = vm.stack.reg(0).as_obj();
+    let compilation_unit = vm.objs[compilation_unit].as_ptr();
+    let compilation_unit = compilation_unit.cast::<CompilationUnit>();
+
+    if compilation_unit.is_null() {
+        *status = Status::err(FatalError::new("compilation unit is already consumed"));
+        return;
+    }
+
+
+    let compilation_unit = &mut *compilation_unit;
+
+
+    let name = vm.stack.reg(1).as_obj();
+    let name = vm.objs[name].as_str();
+    let path = vm.stack.reg(2).as_obj();
+    let path = vm.objs[path].as_str();
+    compilation_unit.import_repo(name, path);
+
+    }
+}
+
+
+unsafe extern "C" fn compilation_unit_build(vm: &mut VM, _: &mut Reg, status: &mut Status) {
+    unsafe {
+    let compilation_unit = vm.stack.reg(0).as_obj();
+    let compilation_unit = vm.objs[compilation_unit].as_ptr();
+    let compilation_unit = compilation_unit.cast::<CompilationUnit>();
+
+    if compilation_unit.is_null() {
+        *status = Status::err(FatalError::new("compilation unit is already consumed"));
+        return;
+    }
+
+
+    let compilation_unit = &mut *compilation_unit;
+
+    compilation_unit.build_curr_project();
+    }
+}
+
+
+
+
 pub fn build_system(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg, &mut Status)>) {
-    static ACTIVE_UNITS : Mutex<Vec<Option<CompilationUnit>>> = Mutex::new(Vec::new());
-
-    unsafe extern "C" fn init_compilation_unit(_: &mut VM, ret: &mut Reg, _: &mut Status) {
-        let mut lock = ACTIVE_UNITS.lock().unwrap();
-        lock.push(Some(CompilationUnit::default()));
-        *ret = Reg::new_int(lock.len() as i64 - 1);
-    }
-
-
-    unsafe extern "C" fn compilation_unit_import_repo(vm: &mut VM, _: &mut Reg, _: &mut Status) {
-        unsafe {
-        let compilation_unit = vm.stack.reg(0).as_int();
-        let name = vm.stack.reg(1).as_obj();
-        let name = vm.objs[name].as_str();
-        let path = vm.stack.reg(2).as_obj();
-        let path = vm.objs[path].as_str();
-        let mut lock = ACTIVE_UNITS.lock().unwrap();
-        let compilation_unit = lock.get_mut(compilation_unit as usize).unwrap().as_mut().unwrap();
-        compilation_unit.import_repo(name, path);
-        }
-    }
-
-
-    unsafe extern "C" fn compilation_unit_build(vm: &mut VM, _: &mut Reg, _: &mut Status) {
-        unsafe {
-        let compilation_unit = vm.stack.reg(0).as_int();
-        let mut lock = ACTIVE_UNITS.lock().unwrap();
-        let compilation_unit = lock.get_mut(compilation_unit as usize).unwrap().as_mut().unwrap();
-        compilation_unit.build_curr_project();
-        }
-    }
-
 
     hosts.insert("compilation_unit_init".into(), init_compilation_unit);
     hosts.insert("compilation_unit_import_repo".into(), compilation_unit_import_repo);

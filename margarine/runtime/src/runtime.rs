@@ -3,9 +3,13 @@ use std::{hint::select_unpredictable, ops::Deref};
 use crate::{obj_map::{ObjectData, ObjectIndex}, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
 impl<'src> VM<'src> {
-    pub fn run(&mut self, func: &str) -> Status {
+    pub fn run(&mut self, func: &str, args: &[Reg]) -> Status {
         let Some((index, _)) = &self.funcs.iter().enumerate().find(|x| x.1.name == func)
         else { return Status::err(FatalError::new(&format!("invalid entry function '{func}'"))) };
+
+        for &arg in args {
+            self.stack.push(arg);
+        }
 
         self.run_func(*index)
     }
@@ -14,16 +18,21 @@ impl<'src> VM<'src> {
         //dbg!(jit::attempt_jit(self, index));
 
         let func = &self.funcs[index];
-        match func.kind {
+
+        let callframe = match func.kind {
             crate::FunctionKind::Code { byte_offset, byte_size } => {
-                assert!(self.callstack.stack.is_empty());
-                self.curr = CallFrame::new(
+                let cf = CallFrame::new(
                     &self.callstack.src[byte_offset..byte_offset + byte_size],
-                    0,
-                    0,
+                    self.stack.bottom,
+                    func.argc,
                     index as _,
                 );
 
+                unsafe {
+                    self.stack.set_bottom(self.stack.curr - func.argc as usize);
+                }
+
+                cf
             },
 
 
@@ -34,6 +43,10 @@ impl<'src> VM<'src> {
                 return status
             },
         };
+
+
+        let prev = std::mem::replace(&mut self.curr, callframe);
+        let bottom = self.callstack.stack.len();
 
 
         unsafe {
@@ -56,6 +69,7 @@ impl<'src> VM<'src> {
                     let mut ret_value = Reg::new_unit();
                     ret_instr(self, local_count as _, &mut ret_value);
 
+                    if self.callstack.stack.len() == bottom { break; }
                     let Some(prev_frame) = self.callstack.pop()
                     else { break; };
 

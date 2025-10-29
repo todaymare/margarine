@@ -1,31 +1,5 @@
-extern {
-    fn compilation_unit_init(): CompilationUnit
-    fn compilation_unit_import_repo(compilation_unit: CompilationUnit, name: str, path: str)
-    fn compilation_unit_build(compilation_unit: CompilationUnit)
-}
+use std::build::*
 
-
-type CompilationUnit
-
-
-impl CompilationUnit {
-    fn init(): CompilationUnit {
-        compilation_unit_init()
-    }
-
-
-    fn import(self, name: str, path: str) {
-        compilation_unit_import_repo(self, name, path)
-    }
-
-
-    fn build(self) {
-        compilation_unit_build(self)
-    }
-}
-
-
-fn build(): CompilationUnit {
-    var unit = CompilationUnit::init();
+fn build(unit: CompilationUnit) {
     unit.import("std", "https://github.com/todaymare/margarine-std");
 }
