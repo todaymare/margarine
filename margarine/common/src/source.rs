@@ -116,7 +116,7 @@ impl SourceRange {
             end = start + f.read().len() as u32;
 
             if self.start <= end {
-                assert!(self.end <= end);
+                assert!(self.end <= end, "end is {end} which is more than {}", self.end);
                 return (f, start);
             }
 

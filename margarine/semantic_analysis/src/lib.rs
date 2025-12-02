@@ -52,7 +52,7 @@ pub struct TyInfo {
 #[derive(Debug, Clone, Copy)]
 pub enum ExprInfo {
     Result {
-        ty    : Sym,
+        ty: Sym,
     },
 
     Errored(ErrorId),
@@ -153,6 +153,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.node(), error);
             }
         }
+
+        dbg!(&analyzer.namespaces);
 
         analyzer
     }

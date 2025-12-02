@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use common::source::SourceRange;
+use common::{source::SourceRange, string_map::StringIndex};
 use errors::ErrorType;
 use lexer::TokenKind;
 
@@ -37,7 +37,13 @@ pub enum Error {
 
     DeclarationOnlyBlock {
         source: SourceRange,
-    }
+    },
+
+
+    FileDoesntExist {
+        source: SourceRange,
+        path: StringIndex,
+    },
 }
 
 
@@ -113,6 +119,13 @@ impl ErrorType<()> for Error {
                 fmt.error("this block only allows declarations")
                     .highlight(*source);
             },
+
+
+            Error::FileDoesntExist { source, path } => {
+                let msg = format!("unable to find file '{}'", fmt.string(*path));
+                fmt.error(&msg)
+                    .highlight(*source);
+            }
         }
     }
 }

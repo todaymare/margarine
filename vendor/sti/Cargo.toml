@@ -1,0 +1,15 @@
+[package]
+name = "sti"
+version = "0.200.0"
+edition = "2021"
+description = "STd Improved"
+license = "MIT"
+homepage = "https://github.com/leddoo/sti"
+repository = "https://github.com/leddoo/sti"
+documentation = "https://docs.rs/sti"
+readme = "readme.md"
+
+[features]
+default = ["std"]
+std = []
+

@@ -1,7 +1,8 @@
 use common::{string_map::StringIndex, source::SourceRange};
+use errors::ErrorId;
 use sti::define_key;
 
-use crate::{DataType, Block};
+use crate::{nodes::NodeId, Block, DataType};
 
 define_key!(pub DeclId(u32));
 
@@ -44,6 +45,11 @@ pub enum Decl<'a> {
         user_defined: bool,
     },
 
+    ImportFile {
+        name: StringIndex,
+        body: &'a [NodeId],
+    },
+
     Extern {
         functions: &'a [ExternFunction<'a>],
     },
@@ -58,7 +64,9 @@ pub enum Decl<'a> {
         attr: StringIndex,
         attr_range: SourceRange,
         decl: DeclId,
-    }
+    },
+
+    Error(ErrorId),
 }
 
 
