@@ -88,7 +88,7 @@ unsafe extern "C" fn compilation_unit_build(vm: &mut VM, _: &mut Reg, status: &m
     unsafe {
     let compilation_unit = vm.stack.reg(0).as_obj();
     let compilation_unit = vm.objs[compilation_unit].as_ptr();
-    let compilation_unit = compilation_unit.cast::<CompilationUnit>();
+    let compilation_unit = compilation_unit.cast::<CompilationInfo>();
 
     if compilation_unit.is_null() {
         *status = Status::err(FatalError::new("compilation unit is already consumed"));
@@ -97,8 +97,6 @@ unsafe extern "C" fn compilation_unit_build(vm: &mut VM, _: &mut Reg, status: &m
 
 
     let compilation_unit = &mut *compilation_unit;
-
-    compilation_unit.build_curr_project();
     }
 }
 

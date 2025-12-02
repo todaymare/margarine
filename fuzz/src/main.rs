@@ -12,7 +12,7 @@ fn main() {
         let mut sm = StringMap::new(&arena);
 
         let file_data = FileData::new(s.to_string(), StringMap::VALUE, margarine::Extension::Mar);
-        margarine::run(&mut sm, vec![file_data]);
+        margarine::run(&mut sm, file_data);
     });
 
 }

@@ -1,0 +1,7 @@
+this file lists all contributors of the `sti` open source project.
+by adding their contact information to this document in a pull request,
+contributors confirm that all their contributions to this repository are of their own work,
+and they agree that this work be published under the MIT open source license (license.txt).
+
+leddoo, leo@leddoo.net, 03 April 2024
+rookieCookies, rookiee.cookies@gmail.com, 03 April 2024

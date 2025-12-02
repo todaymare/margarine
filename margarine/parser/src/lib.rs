@@ -18,7 +18,7 @@ pub fn parse<'a>(
     arena: &'a Arena, 
     string_map: &mut StringMap,
     ast: &mut AST<'a>,
-) -> (Block<'a>, KVec<ParserError, Error>) {
+) -> (Block<'a>, KVec<u32, DeclId>, KVec<ParserError, Error>) {
 
     let mut parser = Parser {
         tokens: &*tokens,
@@ -29,6 +29,7 @@ pub fn parse<'a>(
         is_in_panic: false,
         file,
         ast,
+        imports: KVec::new(),
     };
 
 
@@ -45,7 +46,7 @@ pub fn parse<'a>(
         },
     };
 
-    (result, parser.errors)
+    (result, parser.imports, parser.errors)
 }
 
 
@@ -74,6 +75,8 @@ struct Parser<'me, 'ast, 'str> {
     arena: &'ast Arena,
     ast: &'me mut AST<'ast>,
     string_map: &'me mut StringMap<'str>,
+
+    imports: Vec<DeclId>,
 
     errors: KVec<ParserError, Error>,
     is_in_panic: bool,
@@ -742,19 +745,32 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         let name = self.expect_identifier()?;
         let header_end = self.current_range().end();
+
+        if self.peek_is(TokenKind::LeftBracket) {
+            self.advance();
+
+            let body_start = self.current_range().start();
+            self.expect(TokenKind::LeftBracket)?;
+            self.advance();
+
+            let body = self.parse_till_decl(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
+            let end = self.current_range().end();
+
+            return Ok(self.ast.add_decl(
+                Decl::Module { name, body, header: SourceRange::new(start, header_end), user_defined: true },
+                SourceRange::new(start, end)
+            ))
+        }
+
         self.advance();
+        self.expect(TokenKind::SemiColon)?;
+        let decl = self.ast.add_decl(
+            Decl::ImportFile { name, body: &[] },
+            SourceRange::new(start, self.current_range().end())
+        );
 
-        let body_start = self.current_range().start();
-        self.expect(TokenKind::LeftBracket)?;
-        self.advance();
-
-        let body = self.parse_till_decl(TokenKind::RightBracket, body_start, &ParserSettings::default())?;
-        let end = self.current_range().end();
-
-        Ok(self.ast.add_decl(
-            Decl::Module { name, body, header: SourceRange::new(start, header_end), user_defined: true },
-            SourceRange::new(start, end)
-        ))
+        self.imports.push(decl);
+        Ok(decl)
     }
 
 

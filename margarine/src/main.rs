@@ -1,11 +1,9 @@
-use std::{collections::HashMap, ffi::OsStr, fmt::Write, path::{Path, PathBuf}};
+use std::collections::HashMap;
 
-use colourful::ColourBrush;
 use common::{source::FileData, string_map::StringMap, DropTimer};
-use margarine::{build_system, init_compilation_unit_id, raylib::raylib, stdlib, CompilationUnit, ACTIVE_UNITS};
-use runtime::{Reg, Status, VM};
-use sti::arena::Arena;
-use toml::Table;
+use margarine::stdlib;
+use runtime::VM;
+use sti::{arena::Arena};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -18,18 +16,22 @@ fn main() {
 
     match command.as_str() {
         "run" => {
-            let (code, _) = compile_curr_project();
+            let path = args.next().unwrap();
+            let arena = Arena::new();
+            let mut sm = StringMap::new(&arena);
+            println!("path is {path}");
+            let files = FileData::open(path, &mut sm).unwrap();
+            let (code, _) = margarine::run(&mut sm, files);
 
             println!("running");
             let mut hosts : HashMap<String, _>= HashMap::new();
             stdlib(&mut hosts);
-            build_system(&mut hosts);
-            raylib(&mut hosts);
 
             let mut vm = VM::new(hosts, &*code).unwrap();
+            dbg!(&vm.funcs);
             {
                 let _t = DropTimer::new("runtime");
-                if let Some(e) = vm.run("self::main", &[]).as_err() {
+                if let Some(e) = vm.run("main", &[]).as_err() {
                     println!("{}", e.to_str().unwrap());
                 }
             }
@@ -129,38 +131,3 @@ fn main() {
 
 }
 
-
-
-
-fn compile_curr_project() -> (Vec<u8>, Vec<String>) {
-    println!("{} 'build.mar'", "compiling".green());
-
-    let mut unit = CompilationUnit::default();
-    unit.import_repo("std", "https://github.com/todaymare/margarine-std");
-
-    let string_map_arena = Arena::new();
-    let mut string_map = StringMap::new(&string_map_arena);
-
-    let mut files = vec![];
-    files.push(FileData::open("build.mar", &mut string_map).unwrap());
-
-    let (code, _) = unit.build(&mut string_map, files);
-
-    let mut hosts : HashMap<String, _>= HashMap::new();
-    stdlib(&mut hosts);
-    build_system(&mut hosts);
-
-
-    let mut vm = VM::new(hosts, &*code).unwrap();
-    let id = init_compilation_unit_id();
-
-    {
-        let _t = DropTimer::new("runtime");
-        if let Some(e) = vm.run("build::build", &[Reg::new_int(id as i64)]).as_err() {
-            println!("{}", e.to_str().unwrap());
-        }
-    }
-
-    let mut lock = ACTIVE_UNITS.lock().unwrap();
-    lock.get_mut(id).unwrap().as_mut().unwrap().build_curr_project()
-}

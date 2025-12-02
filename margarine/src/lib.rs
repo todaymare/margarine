@@ -1,5 +1,4 @@
 pub mod raylib;
-pub mod compilation_unit;
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -8,6 +7,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use common::string_map::StringIndex;
+use errors::ParserError;
 use git2::Repository;
 pub use lexer::lex;
 use parser::nodes::decl::Decl;
@@ -25,124 +25,82 @@ pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 pub use runtime::{VM, opcode, Status, FatalError, Reg};
 pub use sti::arena::Arena;
+use sti::format_in;
 
 
-pub fn run<'str>(string_map: &mut StringMap<'str>, files: Vec<FileData>) -> (Vec<u8>, Vec<String>) {
+pub fn run<'str>(string_map: &mut StringMap<'str>, files: FileData) -> (Vec<u8>, Vec<String>) {
     let arena = Arena::new();
     let mut global = AST::new(&arena);
-    let mut modules = HashMap::<&[StringIndex], Block>::new();
     let mut lex_errors = vec![];
     let mut parse_errors = vec![];
 
+    let mut stack = vec![(None, files.clone())];
     let mut source_offset = 0;
-    for (i, f) in files.iter().enumerate() {
+    let mut counter = 0;
+
+    let mut root = None;
+
+    let mut files = vec![];
+    while let Some((decl, f)) = stack.pop() {
         let (tokens, le) = DropTimer::with_timer("tokenisation", || {
             let tokens = lex(&f, string_map, source_offset);
             tokens
         });
 
-        let (body, pe) = DropTimer::with_timer("parsing", || {
-            parse(tokens, i.try_into().unwrap(), &arena, string_map, &mut global)
+        println!("parsing {}", string_map.get(f.name()));
+        let (body, imports, mut pe) = DropTimer::with_timer("parsing", || {
+            parse(tokens, counter, &arena, string_map, &mut global)
         });
+
+
+        for (_, i) in imports {
+            let source = global.range(i);
+            let Decl::ImportFile { name, .. }= global.decl(i)
+            else { unreachable!() };
+
+            let path = string_map.get(f.name());
+            let path = format_in!(&arena, "{}/{}.mar", path, string_map.get(name));
+            let Ok(file) = FileData::open(&*path, string_map)
+            else {
+                let path_str = string_map.insert(&path);
+                println!("{source:?}");
+                let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_str });
+                global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                
+                continue;
+            };
+
+            println!("path is {path} file is {file:?}");
+
+            stack.push((Some((i, name)), file));
+        }
+
+        if let Some((decl, name)) = decl {
+            println!("updating {} with {body:#?}", string_map.get(name));
+            let offset = global.range(decl);
+            global.set_decl(decl, Decl::Module { name, header: offset, body, user_defined: true });
+        } else {
+            root = Some(body);
+        }
+        
 
         lex_errors.push(le);
         parse_errors.push(pe);
 
-        let path = {
-            let mut list = sti::vec::Vec::new_in(&arena);
-            let path = string_map.get(f.name()).split('/');
-            for module in path {
-                let id = string_map.insert(module);
-                list.push(id);
-            }
-            list.leak()
-        };
-
-        modules.insert(path, body);
+        counter += 1;
 
         source_offset += f.read().len() as u32;
+        files.push(f);
     }
 
-    #[derive(Debug)]
-    struct Module {
-        tree: HashMap<StringIndex, Module>,
-        body: sti::vec::Vec<NodeId>,
-        range: SourceRange,
-    }
-
-    let mut module_tree : HashMap<StringIndex, Module> = HashMap::new();
-
-    let mut depth = 1;
-    let mut active = false;
-    loop {
-        for (path, block) in &modules {
-            if path.len() != depth { continue }
-
-            active = true;
-            let mut module : Option<&mut Module> = None;
-            for path in path.iter().take(path.len() - 1) {
-                let m = match module {
-                    Some(v) => v.tree.get_mut(path).unwrap(),
-                    None => module_tree.get_mut(path).unwrap(),
-                };
-
-                module = Some(m);
-            }
-
-            let curr_module = Module {
-                tree: HashMap::new(),
-                body: sti::vec::Vec::from_slice(block.body()),
-                range: block.range(),
-            };
-
-            match module {
-                Some(module) => {
-                    module.tree.insert(*path.last().unwrap(), curr_module)
-                },
-                None => module_tree.insert(*path.last().unwrap(), curr_module),
-            };
-        }
-        depth += 1;
-
-        if !active {
-            break;
-        }
-        active = false;
-    }
-
-
-    fn register_module(name: StringIndex, module: &mut Module, ast: &mut AST) -> DeclId {
-        for (&name, child) in module.tree.iter_mut() {
-            module.body.insert(0, register_module(name, child, ast).into());
-        }
-
-        ast.add_decl(
-            Decl::Module {
-                name,
-                header: module.range,
-                body: Block::new(module.body.clone_in(ast.arena).leak(), module.range),
-                user_defined: true,
-            },
-            module.range
-        )
-    }
-
-
-    let mut modules = vec![];
-    for (&name, module) in module_tree.iter_mut() {
-        let decl = register_module(name, module, &mut global);
-        modules.insert(0, decl.into());
-    }
-
-    assert_eq!(lex_errors.len(), files.len());
-    assert_eq!(parse_errors.len(), files.len());
+    dbg!(root);
 
     let sema_arena = Arena::new();
     let temp = Arena::new();
     let _scopes = Arena::new();
     let mut sema = {
         let _1 = DropTimer::new("semantic analysis");
-        TyChecker::run(&sema_arena, &temp, &mut global, &*modules, string_map)
+        TyChecker::run(&sema_arena, &temp, &mut global, &root.unwrap(), string_map)
     };
 
     // todo: find a way to comrpess these errors into vecs
@@ -192,171 +150,6 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: Vec<FileData>) -> (Vec
     }
 
     (src, tests)
-}
-
-
-#[derive(Default)]
-pub struct CompilationUnit {
-    imports: HashMap<String, String>,
-    output: String,
-}
-
-
-impl CompilationUnit {
-    pub fn import_repo(&mut self, name: &str, repo: &str) {
-        self.imports.insert(name.to_string(), repo.to_string());
-    }
-
-
-    pub fn build(&mut self, string_map: &mut StringMap, mut files: Vec<FileData>) -> (Vec<u8>, Vec<String>) {
-        let mut stack = vec![];
-        let artifacts_path = Path::new("artifacts");
-
-        if !std::fs::exists("artifacts").unwrap() {
-            std::fs::create_dir("artifacts").unwrap();
-        }
-
-
-        for value in &self.imports {
-            let path = artifacts_path.join(&value.0);
-
-            if !std::fs::exists(&path).unwrap() {
-                println!("fetching '{}'", value.1.as_str());
-                let _ = git2::Repository::clone(value.1.as_str(), &path).unwrap();
-            }
-
-            let dir = std::fs::read_dir(&path).unwrap();
-            let path = artifacts_path.join(&value.0).join("src");
-
-            let name = string_map.insert(value.0);
-            stack.push(dir);
-            while let Some(dir) = stack.pop() {
-                for file in dir {
-                    let file = file.unwrap();
-
-                    if file.path() == path.join("lib.mar") {
-                        files.push(FileData::open_ex(file.path(), name, string_map).unwrap())
-                    } else if file.path().extension() == Some(OsStr::new("mar")) {
-                        let name = file.file_name();
-                        let name = name.to_string_lossy();
-                        let path = string_map.insert(
-                            &format!("{}/{}", value.0,
-                                &name[..name.len()-4]
-                            )
-                        );
-
-                        files.push(FileData::open_ex(file.path(), path, string_map).unwrap());
-                    } else if file.metadata().unwrap().is_dir() {
-                        stack.push(std::fs::read_dir(file.path()).unwrap());
-                    }
-                }
-            }
-        }
-
-
-        run(string_map, files)
-    }
-
-
-    pub fn build_curr_project(&mut self) -> (Vec<u8>, Vec<String>) {
-        println!("building project");
-
-        let string_map_arena = Arena::new();
-        let mut string_map = StringMap::new(&string_map_arena);
-
-        let mut stack = vec![];
-        let mut files = vec![];
-        stack.push(std::fs::read_dir("src").unwrap());
-
-        let name = string_map.insert("self");
-        let src_dir = Path::new("src");
-        while let Some(dir) = stack.pop() {
-            for file in dir {
-                let file = file.unwrap();
-
-                if file.path() == src_dir.join("main.mar") {
-                    files.push(FileData::open_ex(file.path(), name, &mut string_map).unwrap())
-                } else if file.path().extension() == Some(OsStr::new("mar")) {
-                    let name = file.file_name();
-                    let name = name.to_string_lossy();
-                    let path = string_map.insert(
-                        &format!("self/{}",
-                            &name[..name.len()-4]
-                        )
-                    );
-
-                    files.push(FileData::open_ex(file.path(), path, &mut string_map).unwrap());
-                } else if file.metadata().unwrap().is_dir() {
-                    stack.push(std::fs::read_dir(file.path()).unwrap());
-                }
-            }
-        }
-
-        self.build(&mut string_map, files)
-
-    }
-}
-
-
-unsafe extern "C" fn init_compilation_unit(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
-    let ptr = CompilationUnit::default();
-    let ptr = Box::into_raw(Box::new(ptr));
-    let obj = vm.new_obj(runtime::obj_map::ObjectData::Ptr(ptr.cast())).unwrap();
-    *ret = obj;
-}
-
-
-unsafe extern "C" fn compilation_unit_import_repo(vm: &mut VM, _: &mut Reg, status: &mut Status) {
-    unsafe {
-    let compilation_unit = vm.stack.reg(0).as_obj();
-    let compilation_unit = vm.objs[compilation_unit].as_ptr();
-    let compilation_unit = compilation_unit.cast::<CompilationUnit>();
-
-    if compilation_unit.is_null() {
-        *status = Status::err(FatalError::new("compilation unit is already consumed"));
-        return;
-    }
-
-
-    let compilation_unit = &mut *compilation_unit;
-
-
-    let name = vm.stack.reg(1).as_obj();
-    let name = vm.objs[name].as_str();
-    let path = vm.stack.reg(2).as_obj();
-    let path = vm.objs[path].as_str();
-    compilation_unit.import_repo(name, path);
-
-    }
-}
-
-
-unsafe extern "C" fn compilation_unit_build(vm: &mut VM, _: &mut Reg, status: &mut Status) {
-    unsafe {
-    let compilation_unit = vm.stack.reg(0).as_obj();
-    let compilation_unit = vm.objs[compilation_unit].as_ptr();
-    let compilation_unit = compilation_unit.cast::<CompilationUnit>();
-
-    if compilation_unit.is_null() {
-        *status = Status::err(FatalError::new("compilation unit is already consumed"));
-        return;
-    }
-
-
-    let compilation_unit = &mut *compilation_unit;
-
-    compilation_unit.build_curr_project();
-    }
-}
-
-
-
-
-pub fn build_system(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg, &mut Status)>) {
-
-    hosts.insert("compilation_unit_init".into(), init_compilation_unit);
-    hosts.insert("compilation_unit_import_repo".into(), compilation_unit_import_repo);
-    hosts.insert("compilation_unit_build".into(), compilation_unit_build);
 }
 
 

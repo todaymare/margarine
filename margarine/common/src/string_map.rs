@@ -104,7 +104,7 @@ impl<'str> StringMap<'str> {
 
     #[inline(always)]
     pub fn insert(&mut self, value: &str) -> StringIndex {
-        let key = HashStr::new(unsafe { std::mem::transmute(value) });
+        let key = HashStr::new(unsafe { sti::erase!(&str, value) });
         let (exists, slot) = self.map.entry_for_insert(&key);
 
         if exists {
@@ -116,6 +116,13 @@ impl<'str> StringMap<'str> {
         let alloc = self.arena.alloc_str(value);
 
         let index = StringIndex(self.vec.len() as u32);
+        let key = HashStr {
+            ptr: alloc.as_ptr(),
+            len: alloc.len() as _,
+            hash: key.hash,
+            phantom: PhantomData,
+        };
+
         self.vec.push(alloc);
 
         self.map.insert_at(slot, Hash32(key.hash()), key, index);
@@ -266,5 +273,28 @@ struct HashStrHashFn;
 impl<'a> HashFn<HashStr<'a>, u32> for HashStrHashFn {
     fn hash(&self, value: &HashStr) -> u32 {
         value.hash()
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn deallocated_string_insert() {
+        let arena = sti::arena::Arena::new();
+        let mut map = StringMap::new(&arena);
+        let mut vec = vec![];
+
+        for _ in 0..10 {
+            let string = String::from("hello world");
+            let id = map.insert(&string);
+            vec.push(id);
+
+            for &i in &vec {
+                assert_eq!(id, i);
+            }
+        }
     }
 }

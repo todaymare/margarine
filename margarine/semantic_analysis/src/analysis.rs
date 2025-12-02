@@ -577,6 +577,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 scope: &mut ScopeId, ns: NamespaceId, node: NodeId) -> AnalysisResult {
         match node {
             NodeId::Decl(decl) => {
+                if let Decl::Error(e) = self.ast.decl(decl) {
+                    self.type_info.set_decl(decl, e);
+                    return AnalysisResult::new(Sym::ERROR);
+                }
+
+
                 self.decl(scope, ns, decl);
                 AnalysisResult::new(Sym::UNIT)
             },
@@ -601,6 +607,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             Decl::Struct { .. } => (),
             Decl::Enum { .. } => (),
             Decl::OpaqueType { .. } => (),
+            Decl::ImportFile { .. } => todo!(),
+            Decl::Error(_) => (),
 
             
             Decl::Function { sig, body, .. } => {
@@ -1556,7 +1564,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
-                else { dbg!(sym); return Err(Error::CallOnNonFunction { source: lhs_range }) };
+                else { return Err(Error::CallOnNonFunction { source: lhs_range }); };
 
 
                 let f_gens = lhs.ty.gens(&self.syms);
