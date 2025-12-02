@@ -24,11 +24,11 @@ fn main() {
             let (code, _) = margarine::run(&mut sm, files);
 
             println!("running");
+
             let mut hosts : HashMap<String, _>= HashMap::new();
             stdlib(&mut hosts);
 
             let mut vm = VM::new(hosts, &*code).unwrap();
-            dbg!(&vm.funcs);
             {
                 let _t = DropTimer::new("runtime");
                 if let Some(e) = vm.run("main", &[]).as_err() {
