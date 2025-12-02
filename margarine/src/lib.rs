@@ -47,7 +47,6 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: FileData) -> (Vec<u8>,
             tokens
         });
 
-        println!("parsing {}", string_map.get(f.name()));
         let (body, imports, mut pe) = DropTimer::with_timer("parsing", || {
             parse(tokens, counter, &arena, string_map, &mut global)
         });
@@ -63,20 +62,16 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: FileData) -> (Vec<u8>,
             let Ok(file) = FileData::open(&*path, string_map)
             else {
                 let path_str = string_map.insert(&path);
-                println!("{source:?}");
                 let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_str });
                 global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
                 
                 continue;
             };
 
-            println!("path is {path} file is {file:?}");
-
             stack.push((Some((i, name)), file));
         }
 
         if let Some((decl, name)) = decl {
-            println!("updating {} with {body:#?}", string_map.get(name));
             let offset = global.range(decl);
             global.set_decl(decl, Decl::Module { name, header: offset, body, user_defined: true });
         } else {
@@ -92,8 +87,6 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: FileData) -> (Vec<u8>,
         source_offset += f.read().len() as u32;
         files.push(f);
     }
-
-    dbg!(root);
 
     let sema_arena = Arena::new();
     let temp = Arena::new();

@@ -115,8 +115,8 @@ impl SourceRange {
         for f in files {
             end = start + f.read().len() as u32;
 
-            if self.start <= end {
-                assert!(self.end <= end, "end is {end} which is more than {}", self.end);
+            if self.start < end {
+                assert!(self.end <= end, "Range {}..{} exceeds file bounds {}..{}", self.start, self.end, start, end);
                 return (f, start);
             }
 

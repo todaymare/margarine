@@ -489,7 +489,7 @@ impl Lexer<'_, '_> {
             value.leak()
         };
        
-        let source = SourceRange::new(begin as u32, self.reader.offset() as u32 - 1);
+        let source = SourceRange::new(self.source_offset + begin as u32, self.source_offset + self.reader.offset() as u32 - 1);
 
         let kind = match dot_count {
             0 => {
@@ -531,8 +531,8 @@ impl Lexer<'_, '_> {
             if clone.next() != Some(b'"') {
                 self.reader.set_offset(clone.offset());
                 let err = Error::UnterminatedString(SourceRange::new(
-                    start as u32, 
-                    clone.offset() as u32 - 1
+                    self.source_offset + start as u32, 
+                    self.source_offset + clone.offset() as u32 - 1
                 ));
 
                 let err = self.errors.push(err);

@@ -154,8 +154,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             }
         }
 
-        dbg!(&analyzer.namespaces);
-
         analyzer
     }
 
