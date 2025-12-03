@@ -563,6 +563,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
             _ => self.assignment(&settings)?.into(),
         };
 
+        if let NodeId::Decl(_) = node && self.peek_is(TokenKind::SemiColon) {
+            self.advance();
+        }
+
         Ok(node)
     }
 
