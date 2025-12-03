@@ -26,7 +26,7 @@ sudo cp target/release/margarine /usr/local/bin
 We'll start by creating our first margarine file, [`hello.mar`](./examples/hello.mar).  
 Inside it we can put
 ```rs
-extern "www.github.com/todaymare/margarine-std" as std;
+extern "https://github.com/todaymare/margarine-std" as std;
 use std::*;
 
 fn main() {
@@ -44,7 +44,7 @@ Okay so what is happening in that file, you might rightfully ask.
 For anyone familiar with Rust this should look pretty normal, except for the elephant in the room.
 
 ```rs
-extern "www.github.com/todaymare/margarine-std" as std;
+extern "https://github.com/todaymare/margarine-std" as std;
 ```
 This is the syntax we use to import any git repository into our program. Depending on the host program these might get ignored or limited but the CLI tool will allow any valid git repo.  
 
@@ -67,4 +67,6 @@ Defines a function named `main`. The CLI runtime assumes the `main` function is 
 
 You might notice that your program still compiles without it but when running it you'll get an `invalid entry point 'main'` error since the default runtime tries to call that.
 
-And voilla! You have your first margarine program!
+And voilla! You have your first margarine program! Don't worry, there's a LOT more to margarine than just Rust without the borrow checker, but before I tell you about that we should probably move to a more structured format.  
+
+Here, I'll

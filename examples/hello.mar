@@ -1,4 +1,4 @@
-extern "www.github.com/todaymare/margarine-std" as std;
+extern "https://github.com/todaymare/margarine-std" as std;
 use std::*;
 
 fn main() {
