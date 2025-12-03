@@ -1,6 +1,0 @@
-extern "https://github.com/todaymare/margarine-std" as std;
-
-@test
-fn test() {
-    std::assert(true, "hey");
-}
