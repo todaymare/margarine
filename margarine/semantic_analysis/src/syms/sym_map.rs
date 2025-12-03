@@ -123,6 +123,12 @@ impl<'me> SymbolMap<'me> {
     }
 
 
+    pub fn as_ns(&self, id: SymbolId) -> NamespaceId {
+        assert!(matches!(self.sym(id).kind(), SymbolKind::Namespace));
+        self.sym_ns(id)
+    }
+
+
     pub fn sym(&self, id: SymbolId) -> Symbol<'me> { 
         self.syms[id].0.unwrap()
     }

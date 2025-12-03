@@ -251,14 +251,30 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
-            DataTypeKind::Within(ns, dt) => {
-                let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces, &self.syms)
-                else { return Err(Error::NamespaceNotFound { namespace: ns, source: dt.range() }) };
+            DataTypeKind::Within(ns_name, ty) => {
+                let ns = scope.find_sym(
+                    ns_name, &self.scopes, 
+                    &mut self.syms, &self.namespaces
+                );
 
-                if ns.1 { return Err(Error::Bypass) }
+                let Some(ns) = ns
+                else { 
+                    return Err(Error::NamespaceNotFound { 
+                        source: ty.range(), 
+                        namespace: ns_name,
+                    }) 
+                };
 
-                let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns.0));
-                self.dt_to_gen(scope, *dt, gens)
+                let Ok(ns) = ns
+                else {
+                    return Err(Error::Bypass);
+                };
+
+                let ns = self.syms.sym_ns(ns);
+
+
+                let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
+                self.dt_to_gen(scope, *ty, gens)
             },
 
 
@@ -302,16 +318,32 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             DataTypeKind::Hole => Ok(self.syms.new_var(id, dt.range())),
 
 
-            DataTypeKind::Within(ns, dt) => {
+            DataTypeKind::Within(ns_name, ty) => {
                 let scope = self.scopes.get(scope_id);
-                let Some(ns) = scope.find_ns(ns, &self.scopes, &self.namespaces, &self.syms)
-                else { return Err(Error::NamespaceNotFound { namespace: ns, source: dt.range() }) };
 
-                if ns.1 { return Err(Error::Bypass) }
+                let ns = scope.find_sym(
+                    ns_name, &self.scopes, 
+                    &mut self.syms, &self.namespaces
+                );
 
-                let scope = Scope::new(scope_id, ScopeKind::ImplicitNamespace(ns.0));
+                let Some(ns) = ns
+                else { 
+                    return Err(Error::NamespaceNotFound { 
+                        source: ty.range(), 
+                        namespace: ns_name,
+                    }) 
+                };
+
+                let Ok(ns) = ns
+                else {
+                    return Err(Error::Bypass);
+                };
+
+                let ns = self.syms.sym_ns(ns);
+
+                let scope = Scope::new(scope_id, ScopeKind::ImplicitNamespace(ns));
                 let scope = self.scopes.push(scope);
-                self.dt_to_ty(scope, id, *dt)
+                self.dt_to_ty(scope, id, *ty)
             },
 
 
