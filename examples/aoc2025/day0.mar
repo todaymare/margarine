@@ -1,6 +1,6 @@
 extern "https://github.com/todaymare/margarine-std" as std;
 use std::*;
-use std::io::ffi::read_file;
+use std::io::read_file;
 
 fn main() {
     var input = read_file("./examples/aoc2025/day0.txt");
