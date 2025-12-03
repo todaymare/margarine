@@ -68,5 +68,3 @@ Defines a function named `main`. The CLI runtime assumes the `main` function is 
 You might notice that your program still compiles without it but when running it you'll get an `invalid entry point 'main'` error since the default runtime tries to call that.
 
 And voilla! You have your first margarine program! Don't worry, there's a LOT more to margarine than just Rust without the borrow checker, but before I tell you about that we should probably move to a more structured format.  
-
-Here, I'll

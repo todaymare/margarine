@@ -13,6 +13,7 @@ pub use parser::nodes;
 pub use common::source::{FileData, Extension};
 pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
+use runtime::obj_map::ObjectData;
 use semantic_analysis::syms::sym_map::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
@@ -337,14 +338,14 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
 
         unsafe {
         match SymbolId(ty_id as u32) {
-            SymbolId::I64 => println!("{}", val.as_int()),
-            SymbolId::F64 => println!("{}", val.as_float()),
-            SymbolId::BOOL => println!("{}", val.as_bool()),
-            SymbolId::STR => println!("{}", vm.objs[val.as_obj()].as_str()),
-            SymbolId::LIST => println!("{:?}", vm.objs[val.as_obj()].as_list()),
+            SymbolId::I64 => print!("{}", val.as_int()),
+            SymbolId::F64 => print!("{}", val.as_float()),
+            SymbolId::BOOL => print!("{}", val.as_bool()),
+            SymbolId::STR => print!("{}", vm.objs[val.as_obj()].as_str()),
+            SymbolId::LIST => print!("{:?}", vm.objs[val.as_obj()].as_list()),
 
             //@todo
-            _ => println!("{:?}", vm.objs[val.as_obj()])
+            _ => print!("{:?}", vm.objs[val.as_obj()])
         }
         }
     }
@@ -535,6 +536,38 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
+    unsafe extern "C" fn io_read_line(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let mut str = String::new();
+        let value = std::io::stdin().read_line(&mut str);
+
+        let obj = 'b: {
+        if let Err(e) = value {
+            let str = e.to_string();
+            let str =
+            match vm.new_obj(ObjectData::String(str.into())) {
+                Ok(v) => v,
+                Err(v) => break 'b Err(v),
+            };
+
+            vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(1), str] })
+        } else {
+            let str =
+            match vm.new_obj(ObjectData::String(str.into())) {
+                Ok(v) => v,
+                Err(v) => break 'b Err(v),
+            };
+
+            vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(0), str] })
+        } };
+
+
+        match obj {
+            Ok(v) => *ret = v,
+            Err(e) => *status = Status::err(e),
+        }
+    }
+
+
     unsafe extern "C" fn panic(vm: &mut VM, _: &mut Reg, status: &mut Status) {
         let str = vm.stack.reg(0).as_obj();
         let str = vm.objs[str].as_str();
@@ -559,5 +592,6 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("hashmap_clear".to_string(), hashmap_clear);
     hosts.insert("hashmap_contains_key".to_string(), hashmap_contains_key);
     hosts.insert("hashmap_remove".to_string(), hashmap_remove);
+    hosts.insert("io_read_line".to_string(), io_read_line);
     hosts.insert("panic".to_string(), panic);
 }

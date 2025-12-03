@@ -111,11 +111,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 Decl::Module { name, header, body, .. } => {
                     let path = self.string_map.concat(path, name);
 
-                    let module_ns = Namespace::new(path);
-                    let module_ns = self.namespaces.push(module_ns);
-
                     let sym = self.syms.pending(&mut self.namespaces, path, 0);
                     self.syms.add_sym(sym, Symbol::new(name, &[], SymbolKind::Namespace));
+
+                    let module_ns = self.syms.as_ns(sym);
 
                     if let Err(e) = self.namespaces.get_ns_mut(ns_id).add_sym(header, name, sym) {
                         self.error(*n, e);
