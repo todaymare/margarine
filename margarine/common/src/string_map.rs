@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use sti::{alloc::GlobalAlloc, arena::{Arena, ArenaStats}, define_key, format_in, hash::{fxhash::{fxhash32, FxHasher32}, hash_map::Hash32, HashFn, HashMap}};
+use sti::{alloc::GlobalAlloc, arena::{Arena, ArenaStats}, define_key, format_in, hash::{fxhash::fxhash32, hash_map::Hash32, HashFn, HashMap}};
 
 define_key!(pub StringIndex(u32));
 

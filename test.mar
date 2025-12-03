@@ -4,6 +4,8 @@ mod something;
 
 
 fn main() {
+    var dur = std::duration::Duration::now();
     std::print(something::foo());
     std::print(something::hey::random_number());
+    std::print(dur.elapsed().as_nanos());
 }

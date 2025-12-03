@@ -1,5 +1,0 @@
-enum EitherOrNone {
-    left: i64,
-    right: f32,
-    none,
-}

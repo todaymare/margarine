@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use common::{source::SourceRange, string_map::StringIndex};
-use errors::{ErrorId, SemaError};
 use sti::{define_key, vec::{KVec}};
 
 use crate::{errors::Error, syms::sym_map::SymbolId};

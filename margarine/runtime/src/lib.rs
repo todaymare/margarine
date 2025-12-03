@@ -3,20 +3,14 @@
 #[cfg(not(debug_assertions))]
 use std::marker::PhantomData;
 
-use std::{cell::Cell, collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}, thread::JoinHandle};
+use std::{cell::Cell, collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
 
 use crate::obj_map::{Object, ObjectData, ObjectIndex, ObjectMap};
 
-//use crate::jitty::JIT;
-//use crate::jit::JIT;
-
 pub mod runtime;
 pub mod opcode;
-pub mod alloc;
 pub mod obj_map;
 pub mod gc;
-//pub mod jitty;
-//pub mod jit;
 
 
 #[derive(Clone, Copy)]
@@ -52,7 +46,6 @@ pub struct VM<'src> {
     pub funcs: Vec<Function<'src>>,
     error_table: &'src [u8],
     pub objs: ObjectMap,
-    gc_handle: Option<JoinHandle<ObjectIndex>>,
     //jit: JIT,
 }
 
@@ -62,8 +55,8 @@ pub struct VM<'src> {
 pub struct Function<'src> {
     name: &'src str,
     argc: u8,
-    args: &'src [u8],
-    ret: u32,
+    _args: &'src [u8],
+    _ret: u32,
     kind: FunctionKind<'src>,
 
     cache: Option<HashMap<&'static [Reg], Reg>>,
@@ -233,8 +226,8 @@ impl<'src> VM<'src> {
                                     byte_size: size as usize,
                                 },
                                 argc,
-                                ret,
-                                args,
+                                _ret: ret,
+                                _args: args,
                                 cache,
                             });
                         }
@@ -250,8 +243,8 @@ impl<'src> VM<'src> {
                                 name,
                                 kind: FunctionKind::Host(*host_fn),
                                 argc,
-                                ret,
-                                args,
+                                _ret: ret,
+                                _args: args,
                                 cache,
                             });
                         }
@@ -276,7 +269,6 @@ impl<'src> VM<'src> {
             funcs,
             error_table: errs,
             objs,
-            gc_handle: None,
             //jit: JIT::default(),
         })
     }

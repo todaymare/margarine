@@ -1,4 +1,0 @@
-fn side_effects(val: Ptr<i64>) {
-    val.* += 9
-}
-

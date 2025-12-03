@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use common::{source::SourceRange, string_map::StringIndex};
-use errors::{ErrorId, ErrorType};
+use errors::ErrorType;
 use parser::nodes::expr::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
@@ -730,7 +730,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*range, &msg)
             },
 
-            Error::VariableTupleAndHintTupleSizeMismatch(range, exp, given) => {
+            Error::VariableTupleAndHintTupleSizeMismatch(..) => {
                 todo!()
             },
 

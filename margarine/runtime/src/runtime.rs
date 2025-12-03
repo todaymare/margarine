@@ -15,7 +15,6 @@ impl<'src> VM<'src> {
     }
 
     pub extern "C" fn run_func(&mut self, index: usize) -> Status {
-        //dbg!(jit::attempt_jit(self, index));
 
         let func = &self.funcs[index];
 

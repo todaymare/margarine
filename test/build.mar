@@ -1,5 +1,0 @@
-use std::build::*
-
-fn build(unit: CompilationUnit) {
-    unit.import("std", "https://github.com/todaymare/margarine-std");
-}

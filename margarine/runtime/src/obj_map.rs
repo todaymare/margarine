@@ -166,12 +166,6 @@ impl ObjectMap {
         &mut self.objs[index.0 as usize]
     }
 
-
-    #[inline]
-    pub(crate) fn raw(&self) -> &[Object] {
-        &self.objs
-    }
-
     
     #[inline]
     pub(crate) fn raw_mut(&mut self) -> &mut [Object] {

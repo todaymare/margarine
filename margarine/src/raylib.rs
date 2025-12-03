@@ -1,6 +1,5 @@
-use std::{collections::HashMap, ffi::CString, str::FromStr};
+use std::{collections::HashMap, ffi::CString};
 
-use raylib::{color, ffi::KeyboardKey};
 use runtime::{Reg, Status, VM};
 
 pub fn raylib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg, &mut Status)>) {

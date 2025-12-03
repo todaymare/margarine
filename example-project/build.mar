@@ -1,7 +1,0 @@
-use std::build::*
-
-fn main() {
-    var unit = CompilationUnit::init();
-    unit.import("std", "https://github.com/todaymare/margarine-std");
-    unit.build();
-}

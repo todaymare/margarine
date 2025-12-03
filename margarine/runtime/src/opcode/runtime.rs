@@ -2212,7 +2212,6 @@ impl OpCode {
         let offsets = reader.next_slice(_len as usize);
                 Some((opcode, Decoded::Switch { offsets }))
             }
-            _ => None,
         }
         }
     }
