@@ -1517,13 +1517,36 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         let SymbolKind::Function(func) = sym.kind()
                         else { return Err(e); };
 
+                        let mut vgens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
+
+                        for g in sym.generics().iter() {
+                            let var = self.syms.new_var(id, range);
+                            vgens.push((*g, var));
+                        }
+
+
+                        let gens = self.syms.get_gens(expr.ty.gens(&self.syms));
+
+                        for (n0, g0) in gens {
+                            for (_, (n1, g1)) in &vgens {
+                                if n0 == n1 {
+                                    (*g0).eq(&mut self.syms, *g1);
+                                }
+                            }
+                        }
+
+
+                        let gens = self.syms.add_gens(vgens.leak());
+
+
                         let anal = match func.kind() {
                             FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, expr.ty.gens(&self.syms))),
                             _ => {
                                 let closure = self.syms.new_closure();
 
                                 let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
-                                AnalysisResult::new(Sym::Ty(sym, expr.ty.gens(&self.syms)))
+
+                                AnalysisResult::new(Sym::Ty(sym, gens))
                             }
                         };
 
@@ -1580,8 +1603,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     vec.leak()
                 };
 
-                if sym_id == SymbolId::ERR { return Err(Error::Bypass) };
-
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
                 else { return Err(Error::CallOnNonFunction { source: lhs_range }); };
@@ -1608,7 +1629,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let ret = func.ret().to_ty(gens, &mut self.syms)?;
 
-                // ty & inout check args
+                // ty check args
                 for (a, &fa) in args_anals.iter().zip(func_args.iter()) {
                     if !a.1.ty.eq(&mut self.syms, fa) {
                         self.error(a.2, Error::InvalidType {
