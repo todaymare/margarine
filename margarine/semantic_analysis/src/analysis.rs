@@ -1580,6 +1580,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     vec.leak()
                 };
 
+                if sym_id == SymbolId::ERR { return Err(Error::Bypass) };
+
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
                 else { return Err(Error::CallOnNonFunction { source: lhs_range }); };
