@@ -498,6 +498,7 @@ impl<'me> Reader<'me> {
     /// Returns the next `n` values in the source code as a slice whilst moving the cursor
     ///
     pub fn try_next_slice(&mut self, n: usize) -> Option<&'me [u8]> {
+        if n == 0 { return Some(&[]) }
         unsafe {
             if !self.bounds.as_ptr_range().contains(&self.src)
                 || !self.bounds.as_ptr_range().contains(&self.src.add(n-1)) {
