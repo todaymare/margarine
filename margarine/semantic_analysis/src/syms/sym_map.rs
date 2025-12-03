@@ -5,7 +5,7 @@ use errors::ErrorId;
 use parser::nodes::{decl::DeclId, NodeId};
 use sti::{arena::Arena, define_key, ext::FromIn, vec::KVec};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, scope::VariableScope, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind}};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind}};
 
 use super::{ty::Sym, Symbol};
 

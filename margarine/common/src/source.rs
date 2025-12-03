@@ -2,7 +2,7 @@ use std::path::Path;
 
 use derive::ImmutableData;
 
-use crate::string_map::{self, StringIndex, StringMap};
+use crate::string_map::{StringIndex, StringMap};
 
 ///
 /// A single (immutable) unit of a file

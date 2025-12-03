@@ -1,6 +1,0 @@
-
-mod hey
-
-fn foo(): int {
-    6
-}

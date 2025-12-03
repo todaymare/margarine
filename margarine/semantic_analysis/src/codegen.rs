@@ -1,10 +1,9 @@
-use std::{any::Any, collections::HashMap, fmt::Write, fs, hash::Hash};
+use std::{collections::HashMap, hash::Hash};
 
-use common::{string_map::{StringIndex, StringMap}, Swap};
+use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, stmt::StmtId, NodeId, AST};
-use runtime::opcode::{self, runtime::{builder::{self, Builder}, consts, OpCode}, HEADER};
-use sti::{arena::Arena, define_key, reader::Reader, vec::KVec};
+use runtime::opcode::{self, runtime::builder::Builder, HEADER};
 
 use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
 
@@ -37,7 +36,7 @@ struct Function<'a> {
     ret: u32,
 
     kind: FunctionKind<'a>,
-    error: Option<ErrorId>,
+    _error: Option<ErrorId>,
 
     cached: bool,
 }
@@ -86,7 +85,6 @@ enum BlockTerminator<'a> {
 
 
 pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8> {
-    let out = Arena::new();
     let mut conv = Conversion {
         string_map: ty_checker.string_map,
         syms: &mut ty_checker.syms,
@@ -340,7 +338,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     name: self.string_map.insert(self.string_map.get(path)),
                     index: self.next_func_id(),
                     kind: FunctionKind::Extern(path),
-                    error: self.ty_info.decl(sym_func.decl().unwrap()),
+                    _error: self.ty_info.decl(sym_func.decl().unwrap()),
                     args,
                     ret: ret.0,
                     cached: sym_func.cached,
@@ -364,7 +362,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         entry: BlockIndex(0),
                         blocks: vec![],
                     },
-                    error: err,
+                    _error: err,
                     ret: ret.0,
                     args,
                     cached: sym_func.cached,
@@ -445,7 +443,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         blocks: vec![block],
                     },
 
-                    error: None,
+                    _error: None,
                     args,
                     ret: ret.0,
                     cached: false,
@@ -490,7 +488,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                             terminator: BlockTerminator::Ret,
                         }]
                     },
-                    error: err,
+                    _error: err,
                     args,
                     ret: ret.0,
                     cached: false,
@@ -507,7 +505,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
 
-    pub fn process(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, instrs: &[NodeId]) -> Result<(), ErrorId> {
+    fn process(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, instrs: &[NodeId]) -> Result<(), ErrorId> {
         let mut has_ret = false;
 
         for (i, &n) in instrs.iter().enumerate() {
@@ -1220,7 +1218,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                             blocks: env.blocks,
                         },
 
-                        error: None,
+                        _error: None,
                         args: vec![0; argc],
                         ret: self.ty_info.expr(body).unwrap().sym(self.syms).unwrap().0,
                         cached: false,
@@ -1361,8 +1359,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
                 else { unreachable!() };
 
-                let mut str = sti::string::String::new_in(self.syms.arena());
-                let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
+                let (i, _) = cont.fields().iter().enumerate().find(|(_, f)| {
                     let name = f.0;
                     field_name == name
                 }).unwrap();
@@ -1398,7 +1395,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
                         else { unreachable!() };
 
-                        let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
+                        let (i, _) = cont.fields().iter().enumerate().find(|(_, f)| {
                             let name = f.0;
                             field_name == name
                         }).unwrap();
@@ -1479,7 +1476,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
                         else { unreachable!() };
 
-                        let (i, _) = cont.fields().iter().enumerate().find(|(i, f)| {
+                        let (i, _) = cont.fields().iter().enumerate().find(|(_, f)| {
                             let name = f.0;
 
                             field_name == name

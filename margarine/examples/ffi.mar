@@ -1,4 +1,0 @@
-extern {
-    fn print_string(value: str)
-    fn random_number(): f64
-}

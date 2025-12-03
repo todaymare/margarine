@@ -1,13 +1,13 @@
 #![feature(slice_partition_dedup)]
-use std::{collections::HashMap, fmt::Write};
+use std::collections::HashMap;
 
-use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}, Either};
+use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, hash::fxhash::fxhash64, key::Key, string::String, vec::{KVec, Vec}, write};
+use sti::{arena::Arena, key::Key, vec::{KVec, Vec}};
 use syms::{ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 
 use crate::{scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::ClosureId, Symbol}};
@@ -16,8 +16,6 @@ pub mod scope;
 pub mod namespace;
 pub mod errors;
 pub mod analysis;
-//pub mod codegen;
-pub mod global;
 pub mod syms;
 pub mod codegen;
 
@@ -112,30 +110,30 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             macro_rules! add_sym {
                 ($n: ident) => {
-                    namespace.add_sym(SourceRange::ZERO, StringMap::$n, SymbolId::$n);
+                    namespace.add_sym(SourceRange::ZERO, StringMap::$n, SymbolId::$n)
                 };
             }
 
-            add_sym!(I64);
-            add_sym!(F64);
-            add_sym!(BOOL);
-            add_sym!(PTR);
-            add_sym!(OPTION);
-            add_sym!(RESULT);
-            add_sym!(STR);
-            add_sym!(RANGE);
-            add_sym!(TYPE_ID);
+            let _ = add_sym!(I64);
+            let _ = add_sym!(F64);
+            let _ = add_sym!(BOOL);
+            let _ = add_sym!(PTR);
+            let _ = add_sym!(OPTION);
+            let _ = add_sym!(RESULT);
+            let _ = add_sym!(STR);
+            let _ = add_sym!(RANGE);
+            let _ = add_sym!(TYPE_ID);
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
-                namespace.add_sym(SourceRange::ZERO, StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap());
-                namespace.add_sym(SourceRange::ZERO, StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap());
+                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap());
+                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap());
             }
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::RESULT));
-                namespace.add_sym(SourceRange::ZERO, StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap());
-                namespace.add_sym(SourceRange::ZERO, StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap());
+                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap());
+                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap());
             }
 
             analyzer.namespaces.push(namespace)

@@ -1,8 +1,4 @@
-use std::{sync::atomic::{AtomicU32, AtomicU64}, thread, time::Instant};
-
-//use rayon::prelude::{IntoParallelRefMutIterator, IndexedParallelIterator, ParallelIterator};
-
-use rayon::iter::{IntoParallelRefMutIterator, ParallelBridge, ParallelIterator};
+use std::{sync::atomic::AtomicU32, time::Instant};
 
 use crate::{VM, Object, obj_map::{ObjectMap, ObjectData, ObjectIndex}};
 

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 pub mod string_map;
 pub mod hashables;
 pub mod source;

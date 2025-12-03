@@ -1,11 +1,8 @@
-use std::{any::Any, env::var, fmt::Write};
-
-use common::{buffer::Buffer, copy_slice_in, string_map::{StringIndex, StringMap}};
-use errors::ErrorId;
+use common::{buffer::Buffer, string_map::{StringIndex, StringMap}};
 use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId}};
-use sti::{alloc::GlobalAlloc, arena::Arena, vec::{KVec, Vec}, write};
+use sti::{alloc::GlobalAlloc, vec::{KVec, Vec}};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{GenListId, Generic, GenericKind, SymbolId}, ty::Sym, Symbol, SymbolKind}, AnalysisResult, TyChecker};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{Generic, GenericKind, SymbolId}, ty::Sym, Symbol, SymbolKind}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
@@ -774,7 +771,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     }
 
                     _ => {
-                        self.error(id, Error::UnknownAttr(attr_range, attr));;
+                        self.error(id, Error::UnknownAttr(attr_range, attr));
                     }
                 }
             },
