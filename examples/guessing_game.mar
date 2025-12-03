@@ -2,7 +2,6 @@ extern "https://github.com/todaymare/margarine-std" as std;
 use std::*;
 
 
-
 fn main() {
     println("Guess the number:");
     println("Please input your guess.");
