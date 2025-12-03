@@ -1482,7 +1482,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
-            Expr::AccessField { val, field_name  } => {
+            Expr::AccessField { val, field_name, gens: expr_gens } => {
                 let expr = self.expr(path, scope, val);
 
                 let sym_id = expr.ty.sym(&mut self.syms)?;
@@ -1513,31 +1513,49 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                         let sym_id = sym?;
 
+                        println!("accessing field {} {range:?}", self.string_map.get(field_name));
                         let sym = self.syms.sym(sym_id);
                         let SymbolKind::Function(func) = sym.kind()
                         else { return Err(e); };
 
                         let mut vgens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
 
+
                         for g in sym.generics().iter() {
                             let var = self.syms.new_var(id, range);
                             vgens.push((*g, var));
                         }
 
+                        let sym_gens = self.syms.get_gens(expr.ty.gens(&self.syms));
 
-                        let gens = self.syms.get_gens(expr.ty.gens(&self.syms));
+                        assert!(sym_gens.iter().zip(&vgens).all(|(a, b)| a.0 == b.1.0));
 
-                        for (n0, g0) in gens {
-                            for (_, (n1, g1)) in &vgens {
-                                if n0 == n1 {
-                                    (*g0).eq(&mut self.syms, *g1);
-                                }
+                        for ((n0, g0), (_, (n1, g1))) in sym_gens.iter().zip(&vgens) {
+                            if n0 == n1 {
+                                (*g0).eq(&mut self.syms, *g1);
                             }
                         }
 
 
-                        let gens = self.syms.add_gens(vgens.leak());
+                        if let Some(gens) = expr_gens {
+                            for (g, (_, s)) in gens.iter().zip(vgens.iter().skip(sym_gens.len())) {
+                                let ty = self.dt_to_ty(scope, id, *g);
 
+                                let ty = match ty {
+                                    Ok(v) => v,
+                                    Err(v) => {
+                                        self.error(id, v);
+                                        continue;
+                                    },
+                                };
+
+                                if !ty.eq(&mut self.syms, *s) {
+                                    self.error(id, Error::InvalidType { source: range, found: *s, expected: ty });
+                                }
+                            }
+                        }
+
+                        let gens = self.syms.add_gens(vgens.leak());
 
                         let anal = match func.kind() {
                             FunctionKind::Closure(_) => AnalysisResult::new(Sym::Ty(sym_id, expr.ty.gens(&self.syms))),
@@ -1900,6 +1918,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
         })})();
+
 
         match result {
             Ok(v) => {

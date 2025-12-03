@@ -992,7 +992,9 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     self.advance();
 
                     let list = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma), 
-                                        |parser, _| parser.parse_use_item())?;
+                                        |parser, _| {
+                                            parser.parse_use_item()
+                                        })?;
 
                     return Ok(UseItemKind::List { list })
                 }
@@ -1458,13 +1460,39 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 _ => self.expect_identifier()?,
             };
 
+
+            if self.peek_kind() == Some(TokenKind::DoubleColon) {
+                if self.peek_n(2).map(|t| t.kind()) == Some(TokenKind::LeftAngle) {
+                    self.advance();
+
+                    let gens = self.parse_generic_usage()?;
+                    self.index -= 1;
+
+                    result = self.ast.add_expr(
+                        Expr::AccessField { 
+                            val: result, 
+                            field_name: ident,
+                            gens,
+                        },
+
+                        SourceRange::new(start, self.current_range().end())
+                    );
+
+                    continue;
+                }
+            }
+            
+
+
             result = self.ast.add_expr(
                 Expr::AccessField { 
                     val: result, 
                     field_name: ident,
+                    gens: None,
                 },
+
                 SourceRange::new(start, self.current_range().end())
-            )
+            );
         }
 
         Ok(result)

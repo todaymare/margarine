@@ -1,6 +1,8 @@
+#![feature(if_let_guard)]
 pub mod raylib;
 
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fs;
 
 use colourful::ColourBrush;
@@ -604,6 +606,20 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         let str = vm.objs.get(str).as_str();
 
         let offset = obj[1].as_int();
+        if offset >= str.len() as _ {
+            let obj = vm.new_obj(
+                ObjectData::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] });
+
+            *ret = match obj {
+                Ok(v) => v,
+                Err(e) => {
+                    *status = Status::err(e);
+                    return
+                },
+            };
+
+            return;
+        }
 
         let str = &str[offset as usize..];
         let str = str.lines().next();
@@ -648,6 +664,12 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
 
         let split_pos = vm.stack.reg(1).as_int();
 
+        if split_pos >= str.len() as _ {
+            *status = Status::err(FatalError::new(
+                    &format!("index '{split_pos}' is out of bounds for string '{str}'")));
+            return;
+        }
+
         let (s1, s2) = str.split_at(split_pos as usize);
         let s1 = s1.into();
         let s2 = s2.into();
@@ -680,6 +702,61 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
+
+    unsafe extern "C" fn str_parse(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let str_id = vm.stack.reg(0).as_obj();
+        let str = vm.objs.get(str_id).as_str();
+
+        let ty = vm.stack.reg(1).as_int();
+
+        let result = match SymbolId(ty as u32) {
+            SymbolId::I64 if let Ok(v) = str.parse() => {
+                vec![Reg::new_int(0), Reg::new_int(v)]
+            },
+
+            _ => {
+                vec![Reg::new_int(1), Reg::new_unit()]
+            }
+        };
+
+
+
+        let obj = vm.new_obj(ObjectData::Struct { fields: result });
+        *ret = match obj {
+            Ok(v) => v,
+            Err(e) => {
+                *status = Status::err(e);
+                return;
+            },
+        }
+    }
+
+
+    unsafe extern "C" fn str_len(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let str_id = vm.stack.reg(0).as_obj();
+        let str = vm.objs.get(str_id).as_str();
+
+        *ret = Reg::new_int(str.len() as _);
+    }
+
+
+    unsafe extern "C" fn io_read_file(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let str_id = vm.stack.reg(0).as_obj();
+        let str = vm.objs.get(str_id).as_str();
+
+
+        let path = std::fs::read_to_string(str).unwrap();
+
+        *ret = match vm.new_obj(ObjectData::String(path.into())) {
+            Ok(v) => v,
+            Err(e) => {
+                *status = Status::err(e);
+                return;
+            },
+        }
+    }
+
+
     hosts.insert("print_raw".to_string(), print_raw);
     hosts.insert("new_any".to_string(), new_any);
     hosts.insert("downcast_any".to_string(), downcast_any);
@@ -697,8 +774,11 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("hashmap_contains_key".to_string(), hashmap_contains_key);
     hosts.insert("hashmap_remove".to_string(), hashmap_remove);
     hosts.insert("io_read_line".to_string(), io_read_line);
+    hosts.insert("io_read_file".to_string(), io_read_file);
     hosts.insert("str_lines_iter".to_string(), str_lines_iter);
     hosts.insert("str_lines_iter_next".to_string(), str_lines_iter_next);
     hosts.insert("str_split_at".to_string(), str_split_at);
+    hosts.insert("str_parse".to_string(), str_parse);
+    hosts.insert("str_len".to_string(), str_len);
     hosts.insert("panic".to_string(), panic);
 }
