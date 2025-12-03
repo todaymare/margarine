@@ -1635,7 +1635,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let Ok(ns) = ns
                 else {
-                    return Err(Error::Bypass);
+                    return Err(ns.unwrap_err());
                 };
 
                 let ns = self.syms.sym_ns(ns);
