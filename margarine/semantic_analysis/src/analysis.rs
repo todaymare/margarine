@@ -18,11 +18,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
         let scope = Scope::new(Some(scope), ScopeKind::ImplicitNamespace(namespace));
         let mut scope = self.scopes.push(scope);
 
-        // Collect impls
-        self.collect_impls(path, scope, namespace, body);
-
         // Collect imports
         self.collect_uses(scope, namespace, body);
+
+        // Collect impls
+        self.collect_impls(path, scope, namespace, body);
 
         // Compute types & functions
         self.compute_types(path, scope, namespace, body, None);
@@ -1606,10 +1606,22 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let args_anals = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, args.len());
 
-                    if let Expr::AccessField { val, .. } = self.ast.expr(lhs_expr) {
+                    if let Expr::AccessField { val, field_name, .. } = self.ast.expr(lhs_expr) {
                         let range = self.ast.range(val);
-                        vec.push((range, self.expr(path, scope, val), val));
-                        is_accessor = true;
+                        let anal = self.expr(path, scope, val);
+
+                        // check if it's a field or not
+                        let sym = anal.ty;
+                        let sym = sym.sym(&mut self.syms)?;
+                        let sym = self.syms.sym(sym);
+
+                        if let SymbolKind::Container(cont) = sym.kind()
+                        && cont.fields().iter().find(|x| x.0 == field_name).is_some() {
+                            is_accessor = false;
+                        } else {
+                            is_accessor = true;
+                            vec.push((range, anal, val));
+                        }
                     }
 
                     for &expr in args {
@@ -1630,6 +1642,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 // check arg len
                 if func.args().len() != args_anals.len() {
+                    dbg!(func.args().len(), args_anals.len());
                     return Err(Error::FunctionArgsMismatch {
                         source: range, sig_len: func.args().len() - if is_accessor { 1 } else { 0 }, call_len: args.len() });
                 }
@@ -1873,9 +1886,16 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 else { return Err(Error::OutsideOfAFunction { source: range }) };
 
                 if sym == SymbolId::OPTION {
-                    let func_sym = func.ret.sym(&mut self.syms)?;
+                    let func_sym = func.ret;
+                    let opt_sym = {
+                        let val = self.syms.new_var(id, range);
+                        let gens = self.output.alloc_new([(StringMap::T, val)]);
+                        let gens = self.syms.add_gens(gens);
 
-                    if func_sym != SymbolId::OPTION {
+                        Sym::Ty(SymbolId::OPTION, gens)
+                    };
+
+                    if !opt_sym.eq(&mut self.syms, func_sym) {
                         return Err(Error::FunctionDoesntReturnAnOption { source: range, func_typ: func.ret });
                     }
 
@@ -1887,9 +1907,15 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 
                 if sym == SymbolId::RESULT {
-                    let func_sym = func.ret.sym(&mut self.syms)?;
+                    let res_sym = {
+                        let val = self.syms.new_var(id, range);
+                        let gens = self.output.alloc_new([(StringMap::T, val), (StringMap::A, val)]);
+                        let gens = self.syms.add_gens(gens);
 
-                    if func_sym != SymbolId::RESULT {
+                        Sym::Ty(SymbolId::RESULT, gens)
+                    };
+
+                    if !res_sym.eq(&mut self.syms, func.ret) {
                         return Err(Error::FunctionDoesntReturnAResult { source: range, func_typ: func.ret });
                     }
 

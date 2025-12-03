@@ -732,7 +732,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn str_len(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+    unsafe extern "C" fn str_len(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let str_id = vm.stack.reg(0).as_obj();
         let str = vm.objs.get(str_id).as_str();
 
@@ -740,10 +740,92 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
-    unsafe extern "C" fn io_read_file(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+    unsafe extern "C" fn str_slice(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let str_id = vm.stack.reg(0).as_obj();
         let str = vm.objs.get(str_id).as_str();
 
+        let min = vm.stack.reg(1).as_int();
+        let max = vm.stack.reg(2).as_int();
+
+        let sliced = 
+            str.chars()
+            .skip(min as usize)
+            .take((max - min) as usize)
+            .collect::<String>();
+
+        let obj = vm.new_obj(ObjectData::String(sliced.into()));
+
+        *ret = match obj {
+            Ok(v) => v,
+            Err(e) => {
+                *status = Status::err(e);
+                return;
+            },
+        }
+    }
+
+
+    unsafe extern "C" fn str_split_once(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let str_id = vm.stack.reg(0).as_obj();
+        let str = vm.objs.get(str_id).as_str();
+
+        let del_id = vm.stack.reg(1).as_obj();
+        let del = vm.objs.get(del_id).as_str();
+
+        let sliced = str.split_once(del);
+
+        let fields =
+        if let Some((s1, s2)) = sliced {
+            let s1 = s1.into();
+            let s2 = s2.into();
+
+            let s1 = match vm.new_obj(ObjectData::String(s1)) {
+                Ok(v) => v,
+                Err(v) => {
+                    *status = Status::err(v);
+                    return;
+                },
+            };
+
+
+            let s2 = match vm.new_obj(ObjectData::String(s2)) {
+                Ok(v) => v,
+                Err(v) => {
+                    *status = Status::err(v);
+                    return;
+                },
+            };
+
+
+            let tuple = match vm.new_obj(ObjectData::Struct { fields: vec![s1, s2] }) {
+                Ok(v) => v,
+                Err(v) => {
+                    *status = Status::err(v);
+                    return;
+                },
+            };
+
+            vec![Reg::new_int(0), tuple]
+        } else {
+            vec![Reg::new_int(1), Reg::new_unit()]
+        };
+
+
+        let obj = vm.new_obj(ObjectData::Struct { fields });
+
+        *ret = match obj {
+            Ok(v) => v,
+            Err(e) => {
+                *status = Status::err(e);
+                return;
+            },
+        }
+    }
+
+
+    unsafe extern "C" fn io_read_file(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let str_id = vm.stack.reg(0).as_obj();
+        let str = vm.objs.get(str_id).as_str();
 
         let path = std::fs::read_to_string(str).unwrap();
 
@@ -780,5 +862,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("str_split_at".to_string(), str_split_at);
     hosts.insert("str_parse".to_string(), str_parse);
     hosts.insert("str_len".to_string(), str_len);
+    hosts.insert("str_slice".to_string(), str_slice);
+    hosts.insert("str_split_once".to_string(), str_split_once);
     hosts.insert("panic".to_string(), panic);
 }
