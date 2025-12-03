@@ -1,0 +1,3 @@
+[packages]
+test_std = { commit = "8c3c14580f775c9b310b5cb64a3fa366bd07b391" }
+test<>std = { commit = "8c3c14580f775c9b310b5cb64a3fa366bd07b391" }

@@ -1,19 +1,12 @@
 pub mod raylib;
 
 use std::collections::HashMap;
-use std::ffi::CString;
-use std::ffi::OsStr;
-use std::path::Path;
-use std::sync::Mutex;
+use std::fs;
 
-use common::string_map::StringIndex;
-use errors::ParserError;
+use colourful::ColourBrush;
 use git2::Repository;
 pub use lexer::lex;
 use parser::nodes::decl::Decl;
-use parser::nodes::decl::DeclId;
-use parser::nodes::expr::Block;
-use parser::nodes::NodeId;
 use parser::nodes::AST;
 pub use parser::parse;
 pub use parser::nodes;
@@ -33,15 +26,43 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: FileData) -> (Vec<u8>,
     let mut global = AST::new(&arena);
     let mut lex_errors = vec![];
     let mut parse_errors = vec![];
+    let mut build_lock = BuildLock::load();
 
-    let mut stack = vec![(None, files.clone())];
+    let mut stack = vec![(None, files.clone(), 0)];
     let mut source_offset = 0;
     let mut counter = 0;
 
     let mut root = None;
 
     let mut files = vec![];
-    while let Some((decl, f)) = stack.pop() {
+    while let Some((decl, f, depth)) = stack.pop() {
+        if depth != 0 {
+            let name = string_map.get(f.name());
+
+            let name =
+            if name.starts_with("artifacts/") {
+                &name["artifacts/".len()..]
+            } else { &name };
+
+            println!(
+                "{}{}{} {} {}.mar", 
+                "|".dark_grey(), 
+                "-".repeat(depth).dark_grey(), 
+                ">".dark_grey(), 
+                "compiling:".green().bold(),
+                name.replace("<>", "::")
+            );
+
+
+        } else {
+            println!(
+                "{} {}.mar",
+                "compiling:".green().bold(),
+                string_map.get(f.name())
+            );
+        }
+
+
         let (tokens, le) = DropTimer::with_timer("tokenisation", || {
             let tokens = lex(&f, string_map, source_offset);
             tokens
@@ -54,21 +75,135 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: FileData) -> (Vec<u8>,
 
         for (_, i) in imports {
             let source = global.range(i);
-            let Decl::ImportFile { name, .. }= global.decl(i)
-            else { unreachable!() };
+            match global.decl(i) {
+                Decl::ImportFile { name, .. } => {
+                    let path = string_map.get(f.name());
+                    let path = format_in!(&arena, "{}/{}.mar", path, string_map.get(name));
+                    let Ok(file) = FileData::open(&*path, string_map)
+                    else {
+                        let path_str = string_map.insert(&path);
+                        let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_str });
+                        global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                        
+                        continue;
+                    };
 
-            let path = string_map.get(f.name());
-            let path = format_in!(&arena, "{}/{}.mar", path, string_map.get(name));
-            let Ok(file) = FileData::open(&*path, string_map)
-            else {
-                let path_str = string_map.insert(&path);
-                let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_str });
-                global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                
-                continue;
-            };
+                    stack.push((Some((i, name)), file, depth+1));
+                }
 
-            stack.push((Some((i, name)), file));
+
+                Decl::ImportRepo { alias, repo } => {
+                    let repo_str = string_map.get(repo);
+                    let (url, commit) = if repo_str.contains('@') {
+                        let parts: Vec<_> = repo_str.splitn(2, '@').collect();
+                        (parts[0], Some(parts[1]))
+                    } else {
+                        (repo_str, None)
+                    };
+
+
+
+                    let local_path = string_map.get(f.name())
+                        .replace("<>", "<_>")
+                        .replace("/", "<>");
+                    let alias_str = string_map.get(alias);
+                    let alias_str = format!("{local_path}<>{alias_str}");
+
+                    // Convert github/owner/repo format to URL
+                    let url = if url.starts_with("github/") {
+                        let parts: Vec<&str> = url.split('/').collect();
+                        if parts.len() == 3 {
+                            format!("https://github.com/{}/{}.git", parts[1], parts[2])
+                        } else {
+                            let err = pe.push(parser::errors::Error::FileDoesntExist { 
+                                source, 
+                                path: repo 
+                            });
+                            global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                            continue;
+                        }
+                    } else {
+                        url.to_string()
+                    };
+
+                    let artifacts_dir = "artifacts";
+                    if !std::fs::exists(artifacts_dir).unwrap_or(false) {
+                        std::fs::create_dir(artifacts_dir).unwrap();
+                    }
+
+                    let local_path = format!("{}/{}", artifacts_dir, alias_str);
+
+                    if !std::fs::exists(&local_path).unwrap_or(false) {
+                        println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
+
+                        let repo =
+                        match Repository::clone(&url, &local_path) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                let err = pe.push(parser::errors::Error::FileDoesntExist { 
+                                    source, 
+                                    path: repo 
+                                });
+                                global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                                continue;
+                            },
+                        };
+
+
+                        let target_commit =
+                        if let Some(commit) = commit {
+                            commit.to_string()
+                        } else if let Some(lock) = build_lock.get(&alias_str) {
+                            lock
+                        } else {
+                            // Get HEAD commit
+                            match repo.head() {
+                                Ok(head) => {
+                                    head.target()
+                                        .map(|oid| oid.to_string())
+                                        .unwrap_or_else(|| "HEAD".to_string())
+                                }
+                                Err(_) => "HEAD".to_string(),
+                            }
+                        };
+
+                        // Checkout the commit
+                        if let Ok(obj) = repo.revparse_single(&target_commit) {
+                            let _ = repo.checkout_tree(&obj, None);
+                        }
+
+
+                        // Update lock file
+                        build_lock.set(alias_str.to_string(), target_commit);
+
+                    } else if let Some(commit) = commit {
+                        // If repo exists but user specified a commit, checkout it
+                        if let Ok(repo) = Repository::open(&local_path) {
+                            if let Ok(obj) = repo.revparse_single(commit) {
+                                let _ = repo.checkout_tree(&obj, None);
+                            }
+                            build_lock.set(alias_str.to_string(), commit.to_string());
+                        }
+                    }
+
+                    // Load lib.mar from the cloned repo
+                    let lib_path = format!("{}/lib.mar", local_path);
+                    let Ok(file) = FileData::open(&lib_path, string_map)
+                    else {
+                        let lib_path_str = string_map.insert(&lib_path);
+                        let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: lib_path_str });
+                        global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                        
+                        continue;
+                    };
+
+                    stack.push((Some((i, alias)), file, depth+1));
+                }
+
+
+                _ => unreachable!()
+            }
+
         }
 
         if let Some((decl, name)) = decl {
@@ -142,7 +277,55 @@ pub fn run<'str>(string_map: &mut StringMap<'str>, files: FileData) -> (Vec<u8>,
         tests.push(sema.string_map.get(name).to_string());
     }
 
+    // Save the build lock file
+    let _ = build_lock.save();
+
     (src, tests)
+}
+
+
+struct BuildLock {
+    packages: HashMap<String, String>, // alias -> commit hash
+}
+
+impl BuildLock {
+    fn load() -> Self {
+        match fs::read_to_string("build.lock") {
+            Ok(content) => {
+                match toml::from_str::<toml::Table>(&content) {
+                    Ok(table) => {
+                        let mut packages = HashMap::new();
+                        if let Some(pkgs) = table.get("packages").and_then(|v| v.as_table()) {
+                            for (alias, entry) in pkgs {
+                                if let Some(commit) = entry.get("commit").and_then(|v| v.as_str()) {
+                                    packages.insert(alias.to_string(), commit.to_string());
+                                }
+                            }
+                        }
+                        BuildLock { packages }
+                    }
+                    Err(_) => BuildLock { packages: HashMap::new() },
+                }
+            }
+            Err(_) => BuildLock { packages: HashMap::new() },
+        }
+    }
+
+    fn save(&self) -> std::io::Result<()> {
+        let mut content = String::from("[packages]\n");
+        for (alias, commit) in &self.packages {
+            content.push_str(&format!("{} = {{ commit = \"{}\" }}\n", alias, commit));
+        }
+        fs::write("build.lock", content)
+    }
+
+    fn get(&self, alias: &str) -> Option<String> {
+        self.packages.get(alias).cloned()
+    }
+
+    fn set(&mut self, alias: String, commit: String) {
+        self.packages.insert(alias, commit);
+    }
 }
 
 

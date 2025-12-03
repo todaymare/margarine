@@ -1,41 +1,9 @@
-//extern "https://github.com/todaymare/margarine-std" as std
+extern "https://github.com/todaymare/margarine-std" as std
 
 mod something;
 
-mod ffi {
-    extern {
-        fn print_raw<T>(val: T, ty_id: int)
-
-        fn new_any<T>(value: T, type_id: int): any 
-        fn downcast_any<T>(ptr: any, target: int): Option<T>
-
-        fn int_to_str(value: int): str
-        fn float_to_str(value: float): str
-    }
-}
-
-
-fn print<T>(val: T) {
-    ffi::print_raw(val, type_id::<T>())
-}
-
-
-type any
-
-
-impl any {
-    fn from<T>(value: T): any {
-        ffi::new_any(value, type_id::<T>())
-    }
-
-
-    fn cast<T>(self): Option<T> {
-        ffi::downcast_any::<T>(self, type_id::<T>())
-    }
-}
-
 
 fn main() {
-    print(something::foo());
-    print(something::hey::random_number());
+    std::print(something::foo());
+    std::print(something::hey::random_number());
 }

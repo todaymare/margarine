@@ -50,6 +50,11 @@ pub enum Decl<'a> {
         body: &'a [NodeId],
     },
 
+    ImportRepo {
+        alias: StringIndex,
+        repo: StringIndex,
+    },
+
     Extern {
         functions: &'a [ExternFunction<'a>],
     },
