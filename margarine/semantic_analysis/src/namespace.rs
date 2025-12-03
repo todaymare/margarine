@@ -11,7 +11,6 @@ define_key!(pub NamespaceId(u32));
 #[derive(Debug)]
 pub struct Namespace {
     symbols: HashMap<StringIndex, Result<SymbolId, Error>>,
-    namespaces: HashMap<StringIndex, NamespaceId>,
     pub path: StringIndex,
 }
 
@@ -53,7 +52,6 @@ impl Namespace {
     pub fn new(path: StringIndex) -> Self {
         Self {
             symbols: HashMap::new(),
-            namespaces: HashMap::new(),
             path,
         }
     }
@@ -76,11 +74,6 @@ impl Namespace {
     }
 
 
-    pub fn add_ns(&mut self, name: StringIndex, ns: NamespaceId) {
-        let old_sym = self.namespaces.insert(name, ns);
-        assert!(old_sym.is_none());
-    }
-
     pub fn get_sym(&self, name: StringIndex) -> Option<Result<SymbolId, Error>> {
         if let Some(v) = self.symbols.get(&name).cloned() {
             return Some(v)
@@ -89,18 +82,10 @@ impl Namespace {
         None
     }
 
-
-    pub fn get_ns(&self, name: StringIndex) -> Option<NamespaceId> {
-        self.namespaces.get(&name).copied()
-    }
-
     pub fn syms(&self) -> &HashMap<StringIndex, Result<SymbolId, Error>> {
         &self.symbols
     }
 
-    pub fn nss(&self) -> &HashMap<StringIndex, NamespaceId> {
-        &self.namespaces
-    }
 }
 
 

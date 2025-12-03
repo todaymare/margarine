@@ -1,0 +1,18 @@
+extern "https://github.com/todaymare/margarine-std" as std;
+use std::*;
+
+
+mod io {
+}
+
+
+fn main() {
+    println("Guess the number:");
+    println("Please input your guess.");
+
+    var guess = io::read_line()!;
+
+    print("You guessed: ");
+    println(guess);
+}
+

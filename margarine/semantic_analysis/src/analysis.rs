@@ -90,6 +90,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                             if sym.is_ok() { ns.set_err_sym(f.name(), err.clone()) }
 
                             self.error(*n, err);
+
                             ns = self.namespaces.get_ns_mut(ns_id);
                             continue
                         }
@@ -108,20 +109,20 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                 Decl::Module { name, header, body, .. } => {
-                    if let Some(ns) = ns.get_ns(name) {
-                        self.error(*n, Error::NameIsAlreadyDefined {
-                            source: header, name });
-
-                        self.collect_names(path, ns, &*body, gen_count);
-                        continue
-                    }
-
                     let path = self.string_map.concat(path, name);
 
                     let module_ns = Namespace::new(path);
                     let module_ns = self.namespaces.push(module_ns);
 
-                    self.namespaces.get_ns_mut(ns_id).add_ns(name, module_ns);
+                    let sym = self.syms.pending(&mut self.namespaces, path, 0);
+                    self.syms.add_sym(sym, Symbol::new(name, &[], SymbolKind::Namespace));
+
+                    if let Err(e) = self.namespaces.get_ns_mut(ns_id).add_sym(header, name, sym) {
+                        self.error(*n, e);
+                        continue;
+                    }
+
+
                     self.collect_names(path, module_ns, &*body, gen_count);
                 },
 
@@ -142,8 +143,19 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             let decl = self.ast.decl(*decl);
             match decl {
                 Decl::Module { name, body, user_defined, .. } => {
-                    let module_ns = self.namespaces.get_ns(ns_id).get_ns(name).unwrap();
-                    let scope = Scope::new(if !user_defined { self.base_scope } else { scope }, ScopeKind::ImplicitNamespace(module_ns));
+                    let module_ns = self.namespaces.get_ns(ns_id);
+                    let Some(Ok(module_ns)) = module_ns.get_sym(name)
+                    else { continue; };
+
+                    let module_ns = self.syms.as_ns(module_ns);
+
+                    let scope = Scope::new(
+                        if !user_defined { self.base_scope }
+                        else { scope }, 
+
+                        ScopeKind::ImplicitNamespace(module_ns),
+                    );
+
                     let scope = self.scopes.push(scope);
                     self.collect_impls(path, scope, module_ns, &*body);
                 }
@@ -192,7 +204,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             match self.ast.decl(id) {
                 Decl::Module { name, body, .. } => {
-                    let module_ns = self.namespaces.get_ns(ns_id).get_ns(name).unwrap();
+                    let module_ns = self.namespaces.get_ns(ns_id);
+                    let Some(Ok(module_ns)) = module_ns.get_sym(name)
+                    else { continue; };
+
+                    let module_ns = self.syms.as_ns(module_ns);
+
                     let scope = Scope::new(Some(scope_id), ScopeKind::ImplicitNamespace(module_ns));
                     let scope = self.scopes.push(scope);
                     self.collect_uses(scope, module_ns, &body);
@@ -228,12 +245,18 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     fn collect_use_item(&mut self, node: NodeId, scope: Scope, ns_id: NamespaceId, item: UseItem) {
         match item.kind() {
             UseItemKind::List { list } => {
-                let Some((import_ns, _)) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms)
+                let Some(import_ns) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces)
                 else {
                     self.error(node, Error::NamespaceNotFound { source: item.range(), namespace: item.name() });
                     return;
                 };
 
+                let Ok(import_ns) = import_ns
+                // @todo: we should probably recursively go and mark everything imported as
+                // "errored" as well
+                else { return; };
+
+                let import_ns = self.syms.sym_ns(import_ns);
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(import_ns));
                 for ui in list {
                     self.collect_use_item(node, scope, ns_id, *ui);
@@ -257,29 +280,23 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 };
 
 
-                if let Some((import_ns, _)) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms) {
-                    let ns = self.namespaces.get_ns_mut(ns_id);
-                    if ns.get_ns(item.name()).is_some() {
-                        Self::error_ex(&mut self.errors, &mut self.type_info,
-                                       node, Error::NameIsAlreadyDefined { source: item.range(), name: item.name() });
-                        return;
-                    }
-
-                    ns.add_ns(item.name(), import_ns);
-                    return;
-                };
-
-
                 self.error(node, Error::NamespaceNotFound { source: item.range(), namespace: item.name() });
             },
 
 
             UseItemKind::All => {
-                let Some((import_ns, _)) = scope.find_ns(item.name(), &self.scopes, &self.namespaces, &self.syms)
+                let Some(import_ns) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces)
                 else {
                     self.error(node, Error::NamespaceNotFound { source: item.range(), namespace: item.name() });
                     return;
                 };
+
+                let Ok(import_ns) = import_ns
+                // @todo: we should probably recursively go and mark everything imported as
+                // "errored" as well
+                else { return; };
+
+                let import_ns = self.syms.sym_ns(import_ns);
 
                 let (ns, import_ns) = self.namespaces.get_double(ns_id, import_ns);
 
@@ -294,9 +311,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     }
                 }
 
-                for n in import_ns.nss() {
-                    ns.add_ns(*n.0, *n.1)
-                }
             },
         };
 
@@ -533,9 +547,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                 Decl::Module { name, body, user_defined, .. } => {
+
                     let ns = self.namespaces.get_ns(ns);
-                    let Some(module_ns) = ns.get_ns(name)
-                    else { continue };
+                    let Some(Ok(module_ns)) = ns.get_sym(name)
+                    else { continue; };
+
+                    let module_ns = self.syms.as_ns(module_ns);
 
                     let scope = self.scopes.push(self.scopes.get(scope));
                     let scope = Scope::new(if !user_defined { self.base_scope } else { scope }, ScopeKind::ImplicitNamespace(module_ns));
@@ -702,9 +719,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             Decl::Module { name, body, user_defined, .. } => {
                 let ns = self.namespaces.get_ns(ns);
-                let Some(module_ns) = ns.get_ns(name)
-                else { return };
-                
+
+                let Some(Ok(module_ns)) = ns.get_sym(name)
+                else { return; };
+
+                let module_ns = self.syms.as_ns(module_ns);
+
+
                 let scope = Scope::new(if !user_defined { self.base_scope } else { *scope }, ScopeKind::ImplicitNamespace(module_ns));
                 let mut scope = self.scopes.push(scope);
 
@@ -1600,13 +1621,27 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             Expr::WithinNamespace { namespace, namespace_source, action  } => {
-                let ns = self.scopes.get(scope).find_ns(namespace, &self.scopes, &self.namespaces, &self.syms);
+                let ns = self.scopes.get(scope).find_sym(
+                    namespace, &self.scopes, 
+                    &mut self.syms, &self.namespaces
+                );
+
                 let Some(ns) = ns
-                else { return Err(Error::NamespaceNotFound { source: namespace_source, namespace }) };
+                else { 
+                    return Err(Error::NamespaceNotFound { 
+                        source: namespace_source, 
+                        namespace 
+                    }) 
+                };
 
-                if ns.1 { return Err(Error::Bypass) }
+                let Ok(ns) = ns
+                else {
+                    return Err(Error::Bypass);
+                };
 
-                let scope = Scope::new(scope, ScopeKind::ImplicitNamespace(ns.0));
+                let ns = self.syms.sym_ns(ns);
+
+                let scope = Scope::new(scope, ScopeKind::ImplicitNamespace(ns));
                 let scope = self.scopes.push(scope);
 
                 self.expr(path, scope, action)

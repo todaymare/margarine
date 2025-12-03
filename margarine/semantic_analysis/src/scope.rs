@@ -84,29 +84,6 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_ns(self, name: StringIndex, scope_map: &ScopeMap, namespaces: &NamespaceMap, symbols: &SymbolMap) -> Option<(NamespaceId, bool)> {
-        self.over(scope_map, |scope| {
-            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
-                let ns = namespaces.get_ns(ns);
-                if let Some(ns) = ns.get_ns(name) {
-                    return Some((ns, false))
-                }
-
-                if let Some(ty) = ns.get_sym(name) {
-                    let ns = match ty {
-                        Ok(v) => (symbols.sym_ns(v), false),
-                        Err(_) => (symbols.sym_ns(SymbolId::ERR), true),
-                    };
-
-                    return Some(ns)
-                }
-            }
-
-            None
-        })
-    }
-
-
     pub fn find_var(
         self,
         name: StringIndex,
