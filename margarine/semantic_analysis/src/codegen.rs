@@ -36,7 +36,7 @@ struct Function<'a> {
     ret: u32,
 
     kind: FunctionKind<'a>,
-    _error: Option<ErrorId>,
+    error: Option<ErrorId>,
 
     cached: bool,
 }
@@ -338,7 +338,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     name: self.string_map.insert(self.string_map.get(path)),
                     index: self.next_func_id(),
                     kind: FunctionKind::Extern(path),
-                    _error: self.ty_info.decl(sym_func.decl().unwrap()),
+                    error: self.ty_info.decl(sym_func.decl().unwrap()),
                     args,
                     ret: ret.0,
                     cached: sym_func.cached,
@@ -354,6 +354,36 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 else { unreachable!() };
 
                 let err = self.ty_info.decl(sym_func.decl().unwrap());
+
+                if let Some(err) = err {
+                    let block = Block {
+                        index: BlockIndex(0),
+                        bytecode: Builder::new(),
+                        terminator: BlockTerminator::Err(err),
+                    };
+
+
+                    let func = Function {
+                        name: self.string_map.insert(ty.display(self.string_map, self.syms)),
+                        index: self.next_func_id(),
+                        kind: FunctionKind::Code {
+                            local_count: 0,
+                            entry: BlockIndex(0),
+                            blocks: vec![block],
+                        },
+                        error: Some(err),
+                        ret: ret.0,
+                        args,
+                        cached: sym_func.cached,
+
+                    };
+
+                    assert!(self.funcs.insert(hash, func).is_none());
+                    return Ok(self.funcs.get(&hash).unwrap());
+                }
+
+                assert!(err.is_none());
+
                 let func = Function {
                     name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     index: self.next_func_id(),
@@ -362,7 +392,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         entry: BlockIndex(0),
                         blocks: vec![],
                     },
-                    _error: err,
+                    error: None,
                     ret: ret.0,
                     args,
                     cached: sym_func.cached,
@@ -443,7 +473,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         blocks: vec![block],
                     },
 
-                    _error: None,
+                    error: None,
                     args,
                     ret: ret.0,
                     cached: false,
@@ -488,7 +518,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                             terminator: BlockTerminator::Ret,
                         }]
                     },
-                    _error: err,
+                    error: err,
                     args,
                     ret: ret.0,
                     cached: false,
@@ -1218,7 +1248,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                             blocks: env.blocks,
                         },
 
-                        _error: None,
+                        error: None,
                         args: vec![0; argc],
                         ret: self.ty_info.expr(body).unwrap().sym(self.syms).unwrap().0,
                         cached: false,
@@ -1623,24 +1653,6 @@ fn egenerate_error<'buf>(env: &mut Env<'buf>, builder: &mut Block<'buf>, err: Er
 
     core::mem::swap(builder, &mut cont_block);
     env.blocks.push(cont_block);
-    
 
-    /*
-    match err {
-        errors::ErrorId::Lexer(error) => {
-            builder.err(0, error.0, error.1.inner());
-        },
-
-
-        errors::ErrorId::Parser(error) => {
-            builder.err(1, error.0, error.1.inner());
-
-        },
-
-
-        errors::ErrorId::Sema(sema_error) => {
-            builder.err(2, 0, sema_error.inner());
-        },
-    }*/
 }
 
