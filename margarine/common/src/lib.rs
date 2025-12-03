@@ -38,6 +38,7 @@ impl Drop for DropTimer<'_> {
     fn drop(&mut self) {
         #[cfg(not(feature = "fuzzer"))]
         #[cfg(debug_assertions)]
+        #[cfg(false)]
         println!("droptimer: ran '{}' in {:?}", self.message, self.time.elapsed());
     }
 }

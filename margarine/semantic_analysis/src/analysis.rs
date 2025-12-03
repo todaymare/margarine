@@ -607,8 +607,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             Decl::Struct { .. } => (),
             Decl::Enum { .. } => (),
             Decl::OpaqueType { .. } => (),
-            Decl::ImportFile { .. } => todo!(),
-            Decl::Error(_) => (),
+            Decl::ImportFile { .. } => unreachable!(),
+            Decl::ImportRepo { .. } => unreachable!(),
+            Decl::Error(_) => unreachable!(),
 
             
             Decl::Function { sig, body, .. } => {

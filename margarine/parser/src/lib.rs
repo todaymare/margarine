@@ -779,6 +779,28 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
         self.advance();
 
+        if let TokenKind::Literal(Literal::String(repo)) = self.current_kind() {
+            self.advance();
+
+            self.expect(TokenKind::Keyword(Keyword::As))?;
+            self.advance();
+
+            let alias = self.expect_identifier()?;
+
+
+            let decl = self.ast.add_decl(
+                Decl::ImportRepo { 
+                    alias,
+                    repo
+                }, 
+                SourceRange::new(start, self.current_range().end())
+            );
+            
+            self.imports.push(decl);
+
+            return Ok(decl);
+        }
+
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
 
