@@ -1,15 +1,6 @@
-struct Foo<A> {}
+extern "https://github.com/todaymare/margarine-std" as std;
 
-
-impl<A> Foo<A> {
-
-fn test<T>(self): Option<T> {
-    none()
-}
-
-}
-
-
-fn main() {
-    Foo {}.test();
+@test
+fn test() {
+    std::assert(true, "hey");
 }

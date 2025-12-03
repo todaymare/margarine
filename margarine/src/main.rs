@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write};
 
+use colourful::ColourBrush;
 use common::{source::FileData, string_map::StringMap, DropTimer};
 use margarine::stdlib;
 use runtime::VM;
@@ -39,15 +40,14 @@ fn main() {
 
 
         "test" => {
-            /*
-            let Some((code, tests)) = compile_curr_project()
-            else { return };
-
-            dbg!(&tests);
+            let path = args.next().unwrap_or_else(|| ".".to_string());
+            let arena = Arena::new();
+            let mut sm = StringMap::new(&arena);
+            let files = FileData::open(path, &mut sm).unwrap();
+            let (code, tests) = margarine::run(&mut sm, files);
 
             let mut hosts : HashMap<String, _>= HashMap::new();
             stdlib(&mut hosts);
-            raylib(&mut hosts);
 
             let mut vm = VM::new(hosts, &*code).unwrap();
             {
@@ -59,12 +59,13 @@ fn main() {
 
                 let mut fails = String::new();
                 for t in tests {
-                    let result = vm.run(&t);
+                    let result = vm.run(&t, &[]);
 
-                    println!("test {t} .. {}", if result.as_err().is_some() { "FAILED".red() } else { "ok".green() });
+                    println!("test '{t}' .. {}", if result.as_err().is_some() { "FAILED".red() } else { "ok".green() }).bold();
 
                     if let Some(err) = result.as_err() {
-                        writeln!(&mut fails, "failed '{t}':\n{}", err.to_string_lossy()).unwrap();
+                        let err_str = err.to_str().unwrap_or("unknown error");
+                        writeln!(&mut fails, "failed '{t}':\n{}", err_str).unwrap();
                     }
 
                     vm.reset();
@@ -79,7 +80,6 @@ fn main() {
                 }
 
             }
-            */
             return;
         },
 
