@@ -91,3 +91,9 @@ impl<T> Iter<T> {
         }
     }
 }
+
+
+impl Iter<int> {
+    fn sum(self): int {
+    }
+}
