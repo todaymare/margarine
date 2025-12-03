@@ -1,0 +1,31 @@
+use std::assert;
+
+@test
+fn test_basic_assert_true() {
+    assert(true, "true should pass");
+}
+
+@test
+fn test_basic_assert_false_value() {
+    var x = 5;
+    var y = 5;
+    assert(x == y, "equality check should pass");
+}
+
+@test
+fn test_basic_arithmetic() {
+    var result = 2 + 3;
+    assert(result == 5, "2 + 3 should equal 5");
+}
+
+@test
+fn test_basic_subtraction() {
+    var result = 10 - 4;
+    assert(result == 6, "10 - 4 should equal 6");
+}
+
+@test
+fn test_basic_multiplication() {
+    var result = 3 * 4;
+    assert(result == 12, "3 * 4 should equal 12");
+}

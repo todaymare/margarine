@@ -1,0 +1,557 @@
+use std::assert;
+
+// ============================================================================
+// SECTION 1: BASIC OPERATIONS (20 tests)
+// ============================================================================
+
+@test
+fn test_add_5_3() {
+    assert(5 + 3 == 8, "5 + 3 should equal 8");
+}
+
+@test
+fn test_add_100_200() {
+    assert(100 + 200 == 300, "100 + 200 should equal 300");
+}
+
+@test
+fn test_add_1_1() {
+    assert(1 + 1 == 2, "1 + 1 should equal 2");
+}
+
+@test
+fn test_add_large() {
+    assert(999999 + 1 == 1000000, "999999 + 1 should equal 1000000");
+}
+
+@test
+fn test_sub_10_3() {
+    assert(10 - 3 == 7, "10 - 3 should equal 7");
+}
+
+@test
+fn test_sub_100_50() {
+    assert(100 - 50 == 50, "100 - 50 should equal 50");
+}
+
+@test
+fn test_sub_5_5() {
+    assert(5 - 5 == 0, "5 - 5 should equal 0");
+}
+
+@test
+fn test_sub_large() {
+    assert(1000000 - 999999 == 1, "1000000 - 999999 should equal 1");
+}
+
+@test
+fn test_mul_3_4() {
+    assert(3 * 4 == 12, "3 * 4 should equal 12");
+}
+
+@test
+fn test_mul_6_7() {
+    assert(6 * 7 == 42, "6 * 7 should equal 42");
+}
+
+@test
+fn test_mul_10_10() {
+    assert(10 * 10 == 100, "10 * 10 should equal 100");
+}
+
+@test
+fn test_mul_15_20() {
+    assert(15 * 20 == 300, "15 * 20 should equal 300");
+}
+
+@test
+fn test_div_20_4() {
+    assert(20 / 4 == 5, "20 / 4 should equal 5");
+}
+
+@test
+fn test_div_100_5() {
+    assert(100 / 5 == 20, "100 / 5 should equal 20");
+}
+
+@test
+fn test_div_12_3() {
+    assert(12 / 3 == 4, "12 / 3 should equal 4");
+}
+
+@test
+fn test_div_same() {
+    assert(7 / 7 == 1, "7 / 7 should equal 1");
+}
+
+@test
+fn test_mod_10_3() {
+    assert(10 % 3 == 1, "10 % 3 should equal 1");
+}
+
+@test
+fn test_mod_17_5() {
+    assert(17 % 5 == 2, "17 % 5 should equal 2");
+}
+
+@test
+fn test_mod_20_4() {
+    assert(20 % 4 == 0, "20 % 4 should equal 0");
+}
+
+@test
+fn test_mod_15_7() {
+    assert(15 % 7 == 1, "15 % 7 should equal 1");
+}
+
+// ============================================================================
+// SECTION 2: NEGATIVES AND ZERO (20 tests)
+// ============================================================================
+
+@test
+fn test_neg_add_1() {
+    assert(-5 + 10 == 5, "-5 + 10 should equal 5");
+}
+
+@test
+fn test_neg_add_2() {
+    assert(-10 + (-5) == -15, "-10 + (-5) should equal -15");
+}
+
+@test
+fn test_neg_add_3() {
+    assert(20 + (-8) == 12, "20 + (-8) should equal 12");
+}
+
+@test
+fn test_neg_sub_1() {
+    assert(-5 - 10 == -15, "-5 - 10 should equal -15");
+}
+
+@test
+fn test_neg_sub_2() {
+    assert(10 - (-5) == 15, "10 - (-5) should equal 15");
+}
+
+@test
+fn test_neg_sub_3() {
+    assert(-10 - (-5) == -5, "-10 - (-5) should equal -5");
+}
+
+@test
+fn test_neg_mul_1() {
+    assert(-5 * 3 == -15, "-5 * 3 should equal -15");
+}
+
+@test
+fn test_neg_mul_2() {
+    assert(5 * (-3) == -15, "5 * (-3) should equal -15");
+}
+
+@test
+fn test_neg_mul_3() {
+    assert(-5 * (-3) == 15, "-5 * (-3) should equal 15");
+}
+
+@test
+fn test_neg_div_1() {
+    assert(-20 / 4 == -5, "-20 / 4 should equal -5");
+}
+
+@test
+fn test_neg_div_2() {
+    assert(20 / (-4) == -5, "20 / (-4) should equal -5");
+}
+
+@test
+fn test_neg_div_3() {
+    assert(-20 / (-4) == 5, "-20 / (-4) should equal 5");
+}
+
+@test
+fn test_zero_add() {
+    assert(0 + 5 == 5, "0 + 5 should equal 5");
+}
+
+@test
+fn test_zero_sub() {
+    assert(0 - 5 == -5, "0 - 5 should equal -5");
+}
+
+@test
+fn test_zero_mul() {
+    assert(0 * 100 == 0, "0 * 100 should equal 0");
+}
+
+@test
+fn test_zero_div() {
+    assert(0 / 5 == 0, "0 / 5 should equal 0");
+}
+
+@test
+fn test_one_mul() {
+    assert(1 * 42 == 42, "1 * 42 should equal 42");
+}
+
+@test
+fn test_one_div() {
+    assert(42 / 1 == 42, "42 / 1 should equal 42");
+}
+
+// ============================================================================
+// SECTION 3: OPERATOR PRECEDENCE (20 tests)
+// ============================================================================
+
+@test
+fn test_prec_mul_add() {
+    assert(2 + 3 * 4 == 14, "2 + 3 * 4 should equal 14");
+}
+
+@test
+fn test_prec_div_add() {
+    assert(2 + 10 / 2 == 7, "2 + 10 / 2 should equal 7");
+}
+
+@test
+fn test_prec_mul_sub() {
+    assert(10 - 2 * 3 == 4, "10 - 2 * 3 should equal 4");
+}
+
+@test
+fn test_prec_paren_1() {
+    assert((2 + 3) * 4 == 20, "(2 + 3) * 4 should equal 20");
+}
+
+@test
+fn test_prec_paren_2() {
+    assert(2 * (3 + 4) == 14, "2 * (3 + 4) should equal 14");
+}
+
+@test
+fn test_prec_paren_3() {
+    assert((10 - 2) * 3 == 24, "(10 - 2) * 3 should equal 24");
+}
+
+@test
+fn test_prec_multi_1() {
+    assert(2 + 3 + 4 == 9, "2 + 3 + 4 should equal 9");
+}
+
+@test
+fn test_prec_multi_2() {
+    assert(2 * 3 * 4 == 24, "2 * 3 * 4 should equal 24");
+}
+
+@test
+fn test_prec_multi_3() {
+    assert(20 / 4 / 2 == 2, "20 / 4 / 2 should equal 2");
+}
+
+@test
+fn test_prec_mixed_1() {
+    assert(2 + 3 * 4 - 5 == 9, "2 + 3 * 4 - 5 should equal 9");
+}
+
+@test
+fn test_prec_mixed_2() {
+    assert(10 / 2 + 3 == 8, "10 / 2 + 3 should equal 8");
+}
+
+@test
+fn test_prec_mixed_3() {
+    assert(20 - 10 / 2 == 15, "20 - 10 / 2 should equal 15");
+}
+
+@test
+fn test_prec_complex_1() {
+    assert((5 + 3) * (2 + 1) == 24, "(5 + 3) * (2 + 1) should equal 24");
+}
+
+@test
+fn test_prec_complex_2() {
+    assert((10 / 2) * (3 + 1) == 20, "(10 / 2) * (3 + 1) should equal 20");
+}
+
+@test
+fn test_prec_complex_3() {
+    assert(((5 + 3) * 2) / 2 == 8, "((5 + 3) * 2) / 2 should equal 8");
+}
+
+@test
+fn test_prec_deep() {
+    assert(((2 + 3) * (4 + 5)) / 9 == 5, "((2 + 3) * (4 + 5)) / 9 should equal 5");
+}
+
+@test
+fn test_prec_assoc_left() {
+    assert(20 - 10 - 5 == 5, "20 - 10 - 5 should equal 5");
+}
+
+// ============================================================================
+// SECTION 4: COMPOUND ASSIGNMENTS (20 tests)
+// ============================================================================
+
+@test
+fn test_comp_add_1() {
+    var x = 5;
+    x += 3;
+    assert(x == 8, "x += 3 when x=5 should make x=8");
+}
+
+@test
+fn test_comp_add_2() {
+    var x = 10;
+    x += 20;
+    assert(x == 30, "x += 20 when x=10 should make x=30");
+}
+
+@test
+fn test_comp_add_3() {
+    var x = -5;
+    x += 10;
+    assert(x == 5, "x += 10 when x=-5 should make x=5");
+}
+
+@test
+fn test_comp_sub_1() {
+    var x = 10;
+    x -= 3;
+    assert(x == 7, "x -= 3 when x=10 should make x=7");
+}
+
+@test
+fn test_comp_sub_2() {
+    var x = 50;
+    x -= 25;
+    assert(x == 25, "x -= 25 when x=50 should make x=25");
+}
+
+@test
+fn test_comp_sub_3() {
+    var x = 0;
+    x -= 5;
+    assert(x == -5, "x -= 5 when x=0 should make x=-5");
+}
+
+@test
+fn test_comp_mul_1() {
+    var x = 5;
+    x *= 3;
+    assert(x == 15, "x *= 3 when x=5 should make x=15");
+}
+
+@test
+fn test_comp_mul_2() {
+    var x = 10;
+    x *= 10;
+    assert(x == 100, "x *= 10 when x=10 should make x=100");
+}
+
+@test
+fn test_comp_mul_3() {
+    var x = -5;
+    x *= 2;
+    assert(x == -10, "x *= 2 when x=-5 should make x=-10");
+}
+
+@test
+fn test_comp_div_1() {
+    var x = 20;
+    x /= 4;
+    assert(x == 5, "x /= 4 when x=20 should make x=5");
+}
+
+@test
+fn test_comp_div_2() {
+    var x = 100;
+    x /= 10;
+    assert(x == 10, "x /= 10 when x=100 should make x=10");
+}
+
+@test
+fn test_comp_div_3() {
+    var x = -20;
+    x /= 4;
+    assert(x == -5, "x /= 4 when x=-20 should make x=-5");
+}
+
+@test
+fn test_comp_chain_1() {
+    var x = 10;
+    x += 5;
+    x *= 2;
+    assert(x == 30, "x += 5; x *= 2 should make x=30");
+}
+
+@test
+fn test_comp_chain_2() {
+    var x = 100;
+    x -= 50;
+    x /= 5;
+    assert(x == 10, "x -= 50; x /= 5 should make x=10");
+}
+
+@test
+fn test_comp_chain_3() {
+    var x = 2;
+    x *= 5;
+    x += 10;
+    assert(x == 20, "x *= 5; x += 10 should make x=20");
+}
+
+@test
+fn test_comp_multi_1() {
+    var x = 5;
+    x += 3;
+    x -= 2;
+    assert(x == 6, "x += 3; x -= 2 should make x=6");
+}
+
+@test
+fn test_comp_multi_2() {
+    var x = 2;
+    x *= 3;
+    x *= 2;
+    assert(x == 12, "x *= 3; x *= 2 should make x=12");
+}
+
+// ============================================================================
+// SECTION 5: EDGE CASES AND BOUNDARIES (20 tests)
+// ============================================================================
+
+@test
+fn test_edge_large_ops() {
+    assert(999999 * 1 == 999999, "999999 * 1 should equal 999999");
+}
+
+@test
+fn test_edge_many_ops() {
+    assert(((((1 + 1) + 1) + 1) + 1) == 5, "nested additions should equal 5");
+}
+
+@test
+fn test_edge_zero_boundary() {
+    assert(5 + 0 - 5 == 0, "5 + 0 - 5 should equal 0");
+}
+
+@test
+fn test_edge_mod_div() {
+    assert(10 % 3 + 10 / 3 == 4, "10 % 3 + 10 / 3 should equal 4");
+}
+
+@test
+fn test_edge_mixed_signs() {
+    assert(-5 + 10 - 3 == 2, "-5 + 10 - 3 should equal 2");
+}
+
+@test
+fn test_edge_div_result() {
+    assert(15 / 3 == 5, "15 / 3 should equal 5");
+}
+
+@test
+fn test_edge_add_result() {
+    assert(50 + 50 == 100, "50 + 50 should equal 100");
+}
+
+@test
+fn test_edge_sub_result() {
+    assert(50 - 25 == 25, "50 - 25 should equal 25");
+}
+
+@test
+fn test_edge_mul_result() {
+    assert(20 * 5 == 100, "20 * 5 should equal 100");
+}
+
+@test
+fn test_edge_assoc_1() {
+    assert(10 - 5 - 2 == 3, "10 - 5 - 2 should equal 3");
+}
+
+@test
+fn test_edge_assoc_2() {
+    assert(2 * 3 * 4 == 24, "2 * 3 * 4 should equal 24");
+}
+
+@test
+fn test_edge_paren_1() {
+    assert((5) == 5, "(5) should equal 5");
+}
+
+@test
+fn test_edge_paren_2() {
+    assert(((5 + 3)) == 8, "((5 + 3)) should equal 8");
+}
+
+@test
+fn test_edge_neg_paren() {
+    assert(-(5) == -5, "-(5) should equal -5");
+}
+
+@test
+fn test_edge_neg_double() {
+    assert(-(-5) == 5, "-(-5) should equal 5");
+}
+
+@test
+fn test_edge_zero_ops() {
+    var x = 0;
+    x += 10;
+    x -= 10;
+    assert(x == 0, "starting at 0, add 10, subtract 10 should be 0");
+}
+
+@test
+fn test_edge_one_ops() {
+    var x = 1;
+    x *= 5;
+    x /= 5;
+    assert(x == 1, "starting at 1, multiply 5, divide 5 should be 1");
+}
+
+// ============================================================================
+// HELPER FUNCTIONS FOR ADVANCED ARITHMETIC
+// ============================================================================
+
+fn sum_range(start: int, end: int): int {
+    if start >= end { 0 } else { start + sum_range(start + 1, end) }
+}
+
+fn factorial(n: int): int {
+    if n <= 1 { 1 } else { n * factorial(n - 1) }
+}
+
+fn fibonacci(n: int): int {
+    if n <= 1 { n } else { fibonacci(n - 1) + fibonacci(n - 2) }
+}
+
+@test
+fn test_sum_1_to_5() {
+    assert(sum_range(1, 6) == 15, "sum from 1 to 5 should equal 15");
+}
+
+@test
+fn test_sum_1_to_10() {
+    assert(sum_range(1, 11) == 55, "sum from 1 to 10 should equal 55");
+}
+
+@test
+fn test_fact_4() {
+    assert(factorial(4) == 24, "factorial(4) should equal 24");
+}
+
+@test
+fn test_fact_5() {
+    assert(factorial(5) == 120, "factorial(5) should equal 120");
+}
+
+@test
+fn test_fib_5() {
+    assert(fibonacci(5) == 5, "fibonacci(5) should equal 5");
+}
+
+@test
+fn test_fib_6() {
+    assert(fibonacci(6) == 8, "fibonacci(6) should equal 8");
+}

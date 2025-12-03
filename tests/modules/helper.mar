@@ -1,0 +1,11 @@
+fn get_value(): int {
+    42
+}
+
+fn add(a: int, b: int): int {
+    a + b
+}
+
+fn multiply(a: int, b: int): int {
+    a * b
+}

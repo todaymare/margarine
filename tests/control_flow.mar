@@ -1,0 +1,122 @@
+use std::assert;
+
+@test
+fn test_if_true() {
+    var x = 10;
+    var result = false;
+    if x > 5 {
+        result = true;
+    }
+    assert(result, "if x > 5 should execute");
+}
+
+@test
+fn test_if_false() {
+    var x = 3;
+    var result = false;
+    if x > 5 {
+        result = true;
+    }
+    assert(!result, "if x > 5 should not execute when x=3");
+}
+
+@test
+fn test_if_else_true() {
+    var x = 10;
+    var result = false;
+    if x > 5 {
+        result = true;
+    } else {
+        result = false;
+    }
+    assert(result, "if-else true branch should execute");
+}
+
+@test
+fn test_if_else_false() {
+    var x = 3;
+    var result = false;
+    if x > 5 {
+        result = false;
+    } else {
+        result = true;
+    }
+    assert(result, "if-else false branch should execute");
+}
+
+@test
+fn test_if_nested() {
+    var x = 10;
+    var y = 20;
+    var result = false;
+    if x < y {
+        if y > 15 {
+            result = true;
+        }
+    }
+    assert(result, "nested if should work");
+}
+
+@test
+fn test_while_basic() {
+    var count = 0;
+    while count < 5 {
+        count += 1;
+    }
+    assert(count == 5, "while loop should count to 5");
+}
+
+@test
+fn test_while_sum() {
+    var i = 0;
+    var sum = 0;
+    while i < 5 {
+        sum += i;
+        i += 1;
+    }
+    assert(sum == 10, "while loop sum should equal 10");
+}
+
+@test
+fn test_while_break() {
+    var count = 0;
+    while count < 100 {
+        count += 1;
+        if count == 5 {
+            break;
+        }
+    }
+    assert(count == 5, "break should exit loop at 5");
+}
+
+@test
+fn test_while_product() {
+    var i = 1;
+    var prod = 1;
+    while i <= 5 {
+        prod *= i;
+        i += 1;
+    }
+    assert(prod == 120, "factorial via while loop should equal 120");
+}
+
+@test
+fn test_if_boolean_var() {
+    var flag = true;
+    var result = false;
+    if flag {
+        result = true;
+    }
+    assert(result, "if with boolean variable should work");
+}
+
+@test
+fn test_complex_condition() {
+    var x = 5;
+    var y = 10;
+    var result = false;
+    if x < 10 && y > 5 {
+        result = true;
+    }
+    assert(result, "if with compound condition should work");
+}

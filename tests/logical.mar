@@ -1,0 +1,82 @@
+use std::assert;
+
+@test
+fn test_and_tt() {
+    assert(true && true, "true && true should be true");
+}
+
+@test
+fn test_and_tf() {
+    assert(!(true && false), "!(true && false) should be true");
+}
+
+@test
+fn test_and_expr() {
+    assert(5 < 10 && 10 < 20, "5 < 10 && 10 < 20 should be true");
+}
+
+@test
+fn test_or_tt() {
+    assert(true || true, "true || true should be true");
+}
+
+@test
+fn test_or_tf() {
+    assert(true || false, "true || false should be true");
+}
+
+@test
+fn test_or_ff() {
+    assert(!(false || false), "!(false || false) should be true");
+}
+
+@test
+fn test_not_true() {
+    assert(!true == false, "!true == false");
+}
+
+@test
+fn test_not_false() {
+    assert(!false == true, "!false == true");
+}
+
+@test
+fn test_not_expr() {
+    assert(!(5 > 10), "!(5 > 10) should be true");
+}
+
+@test
+fn test_complex_and_or() {
+    var a = true;
+    var b = false;
+    var c = true;
+    assert((a && b) || c, "(a && b) || c should be true");
+}
+
+@test
+fn test_demorgan_1() {
+    var a = true;
+    var b = false;
+    assert(!(a && b) == (!a || !b), "De Morgan's law 1 should hold");
+}
+
+@test
+fn test_demorgan_2() {
+    var a = true;
+    var b = true;
+    assert(!(a || b) == (!a && !b), "De Morgan's law 2 should hold");
+}
+
+@test
+fn test_complex_range() {
+    var x = 15;
+    assert(x > 10 && x < 20, "15 should be between 10 and 20");
+}
+
+@test
+fn test_complex_three_cond() {
+    var a = 5;
+    var b = 10;
+    var c = 15;
+    assert((a < b && b < c) && c > 0, "chained comparisons should work");
+}
