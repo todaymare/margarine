@@ -2,9 +2,6 @@ extern "https://github.com/todaymare/margarine-std" as std;
 use std::*;
 
 
-mod io {
-}
-
 
 fn main() {
     println("Guess the number:");

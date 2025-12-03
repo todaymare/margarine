@@ -1,2 +1,5 @@
 /target
 \.DS_Store
+
+build.lock
+/artifacts
