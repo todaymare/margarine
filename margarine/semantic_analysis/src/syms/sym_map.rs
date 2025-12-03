@@ -68,11 +68,6 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn pending_with_ns(&mut self, namespace: NamespaceId, gen_count: usize) -> SymbolId {
-        self.syms.push((Err(gen_count), namespace))
-    }
-
-
     pub fn insert_closure_capture(&mut self, closure: ClosureId, name: StringIndex) {
         self.closures[closure].captured_variables.insert(name);
 

@@ -1,14 +1,15 @@
-extern "https://github.com/todaymare/margarine-std" as std
-
-mod something;
+struct Foo<A> {}
 
 
-fn main() {
-    std::print(foo(30));
-    var dur = std::duration::Duration::now();
-    std::print(something::foo());
-    std::print(something::hey::random_number());
-    std::print(dur.elapsed().as_nanos());
+impl<A> Foo<A> {
+
+fn test<T>(self): Option<T> {
+    none()
+}
+
 }
 
 
+fn main() {
+    Foo {}.test();
+}
