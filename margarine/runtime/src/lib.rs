@@ -460,6 +460,8 @@ impl<'me> Reader<'me> {
     ///
     pub fn try_next_str(&mut self) -> Option<&'me str> {
         let len = self.try_next_u32()?;
+        if len == 0 { return Some("") };
+
         let str = self.try_next_slice(len as usize)?;
         Some(core::str::from_utf8(str).unwrap())
     }
@@ -750,7 +752,14 @@ impl Reg {
     }
 
 
+    pub unsafe fn as_nocap(self) -> u32 {
+        debug_assert!(self.is_nocap());
+        unsafe { self.data.as_int as u32 } 
+    }
+
+
     pub fn is_obj(self) -> bool { self.kind == Self::TAG_OBJ }
+    pub fn is_nocap(self) -> bool { self.kind == Self::TAG_NOCAP }
 
 }
 
@@ -809,6 +818,7 @@ impl Reg {
     pub const TAG_FLOAT : u64 = 2;
     pub const TAG_BOOL  : u64 = 3;
     pub const TAG_OBJ   : u64 = 4;
+    pub const TAG_NOCAP : u64 = 5;
 
 
     pub fn new_int(data: i64) -> Self { Reg { kind: Self::TAG_INT, data: RegData { as_int: data }} }
@@ -816,6 +826,7 @@ impl Reg {
     pub fn new_bool(data: bool) -> Self { Reg { kind: Self::TAG_BOOL, data: RegData { as_bool: data as _ } } }
     pub fn new_unit() -> Self { Reg { kind: Self::TAG_UNIT, data: RegData { as_unit: 0 } } }
     pub fn new_obj(data: ObjectIndex) -> Self { Reg { kind: Self::TAG_OBJ, data: RegData { as_obj: data } } }
+    pub fn new_nocap(data: u32) -> Self { Reg { kind: Self::TAG_NOCAP, data: RegData { as_int: data as i64 } } }
 }
 
 

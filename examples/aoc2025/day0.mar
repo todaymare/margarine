@@ -1,0 +1,72 @@
+extern "https://github.com/todaymare/margarine-std" as std;
+use std::*;
+
+fn main() {
+    var input = "L68
+L30
+R48
+L5
+R60
+L55
+L1
+L99
+R14
+L82
+";
+
+    day0(input);
+}
+
+
+fn day0(input: str): str {
+    var dial = 50;
+    var counter = 0;
+
+    for instr in input.lines() {
+        var split = instr.split_at(1);
+        var dir = split.0;
+        var value = split.1.parse();
+        println(split.0);
+        println(split.1);
+    }
+
+    ""
+}
+
+
+type Lines;
+
+impl str {
+    fn lines(self): Lines {
+        extern {
+            fn str_lines_iter(s: str): Lines
+        }
+
+        str_lines_iter(self)
+    }
+
+
+    fn split_at(self, idx: int): (str, str) {
+        extern {
+            fn str_split_at(s: str, idx: int): (str, str)
+        }
+
+        str_split_at(self, idx)
+    }
+    
+
+    fn parse<T>(self): Option<T> {
+        none()
+    }
+}
+
+
+impl Lines {
+    fn __next__(self): Option<str> {
+        extern {
+            fn str_lines_iter_next(s: Lines): Option<str>
+        }
+
+        str_lines_iter_next(self)
+    }
+}

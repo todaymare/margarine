@@ -1,0 +1,13 @@
+extern "https://github.com/todaymare/margarine-std" as std;
+
+fn fib(n: int): int {
+    if n <= 1 { n }
+    else { fib(n-1) + fib(n-2) }
+}
+
+
+fn main() {
+    var now = std::duration::Duration::now();
+    fib(40);
+    std::println(now.elapsed().as_secs_float());
+}

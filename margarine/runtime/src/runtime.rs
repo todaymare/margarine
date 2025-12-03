@@ -84,9 +84,15 @@ impl<'src> VM<'src> {
 
 
                 consts::CallFuncRef => {
-                    let func_ref = self.stack.pop().as_obj();
-                    let ObjectData::FuncRef { func: func_index, captures } = &self.objs[func_ref].data
-                    else { unreachable!() };
+                    let reg = self.stack.pop();
+                    let (func_index, captures) =
+                    if reg.is_nocap() { (reg.as_nocap(), [].as_slice()) }
+                    else {
+                        let func_ref = reg.as_obj();
+                        let ObjectData::FuncRef { func: func_index, captures } = &self.objs[func_ref].data
+                        else { unreachable!() };
+                        (*func_index, captures.as_slice())
+                    };
 
                     let argc = self.curr.next();
                     
@@ -98,7 +104,6 @@ impl<'src> VM<'src> {
 
                     //dbg!(jitty::attempt_jit(self, *func_index as _));
 
-                    let func_index = *func_index;
                     let func = &self.funcs[func_index as usize];
 
                     match func.kind {
@@ -206,6 +211,11 @@ impl<'src> VM<'src> {
                 consts::CreateFuncRef => {
                     let capture_count = self.curr.next();
                     let func = self.stack.pop().as_int() as u32;
+
+                    if capture_count == 0 {
+                        self.stack.push(Reg::new_nocap(func));
+                        continue;
+                    }
 
                     let mut vec = Vec::with_capacity(capture_count as usize);
                     for _ in 0..capture_count {
