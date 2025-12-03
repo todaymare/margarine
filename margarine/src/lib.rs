@@ -576,6 +576,110 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
+    unsafe extern "C" fn str_lines_iter(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let str = vm.stack.reg(0);
+
+        let obj = vm.new_obj(ObjectData::List(vec![
+            str,
+            Reg::new_int(0)
+        ]));
+
+
+        *ret = match obj {
+            Ok(v) => v,
+            Err(v) => {
+                *status = Status::err(v);
+                return;
+            },
+        };
+    }
+
+
+    unsafe extern "C" fn str_lines_iter_next(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let obj_id = vm.stack.reg(0).as_obj();
+
+        let obj = vm.objs.get(obj_id).as_list();
+
+        let str = obj[0].as_obj();
+        let str = vm.objs.get(str).as_str();
+
+        let offset = obj[1].as_int();
+
+        let str = &str[offset as usize..];
+        let str = str.lines().next();
+        let new_offset = offset + str.unwrap_or("").len() as i64 + 1;
+
+
+        let reg = if let Some(line) = str {
+            let line = vm.new_obj(ObjectData::String(line.into()));
+            let line = match line {
+                Ok(v) => v,
+                Err(v) => {
+                    *status = Status::err(v);
+                    return;
+                },
+            };
+
+            vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(0), line] })
+        } else {
+            vm.new_obj(runtime::obj_map::ObjectData::Struct { fields: vec![Reg::new_int(1), Reg::new_unit()] })
+        };
+
+
+        let reg = match reg {
+            Ok(v) => v,
+            Err(v) => {
+                *status = Status::err(v);
+                return;
+            },
+        };
+        
+        let obj = vm.objs.get_mut(obj_id).as_mut_list();
+        obj[1] = Reg::new_int(new_offset);
+
+        *ret = reg;
+    }
+
+
+    unsafe extern "C" fn str_split_at(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let obj_id = vm.stack.reg(0).as_obj();
+
+        let str = vm.objs.get(obj_id).as_str();
+
+        let split_pos = vm.stack.reg(1).as_int();
+
+        let (s1, s2) = str.split_at(split_pos as usize);
+        let s1 = s1.into();
+        let s2 = s2.into();
+
+        let s1 = match vm.new_obj(ObjectData::String(s1)) {
+            Ok(v) => v,
+            Err(v) => {
+                *status = Status::err(v);
+                return;
+            },
+        };
+
+        let s2 = match vm.new_obj(ObjectData::String(s2)) {
+            Ok(v) => v,
+            Err(v) => {
+                *status = Status::err(v);
+                return;
+            },
+        };
+
+        let tuple = match vm.new_obj(ObjectData::Struct { fields: vec![s1, s2] }) {
+            Ok(v) => v,
+            Err(v) => {
+                *status = Status::err(v);
+                return;
+            },
+        };
+
+        *ret = tuple;
+    }
+
+
     hosts.insert("print_raw".to_string(), print_raw);
     hosts.insert("new_any".to_string(), new_any);
     hosts.insert("downcast_any".to_string(), downcast_any);
@@ -593,5 +697,8 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("hashmap_contains_key".to_string(), hashmap_contains_key);
     hosts.insert("hashmap_remove".to_string(), hashmap_remove);
     hosts.insert("io_read_line".to_string(), io_read_line);
+    hosts.insert("str_lines_iter".to_string(), str_lines_iter);
+    hosts.insert("str_lines_iter_next".to_string(), str_lines_iter_next);
+    hosts.insert("str_split_at".to_string(), str_split_at);
     hosts.insert("panic".to_string(), panic);
 }
