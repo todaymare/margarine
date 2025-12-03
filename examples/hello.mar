@@ -1,0 +1,6 @@
+extern "www.github.com/todaymare/margarine-std" as std;
+use std::*;
+
+fn main() {
+    print("hello, margarine!");
+}
