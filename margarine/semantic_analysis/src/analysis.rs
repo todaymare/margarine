@@ -1513,7 +1513,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                         let sym_id = sym?;
 
-                        println!("accessing field {} {range:?}", self.string_map.get(field_name));
                         let sym = self.syms.sym(sym_id);
                         let SymbolKind::Function(func) = sym.kind()
                         else { return Err(e); };
