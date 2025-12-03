@@ -62,6 +62,7 @@ pub enum Expr<'a> {
     AccessField {
         val: ExprId,
         field_name: StringIndex,
+        gens: Option<&'a [DataType<'a>]>,
     },
 
     CallFunction {

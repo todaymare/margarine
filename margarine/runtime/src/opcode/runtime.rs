@@ -60,6 +60,8 @@ pub enum OpCode {
     EqBool,
     NeBool,
     NotBool,
+    EqObj,
+    NeObj,
     Load,
     Store,
     UnwrapStore,
@@ -129,6 +131,8 @@ pub mod consts {
     pub const EqBool: u8 = super::OpCode::EqBool as u8;
     pub const NeBool: u8 = super::OpCode::NeBool as u8;
     pub const NotBool: u8 = super::OpCode::NotBool as u8;
+    pub const EqObj: u8 = super::OpCode::EqObj as u8;
+    pub const NeObj: u8 = super::OpCode::NeObj as u8;
     pub const Load: u8 = super::OpCode::Load as u8;
     pub const Store: u8 = super::OpCode::Store as u8;
     pub const UnwrapStore: u8 = super::OpCode::UnwrapStore as u8;
@@ -407,6 +411,14 @@ pub mod builder {
 
         pub fn not_bool(&mut self) {
             self.bytecode.push(super::OpCode::NotBool.as_u8());
+        }
+
+        pub fn eq_obj(&mut self) {
+            self.bytecode.push(super::OpCode::EqObj.as_u8());
+        }
+
+        pub fn ne_obj(&mut self) {
+            self.bytecode.push(super::OpCode::NeObj.as_u8());
         }
 
         pub fn load(&mut self, index: u8) {
@@ -770,6 +782,16 @@ pub mod builder {
 
         pub fn not_bool_at(&mut self, _at: usize, ) {
             self.bytecode[_at] = super::OpCode::NotBool.as_u8();
+            let mut _offset = 1;
+        }
+
+        pub fn eq_obj_at(&mut self, _at: usize, ) {
+            self.bytecode[_at] = super::OpCode::EqObj.as_u8();
+            let mut _offset = 1;
+        }
+
+        pub fn ne_obj_at(&mut self, _at: usize, ) {
+            self.bytecode[_at] = super::OpCode::NeObj.as_u8();
             let mut _offset = 1;
         }
 
@@ -1654,6 +1676,26 @@ pub mod builder {
                             "NotBool({fields})",
                         ));
                     }
+                    super::OpCode::EqObj => {
+                        let mut fields = String::new();
+                        unsafe {
+
+                        }
+                        strct.entry(&offset,
+                            &format!(
+                            "EqObj({fields})",
+                        ));
+                    }
+                    super::OpCode::NeObj => {
+                        let mut fields = String::new();
+                        unsafe {
+
+                        }
+                        strct.entry(&offset,
+                            &format!(
+                            "NeObj({fields})",
+                        ));
+                    }
                     super::OpCode::Load => {
                         let mut fields = String::new();
                         unsafe {
@@ -1860,6 +1902,8 @@ impl OpCode {
             consts::EqBool => Some(Self::EqBool),
             consts::NeBool => Some(Self::NeBool),
             consts::NotBool => Some(Self::NotBool),
+            consts::EqObj => Some(Self::EqObj),
+            consts::NeObj => Some(Self::NeObj),
             consts::Load => Some(Self::Load),
             consts::Store => Some(Self::Store),
             consts::UnwrapStore => Some(Self::UnwrapStore),
@@ -1932,6 +1976,8 @@ pub enum Decoded<'src> {
     EqBool {  },
     NeBool {  },
     NotBool {  },
+    EqObj {  },
+    NeObj {  },
     Load { index: u8 },
     Store { index: u8 },
     UnwrapStore {  },
@@ -2186,6 +2232,14 @@ impl OpCode {
 
                 Some((opcode, Decoded::NotBool {  }))
             }
+            Self::EqObj => {
+
+                Some((opcode, Decoded::EqObj {  }))
+            }
+            Self::NeObj => {
+
+                Some((opcode, Decoded::NeObj {  }))
+            }
             Self::Load => {
         let index = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());
                 Some((opcode, Decoded::Load { index }))
@@ -2212,6 +2266,7 @@ impl OpCode {
         let offsets = reader.next_slice(_len as usize);
                 Some((opcode, Decoded::Switch { offsets }))
             }
+            _ => None,
         }
         }
     }

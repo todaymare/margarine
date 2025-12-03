@@ -1,72 +1,68 @@
 extern "https://github.com/todaymare/margarine-std" as std;
 use std::*;
+use std::io::ffi::read_file;
 
 fn main() {
-    var input = "L68
-L30
-R48
-L5
-R60
-L55
-L1
-L99
-R14
-L82
-";
+    var input = read_file("./examples/aoc2025/day0.txt");
 
-    day0(input);
+    println(part1(input));
+    println(part2(input));
 }
 
 
-fn day0(input: str): str {
+fn part1(input: str): str {
     var dial = 50;
     var counter = 0;
 
     for instr in input.lines() {
+        if instr.is_empty() { continue }
+
         var split = instr.split_at(1);
         var dir = split.0;
-        var value = split.1.parse();
-        println(split.0);
-        println(split.1);
+        var value = split.1.parse::<int>()!;
+
+        var delta =
+        if dir == "L" { -value }
+        else { value };
+
+        dial += delta;
+
+        dial = ((dial % 100) + 100) % 100;
+
+        if dial == 0 {
+            counter += 1;
+        }
     }
 
-    ""
+    counter.to_str()
 }
 
 
-type Lines;
+fn part2(input: str): str {
+    var dial = 50;
+    var counter = 0;
 
-impl str {
-    fn lines(self): Lines {
-        extern {
-            fn str_lines_iter(s: str): Lines
+    for instr in input.lines() {
+        if instr.is_empty() { continue }
+
+        var split = instr.split_at(1);
+        var dir = split.0;
+        var value = split.1.parse::<int>()!;
+
+        if dir == "R" {
+            counter += (dial + value) / 100;
+            dial = ((dial + value) % 100 + 100) % 100;
+        } else {
+            var t0 = if dial == 0 { 100 } else { dial };
+            if value >= t0 {
+                counter += 1 + (value - t0) / 100;
+            }
+
+            dial = ((dial - value) % 100 + 100) % 100;
         }
-
-        str_lines_iter(self)
     }
 
-
-    fn split_at(self, idx: int): (str, str) {
-        extern {
-            fn str_split_at(s: str, idx: int): (str, str)
-        }
-
-        str_split_at(self, idx)
-    }
-    
-
-    fn parse<T>(self): Option<T> {
-        none()
-    }
+    counter.to_str()
 }
 
 
-impl Lines {
-    fn __next__(self): Option<str> {
-        extern {
-            fn str_lines_iter_next(s: Lines): Option<str>
-        }
-
-        str_lines_iter_next(self)
-    }
-}

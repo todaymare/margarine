@@ -68,6 +68,10 @@ spec = {
   "NeBool": {},
   "NotBool": {},
 
+
+  "EqObj": {},
+  "NeObj": {},
+
   "Load": { "index": "u8" },
   "Store": { "index": "u8" },
   "UnwrapStore": {},

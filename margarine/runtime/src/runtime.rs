@@ -102,7 +102,7 @@ impl<'src> VM<'src> {
                     //
 
 
-                    //dbg!(jitty::attempt_jit(self, *func_index as _));
+                    //dbga(jitty::attempt_jit(self, *func_index as _));
 
                     let func = &self.funcs[func_index as usize];
 
@@ -636,6 +636,123 @@ impl<'src> VM<'src> {
                 consts::NotBool => {
                     let rhs = self.stack.pop().as_bool();
                     self.stack.push(Reg::new_bool(!rhs));
+                }
+
+
+                consts::EqObj => {
+                    let lhs = self.stack.pop().as_obj();
+                    let rhs = self.stack.pop().as_obj();
+
+                    let mut stack = vec![];
+                    stack.push((lhs, rhs));
+
+                    let mut result = true;
+                    while let Some((lhs, rhs)) = stack.pop() {
+                        let lhs = self.objs.get(lhs);
+                        let rhs = self.objs.get(rhs);
+
+                        match (&lhs.data, &rhs.data) {
+                              (ObjectData::List(f1), ObjectData::List(f2))
+                            | (ObjectData::Struct { fields: f1 }, ObjectData::Struct { fields: f2 }) => {
+                                if f1.len() != f2.len() {
+                                    result = false;
+                                    break;
+                                }
+
+                                for (lhs, rhs) in f1.iter().zip(f2.iter()) {
+                                    if lhs.kind != rhs.kind {
+                                        result = false;
+                                        break;
+                                    }
+
+                                    let r = match lhs.kind {
+                                        Reg::TAG_INT => lhs.as_int() == rhs.as_int(),
+                                        Reg::TAG_FLOAT => lhs.as_float() == rhs.as_float(),
+                                        Reg::TAG_BOOL => lhs.as_bool() == rhs.as_bool(),
+                                        Reg::TAG_NOCAP => lhs.as_nocap() == rhs.as_nocap(),
+                                        Reg::TAG_UNIT => true,
+                                        Reg::TAG_OBJ => {
+                                            stack.push((lhs.as_obj(), rhs.as_obj()));
+                                            true
+                                        },
+                                        _ => unreachable!(),
+                                    };
+
+
+                                    if !r {
+                                        result = false;
+                                        break;
+                                    }
+
+                                }
+
+                                if !result { break }
+                            },
+
+
+                            (ObjectData::String(s1), ObjectData::String(s2)) => {
+                                if s1 != s2 {
+                                    result = false;
+                                    break;
+                                }
+                            },
+
+
+                            (ObjectData::Dict(hm1), ObjectData::Dict(hm2)) => {
+                                if hm1.len() != hm2.len() {
+                                    result = false;
+                                    break;
+                                }
+
+                                for (k, lhs) in hm1 {
+                                    let Some(rhs) = hm2.get(k)
+                                    else {
+                                        result = false;
+                                        break;
+                                    };
+
+                                    let r = match lhs.kind {
+                                        Reg::TAG_INT => lhs.as_int() == rhs.as_int(),
+                                        Reg::TAG_FLOAT => lhs.as_float() == rhs.as_float(),
+                                        Reg::TAG_BOOL => lhs.as_bool() == rhs.as_bool(),
+                                        Reg::TAG_NOCAP => lhs.as_nocap() == rhs.as_nocap(),
+                                        Reg::TAG_UNIT => true,
+                                        Reg::TAG_OBJ => {
+                                            stack.push((lhs.as_obj(), rhs.as_obj()));
+                                            true
+                                        },
+                                        _ => unreachable!(),
+                                    };
+
+
+                                    if !r {
+                                        result = false;
+                                        break;
+                                    }
+
+
+                                }
+
+                                if !result { break }
+
+                            },
+
+
+                            (ObjectData::Ptr(p1), ObjectData::Ptr(p2)) => {
+                                if p1 != p2 {
+                                    result = false;
+                                    break;
+                                }
+                            },
+                            _ => {
+                                result = false;
+                                break;
+                            },
+                        }
+
+                    };
+
+                    self.stack.push(Reg::new_bool(result));
                 }
 
 

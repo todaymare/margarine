@@ -135,6 +135,7 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
                 let mut terminators = vec![];
                 let mut bbs_hm = HashMap::with_capacity(blocks.len());
+                //println!("------ {} ------ #{}", conv.string_map.get(func.name), func.index.0);
 
                 let mut buf = vec![];
                 let mut stack = vec![];
@@ -146,6 +147,7 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
                     bbs_hm.insert(block.index.0, code.len());
 
+                    //dbg!(&block);
                     code.append(&block.bytecode);
 
                     let start = code.len();
@@ -324,7 +326,11 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         else { unreachable!() };
 
         let gens = self.syms.gens()[gens_id];
-        //for g in gens { if g.1.is_err(self.syms) { return Err(ErrorId::Bypass) } }
+
+        assert_eq!(gens.len(), fsym.generics().len());
+        for ((g0, _), n1) in gens.iter().zip(fsym.generics()) {
+            assert_eq!(*g0, *n1);
+        }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
         //if ret.is_err(self.syms) { return Err(ErrorId::Bypass) }
@@ -756,8 +762,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                     let mut new_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
                     for (name, sym) in func_gens {
+                        let symbol = sym.sym(self.syms).unwrap();
+                        let symbol = self.syms.sym(symbol);
                         let sym =
-                            env_gens.iter().find(|x| x.0 == *name)
+                            env_gens.iter().find(|x| x.0 == symbol.name())
                             .map(|x| x.1).unwrap_or(*sym);
 
                         new_gens.push((*name, sym));
@@ -835,6 +843,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                     (SymbolId::BOOL, BinaryOperator::Eq) => block.bytecode.eq_bool(),
                     (SymbolId::BOOL, BinaryOperator::Ne) => block.bytecode.ne_bool(),
+
+                    (_, BinaryOperator::Eq) => block.bytecode.eq_obj(),
+                    (_, BinaryOperator::Ne) => block.bytecode.ne_obj(),
 
                     _ => unreachable!(),
                 };
@@ -941,12 +952,13 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             },
 
 
-            parser::nodes::expr::Expr::AccessField { val, field_name } => {
+            parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
                 self.expr(env, block, val)?;
-                let _ = out_if_err!();
+                let slf = out_if_err!();
 
                 let val = self.ty_info.expr(val).unwrap();
                 let ty = val.sym(self.syms).unwrap();
+
                 if let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
                 && let Some((i, _)) = cont.fields().iter().enumerate().find(|(_, f)| {
                     let name = f.0;
@@ -960,18 +972,20 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                             block.bytecode.load_enum_field(i.try_into().unwrap());
                         },
                     }
+
                 } else {
                     let ns = self.syms.sym_ns(ty);
                     let ns = self.ns.get_ns(ns);
 
                     let sym = ns.get_sym(field_name).unwrap().unwrap();
-                    let gens = val.gens(self.syms);
+                    let gens = slf.gens(self.syms);
 
                     let func = self.get_func(sym, gens)?;
 
                     if !is_fn_call_accessor {
                         block.bytecode.pop();
                     }
+
                     block.bytecode.const_int(func.index.0 as i64);
                     block.bytecode.create_func_ref(0);
                     return Ok(())
@@ -1381,7 +1395,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             }
 
 
-            parser::nodes::expr::Expr::AccessField { val, field_name } => {
+            parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
                 self.expr(env, block, val)?;
 
                 let val = self.ty_info.expr(val).unwrap();
@@ -1417,7 +1431,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     },
 
 
-                    parser::nodes::expr::Expr::AccessField { val, field_name } => {
+                    parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
                         self.expr(env, block, val)?;
 
                         let val = self.ty_info.expr(val).unwrap();
@@ -1498,7 +1512,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     },
 
 
-                   parser::nodes::expr::Expr::AccessField { val, field_name } => {
+                   parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
                         self.expr(env, block, val)?;
 
                         let val = self.ty_info.expr(val).unwrap();

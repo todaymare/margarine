@@ -234,8 +234,8 @@ impl<'me> Generic<'me> {
                     .find(|x| x.0 == v)
                     .copied()
                     .map(|x| x.1)
-                    .expect("COMPILER ERROR: a generic name can't be missing as \
-                            if it was the case it would've been a custom type"))
+                    .expect(&format!("COMPILER ERROR: a generic name can't be missing as \
+                            if it was the case it would've been a custom type. {v:?}")))
             },
 
 
@@ -463,13 +463,7 @@ impl SymbolId {
     }
 
     pub fn supports_eq(self) -> bool {
-        matches!(self,
-            | Self::I64
-            | Self::F64
-            | Self::BOOL
-            | Self::UNIT
-            | Self::ERR
-        )
+        true
     }
 
 
