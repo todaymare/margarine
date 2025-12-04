@@ -1289,7 +1289,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                         error: None,
                         args: vec![0; argc],
-                        ret: self.ty_info.expr(body).unwrap().sym(self.syms).unwrap().0,
+                        ret: self.ty_info.expr(body).unwrap()
+                            .sym(self.syms).unwrap().0,
                         cached: false,
                     };
 

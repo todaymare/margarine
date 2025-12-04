@@ -10,6 +10,7 @@ mod functions;
 mod structs;
 mod advanced;
 mod comprehensive;
+mod closures;
 
 use std::assert;
 

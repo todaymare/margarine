@@ -115,9 +115,11 @@ impl Sym {
 
                 let gena = instantiate_gens(map, gena);
                 let gena = map.gens()[gena];
+                assert_eq!(map.sym(symida).generics().len(), gena.len());
 
                 let genb = instantiate_gens(map, genb);
                 let genb = map.gens()[genb];
+                assert_eq!(map.sym(symidb).generics().len(), genb.len());
 
                 if symida == symidb {
                     return gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1));
@@ -130,13 +132,13 @@ impl Sym {
                     (SymbolKind::Function(fa), SymbolKind::Function(fb)) => {
                         if fa.args().len() != fb.args().len() { return false; }
 
-                        let reta = fa.ret().to_ty(gena, map).unwrap_or(Sym::ERROR);
-                        let retb = fb.ret().to_ty(genb, map).unwrap_or(Sym::ERROR);
+                        let reta = fa.ret().to_ty(gena, map).unwrap();
+                        let retb = fb.ret().to_ty(genb, map).unwrap();
 
                         let mut failed = false;
                         for (aa, ab) in fa.args().iter().zip(fb.args().iter()) {
-                            let aa = aa.symbol().to_ty(gena, map).unwrap_or(Sym::ERROR);
-                            let ab = ab.symbol().to_ty(genb, map).unwrap_or(Sym::ERROR);
+                            let aa = aa.symbol().to_ty(gena, map).unwrap();
+                            let ab = ab.symbol().to_ty(genb, map).unwrap();
 
                             if !aa.eq(map, ab) {
                                 failed = true;
@@ -180,7 +182,9 @@ impl Sym {
                 return true
             },
 
-            (Sym::Var(ida), Sym::Var(idb)) if ida == idb => { return true }
+            (Sym::Var(ida), Sym::Var(idb)) if ida == idb => {
+                return true 
+            }
 
             (Sym::Var(ida), _) => {
                 if ida.occurs_in(map, b) { return false }
@@ -188,7 +192,9 @@ impl Sym {
                 let var = map.vars()[ida].sub();
  
                 match var {
-                    VarSub::Concrete(ta) if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
+                    VarSub::Concrete(ta) 
+                        if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _))
+                        => b.eq(map, ta),
 
                     _ => {
                         map.vars_mut()[ida].set_sub(VarSub::Concrete(b));
@@ -203,7 +209,9 @@ impl Sym {
 
                 let var = map.vars()[idb].sub();
                 match var {
-                    VarSub::Concrete(ta) if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) => b.eq(map, ta),
+                    VarSub::Concrete(tb)
+                        if !matches!(tb, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) 
+                        => a.eq(map, tb),
 
                     _ => {
                         map.vars_mut()[idb].set_sub(VarSub::Concrete(a));
@@ -236,6 +244,7 @@ impl Sym {
         match self.instantiate_shallow(map) {
             Sym::Ty(sym, _) => Ok(sym),
             Sym::Var(id) => {
+                dbg!(id);
                 let var = &map.vars()[id];
                 Err(Error::UnableToInfer(var.range()))
             },
@@ -275,7 +284,8 @@ impl Sym {
 
             Sym::Var(v) => {
                 match map.vars()[v].sub() {
-                    VarSub::Concrete(v) => v,
+                    VarSub::Concrete(v) if matches!(v, Sym::Ty(..)) => v,
+                    VarSub::Concrete(v) if matches!(v, Sym::Var(..)) => v.instantiate_shallow(map),
                     _ => self
                 }
             },
