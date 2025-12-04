@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
-use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, stmt::StmtId, NodeId, AST};
+use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
 use runtime::opcode::{self, runtime::builder::Builder, HEADER};
 
 use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
@@ -585,6 +585,33 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
     }
 
 
+    fn resolve_pattern(
+        &mut self, env: &mut Env<'me>, block: &mut Block<'me>,
+        pattern: Pattern,
+    ) {
+        match pattern.kind() {
+            PatternKind::Variable(name) => {
+                let index = env.alloc_var(name);
+                block.bytecode.store(index.try_into().unwrap());
+            },
+
+
+            PatternKind::Tuple(items) => {
+                let base = env.alloc_anon_var();
+                block.bytecode.store(base.try_into().unwrap());
+
+                for (i, item) in items.iter().enumerate() {
+                    block.bytecode.load(base.try_into().unwrap());
+                    block.bytecode.load_field(i.try_into().unwrap());
+
+                    let index = env.alloc_var(*item);
+                    block.bytecode.store(index.try_into().unwrap());
+                }
+            },
+        }
+    }
+
+
     fn stmt(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, stmt: StmtId) -> Result<(), ErrorId> {
         macro_rules! out_if_err {
             () => {
@@ -599,16 +626,14 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
         match self.ast.stmt(stmt) {
-            parser::nodes::stmt::Stmt::Variable { name, rhs, .. } => {
+            parser::nodes::stmt::Stmt::Variable { pat, rhs, .. } => {
                 self.expr(env, block, rhs)?;
                 out_if_err!();
 
-                env.alloc_var(name);
-                let (_, index) = env.vars.iter().rev().find(|x| x.0 == name).unwrap();
-                block.bytecode.store((*index).try_into().unwrap());
+                self.resolve_pattern(env, block, pat);
             },
 
-
+/*
             parser::nodes::stmt::Stmt::VariableTuple { names, rhs, .. } => {
                 self.expr(env, block, rhs)?;
                 out_if_err!();
@@ -619,7 +644,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     block.bytecode.store((*index).try_into().unwrap());
                 }
             },
-
+*/
 
             parser::nodes::stmt::Stmt::UpdateValue { lhs, rhs } => {
                 self.ty_info.expr(lhs)?;

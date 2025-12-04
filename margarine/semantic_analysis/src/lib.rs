@@ -7,7 +7,7 @@ use ::errors::{ErrorId, SemaError};
 use namespace::{Namespace, NamespaceMap};
 use parser::{nodes::{decl::DeclId, expr::ExprId, stmt::StmtId, NodeId, AST}, dt::{DataType, DataTypeKind}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, key::Key, vec::{KVec, Vec}};
+use sti::{arena::Arena, ext::FromIn, key::Key, vec::{KVec, Vec}};
 use syms::{ty::Sym, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 
 use crate::{scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::ClosureId, Symbol}};
@@ -466,6 +466,18 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
         self.syms.add_sym(pending, sym);
 
         pending
+    }
+
+
+    fn tuple_gens(&mut self, count: usize, source: SourceRange, id: NodeId) -> GenListId {
+        let gens = Vec::from_in(self.output, 
+            (0..count).map(|i| {
+                let s = self.syms.new_var(id, source);
+                (self.string_map.num(i), s)
+            })
+        );
+
+        self.syms.add_gens(gens.leak_slice())
     }
 
 

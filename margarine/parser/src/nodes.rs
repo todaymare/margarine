@@ -4,7 +4,7 @@ pub mod decl;
 pub mod err;
 
 
-use common::source::SourceRange;
+use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
 use errors::ErrorId;
 use sti::{arena::Arena, slice::KSlice, vec::KVec};
 
@@ -99,5 +99,29 @@ impl Into<NodeId> for ExprId {
 impl Into<NodeId> for DeclId {
     fn into(self) -> NodeId {
         NodeId::Decl(self)
+    }
+}
+
+
+#[derive(ImmutableData, Debug, PartialEq, Clone, Copy)]
+pub struct Pattern<'out> {
+    source: SourceRange,
+    kind  : PatternKind<'out>,
+}
+
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum PatternKind<'out> {
+    Variable(StringIndex),
+    Tuple(&'out [StringIndex]),
+}
+
+
+impl<'out> Pattern<'out> {
+    pub fn new(range: SourceRange, kind: PatternKind<'out>) -> Self {
+        Self {
+            source: range,
+            kind,
+        }
     }
 }

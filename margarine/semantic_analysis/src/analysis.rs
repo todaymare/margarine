@@ -1,6 +1,6 @@
-use common::{buffer::Buffer, string_map::{StringIndex, StringMap}};
-use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId}};
-use sti::{alloc::GlobalAlloc, vec::{KVec, Vec}};
+use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}, Once};
+use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
+use sti::{alloc::GlobalAlloc, ext::FromIn, vec::{KVec, Vec}};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{Generic, GenericKind, SymbolId}, ty::Sym, Symbol, SymbolKind}, AnalysisResult, TyChecker};
 
@@ -799,57 +799,147 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     }
 
 
+    pub fn resolve_pattern(
+        &mut self, id: NodeId, scope: &mut ScopeId, 
+        pattern: Pattern, rhs: AnalysisResult, rhs_range: SourceRange
+    ) -> Result<(), Error> {
+        //
+        // yes, I'm aware this is a very.. brave way of doing error handling
+        // far as I can see it shouldn't cause any problems but it might
+        // in the future.
+        //
+        // while writing it, the idea is that since for all of these we're
+        // already creating a type and then doing an eq on it, it should be
+        // able to infer as much as possible and leave the program in a
+        // reasonable way.
+        //
+        // oh the lengths we go for graceful errors
+        //
+        let mut result = Once::new();
+
+        (|| {
+            match pattern.kind() {
+                PatternKind::Variable(name) => {
+                    let vs = VariableScope::new(name, rhs.ty);
+                    let vs = Scope::new(*scope, ScopeKind::VariableScope(vs));
+                    *scope = self.scopes.push(vs);
+                },
+
+
+                PatternKind::Tuple(items) => {
+                    let syms = Vec::from_value_in(self.output, items.len(), None);
+
+                    let tuple = self.tuple_sym(pattern.source(), &syms);
+                    let gens = self.tuple_gens(items.len(), pattern.source(), id);
+
+                    let ty = Sym::Ty(tuple, gens);
+
+                    if !ty.eq(&mut self.syms, rhs.ty) {
+                        // if they're not equal, we need to check whether rhs
+                        // is just not a tuple or it's a different sized tuple
+
+                        match rhs.ty.sym(&mut self.syms) {
+                            Ok(sym) => {
+                                let sym = self.syms.sym(sym);
+
+                                if let SymbolKind::Container(cont) = sym.kind()
+                                && cont.kind() == ContainerKind::Tuple {
+                                    result.set(Error::VariableTupleAndHintTupleSizeMismatch(
+                                        pattern.source(),
+                                        cont.fields().len(),
+                                        items.len()
+                                    ));
+                                } else {
+                                    result.set(Error::VariableValueNotTuple(rhs_range));
+                                }
+                            },
+
+
+                            Err(e) => {
+                                result.set(e);
+                            },
+                        }
+
+                    }
+
+
+                    let gens = ty.gens(&self.syms);
+                    let gens = self.syms.get_gens(gens);
+                    for (&item, (_, ty)) in items.iter().zip(gens.iter()) {
+                        let vs = VariableScope::new(item, *ty);
+                        let vs = Scope::new(*scope, ScopeKind::VariableScope(vs));
+                        *scope = self.scopes.push(vs);
+                    }
+
+                },
+            }
+
+        })();
+
+        if let Some(err) = result.into_inner() {
+            return Err(err)
+        }
+
+        Ok(())
+    }
+
+
     pub fn stmt(&mut self, path: StringIndex,
                 scope: &mut ScopeId, id: StmtId) {
         let source = self.ast.range(id);
         let stmt = self.ast.stmt(id);
         match stmt {
-            Stmt::Variable { name, hint, rhs } => {
-                let rhs_anal = self.expr(path, *scope, rhs);
-                
-                let place_dummy = |slf: &mut TyChecker<'_, 'out, '_, '_, '_>, scope: &mut ScopeId| {
-                    let vs = VariableScope::new(name, Sym::ERROR);
-                    *scope = slf.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
+            Stmt::Variable { pat, hint, rhs } => {
+                let mut rhs_anal = self.expr(path, *scope, rhs);
+
+                let mut validate_hint = || {
+                    if let Some(hint) = hint {
+                        let hint = match self.dt_to_ty(*scope, id, hint) {
+                            Ok(v)  => v,
+                            Err(v) => {
+                                rhs_anal.ty = Sym::ERROR;
+                                return Err(v);
+                            },
+                        };
+
+                        if !rhs_anal.ty.eq(&mut self.syms, hint) {
+                            rhs_anal.ty = hint;
+                            return Err(Error::VariableValueAndHintDiffer {
+                                value_type: rhs_anal.ty, hint_type: hint, source })
+                        }
+
+                        // cute trick.
+                        // 
+                        // `err` and `!` types can coerce into whatever `hint`
+                        // was. so if the equality check above passed we can
+                        // just set it to `hint` to avoid some headache.
+                        //
+                        rhs_anal.ty = hint;
+                    }
+
+                    Ok(())
                 };
 
-                // Validation
-                if let Ok(sym) = rhs_anal.ty.sym(&mut self.syms) {
-                    if sym == SymbolId::ERR {
-                        place_dummy(self, scope);
-                        return;
-                    }
+                let validate_hint = validate_hint();
+
+                let rhs_range = self.ast.range(rhs);
+
+                let result = self.resolve_pattern(
+                    id.into(), scope, pat, rhs_anal, rhs_range);
+
+                if let Err(e) = validate_hint {
+                    self.error(id, e);
                 }
 
-                let mut ty = rhs_anal.ty;
-                if let Some(hint) = hint {
-                    let hint = match self.dt_to_ty(*scope, id, hint) {
-                        Ok(v)  => v,
-                        Err(v) => {
-                            place_dummy(self, scope);
-                            self.error(id, v);
-                            return
-                        },
-                    };
-
-                    if !rhs_anal.ty.eq(&mut self.syms, hint) {
-                        let vs = VariableScope::new(name, hint);
-                        *scope = self.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
-
-                        self.error(id, Error::VariableValueAndHintDiffer {
-                            value_type: rhs_anal.ty, hint_type: hint, source });
-                        return
-                    }
-
-                    ty = hint;
+                if let Err(e) = result {
+                    self.error(id, e);
+                    return;
                 }
 
-                // finalise
-                let vs = VariableScope::new(name, ty);
-                *scope = self.scopes.push(Scope::new(*scope,
-                                          ScopeKind::VariableScope(vs)));
             },
 
 
+            /*
             Stmt::VariableTuple { names, rhs, .. } => {
                 let rhs_anal = self.expr(path, *scope, rhs);
 
@@ -898,6 +988,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
             },
 
+            */
 
             Stmt::UpdateValue { lhs, rhs  } => {
                 let lhs_anal = self.expr(path, *scope, lhs);
