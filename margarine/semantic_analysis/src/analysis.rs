@@ -1213,8 +1213,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 if let Some(sym) = expected
                 && let Ok(sym_id) = sym.sym(&mut self.syms)
-                && let SymbolKind::Function(func) = self.syms.sym(sym_id).kind()
-                && let FunctionKind::Closure(_) = func.kind() {
+                && let SymbolKind::Function(func) = self.syms.sym(sym_id).kind() {
                     let gens = sym.gens(&self.syms);
                     let gens = self.syms.get_gens(gens);
 
@@ -1231,36 +1230,22 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 }
 
 
+                // process the body
                 let ret = self.expr(path, active_scope, body);
+
+
                 if !ret.ty.eq(&mut self.syms, ret_var) {
                     let source = self.ast.range(body);
                     return Err(Error::InvalidType { source, found: ret.ty, expected: ret_var });
                 }
 
-                if let Some(sym) = expected
-                && let Ok(sym_id) = sym.sym(&mut self.syms)
-                && let SymbolKind::Function(func) = self.syms.sym(sym_id).kind()
-                && let FunctionKind::Closure(_) = func.kind() {
-                    let gens = sym.gens(&self.syms);
-                    let gens = self.syms.get_gens(gens);
-
-                    for (sym_arg, arg) in func.args().iter().zip(sargs.iter()) {
-                        let Ok(sym_arg) = sym_arg.symbol().to_ty(gens, &mut self.syms)
-                        else { continue };
-
-                        sym_arg.eq(&mut self.syms, arg.1);
-                    }
-
-                    if let Ok(sym_ret) = func.ret().to_ty(gens, &mut self.syms) {
-                        sym_ret.eq(&mut self.syms, ret.ty);
-                    }
-                }
 
                 let mut fargs = sti::vec::Vec::new_in(self.syms.arena());
                 let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
                 let mut gen_list = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
                 gens.push((StringMap::T, ret.ty));
                 gen_list.push(StringMap::T);
+
                 for (i, arg) in sargs.iter().enumerate() {
                     let sym = arg.1;
                     let g = self.string_map.num(i);
@@ -1711,13 +1696,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                             is_accessor = false;
                         } else {
                             is_accessor = true;
-                            vec.push((range, anal, val));
+                            vec.push((range, Some(anal), val));
                         }
                     }
 
                     for &expr in args {
                         let range = self.ast.range(expr);
-                        vec.push((range, self.expr(path, scope, expr), expr));
+                        vec.push((range, None, expr));
                     }
 
                     vec.leak()
@@ -1726,7 +1711,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
                 else { return Err(Error::CallOnNonFunction { source: lhs_range }); };
-
 
                 let f_gens = lhs.ty.gens(&self.syms);
                 let gens = self.syms.get_gens(f_gens);
@@ -1752,9 +1736,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 // ty check args
                 for (a, &fa) in args_anals.iter().zip(func_args.iter()) {
-                    if !a.1.ty.eq(&mut self.syms, fa) {
+                    let anal = a.1.unwrap_or_else(|| self.expr_ex(path, scope, a.2, Some(fa)));
+
+                    if !anal.ty.eq(&mut self.syms, fa) {
                         self.error(a.2, Error::InvalidType {
-                            source: a.0, found: a.1.ty, expected: fa });
+                            source: a.0, found: anal.ty, expected: fa });
                     }
                 }
 

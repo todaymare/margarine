@@ -705,7 +705,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
 
     unsafe extern "C" fn str_parse(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let str_id = vm.stack.reg(0).as_obj();
-        let str = vm.objs.get(str_id).as_str();
+        let str = vm.objs.get(str_id).as_str().trim();
 
         let ty = vm.stack.reg(1).as_int();
 

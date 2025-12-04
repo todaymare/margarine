@@ -11,82 +11,46 @@ fn main() {
 
 
 fn part1(input: str): str {
-    input.split(",")
-        .for_each(|i| println(i));
-    ""
+    input
+        .split(",")
+        .filter(|n| !n.is_empty())
+        .map(|range| {
+            var a, b = range.split_once("-")!;
+            var start : int = a.parse()!;
+            var end : int = b.parse()!;
+
+            (start..=end)
+                .iter()
+                .filter(|n| is_repeated(n))
+                .sum()
+        })
+        .sum()
+        .to_str()
 }
 
 
-struct SplitState {
-    base: str,
-    del : str,
+fn is_repeated(n: int): bool {
+    var s = n.to_str();
+    if s.len() % 2 != 0 { return false }
 
+    var mid = s.len() / 2;
+    var left, right = s.split_at(mid);
+    left == right
 }
-
-
-impl str {
-    fn split(self, delimiter: str): Iter<str> {
-        var state = SplitState {
-            base: self,
-            del : delimiter,
-        };
-
-
-        Iter {
-            next: || {
-                var split = state.base.split_once(delimiter);
-                if split.is_some() {
-                    var split = split!;
-                    state.base = split.1;
-                    some(split.0)
-                } else {
-                    none()
-                }
-            }
-        }
-    }
-
-    fn split_once(self, delimiter: str): Option<(str, str)> {
-        extern {
-            fn str_split_once(s: str, delimiter: str): Option<(str, str)>
-        }
-
-        str_split_once(self, delimiter)
-    }
-
-
-    fn slice(self, range: Range): str {
-        extern {
-            fn str_slice(s: str, min: int, max: int): str
-        }
-
-        str_slice(self, range.min, range.max)
-    }
-}
-
-
-impl<T> Option<T> {
-    fn is_some(self): bool {
-        match self {
-            some => true,
-            none => false,
-        }
-    }
-}
-
 
 
 impl<T> Iter<T> {
-    fn for_each(self, f: fn(T)) {
-        for _ in self.map(f) {}
-    }
-
-
-    fn map<A>(self, f: fn(T): A): Iter<A> {
+    fn filter(self, cond: fn(T): bool): Iter<T> {
         Iter {
             next: || {
-                var result = self.__next__()?;
-                some(f(result))
+                loop {
+                    var value = self.__next__()?;
+                    if cond(value) {
+                        return some(value)
+                    }
+                }
+
+                none()
             }
         }
     }
@@ -95,5 +59,17 @@ impl<T> Iter<T> {
 
 impl Iter<int> {
     fn sum(self): int {
+        var sum = (0,);
+        self.for_each(|n| { sum.0 += n });
+        sum.0
+    }
+}
+
+
+impl Range {
+    fn iter(self): Iter<int> {
+        Iter {
+            next: || self.__next__(),
+        }
     }
 }

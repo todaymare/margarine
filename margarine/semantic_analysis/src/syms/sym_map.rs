@@ -403,6 +403,7 @@ impl VarId {
             Sym::Ty(_, gens) => map.gens[gens].iter().any(|x| self.occurs_in(map, x.1)),
             Sym::Var(v) => {
                 if self == v { return true }
+
                 let sub = map.vars[v].sub;
                 match sub {
                     VarSub::Concrete(ty) => self.occurs_in(map, ty),
