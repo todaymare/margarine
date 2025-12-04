@@ -10,7 +10,7 @@ use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{alloc::Alloc, arena::Arena, vec::{KVec, Vec}};
 
-use crate::nodes::expr::{BinaryOperator, ExprId};
+use crate::nodes::{expr::{BinaryOperator, ExprId}, Pattern};
 
 pub fn parse<'a>(
     tokens: TokenList, 
@@ -498,6 +498,44 @@ impl<'out> Parser<'_, 'out, '_> {
         self.advance();
 
         Ok(list)
+    }
+
+
+    fn parse_pattern(&mut self) -> Result<Pattern<'out>, ErrorId> {
+        let start = self.current_range().start();
+        let mut bindings = Vec::new_in(self.arena);
+        loop {
+            if !bindings.is_empty() {
+                self.expect(TokenKind::Comma)?;
+                self.advance();
+            }
+            
+
+            let name = self.expect_identifier()?;
+            self.advance();
+            
+            bindings.push(name);
+            if self.current_is(TokenKind::Equals) || self.current_is(TokenKind::Colon) {
+                break
+            }
+        }
+
+        if bindings.len() == 0 {
+            self.expect_identifier()?;
+        }
+
+        if bindings.len() == 1 {
+            return Ok(Pattern::new(
+                SourceRange::new(start, self.current_range().end()),
+                nodes::PatternKind::Variable(bindings[0])
+            ))
+        }
+
+
+        return Ok(Pattern::new(
+            SourceRange::new(start, self.current_range().end()),
+            nodes::PatternKind::Tuple(bindings.leak_slice())
+        ))
     }
 }
 
@@ -1058,25 +1096,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Var))?;
         self.advance();
 
-        let mut bindings = Vec::new_in(self.arena);
-        loop {
-            if !bindings.is_empty() {
-                self.expect(TokenKind::Comma)?;
-                self.advance();
-            }
-            
-
-            let name = self.expect_identifier()?;
-            self.advance();
-            
-            bindings.push(name);
-            if self.current_is(TokenKind::Equals) || self.current_is(TokenKind::Colon) {
-                break
-            }
-
-            // @todo: enable tuple var decls
-            break
-        }
+        let pattern = self.parse_pattern()?;
 
         let hint =
             if self.current_is(TokenKind::Colon) {
@@ -1092,15 +1112,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let source = SourceRange::new(start, self.current_range().end());
         let rhs = self.expression(&ParserSettings::default())?;
         
-        Ok(self.ast.add_stmt(if bindings.len() == 1 {
-            let b = bindings[0];
-            Stmt::Variable { name: b, hint, rhs }
-        } else {
-            Stmt::VariableTuple {
-                names: bindings.leak(), 
-                hint, rhs
-            }
-        }, source))
+        Ok(self.ast.add_stmt(
+            Stmt::Variable { pat: pattern, hint, rhs },
+            source
+        ))
         
     }
 

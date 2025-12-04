@@ -1,7 +1,26 @@
 fn main() {
-    foo();
+    var a, b = (50, 40);
+    print(a);
+    print(b);
 }
 
 
-fn foo() {
+
+mod ffi {
+    extern {
+        fn print_raw<T>(val: T, ty_id: int)
+    }
 }
+
+
+fn println<T>(val: T) {
+    ffi::print_raw(val, type_id::<T>());
+    ffi::print_raw("\n", type_id::<str>());
+}
+
+
+fn print<T>(val: T) {
+    ffi::print_raw(val, type_id::<T>());
+}
+
+

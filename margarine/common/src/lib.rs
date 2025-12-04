@@ -120,3 +120,18 @@ pub enum Either<A, B> {
     Left(A),
     Right(B),
 }
+
+
+pub struct Once<T>(Option<T>);
+
+impl<T> Once<T> {
+    pub fn new() -> Self { Self(None) }
+
+    pub fn get(&self) -> Option<&T> { self.0.as_ref() }
+    pub fn into_inner(self) -> Option<T> { self.0 }
+
+    pub fn set(&mut self, value: T) {
+        assert!(self.0.is_none());
+        self.0 = Some(value);
+    }
+}

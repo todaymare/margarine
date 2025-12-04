@@ -11,22 +11,19 @@ fn main() {
 
 
 fn part1(input: str): str {
-    var dial = 50;
-    var counter = 0;
+    var dial, counter = (50, 0);
 
     for instr in input.lines() {
         if instr.is_empty() { continue }
 
-        var split = instr.split_at(1);
-        var dir = split.0;
-        var value = split.1.parse::<int>()!;
+        var dir, value = instr.split_at(1);
+        var value = value.parse::<int>()!;
 
         var delta =
         if dir == "L" { -value }
         else { value };
 
         dial += delta;
-
         dial = ((dial % 100) + 100) % 100;
 
         if dial == 0 {
@@ -39,15 +36,13 @@ fn part1(input: str): str {
 
 
 fn part2(input: str): str {
-    var dial = 50;
-    var counter = 0;
+    var dial, counter = (50, 0);
 
     for instr in input.lines() {
         if instr.is_empty() { continue }
 
-        var split = instr.split_at(1);
-        var dir = split.0;
-        var value = split.1.parse::<int>()!;
+        var dir, value = instr.split_at(1);
+        var value = value.parse::<int>()!;
 
         if dir == "R" {
             counter += (dial + value) / 100;
