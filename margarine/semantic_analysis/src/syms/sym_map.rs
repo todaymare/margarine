@@ -369,7 +369,7 @@ impl<'me> SymbolMap<'me> {
 
             let sym = Symbol::new(
                 StringMap::TYPE_ID,
-                &[StringMap::T],
+                &[StringMap::INVALID_IDENT],
                 SymbolKind::Function(FunctionTy::new(
                         &[],
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None),

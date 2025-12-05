@@ -762,14 +762,15 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
     fn expr_ex(&mut self, env: &mut Env<'me>, block: &mut Block<'me>, expr: ExprId, is_fn_call_accessor: bool) -> Result<(), ErrorId> {
         macro_rules! out_if_err {
-            () => {
-               match self.ty_info.expr(expr) {
+            () => {{
+
+                match self.ty_info.expr(expr) {
                     Ok(e) => e,
                     Err(e) => {
                         return Err(e);
                     },
                }
-            };
+            }};
         }
 
 
@@ -798,14 +799,33 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             },
 
 
-            parser::nodes::expr::Expr::Identifier(string_index, _) => {
+            parser::nodes::expr::Expr::Identifier(string_index, gens) => {
                 let ty = out_if_err!();
+
+                let env_gens = env.gens;
+                let env_gens = self.syms.get_gens(env_gens);
+
+                let ty = ty.resolve(&[env_gens], self.syms);
+
                 // it's a function
                 if let Some(Some(func)) = self.ty_info.idents.get(&expr) {
                     let func_gens = ty.gens(self.syms);
                     let env_gens = self.syms.get_gens(env.gens);
 
-                    let func = Sym::Ty(*func, func_gens).resolve(&[env_gens], self.syms);
+                    let func = Sym::Ty(*func, func_gens);
+                    println!("{}", ty.display(self.string_map, self.syms));
+                    println!("{}", self.string_map.get(string_index));
+
+                    for (n, g) in self.syms.get_gens(func_gens) {
+                        println!("{}: {}", self.string_map.get(*n), g.display(self.string_map, self.syms))
+                    }
+
+
+                    println!("{}", func.display(self.string_map, self.syms));
+                    for (n, g) in env_gens {
+                        println!("{}: {}", self.string_map.get(*n), g.display(self.string_map, self.syms))
+                    }
+                    let func = func.resolve(&[env_gens], self.syms);
 
                     println!("{}", self.string_map.get(string_index));
                     let func = self.get_func(func).unwrap();
@@ -992,7 +1012,16 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 self.expr(env, block, val)?;
                 let slf = out_if_err!();
 
+                let env_gens = self.syms.get_gens(env.gens);
+
+                println!("<-----");
+                for g in env_gens {
+                    println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
+                }
+                println!("----->");
+
                 let val = self.ty_info.expr(val).unwrap();
+                let val = val.resolve(&[env_gens], self.syms);
                 let ty = val.sym(self.syms).unwrap();
 
                 if let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
@@ -1013,9 +1042,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     }
 
                 } else {
-                    let env_gens = self.syms.get_gens(env.gens);
                     let sym_gens = self.syms.get_gens(val.gens(self.syms));
-                    dbg!(env_gens);
                     for g in sym_gens {
                         println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
                     }
