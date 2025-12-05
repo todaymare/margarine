@@ -1,5 +1,5 @@
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, )]
+#[derive(Debug)]
 pub enum OpCode {
     Ret,
     Unit,
@@ -1915,38 +1915,7 @@ impl OpCode {
     }
 }
 
-
-#[derive(Clone, Copy, Debug)]
-pub struct NonNaNF64(f64);
-
-impl NonNaNF64 {
-    pub fn new(val: f64) -> Self {
-        assert!(!val.is_nan());
-        Self(val)
-    }
-
-    pub fn inner(self) -> f64 { self.0 }
-}
-
-impl std::hash::Hash for NonNaNF64 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state)
-    }
-}
-
-
-impl PartialEq for NonNaNF64 {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_bits() == other.0.to_bits()
-    }
-}
-
-
-impl Eq for NonNaNF64 {}
-
-
-
-#[derive(Debug, Clone, Copy, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub enum Decoded<'src> {
     Ret { local_count: u8 },
     Unit {  },
@@ -1954,7 +1923,7 @@ pub enum Decoded<'src> {
     PopLocalSpace { amount: u8 },
     Err { ty: u8, file: u32, index: u32 },
     ConstInt { val: i64 },
-    ConstFloat { val: NonNaNF64 },
+    ConstFloat { val: f64 },
     ConstBool { val: u8 },
     ConstStr { val: u32 },
     Call { func: u32, argc: u8 },
@@ -2052,7 +2021,7 @@ impl OpCode {
             }
             Self::ConstFloat => {
         let val = <f64>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<f64>() }>());
-                Some((opcode, Decoded::ConstFloat { val: NonNaNF64::new(val) }))
+                Some((opcode, Decoded::ConstFloat { val }))
             }
             Self::ConstBool => {
         let val = <u8>::from_le_bytes(reader.next_n::<{ core::mem::size_of::<u8>() }>());

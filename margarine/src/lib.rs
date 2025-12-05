@@ -674,13 +674,6 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         let s1 = s1.into();
         let s2 = s2.into();
 
-        if (37540000..37541000).contains(&vm.tally_counter) {
-            println!("s1: '{}', s2: '{}'", s1, s2);
-            println!("split_pos: {}", split_pos);
-            println!("str len: {}", str.len());
-            println!("str: '{}'", str);
-        }
-
         let s1 = match vm.new_obj(ObjectData::String(s1)) {
             Ok(v) => v,
             Err(v) => {

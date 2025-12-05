@@ -48,10 +48,8 @@ pub struct VM<'src> {
     pub funcs: Vec<Function<'src>>,
     error_table: &'src [u8],
     pub objs: ObjectMap,
+    pub cycle: usize,
     //jit: JIT,
-
-    tally: FxHasher64,
-    pub tally_counter: u64,
 }
 
 
@@ -148,7 +146,7 @@ impl<'src> VM<'src> {
         let Some(b"BUTTERY") = reader.try_next_n().as_ref()
         else { return Err(FatalError::new("invalid header")) };
 
-        let mut objs = ObjectMap::new(64);
+        let mut objs = ObjectMap::new(16 * 1024 * 1024);
 
 
         // table sizes
@@ -263,8 +261,7 @@ impl<'src> VM<'src> {
         }
         }
 
-        println!("Loaded {} functions", funcs.len());
-        println!("{:#?}", funcs);
+        println!("loaded {} functions", funcs.len());
 
         let offset = unsafe { reader.src.offset_from(src.as_ptr()) } as usize;
         let code_section = &src[offset..];
@@ -283,8 +280,7 @@ impl<'src> VM<'src> {
             funcs,
             error_table: errs,
             objs,
-            tally: FxHasher64::default(),
-            tally_counter: 0,
+            cycle: 0,
             //jit: JIT::default(),
         })
     }

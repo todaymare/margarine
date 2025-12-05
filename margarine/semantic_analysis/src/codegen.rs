@@ -115,8 +115,9 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
     funcs.sort_by_key(|x| x.1.index.0);
     for (_, func) in &funcs {
         func_sec.push(opcode::func::consts::Func);
-
         let name = conv.string_map.get(func.name);
+
+        /*
         println!("Generating function: {} (hits: {}, index: {})", name, func.hits, func.index.0);
         println!("-----------------------------------");
         for bb in match &func.kind {
@@ -128,6 +129,8 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
             println!("Terminator: {:?}", bb.terminator);
             println!();
         }
+        */
+
         // func meta
         func_sec.extend_from_slice(&(name.len() as u32).to_le_bytes());
         func_sec.extend_from_slice(name.as_bytes());
