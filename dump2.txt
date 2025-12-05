@@ -1,0 +1,2279 @@
+------ std::duration::Duration::now ------ #0
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 3)",
+        2: "ConstInt(val: 1)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 0)",
+        15: "ConstInt(val: 2)",
+        24: "CreateFuncRef(capture_count: 0)",
+        26: "Store(index: 1)",
+        28: "Load(index: 1)",
+        30: "CallFuncRef(argc: 0)",
+        32: "ConstInt(val: 3)",
+        41: "CreateFuncRef(capture_count: 0)",
+        43: "Store(index: 2)",
+        45: "Load(index: 2)",
+        47: "CallFuncRef(argc: 0)",
+        49: "Load(index: 0)",
+        51: "CallFuncRef(argc: 2)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::new ------ #1
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "Load(index: 1)",
+        6: "ConstInt(val: 1000000000)",
+        15: "DivInt()",
+        16: "AddInt()",
+        17: "Store(index: 2)",
+        19: "Unit()",
+        20: "Pop()",
+        21: "Load(index: 1)",
+        23: "ConstInt(val: 1000000000)",
+        32: "RemInt()",
+        33: "Store(index: 3)",
+        35: "Unit()",
+        36: "Pop()",
+        37: "Load(index: 2)",
+        39: "Load(index: 3)",
+        41: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::elapsed ------ #4
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "ConstInt(val: 0)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 1)",
+        17: "CallFuncRef(argc: 0)",
+        19: "ConstInt(val: 5)",
+        28: "CreateFuncRef(capture_count: 0)",
+        30: "Store(index: 2)",
+        32: "Load(index: 0)",
+        34: "Load(index: 2)",
+        36: "CallFuncRef(argc: 2)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::sub ------ #5
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 3)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 1)",
+        6: "Load(index: 1)",
+        8: "LoadField(field_index: 1)",
+        10: "SubInt()",
+        11: "Store(index: 2)",
+        13: "Unit()",
+        14: "Pop()",
+        15: "Load(index: 0)",
+        17: "LoadField(field_index: 0)",
+        19: "Load(index: 1)",
+        21: "LoadField(field_index: 0)",
+        23: "SubInt()",
+        24: "Store(index: 3)",
+        26: "Unit()",
+        27: "Pop()",
+        28: "Load(index: 2)",
+        30: "ConstInt(val: 0)",
+        39: "LtInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            2,
+        ),
+        op2: BlockIndex(
+            3,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "Unit()",
+        1: "Store(index: 4)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 4)",
+        2: "Pop()",
+        3: "Load(index: 3)",
+        5: "Load(index: 2)",
+        7: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "Load(index: 3)",
+        2: "ConstInt(val: 1)",
+        11: "SubInt()",
+        12: "Store(index: 3)",
+        14: "Unit()",
+        15: "Pop()",
+        16: "ConstInt(val: 1000000000)",
+        25: "Load(index: 2)",
+        27: "AddInt()",
+        28: "Store(index: 2)",
+        30: "Unit()",
+        31: "Store(index: 4)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+------ std::duration::Duration::from_secs ------ #6
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 0)",
+        13: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::from_secs_float ------ #7
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 8)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "ConstFloat(val: 1000000000)",
+        26: "MulFloat()",
+        27: "CastFloatToInt()",
+        28: "Load(index: 1)",
+        30: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::from_nanos ------ #8
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 1000000000)",
+        13: "DivInt()",
+        14: "Store(index: 1)",
+        16: "Unit()",
+        17: "Pop()",
+        18: "Load(index: 0)",
+        20: "ConstInt(val: 1000000000)",
+        29: "RemInt()",
+        30: "Store(index: 2)",
+        32: "Unit()",
+        33: "Pop()",
+        34: "Load(index: 1)",
+        36: "Load(index: 2)",
+        38: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::from_millis ------ #9
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 1000)",
+        13: "DivInt()",
+        14: "Store(index: 1)",
+        16: "Unit()",
+        17: "Pop()",
+        18: "Load(index: 0)",
+        20: "ConstInt(val: 1000)",
+        29: "RemInt()",
+        30: "ConstInt(val: 1000000)",
+        39: "MulInt()",
+        40: "Store(index: 2)",
+        42: "Unit()",
+        43: "Pop()",
+        44: "Load(index: 1)",
+        46: "Load(index: 2)",
+        48: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::from_micros ------ #10
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 1000000)",
+        13: "DivInt()",
+        14: "Store(index: 1)",
+        16: "Unit()",
+        17: "Pop()",
+        18: "Load(index: 0)",
+        20: "ConstInt(val: 1000000)",
+        29: "RemInt()",
+        30: "ConstInt(val: 1000)",
+        39: "MulInt()",
+        40: "Store(index: 2)",
+        42: "Unit()",
+        43: "Pop()",
+        44: "Load(index: 1)",
+        46: "Load(index: 2)",
+        48: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::is_zero ------ #11
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "ConstInt(val: 0)",
+        15: "EqInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            2,
+        ),
+        op2: BlockIndex(
+            3,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "ConstBool(val: 0)",
+        2: "Store(index: 1)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 1)",
+    },
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "Load(index: 0)",
+        2: "LoadField(field_index: 1)",
+        4: "ConstInt(val: 0)",
+        13: "EqInt()",
+        14: "Store(index: 1)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+------ std::duration::Duration::as_secs ------ #12
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::as_secs_float ------ #13
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "CastIntToFloat()",
+        7: "Load(index: 0)",
+        9: "LoadField(field_index: 1)",
+        11: "CastIntToFloat()",
+        12: "ConstFloat(val: 1000000000)",
+        21: "DivFloat()",
+        22: "AddFloat()",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::as_millis ------ #14
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "ConstInt(val: 1000)",
+        15: "MulInt()",
+        16: "Load(index: 0)",
+        18: "LoadField(field_index: 1)",
+        20: "ConstInt(val: 1000000)",
+        29: "DivInt()",
+        30: "AddInt()",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::as_micros ------ #15
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "ConstInt(val: 1000000)",
+        15: "MulInt()",
+        16: "Load(index: 0)",
+        18: "LoadField(field_index: 1)",
+        20: "ConstInt(val: 1000)",
+        29: "DivInt()",
+        30: "AddInt()",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::as_nanos ------ #16
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "ConstInt(val: 1000000000)",
+        15: "MulInt()",
+        16: "Load(index: 0)",
+        18: "LoadField(field_index: 1)",
+        20: "AddInt()",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::subsec_millis ------ #17
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 1)",
+        6: "ConstInt(val: 1000000)",
+        15: "DivInt()",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::subsec_micros ------ #18
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 1)",
+        6: "ConstInt(val: 1000)",
+        15: "DivInt()",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::subsec_nanos ------ #19
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 1)",
+    },
+    terminator: Ret,
+}
+------ std::duration::Duration::add ------ #20
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 3)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 1)",
+        6: "Load(index: 1)",
+        8: "LoadField(field_index: 1)",
+        10: "AddInt()",
+        11: "Store(index: 2)",
+        13: "Unit()",
+        14: "Pop()",
+        15: "Load(index: 0)",
+        17: "LoadField(field_index: 0)",
+        19: "Load(index: 1)",
+        21: "LoadField(field_index: 0)",
+        23: "AddInt()",
+        24: "Store(index: 3)",
+        26: "Unit()",
+        27: "Pop()",
+        28: "Load(index: 2)",
+        30: "ConstInt(val: 1000000000)",
+        39: "GeInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            2,
+        ),
+        op2: BlockIndex(
+            3,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "Unit()",
+        1: "Store(index: 4)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 4)",
+        2: "Pop()",
+        3: "Load(index: 3)",
+        5: "Load(index: 2)",
+        7: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "Load(index: 3)",
+        2: "ConstInt(val: 1)",
+        11: "AddInt()",
+        12: "Store(index: 3)",
+        14: "Unit()",
+        15: "Pop()",
+        16: "Load(index: 2)",
+        18: "ConstInt(val: 1000000000)",
+        27: "SubInt()",
+        28: "Store(index: 2)",
+        30: "Unit()",
+        31: "Store(index: 4)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+------ std::iter::Iter::sum ------ #21
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "ConstInt(val: 0)",
+        11: "CreateStruct(field_count: 1)",
+        13: "Store(index: 1)",
+        15: "Unit()",
+        16: "Pop()",
+        17: "Load(index: 0)",
+        19: "ConstInt(val: 22)",
+        28: "CreateFuncRef(capture_count: 0)",
+        30: "Store(index: 2)",
+        32: "Load(index: 1)",
+        34: "ConstInt(val: 28)",
+        43: "CreateFuncRef(capture_count: 1)",
+        45: "Load(index: 2)",
+        47: "CallFuncRef(argc: 2)",
+        49: "Pop()",
+        50: "Unit()",
+        51: "Pop()",
+        52: "Load(index: 1)",
+        54: "LoadField(field_index: 0)",
+    },
+    terminator: Ret,
+}
+------ std::iter::Iter::for_each<int> ------ #22
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 5)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 23)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 2)",
+        17: "Load(index: 1)",
+        19: "Load(index: 2)",
+        21: "CallFuncRef(argc: 2)",
+        23: "Store(index: 3)",
+        25: "ConstInt(val: 27)",
+        34: "CreateFuncRef(capture_count: 0)",
+        36: "Store(index: 4)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 3)",
+        2: "Load(index: 4)",
+        4: "CallFuncRef(argc: 1)",
+        6: "Copy()",
+        7: "LoadField(field_index: 0)",
+        9: "ConstInt(val: 0)",
+        18: "EqInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            4,
+        ),
+        op2: BlockIndex(
+            5,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        5,
+    ),
+    bytecode: {
+        0: "Pop()",
+    },
+    terminator: Goto(
+        BlockIndex(
+            2,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "Unit()",
+    },
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        4,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 5)",
+        4: "Unit()",
+        5: "Pop()",
+        6: "Store(index: 6)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            3,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "Load(index: 6)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+------ std::iter::Iter::map<T, unit> ------ #23
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "Load(index: 1)",
+        6: "ConstInt(val: 26)",
+        15: "CreateFuncRef(capture_count: 2)",
+        17: "CreateStruct(field_count: 1)",
+    },
+    terminator: Ret,
+}
+------ std::iter::Iter::__next__<T> ------ #24
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "Store(index: 1)",
+        8: "Unit()",
+        9: "Pop()",
+        10: "Load(index: 1)",
+        12: "Store(index: 2)",
+        14: "Load(index: 2)",
+        16: "CallFuncRef(argc: 0)",
+    },
+    terminator: Ret,
+}
+------ Option ------ #25
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 0)",
+        9: "Load(index: 0)",
+        11: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ fn(): T ------ #26
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 5)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 24)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 2)",
+        17: "Load(index: 2)",
+        19: "CallFuncRef(argc: 1)",
+        21: "Copy()",
+        22: "LoadField(field_index: 0)",
+        24: "ConstInt(val: 0)",
+        33: "EqInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            2,
+        ),
+        op2: BlockIndex(
+            3,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {},
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 3)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 3)",
+        2: "Store(index: 4)",
+        4: "Unit()",
+        5: "Pop()",
+        6: "ConstInt(val: 25)",
+        15: "CreateFuncRef(capture_count: 0)",
+        17: "Store(index: 5)",
+        19: "Load(index: 1)",
+        21: "Store(index: 6)",
+        23: "Load(index: 4)",
+        25: "Load(index: 6)",
+        27: "CallFuncRef(argc: 1)",
+        29: "Load(index: 5)",
+        31: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ std::iter::Iter::__next__<unit> ------ #27
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "Store(index: 1)",
+        8: "Unit()",
+        9: "Pop()",
+        10: "Load(index: 1)",
+        12: "Store(index: 2)",
+        14: "Load(index: 2)",
+        16: "CallFuncRef(argc: 0)",
+    },
+    terminator: Ret,
+}
+------ fn(int) ------ #28
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 1)",
+        4: "LoadField(field_index: 0)",
+        6: "Load(index: 0)",
+        8: "AddInt()",
+        9: "Load(index: 1)",
+        11: "StoreField(field_index: 0)",
+        13: "Unit()",
+    },
+    terminator: Ret,
+}
+------ std::io::read_line ------ #29
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 30)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 0)",
+        15: "Load(index: 0)",
+        17: "CallFuncRef(argc: 0)",
+    },
+    terminator: Ret,
+}
+------ str::lines ------ #31
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 32)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ str::split_at ------ #33
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 34)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 2)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "Load(index: 2)",
+        21: "CallFuncRef(argc: 2)",
+    },
+    terminator: Ret,
+}
+------ str::is_empty ------ #35
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 36)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 1)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+        21: "ConstInt(val: 0)",
+        30: "EqInt()",
+    },
+    terminator: Ret,
+}
+------ str::len ------ #36
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 37)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ str::split ------ #38
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "ConstInt(val: 39)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 2)",
+        15: "Load(index: 0)",
+        17: "Load(index: 2)",
+        19: "CallFuncRef(argc: 1)",
+        21: "Load(index: 1)",
+        23: "CreateStruct(field_count: 2)",
+        25: "Store(index: 3)",
+        27: "Unit()",
+        28: "Pop()",
+        29: "Load(index: 3)",
+        31: "Load(index: 1)",
+        33: "ConstInt(val: 44)",
+        42: "CreateFuncRef(capture_count: 2)",
+        44: "CreateStruct(field_count: 1)",
+    },
+    terminator: Ret,
+}
+------ Option ------ #39
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 0)",
+        9: "Load(index: 0)",
+        11: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ str::split_once ------ #40
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 41)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 2)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "Load(index: 2)",
+        21: "CallFuncRef(argc: 2)",
+    },
+    terminator: Ret,
+}
+------ Option::is_some<(str, str)> ------ #42
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "Copy()",
+        5: "LoadField(field_index: 0)",
+    },
+    terminator: Switch(
+        [
+            BlockIndex(
+                2,
+            ),
+            BlockIndex(
+                3,
+            ),
+        ],
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 2)",
+        4: "ConstBool(val: 0)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {},
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 1)",
+        4: "ConstBool(val: 1)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+------ Option ------ #43
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 1)",
+        9: "Unit()",
+        10: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ fn(): Option<str> ------ #44
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 13)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "Copy()",
+        7: "LoadField(field_index: 0)",
+    },
+    terminator: Switch(
+        [
+            BlockIndex(
+                2,
+            ),
+            BlockIndex(
+                10,
+            ),
+        ],
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        10,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 13)",
+        4: "ConstInt(val: 43)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 14)",
+        17: "Load(index: 14)",
+        19: "CallFuncRef(argc: 0)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {},
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 2)",
+        4: "Load(index: 0)",
+        6: "LoadField(field_index: 0)",
+        8: "Copy()",
+        9: "LoadField(field_index: 0)",
+        11: "ConstInt(val: 0)",
+        20: "EqInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            4,
+        ),
+        op2: BlockIndex(
+            5,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        5,
+    ),
+    bytecode: {},
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        4,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 3)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            3,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "Load(index: 3)",
+        2: "ConstInt(val: 40)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 4)",
+        15: "Load(index: 1)",
+        17: "Load(index: 4)",
+        19: "CallFuncRef(argc: 2)",
+        21: "Store(index: 5)",
+        23: "Unit()",
+        24: "Pop()",
+        25: "Load(index: 5)",
+        27: "ConstInt(val: 42)",
+        36: "CreateFuncRef(capture_count: 0)",
+        38: "Store(index: 6)",
+        40: "Load(index: 6)",
+        42: "CallFuncRef(argc: 1)",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            8,
+        ),
+        op2: BlockIndex(
+            9,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        9,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 43)",
+        9: "CreateFuncRef(capture_count: 0)",
+        11: "Store(index: 11)",
+        13: "Load(index: 11)",
+        15: "CallFuncRef(argc: 0)",
+        17: "Load(index: 0)",
+        19: "StoreField(field_index: 0)",
+        21: "Unit()",
+        22: "Pop()",
+        23: "ConstInt(val: 39)",
+        32: "CreateFuncRef(capture_count: 0)",
+        34: "Store(index: 12)",
+        36: "Load(index: 2)",
+        38: "Load(index: 12)",
+        40: "CallFuncRef(argc: 1)",
+        42: "Store(index: 7)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            7,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        7,
+    ),
+    bytecode: {
+        0: "Load(index: 7)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        8,
+    ),
+    bytecode: {
+        0: "Load(index: 5)",
+        2: "Unwrap()",
+        3: "Store(index: 8)",
+        5: "Unit()",
+        6: "Pop()",
+        7: "ConstInt(val: 39)",
+        16: "CreateFuncRef(capture_count: 0)",
+        18: "Store(index: 9)",
+        20: "Load(index: 8)",
+        22: "LoadField(field_index: 1)",
+        24: "Load(index: 9)",
+        26: "CallFuncRef(argc: 1)",
+        28: "Load(index: 0)",
+        30: "StoreField(field_index: 0)",
+        32: "Unit()",
+        33: "Pop()",
+        34: "ConstInt(val: 39)",
+        43: "CreateFuncRef(capture_count: 0)",
+        45: "Store(index: 10)",
+        47: "Load(index: 8)",
+        49: "LoadField(field_index: 0)",
+        51: "Load(index: 10)",
+        53: "CallFuncRef(argc: 1)",
+        55: "Store(index: 7)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            7,
+        ),
+    ),
+}
+------ str::slice ------ #45
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 46)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 2)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "LoadField(field_index: 0)",
+        21: "Load(index: 1)",
+        23: "LoadField(field_index: 1)",
+        25: "Load(index: 2)",
+        27: "CallFuncRef(argc: 3)",
+    },
+    terminator: Ret,
+}
+------ std::string::Lines::__next__ ------ #47
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 48)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ std::assert ------ #49
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "NotBool()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            2,
+        ),
+        op2: BlockIndex(
+            3,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "Unit()",
+        1: "Store(index: 2)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 2)",
+    },
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 50)",
+        9: "CreateFuncRef(capture_count: 0)",
+        11: "Store(index: 3)",
+        13: "Load(index: 1)",
+        15: "Load(index: 3)",
+        17: "CallFuncRef(argc: 1)",
+        19: "Store(index: 2)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+------ Range::__next__ ------ #51
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 3)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "Load(index: 0)",
+        8: "LoadField(field_index: 1)",
+        10: "LtInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            2,
+        ),
+        op2: BlockIndex(
+            3,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 53)",
+        9: "CreateFuncRef(capture_count: 0)",
+        11: "Store(index: 3)",
+        13: "Load(index: 3)",
+        15: "CallFuncRef(argc: 0)",
+        17: "Store(index: 1)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 1)",
+    },
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "Load(index: 0)",
+        2: "LoadField(field_index: 0)",
+        4: "ConstInt(val: 1)",
+        13: "AddInt()",
+        14: "Load(index: 0)",
+        16: "StoreField(field_index: 0)",
+        18: "Unit()",
+        19: "Pop()",
+        20: "ConstInt(val: 52)",
+        29: "CreateFuncRef(capture_count: 0)",
+        31: "Store(index: 2)",
+        33: "Load(index: 0)",
+        35: "LoadField(field_index: 0)",
+        37: "ConstInt(val: 1)",
+        46: "SubInt()",
+        47: "Load(index: 2)",
+        49: "CallFuncRef(argc: 1)",
+        51: "Store(index: 1)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+------ Option ------ #52
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 0)",
+        9: "Load(index: 0)",
+        11: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ Option ------ #53
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 1)",
+        9: "Unit()",
+        10: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ Range::iter ------ #54
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 55)",
+        13: "CreateFuncRef(capture_count: 1)",
+        15: "CreateStruct(field_count: 1)",
+    },
+    terminator: Ret,
+}
+------ fn(): Option<int> ------ #55
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 51)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 1)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ int::abs ------ #56
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 63)",
+        13: "BitshiftRight()",
+        14: "Store(index: 1)",
+        16: "Unit()",
+        17: "Pop()",
+        18: "Load(index: 0)",
+        20: "Load(index: 1)",
+        22: "BitwiseXor()",
+        23: "Load(index: 1)",
+        25: "SubInt()",
+    },
+    terminator: Ret,
+}
+------ int::to_str ------ #57
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 58)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ float::to_str ------ #59
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 60)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ main ------ #61
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 4)",
+        2: "ConstInt(val: 62)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 0)",
+        15: "ConstStr(val: 0)",
+        20: "Load(index: 0)",
+        22: "CallFuncRef(argc: 1)",
+        24: "Store(index: 1)",
+        26: "Unit()",
+        27: "Pop()",
+        28: "ConstInt(val: 63)",
+        37: "CreateFuncRef(capture_count: 0)",
+        39: "Store(index: 2)",
+        41: "ConstInt(val: 66)",
+        50: "CreateFuncRef(capture_count: 0)",
+        52: "Store(index: 3)",
+        54: "Load(index: 1)",
+        56: "Load(index: 3)",
+        58: "CallFuncRef(argc: 1)",
+        60: "Load(index: 2)",
+        62: "CallFuncRef(argc: 1)",
+        64: "Pop()",
+        65: "Unit()",
+    },
+    terminator: Ret,
+}
+------ std::println<str> ------ #63
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 4)",
+        2: "ConstInt(val: 64)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "ConstInt(val: 65)",
+        26: "CreateFuncRef(capture_count: 0)",
+        28: "Store(index: 2)",
+        30: "Load(index: 2)",
+        32: "CallFuncRef(argc: 0)",
+        34: "Load(index: 1)",
+        36: "CallFuncRef(argc: 2)",
+        38: "Pop()",
+        39: "Unit()",
+        40: "Pop()",
+        41: "ConstInt(val: 64)",
+        50: "CreateFuncRef(capture_count: 0)",
+        52: "Store(index: 3)",
+        54: "ConstStr(val: 1)",
+        59: "ConstInt(val: 65)",
+        68: "CreateFuncRef(capture_count: 0)",
+        70: "Store(index: 4)",
+        72: "Load(index: 4)",
+        74: "CallFuncRef(argc: 0)",
+        76: "Load(index: 3)",
+        78: "CallFuncRef(argc: 2)",
+        80: "Pop()",
+        81: "Unit()",
+    },
+    terminator: Ret,
+}
+------ type_id<str> ------ #65
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 16)",
+    },
+    terminator: Ret,
+}
+------ part1 ------ #66
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 5)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 38)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 1)",
+        17: "ConstStr(val: 2)",
+        22: "Load(index: 1)",
+        24: "CallFuncRef(argc: 2)",
+        26: "ConstInt(val: 67)",
+        35: "CreateFuncRef(capture_count: 0)",
+        37: "Store(index: 2)",
+        39: "ConstInt(val: 72)",
+        48: "CreateFuncRef(capture_count: 0)",
+        50: "Load(index: 2)",
+        52: "CallFuncRef(argc: 2)",
+        54: "ConstInt(val: 73)",
+        63: "CreateFuncRef(capture_count: 0)",
+        65: "Store(index: 3)",
+        67: "ConstInt(val: 82)",
+        76: "CreateFuncRef(capture_count: 0)",
+        78: "Load(index: 3)",
+        80: "CallFuncRef(argc: 2)",
+        82: "ConstInt(val: 21)",
+        91: "CreateFuncRef(capture_count: 0)",
+        93: "Store(index: 4)",
+        95: "Load(index: 4)",
+        97: "CallFuncRef(argc: 1)",
+        99: "ConstInt(val: 57)",
+        108: "CreateFuncRef(capture_count: 0)",
+        110: "Store(index: 5)",
+        112: "Load(index: 5)",
+        114: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ std::iter::Iter::filter<str> ------ #67
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 1)",
+        4: "Load(index: 0)",
+        6: "ConstInt(val: 71)",
+        15: "CreateFuncRef(capture_count: 2)",
+        17: "CreateStruct(field_count: 1)",
+    },
+    terminator: Ret,
+}
+------ std::iter::Iter::__next__<T> ------ #68
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "Load(index: 0)",
+        4: "LoadField(field_index: 0)",
+        6: "Store(index: 1)",
+        8: "Unit()",
+        9: "Pop()",
+        10: "Load(index: 1)",
+        12: "Store(index: 2)",
+        14: "Load(index: 2)",
+        16: "CallFuncRef(argc: 0)",
+    },
+    terminator: Ret,
+}
+------ Option ------ #69
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 0)",
+        9: "Load(index: 0)",
+        11: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ Option ------ #70
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 1)",
+        9: "Unit()",
+        10: "CreateStruct(field_count: 2)",
+    },
+    terminator: Ret,
+}
+------ fn(): str ------ #71
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 7)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 1)",
+        2: "ConstInt(val: 68)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 2)",
+        15: "Load(index: 2)",
+        17: "CallFuncRef(argc: 1)",
+        19: "Copy()",
+        20: "LoadField(field_index: 0)",
+        22: "ConstInt(val: 0)",
+        31: "EqInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            4,
+        ),
+        op2: BlockIndex(
+            5,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        5,
+    ),
+    bytecode: {},
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        4,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 3)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            3,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "Load(index: 3)",
+        2: "Store(index: 4)",
+        4: "Unit()",
+        5: "Pop()",
+        6: "Load(index: 0)",
+        8: "Store(index: 5)",
+        10: "Load(index: 4)",
+        12: "Load(index: 5)",
+        14: "CallFuncRef(argc: 1)",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            8,
+        ),
+        op2: BlockIndex(
+            10,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        10,
+    ),
+    bytecode: {
+        0: "Unit()",
+        1: "Store(index: 6)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            7,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        7,
+    ),
+    bytecode: {
+        0: "Load(index: 6)",
+        2: "Pop()",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        8,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 69)",
+        9: "CreateFuncRef(capture_count: 0)",
+        11: "Store(index: 7)",
+        13: "Load(index: 4)",
+        15: "Load(index: 7)",
+        17: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ fn(str): bool ------ #72
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 35)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 1)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+        21: "NotBool()",
+    },
+    terminator: Ret,
+}
+------ std::iter::Iter::map<str, int> ------ #73
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 0)",
+        4: "Load(index: 1)",
+        6: "ConstInt(val: 74)",
+        15: "CreateFuncRef(capture_count: 2)",
+        17: "CreateStruct(field_count: 1)",
+    },
+    terminator: Ret,
+}
+------ fn(): str ------ #74
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 5)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 24)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 2)",
+        17: "Load(index: 2)",
+        19: "CallFuncRef(argc: 1)",
+        21: "Copy()",
+        22: "LoadField(field_index: 0)",
+        24: "ConstInt(val: 0)",
+        33: "EqInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            2,
+        ),
+        op2: BlockIndex(
+            3,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {},
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 3)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 3)",
+        2: "Store(index: 4)",
+        4: "Unit()",
+        5: "Pop()",
+        6: "ConstInt(val: 25)",
+        15: "CreateFuncRef(capture_count: 0)",
+        17: "Store(index: 5)",
+        19: "Load(index: 1)",
+        21: "Store(index: 6)",
+        23: "Load(index: 4)",
+        25: "Load(index: 6)",
+        27: "CallFuncRef(argc: 1)",
+        29: "Load(index: 5)",
+        31: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ str::parse<int> ------ #75
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 2)",
+        2: "ConstInt(val: 76)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "ConstInt(val: 77)",
+        26: "CreateFuncRef(capture_count: 0)",
+        28: "Store(index: 2)",
+        30: "Load(index: 2)",
+        32: "CallFuncRef(argc: 0)",
+        34: "Load(index: 1)",
+        36: "CallFuncRef(argc: 2)",
+    },
+    terminator: Ret,
+}
+------ type_id<int> ------ #77
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 1)",
+    },
+    terminator: Ret,
+}
+------ std::iter::Iter::filter<int> ------ #78
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 0)",
+        2: "Load(index: 1)",
+        4: "Load(index: 0)",
+        6: "ConstInt(val: 79)",
+        15: "CreateFuncRef(capture_count: 2)",
+        17: "CreateStruct(field_count: 1)",
+    },
+    terminator: Ret,
+}
+------ fn(): int ------ #79
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 7)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 1)",
+        2: "ConstInt(val: 68)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 2)",
+        15: "Load(index: 2)",
+        17: "CallFuncRef(argc: 1)",
+        19: "Copy()",
+        20: "LoadField(field_index: 0)",
+        22: "ConstInt(val: 0)",
+        31: "EqInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            4,
+        ),
+        op2: BlockIndex(
+            5,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        5,
+    ),
+    bytecode: {},
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        4,
+    ),
+    bytecode: {
+        0: "LoadField(field_index: 1)",
+        2: "Store(index: 3)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            3,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        3,
+    ),
+    bytecode: {
+        0: "Load(index: 3)",
+        2: "Store(index: 4)",
+        4: "Unit()",
+        5: "Pop()",
+        6: "Load(index: 0)",
+        8: "Store(index: 5)",
+        10: "Load(index: 4)",
+        12: "Load(index: 5)",
+        14: "CallFuncRef(argc: 1)",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            8,
+        ),
+        op2: BlockIndex(
+            10,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        10,
+    ),
+    bytecode: {
+        0: "Unit()",
+        1: "Store(index: 6)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            7,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        7,
+    ),
+    bytecode: {
+        0: "Load(index: 6)",
+        2: "Pop()",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        8,
+    ),
+    bytecode: {
+        0: "ConstInt(val: 69)",
+        9: "CreateFuncRef(capture_count: 0)",
+        11: "Store(index: 7)",
+        13: "Load(index: 4)",
+        15: "Load(index: 7)",
+        17: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ is_repeated ------ #80
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 10)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 57)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 1)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+        21: "Store(index: 2)",
+        23: "Unit()",
+        24: "Pop()",
+        25: "Load(index: 2)",
+        27: "ConstInt(val: 36)",
+        36: "CreateFuncRef(capture_count: 0)",
+        38: "Store(index: 3)",
+        40: "Load(index: 3)",
+        42: "CallFuncRef(argc: 1)",
+        44: "ConstInt(val: 2)",
+        53: "RemInt()",
+        54: "ConstInt(val: 0)",
+        63: "NeInt()",
+    },
+    terminator: SwitchBool {
+        op1: BlockIndex(
+            2,
+        ),
+        op2: BlockIndex(
+            4,
+        ),
+    },
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        4,
+    ),
+    bytecode: {
+        0: "Unit()",
+        1: "Store(index: 4)",
+    },
+    terminator: Goto(
+        BlockIndex(
+            1,
+        ),
+    ),
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        1,
+    ),
+    bytecode: {
+        0: "Load(index: 4)",
+        2: "Pop()",
+        3: "Load(index: 2)",
+        5: "ConstInt(val: 36)",
+        14: "CreateFuncRef(capture_count: 0)",
+        16: "Store(index: 5)",
+        18: "Load(index: 5)",
+        20: "CallFuncRef(argc: 1)",
+        22: "ConstInt(val: 2)",
+        31: "DivInt()",
+        32: "Store(index: 6)",
+        34: "Unit()",
+        35: "Pop()",
+        36: "Load(index: 2)",
+        38: "ConstInt(val: 33)",
+        47: "CreateFuncRef(capture_count: 0)",
+        49: "Store(index: 7)",
+        51: "Load(index: 6)",
+        53: "Load(index: 7)",
+        55: "CallFuncRef(argc: 2)",
+        57: "Store(index: 8)",
+        59: "Load(index: 8)",
+        61: "LoadField(field_index: 0)",
+        63: "Store(index: 9)",
+        65: "Load(index: 8)",
+        67: "LoadField(field_index: 1)",
+        69: "Store(index: 10)",
+        71: "Unit()",
+        72: "Pop()",
+        73: "Load(index: 9)",
+        75: "Load(index: 10)",
+        77: "EqObj()",
+    },
+    terminator: Ret,
+}
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        2,
+    ),
+    bytecode: {
+        0: "ConstBool(val: 0)",
+    },
+    terminator: Ret,
+}
+------ fn(int): bool ------ #81
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 1)",
+        2: "ConstInt(val: 80)",
+        11: "CreateFuncRef(capture_count: 0)",
+        13: "Store(index: 1)",
+        15: "Load(index: 0)",
+        17: "Load(index: 1)",
+        19: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}
+------ fn(str): int ------ #82
+[margarine/semantic_analysis/src/codegen.rs:153:21] &block = Block {
+    index: BlockIndex(
+        0,
+    ),
+    bytecode: {
+        0: "PushLocalSpace(amount: 11)",
+        2: "Load(index: 0)",
+        4: "ConstInt(val: 40)",
+        13: "CreateFuncRef(capture_count: 0)",
+        15: "Store(index: 1)",
+        17: "ConstStr(val: 3)",
+        22: "Load(index: 1)",
+        24: "CallFuncRef(argc: 2)",
+        26: "Unwrap()",
+        27: "Store(index: 2)",
+        29: "Load(index: 2)",
+        31: "LoadField(field_index: 0)",
+        33: "Store(index: 3)",
+        35: "Load(index: 2)",
+        37: "LoadField(field_index: 1)",
+        39: "Store(index: 4)",
+        41: "Unit()",
+        42: "Pop()",
+        43: "Load(index: 3)",
+        45: "ConstInt(val: 75)",
+        54: "CreateFuncRef(capture_count: 0)",
+        56: "Store(index: 5)",
+        58: "Load(index: 5)",
+        60: "CallFuncRef(argc: 1)",
+        62: "Unwrap()",
+        63: "Store(index: 6)",
+        65: "Unit()",
+        66: "Pop()",
+        67: "Load(index: 4)",
+        69: "ConstInt(val: 75)",
+        78: "CreateFuncRef(capture_count: 0)",
+        80: "Store(index: 7)",
+        82: "Load(index: 7)",
+        84: "CallFuncRef(argc: 1)",
+        86: "Unwrap()",
+        87: "Store(index: 8)",
+        89: "Unit()",
+        90: "Pop()",
+        91: "Load(index: 6)",
+        93: "Load(index: 8)",
+        95: "ConstInt(val: 1)",
+        104: "AddInt()",
+        105: "CreateStruct(field_count: 2)",
+        107: "ConstInt(val: 54)",
+        116: "CreateFuncRef(capture_count: 0)",
+        118: "Store(index: 9)",
+        120: "Load(index: 9)",
+        122: "CallFuncRef(argc: 1)",
+        124: "ConstInt(val: 78)",
+        133: "CreateFuncRef(capture_count: 0)",
+        135: "Store(index: 10)",
+        137: "ConstInt(val: 81)",
+        146: "CreateFuncRef(capture_count: 0)",
+        148: "Load(index: 10)",
+        150: "CallFuncRef(argc: 2)",
+        152: "ConstInt(val: 21)",
+        161: "CreateFuncRef(capture_count: 0)",
+        163: "Store(index: 11)",
+        165: "Load(index: 11)",
+        167: "CallFuncRef(argc: 1)",
+    },
+    terminator: Ret,
+}

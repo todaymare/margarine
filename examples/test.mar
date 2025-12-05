@@ -1,8 +1,11 @@
+//extern "https://github.com/todaymare/margarine-std" as std;
+
+
 fn main() {
-    test(|a| a);
+    test();
 }
 
 
-fn test<T>(f: fn(int): T) {
+fn test() {
 }
 

@@ -18,6 +18,56 @@ impl Sym {
     pub fn display<'str>(self, string_map: &StringMap<'str>, map: &mut SymbolMap) -> &'str str {
         self.display_ex(string_map, map, None)
     }
+
+
+    pub fn resolve(self, env_gens: &[&[(StringIndex, Sym)]], map: &mut SymbolMap) -> Sym {
+        let ty = self.instantiate(map, 0);
+        let func_gens = map.get_gens(ty.gens(map));
+
+        let mut new_gens = sti::vec::Vec::with_cap_in(map.arena(), func_gens.len());
+        for (name, sym) in func_gens {
+            let mut iter = env_gens.iter().map(|x| x.iter()).flatten();
+            let sym =
+                iter.find(|x| x.0 == *name)
+                .map(|x| x.1).unwrap_or(*sym);
+
+            let sym = sym.resolve(env_gens, map);
+
+            new_gens.push((*name, sym));
+        }
+
+        let gens = map.add_gens(new_gens.leak());
+        let sym = ty.sym(map).unwrap();
+
+        Sym::Ty(sym, gens)
+    }
+
+
+    pub fn is_resolved(self, map: &mut SymbolMap) -> bool {
+        match self {
+            Sym::Ty(symbol_id, gen_list_id) => {
+                if let SymbolKind::Container(cont) = map.sym(symbol_id).kind()
+                && let ContainerKind::Generic = cont.kind() {
+                    dbg!(cont);
+                    return false;
+                }
+
+                for (name, sym) in map.get_gens(gen_list_id) {
+                    if !sym.is_resolved(map) {
+                        println!("generic {name:?}");
+                        return false 
+                    }
+                }
+
+                true
+            },
+            Sym::Var(v) => {
+                dbg!("is a variable");
+                dbg!(map.vars_mut()[v]);
+                false
+            },
+        }
+    }
     
 
     fn display_ex<'str>(self, string_map: &StringMap<'str>,
@@ -262,6 +312,7 @@ impl Sym {
 
     pub fn instantiate(self, map: &mut SymbolMap, depth: usize) -> Sym {
         if depth == 100 { panic!() }
+
         match self {
             Sym::Ty(sym, gens) => {
                 Sym::Ty(sym, instantiate_gens(map, gens))
@@ -271,7 +322,7 @@ impl Sym {
             Sym::Var(v) => {
                 match map.vars()[v].sub() {
                     VarSub::Concrete(v) => v.instantiate(map, depth + 1),
-                    _ => self,
+                    VarSub::None => self,
                 }
             },
         }
@@ -293,12 +344,12 @@ impl Sym {
     }
 
 
-    pub fn hash(self, map: &mut SymbolMap) -> TypeHash {
+    pub fn hash(self, map: &SymbolMap) -> TypeHash {
         self.hash_fn(map, |_| ())
     }
 
 
-    pub fn hash_fn(self, map: &mut SymbolMap, f: impl Fn(&mut FxHasher32)) -> TypeHash {
+    pub fn hash_fn(self, map: &SymbolMap, f: impl Fn(&mut FxHasher32)) -> TypeHash {
         let mut hasher = FxHasher32::new();
         self.hash_ex(map, &mut hasher);
         f(&mut hasher);
@@ -306,9 +357,8 @@ impl Sym {
     }
 
 
-    fn hash_ex(self, map: &mut SymbolMap, hasher: &mut impl Hasher) {
-        let init = self.instantiate(map, 0);
-        match init {
+    fn hash_ex(self, map: &SymbolMap, hasher: &mut impl Hasher) {
+        match self {
             Sym::Ty(v, g) => {
                 v.hash(hasher);
 

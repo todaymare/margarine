@@ -460,7 +460,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     }
 
 
-                    let ret = self.dt_to_gen( self.scopes.get(scope), sig.return_type, generics);
+                    let ret = self.dt_to_gen(self.scopes.get(scope), sig.return_type, generics);
                     let ret = match ret {
                         Ok(v) => v,
                         Err(v) => {
@@ -640,7 +640,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     let mut vec = Buffer::new(&*self.output, generics.len());
                     for g in generics {
                         let ty = self.syms.pending(&mut self.namespaces, *g, 0);
-                        let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Struct));
+                        let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Generic));
                         self.syms.add_sym(ty, Symbol::new(*g, &[], kind));
                         vec.push((*g, self.syms.get_ty(ty, &[])));
                     }
@@ -1662,6 +1662,8 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     },
 
                     ContainerKind::Tuple => field_ty,
+
+                    ContainerKind::Generic => unreachable!(),
                 };
 
                 if let Some(e) = field_gen.err() {

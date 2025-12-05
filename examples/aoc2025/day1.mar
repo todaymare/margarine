@@ -1,7 +1,6 @@
 extern "https://github.com/todaymare/margarine-std" as std;
 use std::*;
 use std::io::read_file;
-use std::iter::Iter;
 
 fn main() {
     var input = read_file("./examples/aoc2025/day1.txt");
@@ -39,37 +38,15 @@ fn is_repeated(n: int): bool {
 }
 
 
-impl<T> Iter<T> {
-    fn filter(self, cond: fn(T): bool): Iter<T> {
-        Iter {
-            next: || {
-                loop {
-                    var value = self.__next__()?;
-                    if cond(value) {
-                        return some(value)
-                    }
-                }
 
-                none()
-            }
-        }
-    }
+fn part2(input: str){
+    input
+        .split(",")
+        .map(|range| {
+            var a, b = range.split_once("-")!;
+            0
+        });
+
 }
 
 
-impl Iter<int> {
-    fn sum(self): int {
-        var sum = (0,);
-        self.for_each(|n| { sum.0 += n });
-        sum.0
-    }
-}
-
-
-impl Range {
-    fn iter(self): Iter<int> {
-        Iter {
-            next: || self.__next__(),
-        }
-    }
-}
