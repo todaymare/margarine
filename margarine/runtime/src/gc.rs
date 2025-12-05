@@ -4,6 +4,7 @@ use crate::{VM, Object, obj_map::{ObjectMap, ObjectData, ObjectIndex}};
 
 impl VM<'_> {
     pub fn run_garbage_collection(&mut self) {
+        return;
         let instant = Instant::now();
         
         self.mark();
@@ -11,12 +12,11 @@ impl VM<'_> {
 
         let elapsed = instant.elapsed();
         println!("took {elapsed:?} to run gc")
-        
     }
 
 
     fn mark(&mut self) {
-        for object in 0..self.stack.curr {
+        for object in 0..(self.stack.curr + 100) {
             let val = self.stack.values[object];
             if val.is_obj() {
                 self.objs.get(unsafe { val.as_obj() }).mark(true, &self.objs);
@@ -26,16 +26,19 @@ impl VM<'_> {
 
 
     fn sweep(&mut self) {
-        let free = AtomicU32::new(self.objs.free.0);
+        let mut free = self.objs.free;
         self.objs.raw_mut()
             .iter_mut()
             .enumerate()
             .filter(|(_, object)| !matches!(object.data, ObjectData::Free { .. }))
             .filter(|(_, object)| !object.liveliness.replace(false))
             .filter(|(_, object)| !object.leaked)
-            .for_each(|(index, object)| object.data = ObjectData::Free(ObjectIndex::new(free.swap(index as u32, std::sync::atomic::Ordering::Relaxed))));
+            .for_each(|(index, object)| {
+                object.data = ObjectData::Free(free);
+                free = ObjectIndex::new(index as u32);
+            });
 
-        self.objs.free = ObjectIndex::new(free.into_inner());
+        self.objs.free = free;
     }
 }
 

@@ -3,7 +3,9 @@
 #[cfg(not(debug_assertions))]
 use std::marker::PhantomData;
 
-use std::{cell::Cell, collections::HashMap, convert::Infallible, ffi::{CStr, CString}, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
+use std::{cell::Cell, collections::HashMap, convert::Infallible, ffi::{CStr, CString}, hash::DefaultHasher, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
+
+use fxhash::FxHasher64;
 
 use crate::obj_map::{Object, ObjectData, ObjectIndex, ObjectMap};
 
@@ -47,6 +49,9 @@ pub struct VM<'src> {
     error_table: &'src [u8],
     pub objs: ObjectMap,
     //jit: JIT,
+
+    tally: FxHasher64,
+    pub tally_counter: u64,
 }
 
 
@@ -143,7 +148,7 @@ impl<'src> VM<'src> {
         let Some(b"BUTTERY") = reader.try_next_n().as_ref()
         else { return Err(FatalError::new("invalid header")) };
 
-        let mut objs = ObjectMap::new(1024 * 1024);
+        let mut objs = ObjectMap::new(64);
 
 
         // table sizes
@@ -258,9 +263,18 @@ impl<'src> VM<'src> {
         }
         }
 
+        println!("Loaded {} functions", funcs.len());
+        println!("{:#?}", funcs);
 
         let offset = unsafe { reader.src.offset_from(src.as_ptr()) } as usize;
         let code_section = &src[offset..];
+
+        for obj in objs.objs.iter() {
+            match obj.data {
+                ObjectData::Free { .. } => {},
+                _ => assert!(obj.leaked),
+            }
+        }
 
         Ok(Self {
             stack: Stack::new(1024),
@@ -269,6 +283,8 @@ impl<'src> VM<'src> {
             funcs,
             error_table: errs,
             objs,
+            tally: FxHasher64::default(),
+            tally_counter: 0,
             //jit: JIT::default(),
         })
     }

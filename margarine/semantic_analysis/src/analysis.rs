@@ -648,7 +648,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     vec
                 };
 
-                if self.string_map.get(sig.name).contains("main") {
+                if generics.is_empty() {
                     self.startups.push(func_id);
                 }
                 

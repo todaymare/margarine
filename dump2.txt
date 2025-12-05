@@ -1,115 +1,4061 @@
+[38;2;0;255;0;1mcompiling:[0m examples/aoc2025/day1.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m-[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/string.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/io.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/list.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/iter.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/hashmap.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/duration.mar
+Generating function: std::duration::Duration::now (hits: 0, index: 0)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 3)",
+    2: "ConstInt(val: 1)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 0)",
+    15: "ConstInt(val: 2)",
+    24: "CreateFuncRef(capture_count: 0)",
+    26: "Store(index: 1)",
+    28: "Load(index: 1)",
+    30: "CallFuncRef(argc: 0)",
+    32: "ConstInt(val: 3)",
+    41: "CreateFuncRef(capture_count: 0)",
+    43: "Store(index: 2)",
+    45: "Load(index: 2)",
+    47: "CallFuncRef(argc: 0)",
+    49: "Load(index: 0)",
+    51: "CallFuncRef(argc: 2)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::new (hits: 0, index: 1)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "Load(index: 1)",
+    6: "ConstInt(val: 1000000000)",
+    15: "DivInt()",
+    16: "AddInt()",
+    17: "Store(index: 2)",
+    19: "Unit()",
+    20: "Pop()",
+    21: "Load(index: 1)",
+    23: "ConstInt(val: 1000000000)",
+    32: "RemInt()",
+    33: "Store(index: 3)",
+    35: "Unit()",
+    36: "Pop()",
+    37: "Load(index: 2)",
+    39: "Load(index: 3)",
+    41: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: now_secs (hits: 0, index: 2)
+-----------------------------------
+Generating function: now_nanos (hits: 0, index: 3)
+-----------------------------------
+Generating function: std::duration::Duration::elapsed (hits: 0, index: 4)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "ConstInt(val: 0)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 1)",
+    17: "CallFuncRef(argc: 0)",
+    19: "ConstInt(val: 5)",
+    28: "CreateFuncRef(capture_count: 0)",
+    30: "Store(index: 2)",
+    32: "Load(index: 0)",
+    34: "Load(index: 2)",
+    36: "CallFuncRef(argc: 2)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::sub (hits: 0, index: 5)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 3)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 1)",
+    6: "Load(index: 1)",
+    8: "LoadField(field_index: 1)",
+    10: "SubInt()",
+    11: "Store(index: 2)",
+    13: "Unit()",
+    14: "Pop()",
+    15: "Load(index: 0)",
+    17: "LoadField(field_index: 0)",
+    19: "Load(index: 1)",
+    21: "LoadField(field_index: 0)",
+    23: "SubInt()",
+    24: "Store(index: 3)",
+    26: "Unit()",
+    27: "Pop()",
+    28: "Load(index: 2)",
+    30: "ConstInt(val: 0)",
+    39: "LtInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(2), op2: BlockIndex(3) }
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 4)",
+    2: "Pop()",
+    3: "Load(index: 3)",
+    5: "Load(index: 2)",
+    7: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "Load(index: 3)",
+    2: "ConstInt(val: 1)",
+    11: "SubInt()",
+    12: "Store(index: 3)",
+    14: "Unit()",
+    15: "Pop()",
+    16: "ConstInt(val: 1000000000)",
+    25: "Load(index: 2)",
+    27: "AddInt()",
+    28: "Store(index: 2)",
+    30: "Unit()",
+    31: "Store(index: 4)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(3):
+{
+    0: "Unit()",
+    1: "Store(index: 4)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: std::duration::Duration::from_secs (hits: 0, index: 6)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 0)",
+    13: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::from_secs_float (hits: 0, index: 7)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 8)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "ConstFloat(val: 1000000000)",
+    26: "MulFloat()",
+    27: "CastFloatToInt()",
+    28: "Load(index: 1)",
+    30: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::from_nanos (hits: 0, index: 8)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 1000000000)",
+    13: "DivInt()",
+    14: "Store(index: 1)",
+    16: "Unit()",
+    17: "Pop()",
+    18: "Load(index: 0)",
+    20: "ConstInt(val: 1000000000)",
+    29: "RemInt()",
+    30: "Store(index: 2)",
+    32: "Unit()",
+    33: "Pop()",
+    34: "Load(index: 1)",
+    36: "Load(index: 2)",
+    38: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::from_millis (hits: 0, index: 9)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 1000)",
+    13: "DivInt()",
+    14: "Store(index: 1)",
+    16: "Unit()",
+    17: "Pop()",
+    18: "Load(index: 0)",
+    20: "ConstInt(val: 1000)",
+    29: "RemInt()",
+    30: "ConstInt(val: 1000000)",
+    39: "MulInt()",
+    40: "Store(index: 2)",
+    42: "Unit()",
+    43: "Pop()",
+    44: "Load(index: 1)",
+    46: "Load(index: 2)",
+    48: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::from_micros (hits: 0, index: 10)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 1000000)",
+    13: "DivInt()",
+    14: "Store(index: 1)",
+    16: "Unit()",
+    17: "Pop()",
+    18: "Load(index: 0)",
+    20: "ConstInt(val: 1000000)",
+    29: "RemInt()",
+    30: "ConstInt(val: 1000)",
+    39: "MulInt()",
+    40: "Store(index: 2)",
+    42: "Unit()",
+    43: "Pop()",
+    44: "Load(index: 1)",
+    46: "Load(index: 2)",
+    48: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::is_zero (hits: 0, index: 11)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "ConstInt(val: 0)",
+    15: "EqInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(2), op2: BlockIndex(3) }
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 1)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "Load(index: 0)",
+    2: "LoadField(field_index: 1)",
+    4: "ConstInt(val: 0)",
+    13: "EqInt()",
+    14: "Store(index: 1)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(3):
+{
+    0: "ConstBool(val: 0)",
+    2: "Store(index: 1)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: std::duration::Duration::as_secs (hits: 0, index: 12)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::as_secs_float (hits: 0, index: 13)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "CastIntToFloat()",
+    7: "Load(index: 0)",
+    9: "LoadField(field_index: 1)",
+    11: "CastIntToFloat()",
+    12: "ConstFloat(val: 1000000000)",
+    21: "DivFloat()",
+    22: "AddFloat()",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::as_millis (hits: 0, index: 14)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "ConstInt(val: 1000)",
+    15: "MulInt()",
+    16: "Load(index: 0)",
+    18: "LoadField(field_index: 1)",
+    20: "ConstInt(val: 1000000)",
+    29: "DivInt()",
+    30: "AddInt()",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::as_micros (hits: 0, index: 15)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "ConstInt(val: 1000000)",
+    15: "MulInt()",
+    16: "Load(index: 0)",
+    18: "LoadField(field_index: 1)",
+    20: "ConstInt(val: 1000)",
+    29: "DivInt()",
+    30: "AddInt()",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::as_nanos (hits: 0, index: 16)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "ConstInt(val: 1000000000)",
+    15: "MulInt()",
+    16: "Load(index: 0)",
+    18: "LoadField(field_index: 1)",
+    20: "AddInt()",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::subsec_millis (hits: 0, index: 17)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 1)",
+    6: "ConstInt(val: 1000000)",
+    15: "DivInt()",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::subsec_micros (hits: 0, index: 18)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 1)",
+    6: "ConstInt(val: 1000)",
+    15: "DivInt()",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::subsec_nanos (hits: 0, index: 19)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 1)",
+}
+Terminator: Ret
+
+Generating function: std::duration::Duration::add (hits: 0, index: 20)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 3)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 1)",
+    6: "Load(index: 1)",
+    8: "LoadField(field_index: 1)",
+    10: "AddInt()",
+    11: "Store(index: 2)",
+    13: "Unit()",
+    14: "Pop()",
+    15: "Load(index: 0)",
+    17: "LoadField(field_index: 0)",
+    19: "Load(index: 1)",
+    21: "LoadField(field_index: 0)",
+    23: "AddInt()",
+    24: "Store(index: 3)",
+    26: "Unit()",
+    27: "Pop()",
+    28: "Load(index: 2)",
+    30: "ConstInt(val: 1000000000)",
+    39: "GeInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(2), op2: BlockIndex(3) }
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 4)",
+    2: "Pop()",
+    3: "Load(index: 3)",
+    5: "Load(index: 2)",
+    7: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "Load(index: 3)",
+    2: "ConstInt(val: 1)",
+    11: "AddInt()",
+    12: "Store(index: 3)",
+    14: "Unit()",
+    15: "Pop()",
+    16: "Load(index: 2)",
+    18: "ConstInt(val: 1000000000)",
+    27: "SubInt()",
+    28: "Store(index: 2)",
+    30: "Unit()",
+    31: "Store(index: 4)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(3):
+{
+    0: "Unit()",
+    1: "Store(index: 4)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: std::iter::Iter::sum (hits: 0, index: 21)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "ConstInt(val: 0)",
+    11: "CreateStruct(field_count: 1)",
+    13: "Store(index: 1)",
+    15: "Unit()",
+    16: "Pop()",
+    17: "Load(index: 0)",
+    19: "ConstInt(val: 22)",
+    28: "CreateFuncRef(capture_count: 0)",
+    30: "Store(index: 2)",
+    32: "Load(index: 1)",
+    34: "ConstInt(val: 28)",
+    43: "CreateFuncRef(capture_count: 1)",
+    45: "Load(index: 2)",
+    47: "CallFuncRef(argc: 2)",
+    49: "Pop()",
+    50: "Unit()",
+    51: "Pop()",
+    52: "Load(index: 1)",
+    54: "LoadField(field_index: 0)",
+}
+Terminator: Ret
+
+Generating function: std::iter::Iter::for_each<int> (hits: 0, index: 22)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 5)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 23)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 2)",
+    17: "Load(index: 1)",
+    19: "Load(index: 2)",
+    21: "CallFuncRef(argc: 2)",
+    23: "Store(index: 3)",
+    25: "ConstInt(val: 27)",
+    34: "CreateFuncRef(capture_count: 0)",
+    36: "Store(index: 4)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 3)",
+    2: "Load(index: 4)",
+    4: "CallFuncRef(argc: 1)",
+    6: "Copy()",
+    7: "LoadField(field_index: 0)",
+    9: "ConstInt(val: 0)",
+    18: "EqInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(4), op2: BlockIndex(5) }
+
+Basic Block BlockIndex(2):
+{
+    0: "Unit()",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(3):
+{
+    0: "Load(index: 6)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(4):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 5)",
+    4: "Unit()",
+    5: "Pop()",
+    6: "Store(index: 6)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Basic Block BlockIndex(5):
+{
+    0: "Pop()",
+}
+Terminator: Goto(BlockIndex(2))
+
+Basic Block BlockIndex(6):
+{
+    0: "Store(index: 6)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Generating function: std::iter::Iter::map<int, unit> (hits: 0, index: 23)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "Load(index: 1)",
+    6: "ConstInt(val: 26)",
+    15: "CreateFuncRef(capture_count: 2)",
+    17: "CreateStruct(field_count: 1)",
+}
+Terminator: Ret
+
+Generating function: std::iter::Iter::__next__<int> (hits: 0, index: 24)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "Store(index: 1)",
+    8: "Unit()",
+    9: "Pop()",
+    10: "Load(index: 1)",
+    12: "Store(index: 2)",
+    14: "Load(index: 2)",
+    16: "CallFuncRef(argc: 0)",
+}
+Terminator: Ret
+
+Generating function: Option::some<unit> (hits: 0, index: 25)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "ConstInt(val: 0)",
+    9: "Unit()",
+    10: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: fn(): Option<unit> (hits: 0, index: 26)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 5)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 24)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 2)",
+    17: "Load(index: 2)",
+    19: "CallFuncRef(argc: 1)",
+    21: "Copy()",
+    22: "LoadField(field_index: 0)",
+    24: "ConstInt(val: 0)",
+    33: "EqInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(2), op2: BlockIndex(3) }
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 3)",
+    2: "Store(index: 4)",
+    4: "Unit()",
+    5: "Pop()",
+    6: "ConstInt(val: 25)",
+    15: "CreateFuncRef(capture_count: 0)",
+    17: "Store(index: 5)",
+    19: "Load(index: 1)",
+    21: "Store(index: 6)",
+    23: "Load(index: 4)",
+    25: "Load(index: 6)",
+    27: "CallFuncRef(argc: 1)",
+    29: "Load(index: 5)",
+    31: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(3):
+{}
+Terminator: Ret
+
+Basic Block BlockIndex(4):
+{
+    0: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: std::iter::Iter::__next__<unit> (hits: 0, index: 27)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "Store(index: 1)",
+    8: "Unit()",
+    9: "Pop()",
+    10: "Load(index: 1)",
+    12: "Store(index: 2)",
+    14: "Load(index: 2)",
+    16: "CallFuncRef(argc: 0)",
+}
+Terminator: Ret
+
+Generating function: fn(int) (hits: 0, index: 28)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 1)",
+    4: "LoadField(field_index: 0)",
+    6: "Load(index: 0)",
+    8: "AddInt()",
+    9: "Load(index: 1)",
+    11: "StoreField(field_index: 0)",
+    13: "Unit()",
+}
+Terminator: Ret
+
+Generating function: std::io::read_line (hits: 0, index: 29)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 30)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 0)",
+    15: "Load(index: 0)",
+    17: "CallFuncRef(argc: 0)",
+}
+Terminator: Ret
+
+Generating function: io_read_line (hits: 0, index: 30)
+-----------------------------------
+Generating function: str::lines (hits: 0, index: 31)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 32)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: str_lines_iter (hits: 0, index: 32)
+-----------------------------------
+Generating function: str::split_at (hits: 0, index: 33)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 34)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 2)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "Load(index: 2)",
+    21: "CallFuncRef(argc: 2)",
+}
+Terminator: Ret
+
+Generating function: str_split_at (hits: 0, index: 34)
+-----------------------------------
+Generating function: str::is_empty (hits: 0, index: 35)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 36)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+    21: "ConstInt(val: 0)",
+    30: "EqInt()",
+}
+Terminator: Ret
+
+Generating function: str::len (hits: 0, index: 36)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 37)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: str_len (hits: 0, index: 37)
+-----------------------------------
+Generating function: str::split (hits: 0, index: 38)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "ConstInt(val: 39)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 2)",
+    15: "Load(index: 0)",
+    17: "Load(index: 2)",
+    19: "CallFuncRef(argc: 1)",
+    21: "Load(index: 1)",
+    23: "CreateStruct(field_count: 2)",
+    25: "Store(index: 3)",
+    27: "Unit()",
+    28: "Pop()",
+    29: "Load(index: 3)",
+    31: "Load(index: 1)",
+    33: "ConstInt(val: 44)",
+    42: "CreateFuncRef(capture_count: 2)",
+    44: "CreateStruct(field_count: 1)",
+}
+Terminator: Ret
+
+Generating function: Option::some<str> (hits: 0, index: 39)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "ConstInt(val: 0)",
+    9: "Load(index: 0)",
+    11: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: str::split_once (hits: 0, index: 40)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 41)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 2)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "Load(index: 2)",
+    21: "CallFuncRef(argc: 2)",
+}
+Terminator: Ret
+
+Generating function: str_split_once (hits: 0, index: 41)
+-----------------------------------
+Generating function: Option::is_some<(str, str)> (hits: 0, index: 42)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "Copy()",
+    5: "LoadField(field_index: 0)",
+}
+Terminator: Switch([BlockIndex(2), BlockIndex(3)])
+
+Basic Block BlockIndex(1):
+{}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 1)",
+    4: "ConstBool(val: 1)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(3):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 2)",
+    4: "ConstBool(val: 0)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: Option::none<str> (hits: 0, index: 43)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "ConstInt(val: 1)",
+    9: "Unit()",
+    10: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: fn(): Option<str> (hits: 0, index: 44)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 13)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "Copy()",
+    7: "LoadField(field_index: 0)",
+}
+Terminator: Switch([BlockIndex(2), BlockIndex(10)])
+
+Basic Block BlockIndex(1):
+{}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 2)",
+    4: "Load(index: 0)",
+    6: "LoadField(field_index: 0)",
+    8: "Copy()",
+    9: "LoadField(field_index: 0)",
+    11: "ConstInt(val: 0)",
+    20: "EqInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(4), op2: BlockIndex(5) }
+
+Basic Block BlockIndex(3):
+{
+    0: "Load(index: 3)",
+    2: "ConstInt(val: 40)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 4)",
+    15: "Load(index: 1)",
+    17: "Load(index: 4)",
+    19: "CallFuncRef(argc: 2)",
+    21: "Store(index: 5)",
+    23: "Unit()",
+    24: "Pop()",
+    25: "Load(index: 5)",
+    27: "ConstInt(val: 42)",
+    36: "CreateFuncRef(capture_count: 0)",
+    38: "Store(index: 6)",
+    40: "Load(index: 6)",
+    42: "CallFuncRef(argc: 1)",
+}
+Terminator: SwitchBool { op1: BlockIndex(8), op2: BlockIndex(9) }
+
+Basic Block BlockIndex(4):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Basic Block BlockIndex(5):
+{}
+Terminator: Ret
+
+Basic Block BlockIndex(6):
+{
+    0: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Basic Block BlockIndex(7):
+{
+    0: "Load(index: 7)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(8):
+{
+    0: "Load(index: 5)",
+    2: "Unwrap()",
+    3: "Store(index: 8)",
+    5: "Unit()",
+    6: "Pop()",
+    7: "ConstInt(val: 39)",
+    16: "CreateFuncRef(capture_count: 0)",
+    18: "Store(index: 9)",
+    20: "Load(index: 8)",
+    22: "LoadField(field_index: 1)",
+    24: "Load(index: 9)",
+    26: "CallFuncRef(argc: 1)",
+    28: "Load(index: 0)",
+    30: "StoreField(field_index: 0)",
+    32: "Unit()",
+    33: "Pop()",
+    34: "ConstInt(val: 39)",
+    43: "CreateFuncRef(capture_count: 0)",
+    45: "Store(index: 10)",
+    47: "Load(index: 8)",
+    49: "LoadField(field_index: 0)",
+    51: "Load(index: 10)",
+    53: "CallFuncRef(argc: 1)",
+    55: "Store(index: 7)",
+}
+Terminator: Goto(BlockIndex(7))
+
+Basic Block BlockIndex(9):
+{
+    0: "ConstInt(val: 43)",
+    9: "CreateFuncRef(capture_count: 0)",
+    11: "Store(index: 11)",
+    13: "Load(index: 11)",
+    15: "CallFuncRef(argc: 0)",
+    17: "Load(index: 0)",
+    19: "StoreField(field_index: 0)",
+    21: "Unit()",
+    22: "Pop()",
+    23: "ConstInt(val: 39)",
+    32: "CreateFuncRef(capture_count: 0)",
+    34: "Store(index: 12)",
+    36: "Load(index: 2)",
+    38: "Load(index: 12)",
+    40: "CallFuncRef(argc: 1)",
+    42: "Store(index: 7)",
+}
+Terminator: Goto(BlockIndex(7))
+
+Basic Block BlockIndex(10):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 13)",
+    4: "ConstInt(val: 43)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 14)",
+    17: "Load(index: 14)",
+    19: "CallFuncRef(argc: 0)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: str::slice (hits: 0, index: 45)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 46)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 2)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "LoadField(field_index: 0)",
+    21: "Load(index: 1)",
+    23: "LoadField(field_index: 1)",
+    25: "Load(index: 2)",
+    27: "CallFuncRef(argc: 3)",
+}
+Terminator: Ret
+
+Generating function: str_slice (hits: 0, index: 46)
+-----------------------------------
+Generating function: std::string::Lines::__next__ (hits: 0, index: 47)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 48)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: str_lines_iter_next (hits: 0, index: 48)
+-----------------------------------
+Generating function: std::assert (hits: 0, index: 49)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "NotBool()",
+}
+Terminator: SwitchBool { op1: BlockIndex(2), op2: BlockIndex(3) }
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 2)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "ConstInt(val: 50)",
+    9: "CreateFuncRef(capture_count: 0)",
+    11: "Store(index: 3)",
+    13: "Load(index: 1)",
+    15: "Load(index: 3)",
+    17: "CallFuncRef(argc: 1)",
+    19: "Store(index: 2)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(3):
+{
+    0: "Unit()",
+    1: "Store(index: 2)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: panic (hits: 0, index: 50)
+-----------------------------------
+Generating function: Range::__next__ (hits: 0, index: 51)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 3)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "Load(index: 0)",
+    8: "LoadField(field_index: 1)",
+    10: "LtInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(2), op2: BlockIndex(3) }
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 1)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "Load(index: 0)",
+    2: "LoadField(field_index: 0)",
+    4: "ConstInt(val: 1)",
+    13: "AddInt()",
+    14: "Load(index: 0)",
+    16: "StoreField(field_index: 0)",
+    18: "Unit()",
+    19: "Pop()",
+    20: "ConstInt(val: 52)",
+    29: "CreateFuncRef(capture_count: 0)",
+    31: "Store(index: 2)",
+    33: "Load(index: 0)",
+    35: "LoadField(field_index: 0)",
+    37: "ConstInt(val: 1)",
+    46: "SubInt()",
+    47: "Load(index: 2)",
+    49: "CallFuncRef(argc: 1)",
+    51: "Store(index: 1)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(3):
+{
+    0: "ConstInt(val: 53)",
+    9: "CreateFuncRef(capture_count: 0)",
+    11: "Store(index: 3)",
+    13: "Load(index: 3)",
+    15: "CallFuncRef(argc: 0)",
+    17: "Store(index: 1)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: Option::some<int> (hits: 0, index: 52)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "ConstInt(val: 0)",
+    9: "Load(index: 0)",
+    11: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: Option::none<int> (hits: 0, index: 53)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "ConstInt(val: 1)",
+    9: "Unit()",
+    10: "CreateStruct(field_count: 2)",
+}
+Terminator: Ret
+
+Generating function: Range::iter (hits: 0, index: 54)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 55)",
+    13: "CreateFuncRef(capture_count: 1)",
+    15: "CreateStruct(field_count: 1)",
+}
+Terminator: Ret
+
+Generating function: fn(): Option<int> (hits: 0, index: 55)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 51)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: int::abs (hits: 0, index: 56)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 63)",
+    13: "BitshiftRight()",
+    14: "Store(index: 1)",
+    16: "Unit()",
+    17: "Pop()",
+    18: "Load(index: 0)",
+    20: "Load(index: 1)",
+    22: "BitwiseXor()",
+    23: "Load(index: 1)",
+    25: "SubInt()",
+}
+Terminator: Ret
+
+Generating function: int::to_str (hits: 0, index: 57)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 58)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: int_to_str (hits: 0, index: 58)
+-----------------------------------
+Generating function: float::to_str (hits: 0, index: 59)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 60)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: float_to_str (hits: 0, index: 60)
+-----------------------------------
+Generating function: main (hits: 0, index: 61)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 4)",
+    2: "ConstInt(val: 62)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 0)",
+    15: "ConstStr(val: 0)",
+    20: "Load(index: 0)",
+    22: "CallFuncRef(argc: 1)",
+    24: "Store(index: 1)",
+    26: "Unit()",
+    27: "Pop()",
+    28: "ConstInt(val: 63)",
+    37: "CreateFuncRef(capture_count: 0)",
+    39: "Store(index: 2)",
+    41: "ConstInt(val: 66)",
+    50: "CreateFuncRef(capture_count: 0)",
+    52: "Store(index: 3)",
+    54: "Load(index: 1)",
+    56: "Load(index: 3)",
+    58: "CallFuncRef(argc: 1)",
+    60: "Load(index: 2)",
+    62: "CallFuncRef(argc: 1)",
+    64: "Pop()",
+    65: "Unit()",
+}
+Terminator: Ret
+
+Generating function: io_read_file (hits: 0, index: 62)
+-----------------------------------
+Generating function: std::println<str> (hits: 0, index: 63)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 4)",
+    2: "ConstInt(val: 64)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "ConstInt(val: 65)",
+    26: "CreateFuncRef(capture_count: 0)",
+    28: "Store(index: 2)",
+    30: "Load(index: 2)",
+    32: "CallFuncRef(argc: 0)",
+    34: "Load(index: 1)",
+    36: "CallFuncRef(argc: 2)",
+    38: "Pop()",
+    39: "Unit()",
+    40: "Pop()",
+    41: "ConstInt(val: 64)",
+    50: "CreateFuncRef(capture_count: 0)",
+    52: "Store(index: 3)",
+    54: "ConstStr(val: 1)",
+    59: "ConstInt(val: 65)",
+    68: "CreateFuncRef(capture_count: 0)",
+    70: "Store(index: 4)",
+    72: "Load(index: 4)",
+    74: "CallFuncRef(argc: 0)",
+    76: "Load(index: 3)",
+    78: "CallFuncRef(argc: 2)",
+    80: "Pop()",
+    81: "Unit()",
+}
+Terminator: Ret
+
+Generating function: print_raw (hits: 0, index: 64)
+-----------------------------------
+Generating function: type_id<str> (hits: 0, index: 65)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "ConstInt(val: 16)",
+}
+Terminator: Ret
+
+Generating function: part1 (hits: 0, index: 66)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 5)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 38)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "ConstStr(val: 2)",
+    22: "Load(index: 1)",
+    24: "CallFuncRef(argc: 2)",
+    26: "ConstInt(val: 67)",
+    35: "CreateFuncRef(capture_count: 0)",
+    37: "Store(index: 2)",
+    39: "ConstInt(val: 70)",
+    48: "CreateFuncRef(capture_count: 0)",
+    50: "Load(index: 2)",
+    52: "CallFuncRef(argc: 2)",
+    54: "ConstInt(val: 71)",
+    63: "CreateFuncRef(capture_count: 0)",
+    65: "Store(index: 3)",
+    67: "ConstInt(val: 80)",
+    76: "CreateFuncRef(capture_count: 0)",
+    78: "Load(index: 3)",
+    80: "CallFuncRef(argc: 2)",
+    82: "ConstInt(val: 21)",
+    91: "CreateFuncRef(capture_count: 0)",
+    93: "Store(index: 4)",
+    95: "Load(index: 4)",
+    97: "CallFuncRef(argc: 1)",
+    99: "ConstInt(val: 57)",
+    108: "CreateFuncRef(capture_count: 0)",
+    110: "Store(index: 5)",
+    112: "Load(index: 5)",
+    114: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: std::iter::Iter::filter<str> (hits: 0, index: 67)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 1)",
+    4: "Load(index: 0)",
+    6: "ConstInt(val: 69)",
+    15: "CreateFuncRef(capture_count: 2)",
+    17: "CreateStruct(field_count: 1)",
+}
+Terminator: Ret
+
+Generating function: std::iter::Iter::__next__<str> (hits: 0, index: 68)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "Load(index: 0)",
+    4: "LoadField(field_index: 0)",
+    6: "Store(index: 1)",
+    8: "Unit()",
+    9: "Pop()",
+    10: "Load(index: 1)",
+    12: "Store(index: 2)",
+    14: "Load(index: 2)",
+    16: "CallFuncRef(argc: 0)",
+}
+Terminator: Ret
+
+Generating function: fn(): Option<str> (hits: 0, index: 69)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 7)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 1)",
+    2: "ConstInt(val: 68)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 2)",
+    15: "Load(index: 2)",
+    17: "CallFuncRef(argc: 1)",
+    19: "Copy()",
+    20: "LoadField(field_index: 0)",
+    22: "ConstInt(val: 0)",
+    31: "EqInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(4), op2: BlockIndex(5) }
+
+Basic Block BlockIndex(2):
+{
+    0: "Pop()",
+    1: "ConstInt(val: 43)",
+    10: "CreateFuncRef(capture_count: 0)",
+    12: "Store(index: 8)",
+    14: "Load(index: 8)",
+    16: "CallFuncRef(argc: 0)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(3):
+{
+    0: "Load(index: 3)",
+    2: "Store(index: 4)",
+    4: "Unit()",
+    5: "Pop()",
+    6: "Load(index: 0)",
+    8: "Store(index: 5)",
+    10: "Load(index: 4)",
+    12: "Load(index: 5)",
+    14: "CallFuncRef(argc: 1)",
+}
+Terminator: SwitchBool { op1: BlockIndex(8), op2: BlockIndex(10) }
+
+Basic Block BlockIndex(4):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Basic Block BlockIndex(5):
+{}
+Terminator: Ret
+
+Basic Block BlockIndex(6):
+{
+    0: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Basic Block BlockIndex(7):
+{
+    0: "Load(index: 6)",
+    2: "Pop()",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(8):
+{
+    0: "ConstInt(val: 39)",
+    9: "CreateFuncRef(capture_count: 0)",
+    11: "Store(index: 7)",
+    13: "Load(index: 4)",
+    15: "Load(index: 7)",
+    17: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(9):
+{
+    0: "Unit()",
+    1: "Store(index: 6)",
+}
+Terminator: Goto(BlockIndex(7))
+
+Basic Block BlockIndex(10):
+{
+    0: "Unit()",
+    1: "Store(index: 6)",
+}
+Terminator: Goto(BlockIndex(7))
+
+Generating function: fn(str): bool (hits: 0, index: 70)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 35)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+    21: "NotBool()",
+}
+Terminator: Ret
+
+Generating function: std::iter::Iter::map<str, int> (hits: 0, index: 71)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 0)",
+    4: "Load(index: 1)",
+    6: "ConstInt(val: 72)",
+    15: "CreateFuncRef(capture_count: 2)",
+    17: "CreateStruct(field_count: 1)",
+}
+Terminator: Ret
+
+Generating function: fn(): Option<int> (hits: 0, index: 72)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 5)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 68)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 2)",
+    17: "Load(index: 2)",
+    19: "CallFuncRef(argc: 1)",
+    21: "Copy()",
+    22: "LoadField(field_index: 0)",
+    24: "ConstInt(val: 0)",
+    33: "EqInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(2), op2: BlockIndex(3) }
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 3)",
+    2: "Store(index: 4)",
+    4: "Unit()",
+    5: "Pop()",
+    6: "ConstInt(val: 52)",
+    15: "CreateFuncRef(capture_count: 0)",
+    17: "Store(index: 5)",
+    19: "Load(index: 1)",
+    21: "Store(index: 6)",
+    23: "Load(index: 4)",
+    25: "Load(index: 6)",
+    27: "CallFuncRef(argc: 1)",
+    29: "Load(index: 5)",
+    31: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(3):
+{}
+Terminator: Ret
+
+Basic Block BlockIndex(4):
+{
+    0: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: str::parse<int> (hits: 0, index: 73)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 2)",
+    2: "ConstInt(val: 74)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "ConstInt(val: 75)",
+    26: "CreateFuncRef(capture_count: 0)",
+    28: "Store(index: 2)",
+    30: "Load(index: 2)",
+    32: "CallFuncRef(argc: 0)",
+    34: "Load(index: 1)",
+    36: "CallFuncRef(argc: 2)",
+}
+Terminator: Ret
+
+Generating function: str_parse (hits: 0, index: 74)
+-----------------------------------
+Generating function: type_id<int> (hits: 0, index: 75)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "ConstInt(val: 1)",
+}
+Terminator: Ret
+
+Generating function: std::iter::Iter::filter<int> (hits: 0, index: 76)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 0)",
+    2: "Load(index: 1)",
+    4: "Load(index: 0)",
+    6: "ConstInt(val: 77)",
+    15: "CreateFuncRef(capture_count: 2)",
+    17: "CreateStruct(field_count: 1)",
+}
+Terminator: Ret
+
+Generating function: fn(): Option<int> (hits: 0, index: 77)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 7)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 1)",
+    2: "ConstInt(val: 24)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 2)",
+    15: "Load(index: 2)",
+    17: "CallFuncRef(argc: 1)",
+    19: "Copy()",
+    20: "LoadField(field_index: 0)",
+    22: "ConstInt(val: 0)",
+    31: "EqInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(4), op2: BlockIndex(5) }
+
+Basic Block BlockIndex(2):
+{
+    0: "Pop()",
+    1: "ConstInt(val: 53)",
+    10: "CreateFuncRef(capture_count: 0)",
+    12: "Store(index: 8)",
+    14: "Load(index: 8)",
+    16: "CallFuncRef(argc: 0)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(3):
+{
+    0: "Load(index: 3)",
+    2: "Store(index: 4)",
+    4: "Unit()",
+    5: "Pop()",
+    6: "Load(index: 0)",
+    8: "Store(index: 5)",
+    10: "Load(index: 4)",
+    12: "Load(index: 5)",
+    14: "CallFuncRef(argc: 1)",
+}
+Terminator: SwitchBool { op1: BlockIndex(8), op2: BlockIndex(10) }
+
+Basic Block BlockIndex(4):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Basic Block BlockIndex(5):
+{}
+Terminator: Ret
+
+Basic Block BlockIndex(6):
+{
+    0: "Store(index: 3)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Basic Block BlockIndex(7):
+{
+    0: "Load(index: 6)",
+    2: "Pop()",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(8):
+{
+    0: "ConstInt(val: 52)",
+    9: "CreateFuncRef(capture_count: 0)",
+    11: "Store(index: 7)",
+    13: "Load(index: 4)",
+    15: "Load(index: 7)",
+    17: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(9):
+{
+    0: "Unit()",
+    1: "Store(index: 6)",
+}
+Terminator: Goto(BlockIndex(7))
+
+Basic Block BlockIndex(10):
+{
+    0: "Unit()",
+    1: "Store(index: 6)",
+}
+Terminator: Goto(BlockIndex(7))
+
+Generating function: is_repeated (hits: 0, index: 78)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 10)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 57)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+    21: "Store(index: 2)",
+    23: "Unit()",
+    24: "Pop()",
+    25: "Load(index: 2)",
+    27: "ConstInt(val: 36)",
+    36: "CreateFuncRef(capture_count: 0)",
+    38: "Store(index: 3)",
+    40: "Load(index: 3)",
+    42: "CallFuncRef(argc: 1)",
+    44: "ConstInt(val: 2)",
+    53: "RemInt()",
+    54: "ConstInt(val: 0)",
+    63: "NeInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(2), op2: BlockIndex(4) }
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 4)",
+    2: "Pop()",
+    3: "Load(index: 2)",
+    5: "ConstInt(val: 36)",
+    14: "CreateFuncRef(capture_count: 0)",
+    16: "Store(index: 5)",
+    18: "Load(index: 5)",
+    20: "CallFuncRef(argc: 1)",
+    22: "ConstInt(val: 2)",
+    31: "DivInt()",
+    32: "Store(index: 6)",
+    34: "Unit()",
+    35: "Pop()",
+    36: "Load(index: 2)",
+    38: "ConstInt(val: 33)",
+    47: "CreateFuncRef(capture_count: 0)",
+    49: "Store(index: 7)",
+    51: "Load(index: 6)",
+    53: "Load(index: 7)",
+    55: "CallFuncRef(argc: 2)",
+    57: "Store(index: 8)",
+    59: "Load(index: 8)",
+    61: "LoadField(field_index: 0)",
+    63: "Store(index: 9)",
+    65: "Load(index: 8)",
+    67: "LoadField(field_index: 1)",
+    69: "Store(index: 10)",
+    71: "Unit()",
+    72: "Pop()",
+    73: "Load(index: 9)",
+    75: "Load(index: 10)",
+    77: "EqObj()",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(2):
+{
+    0: "ConstBool(val: 0)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(3):
+{
+    0: "Unit()",
+    1: "Store(index: 4)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(4):
+{
+    0: "Unit()",
+    1: "Store(index: 4)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Generating function: fn(int): bool (hits: 0, index: 79)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 1)",
+    2: "ConstInt(val: 78)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 1)",
+    15: "Load(index: 0)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: fn(str): int (hits: 0, index: 80)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 11)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 40)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "ConstStr(val: 3)",
+    22: "Load(index: 1)",
+    24: "CallFuncRef(argc: 2)",
+    26: "Unwrap()",
+    27: "Store(index: 2)",
+    29: "Load(index: 2)",
+    31: "LoadField(field_index: 0)",
+    33: "Store(index: 3)",
+    35: "Load(index: 2)",
+    37: "LoadField(field_index: 1)",
+    39: "Store(index: 4)",
+    41: "Unit()",
+    42: "Pop()",
+    43: "Load(index: 3)",
+    45: "ConstInt(val: 73)",
+    54: "CreateFuncRef(capture_count: 0)",
+    56: "Store(index: 5)",
+    58: "Load(index: 5)",
+    60: "CallFuncRef(argc: 1)",
+    62: "Unwrap()",
+    63: "Store(index: 6)",
+    65: "Unit()",
+    66: "Pop()",
+    67: "Load(index: 4)",
+    69: "ConstInt(val: 73)",
+    78: "CreateFuncRef(capture_count: 0)",
+    80: "Store(index: 7)",
+    82: "Load(index: 7)",
+    84: "CallFuncRef(argc: 1)",
+    86: "Unwrap()",
+    87: "Store(index: 8)",
+    89: "Unit()",
+    90: "Pop()",
+    91: "Load(index: 6)",
+    93: "Load(index: 8)",
+    95: "ConstInt(val: 1)",
+    104: "AddInt()",
+    105: "CreateStruct(field_count: 2)",
+    107: "ConstInt(val: 54)",
+    116: "CreateFuncRef(capture_count: 0)",
+    118: "Store(index: 9)",
+    120: "Load(index: 9)",
+    122: "CallFuncRef(argc: 1)",
+    124: "ConstInt(val: 76)",
+    133: "CreateFuncRef(capture_count: 0)",
+    135: "Store(index: 10)",
+    137: "ConstInt(val: 79)",
+    146: "CreateFuncRef(capture_count: 0)",
+    148: "Load(index: 10)",
+    150: "CallFuncRef(argc: 2)",
+    152: "ConstInt(val: 21)",
+    161: "CreateFuncRef(capture_count: 0)",
+    163: "Store(index: 11)",
+    165: "Load(index: 11)",
+    167: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: is_repeated_at_least_twice (hits: 0, index: 81)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 19)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 57)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "Load(index: 1)",
+    19: "CallFuncRef(argc: 1)",
+    21: "Store(index: 2)",
+    23: "Unit()",
+    24: "Pop()",
+    25: "Load(index: 2)",
+    27: "ConstInt(val: 36)",
+    36: "CreateFuncRef(capture_count: 0)",
+    38: "Store(index: 3)",
+    40: "Load(index: 3)",
+    42: "CallFuncRef(argc: 1)",
+    44: "Store(index: 4)",
+    46: "Unit()",
+    47: "Pop()",
+    48: "ConstInt(val: 1)",
+    57: "Load(index: 4)",
+    59: "ConstInt(val: 2)",
+    68: "DivInt()",
+    69: "ConstInt(val: 1)",
+    78: "AddInt()",
+    79: "CreateStruct(field_count: 2)",
+    81: "Store(index: 5)",
+    83: "ConstInt(val: 51)",
+    92: "CreateFuncRef(capture_count: 0)",
+    94: "Store(index: 6)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(1):
+{
+    0: "Load(index: 5)",
+    2: "Load(index: 6)",
+    4: "CallFuncRef(argc: 1)",
+    6: "Copy()",
+    7: "LoadField(field_index: 0)",
+    9: "ConstInt(val: 0)",
+    18: "EqInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(4), op2: BlockIndex(23) }
+
+Basic Block BlockIndex(2):
+{
+    0: "ConstBool(val: 1)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(3):
+{
+    0: "Load(index: 8)",
+}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(4):
+{
+    0: "LoadField(field_index: 1)",
+    2: "Store(index: 7)",
+    4: "Load(index: 4)",
+    6: "Load(index: 7)",
+    8: "RemInt()",
+    9: "ConstInt(val: 0)",
+    18: "NeInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(6), op2: BlockIndex(8) }
+
+Basic Block BlockIndex(5):
+{
+    0: "Load(index: 9)",
+    2: "Pop()",
+    3: "Load(index: 2)",
+    5: "ConstInt(val: 33)",
+    14: "CreateFuncRef(capture_count: 0)",
+    16: "Store(index: 10)",
+    18: "Load(index: 7)",
+    20: "Load(index: 10)",
+    22: "CallFuncRef(argc: 2)",
+    24: "Store(index: 11)",
+    26: "Load(index: 11)",
+    28: "LoadField(field_index: 0)",
+    30: "Store(index: 12)",
+    32: "Load(index: 11)",
+    34: "LoadField(field_index: 1)",
+    36: "Store(index: 13)",
+    38: "Unit()",
+    39: "Pop()",
+    40: "ConstBool(val: 1)",
+    42: "Store(index: 14)",
+    44: "Unit()",
+    45: "Pop()",
+    46: "Load(index: 7)",
+    48: "Store(index: 15)",
+    50: "Unit()",
+    51: "Pop()",
+}
+Terminator: Goto(BlockIndex(9))
+
+Basic Block BlockIndex(6):
+{}
+Terminator: Goto(BlockIndex(1))
+
+Basic Block BlockIndex(7):
+{
+    0: "Store(index: 9)",
+}
+Terminator: Goto(BlockIndex(5))
+
+Basic Block BlockIndex(8):
+{
+    0: "Unit()",
+    1: "Store(index: 9)",
+}
+Terminator: Goto(BlockIndex(5))
+
+Basic Block BlockIndex(9):
+{
+    0: "Load(index: 15)",
+    2: "Load(index: 4)",
+    4: "LtInt()",
+}
+Terminator: SwitchBool { op1: BlockIndex(12), op2: BlockIndex(17) }
+
+Basic Block BlockIndex(10):
+{
+    0: "Pop()",
+    1: "Load(index: 14)",
+}
+Terminator: SwitchBool { op1: BlockIndex(20), op2: BlockIndex(22) }
+
+Basic Block BlockIndex(11):
+{
+    0: "Load(index: 16)",
+    2: "Pop()",
+}
+Terminator: Goto(BlockIndex(9))
+
+Basic Block BlockIndex(12):
+{
+    0: "Load(index: 2)",
+    2: "ConstInt(val: 45)",
+    11: "CreateFuncRef(capture_count: 0)",
+    13: "Store(index: 17)",
+    15: "Load(index: 15)",
+    17: "Load(index: 15)",
+    19: "Load(index: 7)",
+    21: "AddInt()",
+    22: "CreateStruct(field_count: 2)",
+    24: "Load(index: 17)",
+    26: "CallFuncRef(argc: 2)",
+    28: "Load(index: 12)",
+    30: "NeObj()",
+}
+Terminator: SwitchBool { op1: BlockIndex(14), op2: BlockIndex(16) }
+
+Basic Block BlockIndex(13):
+{
+    0: "Load(index: 18)",
+    2: "Pop()",
+    3: "Load(index: 15)",
+    5: "Load(index: 7)",
+    7: "AddInt()",
+    8: "Store(index: 15)",
+    10: "Unit()",
+    11: "Store(index: 16)",
+}
+Terminator: Goto(BlockIndex(11))
+
+Basic Block BlockIndex(14):
+{
+    0: "ConstBool(val: 0)",
+    2: "Store(index: 14)",
+    4: "Unit()",
+    5: "Pop()",
+    6: "Unit()",
+}
+Terminator: Goto(BlockIndex(10))
+
+Basic Block BlockIndex(15):
+{
+    0: "Pop()",
+    1: "Unit()",
+    2: "Store(index: 18)",
+}
+Terminator: Goto(BlockIndex(13))
+
+Basic Block BlockIndex(16):
+{
+    0: "Unit()",
+    1: "Store(index: 18)",
+}
+Terminator: Goto(BlockIndex(13))
+
+Basic Block BlockIndex(17):
+{
+    0: "Unit()",
+}
+Terminator: Goto(BlockIndex(10))
+
+Basic Block BlockIndex(18):
+{
+    0: "Store(index: 16)",
+}
+Terminator: Goto(BlockIndex(11))
+
+Basic Block BlockIndex(19):
+{
+    0: "Load(index: 19)",
+    2: "Pop()",
+    3: "Store(index: 8)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Basic Block BlockIndex(20):
+{
+    0: "ConstBool(val: 1)",
+}
+Terminator: Ret
+
+Basic Block BlockIndex(21):
+{
+    0: "Unit()",
+    1: "Store(index: 19)",
+}
+Terminator: Goto(BlockIndex(19))
+
+Basic Block BlockIndex(22):
+{
+    0: "Unit()",
+    1: "Store(index: 19)",
+}
+Terminator: Goto(BlockIndex(19))
+
+Basic Block BlockIndex(23):
+{
+    0: "Pop()",
+}
+Terminator: Goto(BlockIndex(2))
+
+Basic Block BlockIndex(24):
+{
+    0: "Store(index: 8)",
+}
+Terminator: Goto(BlockIndex(3))
+
+Generating function: part2 (hits: 0, index: 82)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 4)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 38)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "ConstStr(val: 4)",
+    22: "Load(index: 1)",
+    24: "CallFuncRef(argc: 2)",
+    26: "ConstInt(val: 71)",
+    35: "CreateFuncRef(capture_count: 0)",
+    37: "Store(index: 2)",
+    39: "ConstInt(val: 83)",
+    48: "CreateFuncRef(capture_count: 0)",
+    50: "Load(index: 2)",
+    52: "CallFuncRef(argc: 2)",
+    54: "ConstInt(val: 21)",
+    63: "CreateFuncRef(capture_count: 0)",
+    65: "Store(index: 3)",
+    67: "Load(index: 3)",
+    69: "CallFuncRef(argc: 1)",
+    71: "ConstInt(val: 57)",
+    80: "CreateFuncRef(capture_count: 0)",
+    82: "Store(index: 4)",
+    84: "Load(index: 4)",
+    86: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
+Generating function: fn(str): int (hits: 0, index: 83)
+-----------------------------------
+Basic Block BlockIndex(0):
+{
+    0: "PushLocalSpace(amount: 10)",
+    2: "Load(index: 0)",
+    4: "ConstInt(val: 40)",
+    13: "CreateFuncRef(capture_count: 0)",
+    15: "Store(index: 1)",
+    17: "ConstStr(val: 5)",
+    22: "Load(index: 1)",
+    24: "CallFuncRef(argc: 2)",
+    26: "Unwrap()",
+    27: "Store(index: 2)",
+    29: "Load(index: 2)",
+    31: "LoadField(field_index: 0)",
+    33: "Store(index: 3)",
+    35: "Load(index: 2)",
+    37: "LoadField(field_index: 1)",
+    39: "Store(index: 4)",
+    41: "Unit()",
+    42: "Pop()",
+    43: "Load(index: 3)",
+    45: "ConstInt(val: 73)",
+    54: "CreateFuncRef(capture_count: 0)",
+    56: "Store(index: 5)",
+    58: "Load(index: 5)",
+    60: "CallFuncRef(argc: 1)",
+    62: "Unwrap()",
+    63: "Store(index: 6)",
+    65: "Unit()",
+    66: "Pop()",
+    67: "Load(index: 4)",
+    69: "ConstInt(val: 73)",
+    78: "CreateFuncRef(capture_count: 0)",
+    80: "Store(index: 7)",
+    82: "Load(index: 7)",
+    84: "CallFuncRef(argc: 1)",
+    86: "Unwrap()",
+    87: "Store(index: 8)",
+    89: "Unit()",
+    90: "Pop()",
+    91: "Load(index: 6)",
+    93: "Load(index: 8)",
+    95: "ConstInt(val: 1)",
+    104: "AddInt()",
+    105: "CreateStruct(field_count: 2)",
+    107: "ConstInt(val: 54)",
+    116: "CreateFuncRef(capture_count: 0)",
+    118: "Store(index: 9)",
+    120: "Load(index: 9)",
+    122: "CallFuncRef(argc: 1)",
+    124: "ConstInt(val: 21)",
+    133: "CreateFuncRef(capture_count: 0)",
+    135: "Store(index: 10)",
+    137: "Load(index: 10)",
+    139: "CallFuncRef(argc: 1)",
+}
+Terminator: Ret
+
 running
-288352-412983
-288352
-412983
-743179-799185
-743179
-799185
-7298346751-7298403555
-7298346751
-7298403555
-took 11.568334ms to run gc
-3269-7729
-3269
-7729
-3939364590-3939433455
-3939364590
-3939433455
-867092-900135
-867092
-900135
-25259-67386
-25259
-67386
-95107011-95138585
-95107011
-95138585
-655569300-655755402
-655569300
-655755402
-took 11.7285ms to run gc
-9372727140-9372846709
-9372727140
-9372846709
-986003-1032361
-986003
-1032361
-69689-125217
-69689
-125217
-took 11.467292ms to run gc
-417160-479391
-417160
-479391
-642-1335
-642
-1335
-521359-592037
-521359
-592037
-7456656494-7456690478
-7456656494
-7456690478
-38956690-39035309
-38956690
-39035309
-took 11.895083ms to run gc
-1-18
-1
-18
-799312-861633
-799312
-861633
-674384-733730
-674384
-733730
-1684-2834
-1684
-2834
-605744-666915
-605744
-666915
-took 11.163708ms to run gc
-6534997-6766843
-6534997
-6766843
-4659420-4693423
-4659420
-4693423
-6161502941-6161738969
-6161502941
-6161738969
-took 11.197417ms to run gc
-932668-985784
-932668
-985784
-took 11.032084ms to run gc
-901838-922814
-901838
-922814
-137371-216743
-137371
-216743
-47446188-47487754
-47446188
-47487754
-117-403
-117
-403
-32-77
-32
-77
-35299661-35411975
-35299661
-35411975
-took 10.9665ms to run gc
-7778-14058
-7778
-14058
-83706740-83939522
-
-83706740
-83939522
-
-took 11.413208ms to run gc
-40055209690
+Loaded 84 functions
+[
+    Function {
+        name: "std::duration::Duration::now",
+        argc: 0,
+        _args: [],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 0,
+            byte_size: 55,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::new",
+        argc: 2,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 55,
+            byte_size: 45,
+        },
+        cache: None,
+    },
+    Function {
+        name: "now_secs",
+        argc: 0,
+        _args: [],
+        _ret: 1,
+        kind: Host(
+            0x00000001029295a4,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "now_nanos",
+        argc: 0,
+        _args: [],
+        _ret: 1,
+        kind: Host(
+            0x0000000102929634,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::elapsed",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 100,
+            byte_size: 40,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::sub",
+        argc: 2,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 140,
+            byte_size: 106,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::from_secs",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 246,
+            byte_size: 17,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::from_secs_float",
+        argc: 1,
+        _args: [
+            2,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 263,
+            byte_size: 34,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::from_nanos",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 297,
+            byte_size: 42,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::from_millis",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 339,
+            byte_size: 52,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::from_micros",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 391,
+            byte_size: 52,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::is_zero",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 3,
+        kind: Code {
+            byte_offset: 443,
+            byte_size: 59,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::as_secs",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 502,
+            byte_size: 8,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::as_secs_float",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 2,
+        kind: Code {
+            byte_offset: 510,
+            byte_size: 25,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::as_millis",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 535,
+            byte_size: 33,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::as_micros",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 568,
+            byte_size: 33,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::as_nanos",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 601,
+            byte_size: 23,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::subsec_millis",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 624,
+            byte_size: 18,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::subsec_micros",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 642,
+            byte_size: 18,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::subsec_nanos",
+        argc: 1,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 660,
+            byte_size: 8,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::duration::Duration::add",
+        argc: 2,
+        _args: [
+            21,
+            0,
+            0,
+            0,
+            21,
+            0,
+            0,
+            0,
+        ],
+        _ret: 21,
+        kind: Code {
+            byte_offset: 668,
+            byte_size: 106,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::sum",
+        argc: 1,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 774,
+            byte_size: 58,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::for_each<int>",
+        argc: 2,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+            115,
+            0,
+            0,
+            0,
+        ],
+        _ret: 0,
+        kind: Code {
+            byte_offset: 832,
+            byte_size: 100,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::map<int, unit>",
+        argc: 2,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+            116,
+            0,
+            0,
+            0,
+        ],
+        _ret: 28,
+        kind: Code {
+            byte_offset: 932,
+            byte_size: 21,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::__next__<int>",
+        argc: 1,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 953,
+            byte_size: 20,
+        },
+        cache: None,
+    },
+    Function {
+        name: "Option::some<unit>",
+        argc: 1,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 973,
+            byte_size: 14,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(): Option<unit>",
+        argc: 2,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 987,
+            byte_size: 89,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::__next__<unit>",
+        argc: 1,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1076,
+            byte_size: 20,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(int)",
+        argc: 2,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 0,
+        kind: Code {
+            byte_offset: 1096,
+            byte_size: 16,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::io::read_line",
+        argc: 0,
+        _args: [],
+        _ret: 13,
+        kind: Code {
+            byte_offset: 1112,
+            byte_size: 21,
+        },
+        cache: None,
+    },
+    Function {
+        name: "io_read_line",
+        argc: 0,
+        _args: [],
+        _ret: 13,
+        kind: Host(
+            0x0000000102929e50,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "str::lines",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 40,
+        kind: Code {
+            byte_offset: 1133,
+            byte_size: 23,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str_lines_iter",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 40,
+        kind: Host(
+            0x000000010292a208,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "str::split_at",
+        argc: 2,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 118,
+        kind: Code {
+            byte_offset: 1156,
+            byte_size: 25,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str_split_at",
+        argc: 2,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 166,
+        kind: Host(
+            0x000000010292a6f8,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "str::is_empty",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 3,
+        kind: Code {
+            byte_offset: 1181,
+            byte_size: 33,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str::len",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 1214,
+            byte_size: 23,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str_len",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Host(
+            0x000000010292ae3c,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "str::split",
+        argc: 2,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 28,
+        kind: Code {
+            byte_offset: 1237,
+            byte_size: 48,
+        },
+        cache: None,
+    },
+    Function {
+        name: "Option::some<str>",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1285,
+            byte_size: 15,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str::split_once",
+        argc: 2,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1300,
+            byte_size: 25,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str_split_once",
+        argc: 2,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Host(
+            0x000000010292af88,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "Option::is_some<(str, str)>",
+        argc: 1,
+        _args: [
+            10,
+            0,
+            0,
+            0,
+        ],
+        _ret: 3,
+        kind: Code {
+            byte_offset: 1325,
+            byte_size: 44,
+        },
+        cache: None,
+    },
+    Function {
+        name: "Option::none<str>",
+        argc: 0,
+        _args: [],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1369,
+            byte_size: 14,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(): Option<str>",
+        argc: 2,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1383,
+            byte_size: 262,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str::slice",
+        argc: 2,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            9,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Code {
+            byte_offset: 1645,
+            byte_size: 31,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str_slice",
+        argc: 3,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Host(
+            0x000000010292aea0,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "std::string::Lines::__next__",
+        argc: 1,
+        _args: [
+            40,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1676,
+            byte_size: 23,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str_lines_iter_next",
+        argc: 1,
+        _args: [
+            40,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Host(
+            0x000000010292a2d8,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "std::assert",
+        argc: 2,
+        _args: [
+            3,
+            0,
+            0,
+            0,
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 0,
+        kind: Code {
+            byte_offset: 1699,
+            byte_size: 52,
+        },
+        cache: None,
+    },
+    Function {
+        name: "panic",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 0,
+        kind: Host(
+            0x000000010292a1b4,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "Range::__next__",
+        argc: 1,
+        _args: [
+            9,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1751,
+            byte_size: 106,
+        },
+        cache: None,
+    },
+    Function {
+        name: "Option::some<int>",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1857,
+            byte_size: 15,
+        },
+        cache: None,
+    },
+    Function {
+        name: "Option::none<int>",
+        argc: 0,
+        _args: [],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1872,
+            byte_size: 14,
+        },
+        cache: None,
+    },
+    Function {
+        name: "Range::iter",
+        argc: 1,
+        _args: [
+            9,
+            0,
+            0,
+            0,
+        ],
+        _ret: 28,
+        kind: Code {
+            byte_offset: 1886,
+            byte_size: 19,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(): Option<int>",
+        argc: 1,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 1905,
+            byte_size: 23,
+        },
+        cache: None,
+    },
+    Function {
+        name: "int::abs",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 1928,
+            byte_size: 28,
+        },
+        cache: None,
+    },
+    Function {
+        name: "int::to_str",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Code {
+            byte_offset: 1956,
+            byte_size: 23,
+        },
+        cache: None,
+    },
+    Function {
+        name: "int_to_str",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Host(
+            0x00000001029296c4,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "float::to_str",
+        argc: 1,
+        _args: [
+            2,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Code {
+            byte_offset: 1979,
+            byte_size: 23,
+        },
+        cache: None,
+    },
+    Function {
+        name: "float_to_str",
+        argc: 1,
+        _args: [
+            2,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Host(
+            0x0000000102929860,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "main",
+        argc: 0,
+        _args: [],
+        _ret: 0,
+        kind: Code {
+            byte_offset: 2002,
+            byte_size: 68,
+        },
+        cache: None,
+    },
+    Function {
+        name: "io_read_file",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Host(
+            0x000000010292b334,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "std::println<str>",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 0,
+        kind: Code {
+            byte_offset: 2070,
+            byte_size: 84,
+        },
+        cache: None,
+    },
+    Function {
+        name: "print_raw",
+        argc: 2,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 0,
+        kind: Host(
+            0x0000000102928f20,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "type_id<str>",
+        argc: 0,
+        _args: [],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 2154,
+            byte_size: 11,
+        },
+        cache: None,
+    },
+    Function {
+        name: "part1",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Code {
+            byte_offset: 2165,
+            byte_size: 118,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::filter<str>",
+        argc: 2,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+            117,
+            0,
+            0,
+            0,
+        ],
+        _ret: 28,
+        kind: Code {
+            byte_offset: 2283,
+            byte_size: 21,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::__next__<str>",
+        argc: 1,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 2304,
+            byte_size: 20,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(): Option<str>",
+        argc: 2,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 2324,
+            byte_size: 121,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(str): bool",
+        argc: 1,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 3,
+        kind: Code {
+            byte_offset: 2445,
+            byte_size: 24,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::map<str, int>",
+        argc: 2,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+            116,
+            0,
+            0,
+            0,
+        ],
+        _ret: 28,
+        kind: Code {
+            byte_offset: 2469,
+            byte_size: 21,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(): Option<int>",
+        argc: 2,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 2490,
+            byte_size: 89,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str::parse<int>",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 2579,
+            byte_size: 40,
+        },
+        cache: None,
+    },
+    Function {
+        name: "str_parse",
+        argc: 2,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Host(
+            0x000000010292abb8,
+        ),
+        cache: None,
+    },
+    Function {
+        name: "type_id<int>",
+        argc: 0,
+        _args: [],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 2619,
+            byte_size: 11,
+        },
+        cache: None,
+    },
+    Function {
+        name: "std::iter::Iter::filter<int>",
+        argc: 2,
+        _args: [
+            28,
+            0,
+            0,
+            0,
+            117,
+            0,
+            0,
+            0,
+        ],
+        _ret: 28,
+        kind: Code {
+            byte_offset: 2630,
+            byte_size: 21,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(): Option<int>",
+        argc: 2,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 10,
+        kind: Code {
+            byte_offset: 2651,
+            byte_size: 121,
+        },
+        cache: None,
+    },
+    Function {
+        name: "is_repeated",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 3,
+        kind: Code {
+            byte_offset: 2772,
+            byte_size: 165,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(int): bool",
+        argc: 1,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 3,
+        kind: Code {
+            byte_offset: 2937,
+            byte_size: 23,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(str): int",
+        argc: 1,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 2960,
+            byte_size: 171,
+        },
+        cache: None,
+    },
+    Function {
+        name: "is_repeated_at_least_twice",
+        argc: 1,
+        _args: [
+            1,
+            0,
+            0,
+            0,
+        ],
+        _ret: 3,
+        kind: Code {
+            byte_offset: 3131,
+            byte_size: 384,
+        },
+        cache: None,
+    },
+    Function {
+        name: "part2",
+        argc: 1,
+        _args: [
+            16,
+            0,
+            0,
+            0,
+        ],
+        _ret: 16,
+        kind: Code {
+            byte_offset: 3515,
+            byte_size: 90,
+        },
+        cache: None,
+    },
+    Function {
+        name: "fn(str): int",
+        argc: 1,
+        _args: [
+            0,
+            0,
+            0,
+            0,
+        ],
+        _ret: 1,
+        kind: Code {
+            byte_offset: 3605,
+            byte_size: 143,
+        },
+        cache: None,
+    },
+]
+tally: 1000000, global offset: 1802, local offset: 51: LoadField { field_index: 0 }
+tally: 2000000, global offset: 2905, local offset: 133: Load { index: 6 }
+tally: 3000000, global offset: 2932, local offset: 160: Ret { local_count: 10 }
+tally: 4000000, global offset: 1217, local offset: 3: ConstInt { val: 37 }
+tally: 5000000, global offset: 1217, local offset: 3: ConstInt { val: 37 }
+tally: 6000000, global offset: 2713, local offset: 62: Store { index: 4 }
+tally: 7000000, global offset: 2670, local offset: 19: CreateFuncRef { capture_count: 0 }
+tally: 8000000, global offset: 1758, local offset: 7: Load { index: 0 }
+tally: 9000000, global offset: 2889, local offset: 117: Pop
+tally: 10000000, global offset: 2925, local offset: 153: Unit
+tally: 11000000, global offset: 2809, local offset: 37: CreateFuncRef { capture_count: 0 }
+tally: 12000000, global offset: 2868, local offset: 96: CreateFuncRef { capture_count: 0 }
+tally: 13000000, global offset: 2691, local offset: 40: SwitchOn { true_offset: 2, false_offset: 0 }
+tally: 14000000, global offset: 2744, local offset: 93: Load { index: 6 }
+tally: 15000000, global offset: 1923, local offset: 18: Load { index: 1 }
+tally: 16000000, global offset: 1236, local offset: 22: Ret { local_count: 1 }
+tally: 17000000, global offset: 2915, local offset: 143: LoadField { field_index: 0 }
+tally: 18000000, global offset: 2794, local offset: 22: Store { index: 2 }
+tally: 19000000, global offset: 1804, local offset: 53: ConstInt { val: 1 }
+tally: 20000000, global offset: 972, local offset: 19: Ret { local_count: 2 }
+tally: 21000000, global offset: 2959, local offset: 22: Ret { local_count: 1 }
+tally: 22000000, global offset: 1906, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 23000000, global offset: 2857, local offset: 85: Load { index: 2 }
+tally: 24000000, global offset: 2907, local offset: 135: Load { index: 7 }
+tally: 25000000, global offset: 2777, local offset: 5: ConstInt { val: 57 }
+tally: 26000000, global offset: 1226, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 27000000, global offset: 1837, local offset: 86: ConstInt { val: 1 }
+tally: 28000000, global offset: 2911, local offset: 139: Store { index: 8 }
+tally: 29000000, global offset: 2672, local offset: 21: Store { index: 2 }
+tally: 30000000, global offset: 2846, local offset: 74: Unit
+tally: 31000000, global offset: 2890, local offset: 118: Load { index: 2 }
+tally: 32000000, global offset: 2953, local offset: 16: Load { index: 0 }
+tally: 33000000, global offset: 2659, local offset: 8: Load { index: 1 }
+tally: 34000000, global offset: 1217, local offset: 3: ConstInt { val: 37 }
+tally: 35000000, global offset: 1813, local offset: 62: AddInt
+tally: 36000000, global offset: 2886, local offset: 114: Store { index: 6 }
+tally: 37000000, global offset: 2713, local offset: 62: Store { index: 4 }
+s1: '72983', s2: '75734'
+split_pos: 5
+str len: 10
+str: '7298375734'
+s1: '72983', s2: '75735'
+split_pos: 5
+str len: 10
+str: '7298375735'
+s1: '72983', s2: '75736'
+split_pos: 5
+str len: 10
+str: '7298375736'
+took 39.92375ms to run gc
+ret value: Reg { tag: "obj", data: ObjectIndex(1048572) }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(1048575) }, Reg { tag: "obj", data: ObjectIndex(1048575) }] } }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(1048575) }, Reg { tag: "obj", data: ObjectIndex(1048575) }] } }
+storing to reg 8 value Reg { tag: "obj", data: ObjectIndex(1048572) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(1048575) }, Reg { tag: "obj", data: ObjectIndex(1048575) }] } }
+loading from reg 8 value Reg { tag: "obj", data: ObjectIndex(1048572) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(1048575) }, Reg { tag: "obj", data: ObjectIndex(1048575) }] } }
+loading field 0 from obj Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(1048575) }, Reg { tag: "obj", data: ObjectIndex(1048575) }] } }
+field obj: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+storing to reg 9 value Reg { tag: "obj", data: ObjectIndex(1048575) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+loading from reg 8 value Reg { tag: "obj", data: ObjectIndex(1048572) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(1048575) }, Reg { tag: "obj", data: ObjectIndex(1048575) }] } }
+loading field 1 from obj Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(1048575) }, Reg { tag: "obj", data: ObjectIndex(1048575) }] } }
+field obj: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+storing to reg 10 value Reg { tag: "obj", data: ObjectIndex(1048575) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+loading from reg 9 value Reg { tag: "obj", data: ObjectIndex(1048575) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+loading from reg 10 value Reg { tag: "obj", data: ObjectIndex(1048575) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+lhs: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+rhs: Object { liveliness: Cell { value: false }, leaked: false, data: String("75736") }
+eq obj result: true
+ret value: Reg { tag: "bool", data: 1 }
+ret val: Reg { tag: "bool", data: 1 }
+ret value: Reg { tag: "bool", data: 1 }
+ret val: Reg { tag: "bool", data: 1 }
+storing to reg 7 value Reg { tag: "unknown", data: "unknown" }
+loading from reg 4 value Reg { tag: "int", data: 7298375736 }
+loading from reg 7 value Reg { tag: "unknown", data: "unknown" }
+loading from reg 0 value Reg { tag: "int", data: 7298375736 }
+ret value: Reg { tag: "obj", data: ObjectIndex(1048570) }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "int", data: 7298375736 }] } }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "int", data: 7298375736 }] } }
+ret value: Reg { tag: "obj", data: ObjectIndex(1048570) }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "int", data: 7298375736 }] } }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "int", data: 7298375736 }] } }
+ret value: Reg { tag: "obj", data: ObjectIndex(1048570) }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "int", data: 7298375736 }] } }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "int", data: 7298375736 }] } }
+loading field 0 from obj Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "int", data: 7298375736 }] } }
+loading field 1 from obj Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "int", data: 7298375736 }] } }
+storing to reg 3 value Reg { tag: "int", data: 7298375736 }
+loading from reg 3 value Reg { tag: "int", data: 7298375736 }
+storing to reg 4 value Reg { tag: "int", data: 7298375736 }
+storing to reg 5 value Reg { tag: "unknown", data: "unknown" }
+loading from reg 1 value Reg { tag: "obj", data: ObjectIndex(903643) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: FuncRef { func: 28, captures: [Reg { tag: "obj", data: ObjectIndex(903642) }] } }
+storing to reg 6 value Reg { tag: "obj", data: ObjectIndex(903643) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: FuncRef { func: 28, captures: [Reg { tag: "obj", data: ObjectIndex(903642) }] } }
+loading from reg 4 value Reg { tag: "int", data: 7298375736 }
+loading from reg 6 value Reg { tag: "obj", data: ObjectIndex(903643) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: FuncRef { func: 28, captures: [Reg { tag: "obj", data: ObjectIndex(903642) }] } }
+loading from reg 1 value Reg { tag: "obj", data: ObjectIndex(903642) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 7298372983 }] } }
+loading field 0 from obj Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 7298372983 }] } }
+loading from reg 0 value Reg { tag: "int", data: 7298375736 }
+loading from reg 1 value Reg { tag: "obj", data: ObjectIndex(903642) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 7298372983 }] } }
+ret value: Reg { tag: "unit", data: 0 }
+ret val: Reg { tag: "unit", data: 0 }
+loading from reg 5 value Reg { tag: "unknown", data: "unknown" }
+ret value: Reg { tag: "obj", data: ObjectIndex(1048569) }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "unit", data: 0 }] } }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "unit", data: 0 }] } }
+ret value: Reg { tag: "obj", data: ObjectIndex(1048569) }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "unit", data: 0 }] } }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "unit", data: 0 }] } }
+ret value: Reg { tag: "obj", data: ObjectIndex(1048569) }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "unit", data: 0 }] } }
+ret obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "unit", data: 0 }] } }
+loading field 0 from obj Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "unit", data: 0 }] } }
+loading field 1 from obj Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "int", data: 0 }, Reg { tag: "unit", data: 0 }] } }
+storing to reg 5 value Reg { tag: "unit", data: 0 }
+storing to reg 6 value Reg { tag: "unknown", data: "unknown" }
+loading from reg 6 value Reg { tag: "unknown", data: "unknown" }
+loading from reg 3 value Reg { tag: "obj", data: ObjectIndex(903645) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(903644) }] } }
+loading from reg 4 value Reg { tag: "unknown", data: "unknown" }
+loading from reg 0 value Reg { tag: "obj", data: ObjectIndex(903645) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(903644) }] } }
+loading field 0 from obj Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(903644) }] } }
+field obj: Object { liveliness: Cell { value: false }, leaked: false, data: FuncRef { func: 26, captures: [Reg { tag: "obj", data: ObjectIndex(903641) }, Reg { tag: "obj", data: ObjectIndex(903643) }] } }
+storing to reg 1 value Reg { tag: "obj", data: ObjectIndex(903644) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: FuncRef { func: 26, captures: [Reg { tag: "obj", data: ObjectIndex(903641) }, Reg { tag: "obj", data: ObjectIndex(903643) }] } }
+loading from reg 1 value Reg { tag: "obj", data: ObjectIndex(903644) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: FuncRef { func: 26, captures: [Reg { tag: "obj", data: ObjectIndex(903641) }, Reg { tag: "obj", data: ObjectIndex(903643) }] } }
+storing to reg 2 value Reg { tag: "obj", data: ObjectIndex(903644) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: FuncRef { func: 26, captures: [Reg { tag: "obj", data: ObjectIndex(903641) }, Reg { tag: "obj", data: ObjectIndex(903643) }] } }
+loading from reg 2 value Reg { tag: "obj", data: ObjectIndex(903644) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: FuncRef { func: 26, captures: [Reg { tag: "obj", data: ObjectIndex(903641) }, Reg { tag: "obj", data: ObjectIndex(903643) }] } }
+loading from reg 0 value Reg { tag: "obj", data: ObjectIndex(903641) }
+value obj: Object { liveliness: Cell { value: false }, leaked: false, data: Struct { fields: [Reg { tag: "obj", data: ObjectIndex(903640) }] } }
+storing to reg 2 value Reg { tag: "unknown", data: "unknown" }
+loading from reg 2 value Reg { tag: "unknown", data: "unknown" }
+s1: '72983', s2: '75737'
+split_pos: 5
+str len: 10
+str: '7298375737'
+s1: '72983', s2: '75738'
+split_pos: 5
+str len: 10
+str: '7298375738'
+tally: 38000000, global offset: 2739, local offset: 88: Jump { offset: 0 }
+tally: 39000000, global offset: 2811, local offset: 39: Store { index: 3 }
+tally: 40000000, global offset: 1763, local offset: 12: SwitchOn { true_offset: 28, false_offset: 0 }
+tally: 41000000, global offset: 1234, local offset: 20: CallFuncRef { argc: 1 }
+tally: 42000000, global offset: 2702, local offset: 51: LoadField { field_index: 1 }
+tally: 43000000, global offset: 1921, local offset: 16: Store { index: 1 }
+tally: 44000000, global offset: 2903, local offset: 131: Store { index: 7 }
+tally: 45000000, global offset: 2723, local offset: 72: Load { index: 5 }
+tally: 46000000, global offset: 2747, local offset: 96: Jump { offset: -93 }
+tally: 47000000, global offset: 1215, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 48000000, global offset: 1804, local offset: 53: ConstInt { val: 1 }
+tally: 49000000, global offset: 2885, local offset: 113: DivInt
+tally: 50000000, global offset: 2711, local offset: 60: Load { index: 3 }
+tally: 51000000, global offset: 2959, local offset: 22: Ret { local_count: 1 }
+tally: 52000000, global offset: 2797, local offset: 25: Pop
+tally: 53000000, global offset: 1756, local offset: 5: LoadField { field_index: 0 }
+tally: 54000000, global offset: 1226, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 55000000, global offset: 2679, local offset: 28: LoadField { field_index: 0 }
+tally: 56000000, global offset: 2913, local offset: 141: Load { index: 8 }
+tally: 57000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 58000000, global offset: 2847, local offset: 75: Store { index: 4 }
+tally: 59000000, global offset: 2892, local offset: 120: ConstInt { val: 33 }
+tally: 60000000, global offset: 2955, local offset: 18: Load { index: 1 }
+tally: 61000000, global offset: 970, local offset: 17: CallFuncRef { argc: 0 }
+tally: 62000000, global offset: 2681, local offset: 30: ConstInt { val: 0 }
+tally: 63000000, global offset: 2737, local offset: 86: Store { index: 6 }
+tally: 64000000, global offset: 2681, local offset: 30: ConstInt { val: 0 }
+tally: 65000000, global offset: 2737, local offset: 86: Store { index: 6 }
+tally: 66000000, global offset: 2681, local offset: 30: ConstInt { val: 0 }
+tally: 67000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 68000000, global offset: 1925, local offset: 20: CallFuncRef { argc: 1 }
+tally: 69000000, global offset: 2874, local offset: 102: CallFuncRef { argc: 1 }
+tally: 70000000, global offset: 2905, local offset: 133: Load { index: 6 }
+tally: 71000000, global offset: 2923, local offset: 151: Store { index: 10 }
+tally: 72000000, global offset: 1970, local offset: 14: Store { index: 1 }
+tally: 73000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 74000000, global offset: 1762, local offset: 11: LtInt
+tally: 75000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 76000000, global offset: 1762, local offset: 11: LtInt
+tally: 77000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 78000000, global offset: 1762, local offset: 11: LtInt
+tally: 79000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 80000000, global offset: 1762, local offset: 11: LtInt
+tally: 81000000, global offset: 1972, local offset: 16: Load { index: 0 }
+took 25.343125ms to run gc
+tally: 82000000, global offset: 1762, local offset: 11: LtInt
+tally: 83000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 84000000, global offset: 1762, local offset: 11: LtInt
+tally: 85000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 86000000, global offset: 1762, local offset: 11: LtInt
+tally: 87000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 88000000, global offset: 1762, local offset: 11: LtInt
+tally: 89000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 90000000, global offset: 1762, local offset: 11: LtInt
+tally: 91000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 92000000, global offset: 1762, local offset: 11: LtInt
+tally: 93000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 94000000, global offset: 1762, local offset: 11: LtInt
+tally: 95000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 96000000, global offset: 1762, local offset: 11: LtInt
+tally: 97000000, global offset: 2744, local offset: 93: Load { index: 6 }
+tally: 98000000, global offset: 2813, local offset: 41: Load { index: 3 }
+tally: 99000000, global offset: 1800, local offset: 49: Load { index: 0 }
+tally: 100000000, global offset: 1236, local offset: 22: Ret { local_count: 1 }
+tally: 101000000, global offset: 2704, local offset: 53: Store { index: 3 }
+tally: 102000000, global offset: 2931, local offset: 159: EqObj
+tally: 103000000, global offset: 2794, local offset: 22: Store { index: 2 }
+tally: 104000000, global offset: 1752, local offset: 1: PushLocalSpace { amount: 3 }
+tally: 105000000, global offset: 1215, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 106000000, global offset: 972, local offset: 19: Ret { local_count: 2 }
+tally: 107000000, global offset: 2919, local offset: 147: Load { index: 8 }
+tally: 108000000, global offset: 1959, local offset: 3: ConstInt { val: 58 }
+tally: 109000000, global offset: 1226, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 110000000, global offset: 1814, local offset: 63: Load { index: 0 }
+tally: 111000000, global offset: 2888, local offset: 116: Unit
+tally: 112000000, global offset: 2715, local offset: 64: Unit
+tally: 113000000, global offset: 2736, local offset: 85: Unit
+tally: 114000000, global offset: 2800, local offset: 28: ConstInt { val: 36 }
+tally: 115000000, global offset: 1760, local offset: 9: LoadField { field_index: 1 }
+tally: 116000000, global offset: 1230, local offset: 16: Load { index: 0 }
+tally: 117000000, global offset: 2690, local offset: 39: EqInt
+tally: 118000000, global offset: 2911, local offset: 139: Store { index: 8 }
+tally: 119000000, global offset: 1976, local offset: 20: CallFuncRef { argc: 1 }
+tally: 120000000, global offset: 1800, local offset: 49: Load { index: 0 }
+tally: 121000000, global offset: 2809, local offset: 37: CreateFuncRef { capture_count: 0 }
+tally: 122000000, global offset: 1819, local offset: 68: Pop
+tally: 123000000, global offset: 2809, local offset: 37: CreateFuncRef { capture_count: 0 }
+tally: 124000000, global offset: 1819, local offset: 68: Pop
+tally: 125000000, global offset: 2716, local offset: 65: Pop
+tally: 126000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 127000000, global offset: 2716, local offset: 65: Pop
+tally: 128000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 129000000, global offset: 962, local offset: 9: Unit
+took 25.99075ms to run gc
+tally: 130000000, global offset: 1814, local offset: 63: Load { index: 0 }
+tally: 131000000, global offset: 1157, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 132000000, global offset: 2788, local offset: 16: Store { index: 1 }
+tally: 133000000, global offset: 966, local offset: 13: Store { index: 2 }
+tally: 134000000, global offset: 1819, local offset: 68: Pop
+tally: 135000000, global offset: 1170, local offset: 14: Store { index: 2 }
+tally: 136000000, global offset: 1957, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 137000000, global offset: 1236, local offset: 22: Ret { local_count: 1 }
+tally: 138000000, global offset: 1867, local offset: 10: Load { index: 0 }
+tally: 139000000, global offset: 2723, local offset: 72: Load { index: 5 }
+tally: 140000000, global offset: 958, local offset: 5: LoadField { field_index: 0 }
+tally: 141000000, global offset: 1108, local offset: 12: StoreField { field_index: 0 }
+tally: 142000000, global offset: 2907, local offset: 135: Load { index: 7 }
+tally: 143000000, global offset: 2777, local offset: 5: ConstInt { val: 57 }
+tally: 144000000, global offset: 1226, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 145000000, global offset: 2854, local offset: 82: Load { index: 4 }
+tally: 146000000, global offset: 2678, local offset: 27: Copy
+tally: 147000000, global offset: 2773, local offset: 1: PushLocalSpace { amount: 10 }
+tally: 148000000, global offset: 1908, local offset: 3: Load { index: 0 }
+tally: 149000000, global offset: 1833, local offset: 82: Load { index: 0 }
+tally: 150000000, global offset: 1178, local offset: 22: CallFuncRef { argc: 2 }
+tally: 151000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 152000000, global offset: 2836, local offset: 64: NeInt
+tally: 153000000, global offset: 1853, local offset: 102: Jump { offset: -62 }
+tally: 154000000, global offset: 2949, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 155000000, global offset: 964, local offset: 11: Load { index: 1 }
+tally: 156000000, global offset: 1073, local offset: 86: CallFuncRef { argc: 1 }
+tally: 157000000, global offset: 1853, local offset: 102: Jump { offset: -62 }
+tally: 158000000, global offset: 2911, local offset: 139: Store { index: 8 }
+tally: 159000000, global offset: 2788, local offset: 16: Store { index: 1 }
+tally: 160000000, global offset: 964, local offset: 11: Load { index: 1 }
+tally: 161000000, global offset: 1800, local offset: 49: Load { index: 0 }
+tally: 162000000, global offset: 1236, local offset: 22: Ret { local_count: 1 }
+tally: 163000000, global offset: 1927, local offset: 22: Ret { local_count: 1 }
+tally: 164000000, global offset: 2917, local offset: 145: Store { index: 9 }
+tally: 165000000, global offset: 2659, local offset: 8: Load { index: 1 }
+tally: 166000000, global offset: 1910, local offset: 5: ConstInt { val: 51 }
+took 25.833291ms to run gc
+tally: 167000000, global offset: 2859, local offset: 87: ConstInt { val: 36 }
+tally: 168000000, global offset: 2890, local offset: 118: Load { index: 2 }
+tally: 169000000, global offset: 2717, local offset: 66: Load { index: 0 }
+tally: 170000000, global offset: 2792, local offset: 20: CallFuncRef { argc: 1 }
+tally: 171000000, global offset: 968, local offset: 15: Load { index: 2 }
+tally: 172000000, global offset: 1804, local offset: 53: ConstInt { val: 1 }
+tally: 173000000, global offset: 2885, local offset: 113: DivInt
+tally: 174000000, global offset: 1178, local offset: 22: CallFuncRef { argc: 2 }
+tally: 175000000, global offset: 2737, local offset: 86: Store { index: 6 }
+tally: 176000000, global offset: 2809, local offset: 37: CreateFuncRef { capture_count: 0 }
+tally: 177000000, global offset: 2836, local offset: 64: NeInt
+tally: 178000000, global offset: 1853, local offset: 102: Jump { offset: -62 }
+tally: 179000000, global offset: 2949, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 180000000, global offset: 964, local offset: 11: Load { index: 1 }
+tally: 181000000, global offset: 2872, local offset: 100: Load { index: 5 }
+tally: 182000000, global offset: 1168, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 183000000, global offset: 2792, local offset: 20: CallFuncRef { argc: 1 }
+tally: 184000000, global offset: 1234, local offset: 20: CallFuncRef { argc: 1 }
+tally: 185000000, global offset: 1858, local offset: 1: ConstInt { val: 0 }
+tally: 186000000, global offset: 2721, local offset: 70: Load { index: 4 }
+tally: 187000000, global offset: 956, local offset: 3: Load { index: 0 }
+tally: 188000000, global offset: 2856, local offset: 84: Pop
+tally: 189000000, global offset: 2885, local offset: 113: DivInt
+tally: 190000000, global offset: 2938, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 191000000, global offset: 2797, local offset: 25: Pop
+tally: 192000000, global offset: 1814, local offset: 63: Load { index: 0 }
+tally: 193000000, global offset: 2679, local offset: 28: LoadField { field_index: 0 }
+tally: 194000000, global offset: 2736, local offset: 85: Unit
+tally: 195000000, global offset: 1230, local offset: 16: Load { index: 0 }
+tally: 196000000, global offset: 1230, local offset: 16: Load { index: 0 }
+tally: 197000000, global offset: 2717, local offset: 66: Load { index: 0 }
+tally: 198000000, global offset: 1974, local offset: 18: Load { index: 1 }
+tally: 199000000, global offset: 1762, local offset: 11: LtInt
+tally: 200000000, global offset: 1853, local offset: 102: Jump { offset: -62 }
+tally: 201000000, global offset: 2927, local offset: 155: Load { index: 9 }
+tally: 202000000, global offset: 2813, local offset: 41: Load { index: 3 }
+tally: 203000000, global offset: 2872, local offset: 100: Load { index: 5 }
+tally: 204000000, global offset: 2704, local offset: 53: Store { index: 3 }
+took 25.177166ms to run gc
+tally: 205000000, global offset: 2792, local offset: 20: CallFuncRef { argc: 1 }
+tally: 206000000, global offset: 1752, local offset: 1: PushLocalSpace { amount: 3 }
+tally: 207000000, global offset: 2885, local offset: 113: DivInt
+tally: 208000000, global offset: 2919, local offset: 147: Load { index: 8 }
+tally: 209000000, global offset: 2797, local offset: 25: Pop
+tally: 210000000, global offset: 2716, local offset: 65: Pop
+tally: 211000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 212000000, global offset: 2716, local offset: 65: Pop
+tally: 213000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 214000000, global offset: 2716, local offset: 65: Pop
+tally: 215000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 216000000, global offset: 2716, local offset: 65: Pop
+tally: 217000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 218000000, global offset: 2716, local offset: 65: Pop
+tally: 219000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 220000000, global offset: 2716, local offset: 65: Pop
+tally: 221000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 222000000, global offset: 2716, local offset: 65: Pop
+tally: 223000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 224000000, global offset: 2716, local offset: 65: Pop
+tally: 225000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 226000000, global offset: 2716, local offset: 65: Pop
+tally: 227000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 228000000, global offset: 2716, local offset: 65: Pop
+tally: 229000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 230000000, global offset: 2716, local offset: 65: Pop
+tally: 231000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 232000000, global offset: 2716, local offset: 65: Pop
+tally: 233000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 234000000, global offset: 2716, local offset: 65: Pop
+tally: 235000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 236000000, global offset: 2716, local offset: 65: Pop
+tally: 237000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 238000000, global offset: 2716, local offset: 65: Pop
+tally: 239000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 240000000, global offset: 1816, local offset: 65: StoreField { field_index: 0 }
+tally: 241000000, global offset: 2798, local offset: 26: Load { index: 2 }
+tally: 242000000, global offset: 1816, local offset: 65: StoreField { field_index: 0 }
+tally: 243000000, global offset: 2798, local offset: 26: Load { index: 2 }
+tally: 244000000, global offset: 2929, local offset: 157: Load { index: 10 }
+tally: 245000000, global offset: 1978, local offset: 22: Ret { local_count: 1 }
+tally: 246000000, global offset: 1925, local offset: 20: CallFuncRef { argc: 1 }
+tally: 247000000, global offset: 2874, local offset: 102: CallFuncRef { argc: 1 }
+tally: 248000000, global offset: 1927, local offset: 22: Ret { local_count: 1 }
+tally: 249000000, global offset: 2917, local offset: 145: Store { index: 9 }
+tally: 250000000, global offset: 1957, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 251000000, global offset: 970, local offset: 17: CallFuncRef { argc: 0 }
+tally: 252000000, global offset: 2854, local offset: 82: Load { index: 4 }
+tally: 253000000, global offset: 1867, local offset: 10: Load { index: 0 }
+tally: 254000000, global offset: 1174, local offset: 18: Load { index: 1 }
+tally: 255000000, global offset: 2727, local offset: 76: SwitchOn { true_offset: 16, false_offset: 0 }
+tally: 256000000, global offset: 2798, local offset: 26: Load { index: 2 }
+took 26.173625ms to run gc
+tally: 257000000, global offset: 1758, local offset: 7: Load { index: 0 }
+tally: 258000000, global offset: 1228, local offset: 14: Store { index: 1 }
+tally: 259000000, global offset: 2681, local offset: 30: ConstInt { val: 0 }
+tally: 260000000, global offset: 2925, local offset: 153: Unit
+tally: 261000000, global offset: 1972, local offset: 16: Load { index: 0 }
+tally: 262000000, global offset: 1919, local offset: 14: CreateFuncRef { capture_count: 0 }
+tally: 263000000, global offset: 2868, local offset: 96: CreateFuncRef { capture_count: 0 }
+tally: 264000000, global offset: 1853, local offset: 102: Jump { offset: -62 }
+tally: 265000000, global offset: 2911, local offset: 139: Store { index: 8 }
+tally: 266000000, global offset: 2788, local offset: 16: Store { index: 1 }
+tally: 267000000, global offset: 964, local offset: 11: Load { index: 1 }
+tally: 268000000, global offset: 2846, local offset: 74: Unit
+tally: 269000000, global offset: 1847, local offset: 96: Load { index: 2 }
+tally: 270000000, global offset: 1168, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 271000000, global offset: 2953, local offset: 16: Load { index: 0 }
+tally: 272000000, global offset: 2676, local offset: 25: CallFuncRef { argc: 1 }
+tally: 273000000, global offset: 1752, local offset: 1: PushLocalSpace { amount: 3 }
+tally: 274000000, global offset: 1215, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 275000000, global offset: 972, local offset: 19: Ret { local_count: 2 }
+tally: 276000000, global offset: 2919, local offset: 147: Load { index: 8 }
+tally: 277000000, global offset: 1959, local offset: 3: ConstInt { val: 58 }
+tally: 278000000, global offset: 1906, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 279000000, global offset: 2856, local offset: 84: Pop
+tally: 280000000, global offset: 1869, local offset: 12: CreateStruct { field_count: 2 }
+tally: 281000000, global offset: 1176, local offset: 20: Load { index: 2 }
+tally: 282000000, global offset: 2775, local offset: 3: Load { index: 0 }
+tally: 283000000, global offset: 960, local offset: 7: Store { index: 1 }
+tally: 284000000, global offset: 2827, local offset: 55: ConstInt { val: 0 }
+tally: 285000000, global offset: 1835, local offset: 84: LoadField { field_index: 0 }
+tally: 286000000, global offset: 2909, local offset: 137: CallFuncRef { argc: 2 }
+tally: 287000000, global offset: 2923, local offset: 151: Store { index: 10 }
+tally: 288000000, global offset: 960, local offset: 7: Store { index: 1 }
+tally: 289000000, global offset: 2859, local offset: 87: ConstInt { val: 36 }
+tally: 290000000, global offset: 2909, local offset: 137: CallFuncRef { argc: 2 }
+tally: 291000000, global offset: 2786, local offset: 14: CreateFuncRef { capture_count: 0 }
+tally: 292000000, global offset: 1921, local offset: 16: Store { index: 1 }
+tally: 293000000, global offset: 1846, local offset: 95: SubInt
+tally: 294000000, global offset: 2913, local offset: 141: Load { index: 8 }
+took 25.322458ms to run gc
+tally: 295000000, global offset: 2674, local offset: 23: Load { index: 2 }
+tally: 296000000, global offset: 1234, local offset: 20: CallFuncRef { argc: 1 }
+tally: 297000000, global offset: 1858, local offset: 1: ConstInt { val: 0 }
+tally: 298000000, global offset: 2721, local offset: 70: Load { index: 4 }
+tally: 299000000, global offset: 956, local offset: 3: Load { index: 0 }
+tally: 300000000, global offset: 1752, local offset: 1: PushLocalSpace { amount: 3 }
+tally: 301000000, global offset: 1858, local offset: 1: ConstInt { val: 0 }
+tally: 302000000, global offset: 2919, local offset: 147: Load { index: 8 }
+tally: 303000000, global offset: 956, local offset: 3: Load { index: 0 }
+tally: 304000000, global offset: 2856, local offset: 84: Pop
+tally: 305000000, global offset: 2679, local offset: 28: LoadField { field_index: 0 }
+tally: 306000000, global offset: 2775, local offset: 3: Load { index: 0 }
+tally: 307000000, global offset: 1910, local offset: 5: ConstInt { val: 51 }
+tally: 308000000, global offset: 1835, local offset: 84: LoadField { field_index: 0 }
+tally: 309000000, global offset: 1180, local offset: 24: Ret { local_count: 1 }
+tally: 310000000, global offset: 1974, local offset: 18: Load { index: 1 }
+tally: 311000000, global offset: 2837, local offset: 65: SwitchOn { true_offset: 88, false_offset: 0 }
+tally: 312000000, global offset: 1796, local offset: 45: Load { index: 1 }
+tally: 313000000, global offset: 2951, local offset: 14: Store { index: 1 }
+tally: 314000000, global offset: 2670, local offset: 19: CreateFuncRef { capture_count: 0 }
+tally: 315000000, global offset: 1228, local offset: 14: Store { index: 1 }
+tally: 316000000, global offset: 2870, local offset: 98: Store { index: 5 }
+tally: 317000000, global offset: 1796, local offset: 45: Load { index: 1 }
+tally: 318000000, global offset: 2721, local offset: 70: Load { index: 4 }
+tally: 319000000, global offset: 1959, local offset: 3: ConstInt { val: 58 }
+tally: 320000000, global offset: 1906, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 321000000, global offset: 1814, local offset: 63: Load { index: 0 }
+tally: 322000000, global offset: 2786, local offset: 14: CreateFuncRef { capture_count: 0 }
+tally: 323000000, global offset: 963, local offset: 10: Pop
+tally: 324000000, global offset: 1763, local offset: 12: SwitchOn { true_offset: 28, false_offset: 0 }
+tally: 325000000, global offset: 1234, local offset: 20: CallFuncRef { argc: 1 }
+tally: 326000000, global offset: 1172, local offset: 16: Load { index: 0 }
+tally: 327000000, global offset: 2957, local offset: 20: CallFuncRef { argc: 1 }
+tally: 328000000, global offset: 2797, local offset: 25: Pop
+tally: 329000000, global offset: 1756, local offset: 5: LoadField { field_index: 0 }
+tally: 330000000, global offset: 1837, local offset: 86: ConstInt { val: 1 }
+tally: 331000000, global offset: 2691, local offset: 40: SwitchOn { true_offset: 2, false_offset: 0 }
+took 25.036917ms to run gc
+tally: 332000000, global offset: 2927, local offset: 155: Load { index: 9 }
+tally: 333000000, global offset: 954, local offset: 1: PushLocalSpace { amount: 2 }
+tally: 334000000, global offset: 1236, local offset: 22: Ret { local_count: 1 }
+tally: 335000000, global offset: 1217, local offset: 3: ConstInt { val: 37 }
+tally: 336000000, global offset: 2678, local offset: 27: Copy
+tally: 337000000, global offset: 2940, local offset: 3: ConstInt { val: 78 }
+tally: 338000000, global offset: 1974, local offset: 18: Load { index: 1 }
+tally: 339000000, global offset: 1921, local offset: 16: Store { index: 1 }
+tally: 340000000, global offset: 1820, local offset: 69: ConstInt { val: 52 }
+tally: 341000000, global offset: 2901, local offset: 129: CreateFuncRef { capture_count: 0 }
+tally: 342000000, global offset: 1957, local offset: 1: PushLocalSpace { amount: 1 }
+tally: 343000000, global offset: 1921, local offset: 16: Store { index: 1 }
+tally: 344000000, global offset: 2870, local offset: 98: Store { index: 5 }
+tally: 345000000, global offset: 2901, local offset: 129: CreateFuncRef { capture_count: 0 }
+tally: 346000000, global offset: 2721, local offset: 70: Load { index: 4 }
+tally: 347000000, global offset: 1959, local offset: 3: ConstInt { val: 58 }
+tally: 348000000, global offset: 1226, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 349000000, global offset: 1814, local offset: 63: Load { index: 0 }
+tally: 350000000, global offset: 1853, local offset: 102: Jump { offset: -62 }
+tally: 351000000, global offset: 2911, local offset: 139: Store { index: 8 }
+tally: 352000000, global offset: 2744, local offset: 93: Load { index: 6 }
+tally: 353000000, global offset: 2813, local offset: 41: Load { index: 3 }
+tally: 354000000, global offset: 2854, local offset: 82: Load { index: 4 }
+tally: 355000000, global offset: 1867, local offset: 10: Load { index: 0 }
+tally: 356000000, global offset: 2713, local offset: 62: Store { index: 4 }
+tally: 357000000, global offset: 2786, local offset: 14: CreateFuncRef { capture_count: 0 }
+tally: 358000000, global offset: 963, local offset: 10: Pop
+tally: 359000000, global offset: 1763, local offset: 12: SwitchOn { true_offset: 28, false_offset: 0 }
+tally: 360000000, global offset: 1234, local offset: 20: CallFuncRef { argc: 1 }
+tally: 361000000, global offset: 1172, local offset: 16: Load { index: 0 }
+tally: 362000000, global offset: 2957, local offset: 20: CallFuncRef { argc: 1 }
+tally: 363000000, global offset: 2797, local offset: 25: Pop
+tally: 364000000, global offset: 2836, local offset: 64: NeInt
+tally: 365000000, global offset: 1837, local offset: 86: ConstInt { val: 1 }
+tally: 366000000, global offset: 2691, local offset: 40: SwitchOn { true_offset: 2, false_offset: 0 }
+tally: 367000000, global offset: 2927, local offset: 155: Load { index: 9 }
+tally: 368000000, global offset: 954, local offset: 1: PushLocalSpace { amount: 2 }
+tally: 369000000, global offset: 1236, local offset: 22: Ret { local_count: 1 }
+took 25.964042ms to run gc
+tally: 370000000, global offset: 1217, local offset: 3: ConstInt { val: 37 }
+tally: 371000000, global offset: 2678, local offset: 27: Copy
+tally: 372000000, global offset: 2940, local offset: 3: ConstInt { val: 78 }
+tally: 373000000, global offset: 1974, local offset: 18: Load { index: 1 }
+tally: 374000000, global offset: 1921, local offset: 16: Store { index: 1 }
+tally: 375000000, global offset: 1820, local offset: 69: ConstInt { val: 52 }
+tally: 376000000, global offset: 2901, local offset: 129: CreateFuncRef { capture_count: 0 }
+tally: 377000000, global offset: 2919, local offset: 147: Load { index: 8 }
+tally: 378000000, global offset: 1959, local offset: 3: ConstInt { val: 58 }
+tally: 379000000, global offset: 1226, local offset: 12: CreateFuncRef { capture_count: 0 }
+tally: 380000000, global offset: 1814, local offset: 63: Load { index: 0 }
+tally: 381000000, global offset: 1853, local offset: 102: Jump { offset: -62 }
+tally: 382000000, global offset: 2719, local offset: 68: Store { index: 5 }
+tally: 383000000, global offset: 2744, local offset: 93: Load { index: 6 }
+47353585426
