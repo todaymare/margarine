@@ -1,0 +1,19 @@
+[38;2;0;255;0;1mcompiling:[0m examples/aoc2025/day1.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m-[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/string.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/io.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/list.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/iter.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/hashmap.mar
+[38;2;100;100;100m|[0m[38;2;100;100;100m--[0m[38;2;100;100;100m>[0m [38;2;0;255;0;1mcompiling:[0m examples::aoc2025::day1::std/lib/duration.mar
+running
+took 16.5515ms to run gc
+took 16.487417ms to run gc
+took 16.413084ms to run gc
+took 17.56625ms to run gc
+took 16.031416ms to run gc
+took 16.776541ms to run gc
+took 16.299ms to run gc
+took 16.255292ms to run gc
+took 16.034958ms to run gc
+47353585426

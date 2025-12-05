@@ -1,4 +1,6 @@
-use std::{hint::select_unpredictable, ops::Deref};
+use std::{hash::{DefaultHasher, Hash, Hasher}, hint::select_unpredictable, ops::Deref};
+
+use fxhash::FxHasher64;
 
 use crate::{obj_map::{ObjectData, ObjectIndex}, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
@@ -47,12 +49,17 @@ impl<'src> VM<'src> {
         let prev = std::mem::replace(&mut self.curr, callframe);
         let bottom = self.callstack.stack.len();
 
-
         unsafe {
         loop {
-            //println!(" - {} ", self.stack.curr);
-            //println!("{:?}", crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()));
+            //println!(" - {:?} ", &(*self.stack.values)[..self.stack.curr]);
+            //println!("{:?}", );
+            let decode = crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()).unwrap();
+            decode.1.hash(&mut self.tally);
             let opcode = self.curr.next();
+            self.tally_counter += 1;
+            if self.tally_counter % 1000000 == 0 {
+                println!("tally: {}, global offset: {}, local offset: {}: {:?}", self.tally_counter, self.curr.reader.src.offset_from(self.callstack.src.as_ptr()), self.curr.reader.src.offset_from(self.curr.reader.bounds.as_ptr()), decode.1);
+            }
             //println!("{:?}", self.stack);
             
             match opcode {
@@ -67,6 +74,47 @@ impl<'src> VM<'src> {
 
                     let mut ret_value = Reg::new_unit();
                     ret_instr(self, local_count as _, &mut ret_value);
+                    if (37540400..37540500).contains(&self.tally_counter) {
+                        println!("ret value: {:?}", ret_value);
+                        let mut stack = vec![];
+                        stack.push(ret_value);
+
+                        while let Some(val) = stack.pop() {
+                            if val.is_obj() {
+                                let obj = self.objs.get(val.as_obj());
+                                println!("ret obj: {:?}", obj);
+                                match &obj.data {
+                                      ObjectData::List(fields)
+                                    | ObjectData::FuncRef { captures: fields, .. }
+                                    | ObjectData::Struct { fields } => {
+                                        for field in fields {
+                                            if field.is_obj() {
+                                                stack.push(*field);
+                                            }
+                                        }
+                                    },
+
+                                    ObjectData::Dict(hm) => {
+                                        for (k, v) in hm {
+                                            if k.is_obj() {
+                                                stack.push(*k);
+                                            }
+                                            if v.is_obj() {
+                                                stack.push(*v);
+                                            }
+                                        }
+                                    },
+
+                                    _ => {}
+                                }
+                            } else {
+                                println!("ret val: {:?}", val);
+                            }
+                        }
+                        if ret_value.is_obj() {
+                            println!("ret obj: {:?}", self.objs.get(ret_value.as_obj()));
+                        }
+                    }
 
                     if self.callstack.stack.len() == bottom { break; }
                     let Some(prev_frame) = self.callstack.pop()
@@ -105,6 +153,7 @@ impl<'src> VM<'src> {
                     //dbga(jitty::attempt_jit(self, *func_index as _));
 
                     let func = &self.funcs[func_index as usize];
+                    assert!(func_index < 81);
 
                     match func.kind {
                         crate::FunctionKind::Code { byte_offset, byte_size } => {
@@ -293,7 +342,8 @@ impl<'src> VM<'src> {
                         return Status::err(FatalError::new("out of bounds access"))
                     }
 
-                    list[index as usize] = value
+                    list[index as usize] = value;
+
                 }
 
 
@@ -302,6 +352,14 @@ impl<'src> VM<'src> {
                     let val = self.stack.pop();
                     let obj_index = val.as_obj();
                     let obj = &self.objs[obj_index];
+
+                    if (37540400..37540500).contains(&self.tally_counter) {
+                        println!("loading field {} from obj {:?}", index, obj);
+
+                        if obj.as_fields()[index as usize].is_obj() {
+                            println!("field obj: {:?}", self.objs.get(obj.as_fields()[index as usize].as_obj()));
+                        }
+                    }
                     self.stack.push(obj.as_fields()[index as usize])
                 }
 
@@ -651,6 +709,11 @@ impl<'src> VM<'src> {
                         let lhs = self.objs.get(lhs);
                         let rhs = self.objs.get(rhs);
 
+                        if self.tally_counter == 37540413 { 
+                            println!("lhs: {lhs:?}");
+                            println!("rhs: {rhs:?}");
+                        }
+
                         match (&lhs.data, &rhs.data) {
                               (ObjectData::List(f1), ObjectData::List(f2))
                             | (ObjectData::Struct { fields: f1 }, ObjectData::Struct { fields: f2 }) => {
@@ -752,6 +815,11 @@ impl<'src> VM<'src> {
 
                     };
 
+
+                    if self.tally_counter == 37540413 { 
+                        println!("eq obj result: {}", result);
+                    }
+
                     self.stack.push(Reg::new_bool(result));
                 }
 
@@ -759,6 +827,14 @@ impl<'src> VM<'src> {
                 consts::Load => {
                     let reg = self.curr.next();
                     let val = self.stack.reg(reg);
+                    
+                    if (37540400..37540500).contains(&self.tally_counter) {
+                        println!("loading from reg {} value {:?}", reg, val);
+                        if val.is_obj() {
+                            println!("value obj: {:?}", self.objs.get(val.as_obj()));
+                        }
+                    }
+
                     self.stack.push(val);
                 }
 
@@ -766,6 +842,15 @@ impl<'src> VM<'src> {
                 consts::Store => {
                     let reg = self.curr.next();
                     let data = self.stack.pop();
+
+                    if (37540400..37540500).contains(&self.tally_counter) {
+                        println!("storing to reg {} value {:?}", reg, data);
+                        if data.is_obj() {
+                            println!("value obj: {:?}", self.objs.get(data.as_obj()));
+                        }
+                    }
+
+
                     self.stack.set_reg(reg, data);
                 }
 

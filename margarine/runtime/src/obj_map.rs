@@ -54,7 +54,7 @@ impl Object {
     pub fn as_fields(&self) -> &[Reg] {
         match &self.data {
             ObjectData::Struct { fields } => &fields,
-            _ => unreachable!(),
+            _ => unreachable!("{:?} is not a struct", self.data),
         }
     }
 
@@ -69,7 +69,7 @@ impl Object {
     pub fn as_str(&self) -> &str {
         match &self.data {
             ObjectData::String(str) => &str,
-            _ => unreachable!(),
+            _ => unreachable!("{:?} is not a string", self.data),
         }
     }
 

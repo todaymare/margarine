@@ -41,6 +41,8 @@ struct Function<'a> {
     kind: FunctionKind<'a>,
     error: Option<ErrorId>,
 
+    hits: u32,
+
     cached: bool,
 }
 
@@ -115,6 +117,17 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
         func_sec.push(opcode::func::consts::Func);
 
         let name = conv.string_map.get(func.name);
+        println!("Generating function: {} (hits: {}, index: {})", name, func.hits, func.index.0);
+        println!("-----------------------------------");
+        for bb in match &func.kind {
+            FunctionKind::Code { blocks, .. } => &*blocks,
+            _ => [].as_slice(),
+        } {
+            println!("Basic Block {:?}:", bb.index);
+            println!("{:#?}", bb.bytecode);
+            println!("Terminator: {:?}", bb.terminator);
+            println!();
+        }
         // func meta
         func_sec.extend_from_slice(&(name.len() as u32).to_le_bytes());
         func_sec.extend_from_slice(name.as_bytes());
@@ -138,7 +151,6 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
                 let mut terminators = vec![];
                 let mut bbs_hm = HashMap::with_capacity(blocks.len());
-                println!("------ {} ------ #{}", conv.string_map.get(func.name), func.index.0);
 
                 let mut buf = vec![];
                 let mut stack = vec![];
@@ -358,6 +370,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     args,
                     ret: ret.0,
                     cached: sym_func.cached,
+
+                    hits: 0,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -393,6 +407,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         args,
                         cached: sym_func.cached,
 
+                        hits: 0,
+
                     };
 
                     assert!(self.funcs.insert(hash, func).is_none());
@@ -415,6 +431,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     args,
                     cached: sym_func.cached,
 
+                    hits: 0,
+
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -428,7 +446,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     loop_cont: None,
                     gens: gens_id,
                 };
-
 
                 for arg in sym_func.args() {
                     env.alloc_var(arg.name());
@@ -466,7 +483,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     blocks: env.blocks,
                 };
 
-                println!("done");
                 return Ok(func)
             },
 
@@ -497,6 +513,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     args,
                     ret: ret.0,
                     cached: false,
+
+                    hits: 0,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -543,6 +561,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     args,
                     ret: ret.0,
                     cached: false,
+
+                    hits: 0,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -685,9 +705,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     let Ok(sym) = ns.get_sym(StringMap::ITER_NEXT_FUNC).unwrap()
                     else { unreachable!() };
 
-                    dbg!(self.syms.get_gens(iter_expr.gens(&self.syms)));
                     let sym = Sym::Ty(sym, iter_expr.gens(&self.syms));
-                    println!("{}", sym.display(self.string_map, self.syms));
                     let sym = sym.resolve(&[], self.syms);
 
                     let func = self.get_func(sym)?.index;
@@ -799,7 +817,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             },
 
 
-            parser::nodes::expr::Expr::Identifier(string_index, gens) => {
+            parser::nodes::expr::Expr::Identifier(string_index, _) => {
                 let ty = out_if_err!();
 
                 let env_gens = env.gens;
@@ -813,21 +831,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     let env_gens = self.syms.get_gens(env.gens);
 
                     let func = Sym::Ty(*func, func_gens);
-                    println!("{}", ty.display(self.string_map, self.syms));
-                    println!("{}", self.string_map.get(string_index));
 
-                    for (n, g) in self.syms.get_gens(func_gens) {
-                        println!("{}: {}", self.string_map.get(*n), g.display(self.string_map, self.syms))
-                    }
-
-
-                    println!("{}", func.display(self.string_map, self.syms));
-                    for (n, g) in env_gens {
-                        println!("{}: {}", self.string_map.get(*n), g.display(self.string_map, self.syms))
-                    }
                     let func = func.resolve(&[env_gens], self.syms);
 
-                    println!("{}", self.string_map.get(string_index));
                     let func = self.get_func(func).unwrap();
                     block.bytecode.const_int(func.index.0 as i64);
                     block.bytecode.create_func_ref(0);
@@ -1014,12 +1020,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 let env_gens = self.syms.get_gens(env.gens);
 
-                println!("<-----");
-                for g in env_gens {
-                    println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
-                }
-                println!("----->");
-
                 let val = self.ty_info.expr(val).unwrap();
                 let val = val.resolve(&[env_gens], self.syms);
                 let ty = val.sym(self.syms).unwrap();
@@ -1043,9 +1043,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 } else {
                     let sym_gens = self.syms.get_gens(val.gens(self.syms));
-                    for g in sym_gens {
-                        println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
-                    }
 
                     let ns = self.syms.sym_ns(ty);
                     let ns = self.ns.get_ns(ns);
@@ -1056,9 +1053,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     let sym = Sym::Ty(sym, gens)
                         .resolve(&[env_gens, sym_gens], self.syms);
                     assert!(sym.is_resolved(self.syms));
-                    println!("from {}", val.display(self.string_map, self.syms));
-                    println!("accessing {}", sym.display(self.string_map, self.syms));
-                    println!("named {}", self.string_map.get(field_name));
 
                     let func = self.get_func(sym)?;
 
@@ -1286,16 +1280,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 });
 
 
-
-                println!("closure");
-                for g in self.syms.get_gens(env.gens) {
-                    println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
-                }
-
-
-
-
-
                 let closure = self.syms.closure(closure);
                 for name in &closure.captured_variables {
                     let index = env.find_var(name.0).unwrap();
@@ -1360,6 +1344,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         ret: self.ty_info.expr(body).unwrap()
                             .sym(self.syms).unwrap().0,
                         cached: false,
+
+                        hits: 0,
                     };
 
                     let ret = self.funcs.insert(hash, func);
