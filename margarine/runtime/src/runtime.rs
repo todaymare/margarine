@@ -1,6 +1,4 @@
-use std::{hash::{DefaultHasher, Hash, Hasher}, hint::select_unpredictable, ops::Deref};
-
-use fxhash::FxHasher64;
+use std::{hint::select_unpredictable, ops::Deref};
 
 use crate::{obj_map::{ObjectData, ObjectIndex}, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
@@ -13,6 +11,7 @@ impl<'src> VM<'src> {
             self.stack.push(arg);
         }
 
+        self.cycle = 0;
         let now = std::time::Instant::now();
         let result = self.run_func(*index);
         println!("ran {} cycles in {:?}. {} MIPS", self.cycle, now.elapsed(), (self.cycle as f64) / (now.elapsed().as_secs_f64() * 1_000_000.0));
@@ -111,7 +110,6 @@ impl<'src> VM<'src> {
                     //dbga(jitty::attempt_jit(self, *func_index as _));
 
                     let func = &self.funcs[func_index as usize];
-                    assert!(func_index < 81);
 
                     match func.kind {
                         crate::FunctionKind::Code { byte_offset, byte_size } => {

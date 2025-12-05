@@ -1,8 +1,5 @@
 #![feature(if_let_guard)]
-pub mod raylib;
-
 use std::collections::HashMap;
-use std::ffi::CString;
 use std::fs;
 
 use colourful::ColourBrush;
@@ -295,30 +292,26 @@ impl BuildLock {
     fn load() -> Self {
         match fs::read_to_string("build.lock") {
             Ok(content) => {
-                match toml::from_str::<toml::Table>(&content) {
-                    Ok(table) => {
-                        let mut packages = HashMap::new();
-                        if let Some(pkgs) = table.get("packages").and_then(|v| v.as_table()) {
-                            for (alias, entry) in pkgs {
-                                if let Some(commit) = entry.get("commit").and_then(|v| v.as_str()) {
-                                    packages.insert(alias.to_string(), commit.to_string());
-                                }
-                            }
-                        }
-                        BuildLock { packages }
-                    }
-                    Err(_) => BuildLock { packages: HashMap::new() },
+                let mut lock = BuildLock { packages: HashMap::new() };
+
+                for line in content.lines() {
+                    let (name, commit) = line.split_once(",").unwrap();
+                    lock.packages.insert(name.to_string(), commit.to_string());
                 }
+
+                lock
             }
+
             Err(_) => BuildLock { packages: HashMap::new() },
         }
     }
 
     fn save(&self) -> std::io::Result<()> {
-        let mut content = String::from("[packages]\n");
+        let mut content = String::new();
         for (alias, commit) in &self.packages {
-            content.push_str(&format!("{} = {{ commit = \"{}\" }}\n", alias, commit));
+            sti::write!(&mut content, "{},{}\n", alias, commit);
         }
+
         fs::write("build.lock", content)
     }
 
