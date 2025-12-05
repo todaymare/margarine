@@ -26,9 +26,14 @@ impl Sym {
 
         let mut new_gens = sti::vec::Vec::with_cap_in(map.arena(), func_gens.len());
         for (name, sym) in func_gens {
+            let sym_id = sym.sym(map).unwrap();
+            let sym_name = map.sym(sym_id).name;
+
             let mut iter = env_gens.iter().map(|x| x.iter()).flatten();
+
             let sym =
-                iter.find(|x| x.0 == *name)
+                iter
+                .find(|x| x.0 == sym_name)
                 .map(|x| x.1).unwrap_or(*sym);
 
             let sym = sym.resolve(env_gens, map);
@@ -38,8 +43,9 @@ impl Sym {
 
         let gens = map.add_gens(new_gens.leak());
         let sym = ty.sym(map).unwrap();
+        let ty = Sym::Ty(sym, gens);
 
-        Sym::Ty(sym, gens)
+        ty
     }
 
 

@@ -14,14 +14,9 @@ fn part1(input: str): str {
         .split(",")
         .filter(|n| !n.is_empty())
         .map(|range| {
-            println(range);
             var a, b = range.split_once("-")!;
-            println(a);
-            println(b);
             var start : int = a.parse()!;
             var end : int = b.parse()!;
-            println(start);
-            println(end);
 
             (start..=end)
                 .iter()
@@ -43,10 +38,49 @@ fn is_repeated(n: int): bool {
 }
 
 
+fn is_repeated_at_least_twice(n: int): bool {
+    var s = n.to_str();
+    var len = s.len();
 
-fn part2(input: str){
-    var a, b = input.split_once("-")!;
-    input.split(",");
+    for block_len in 1..=(len/2) {
+        if len % block_len != 0 { continue }
+
+        var block, _ = s.split_at(block_len);
+        var is_ok = true;
+
+        var i = block_len;
+        while i < len {
+            if s.slice(i..(i+block_len)) != block {
+                is_ok = false;
+                break;
+            }
+
+            i += block_len;
+        }
+
+        if is_ok { return true}
+    }
+
+
+    true
+}
+
+
+
+fn part2(input: str): str {
+    input
+        .split(",")
+        .map(|range| {
+            var a, b = range.split_once("-")!;
+            var start : int = a.parse()!;
+            var end : int = b.parse()!;
+
+            (start..=end)
+                .iter()
+                .sum()
+        })
+        .sum()
+        .to_str()
 }
 
 
