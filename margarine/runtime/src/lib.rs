@@ -5,8 +5,6 @@ use std::marker::PhantomData;
 
 use std::{cell::Cell, collections::HashMap, convert::Infallible, ffi::{CStr, CString}, hash::DefaultHasher, mem::ManuallyDrop, ops::{Deref, DerefMut, FromResidual, Index, IndexMut}};
 
-use fxhash::FxHasher64;
-
 use crate::obj_map::{Object, ObjectData, ObjectIndex, ObjectMap};
 
 pub mod runtime;
