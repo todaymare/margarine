@@ -94,14 +94,14 @@ impl<'me> Scope<'me> {
 
         self.over(scope_map, |scope| {
             if let ScopeKind::VariableScope(v) = scope.kind {
-                if v.name() != name { return None}
+                if v.name() != name { return None }
                 self.over(scope_map, |scope| {
                     if let ScopeKind::VariableScope(v) = scope.kind {
                         if v.name() == name { return Some(()) }
                     }
                     
                     if let ScopeKind::Closure(closure) = scope.kind() {
-                        symbols.insert_closure_capture(closure, name);
+                        symbols.insert_closure_capture(closure, name, v.ty);
                     }
 
                     None

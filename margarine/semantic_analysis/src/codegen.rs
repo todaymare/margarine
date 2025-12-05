@@ -4,6 +4,7 @@ use common::string_map::{StringIndex, StringMap};
 use errors::ErrorId;
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
 use runtime::opcode::{self, runtime::builder::Builder, HEADER};
+use sti::hash::fxhash::{FxHasher32, FxHasher64};
 
 use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
 
@@ -30,6 +31,8 @@ struct BlockIndex(u32);
 
 #[derive(Debug)]
 struct Function<'a> {
+    sym: Sym,
+
     name: StringIndex,
     index: FuncIndex,
     args: Vec<u32>,
@@ -99,7 +102,7 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
     // create IR
     for (_, sym) in &ty_checker.startups {
-        let _ = conv.get_func(*sym, GenListId::EMPTY);
+        let _ = conv.get_func(Sym::Ty(*sym, GenListId::EMPTY));
     }
 
 
@@ -135,7 +138,7 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
                 let mut terminators = vec![];
                 let mut bbs_hm = HashMap::with_capacity(blocks.len());
-                //println!("------ {} ------ #{}", conv.string_map.get(func.name), func.index.0);
+                println!("------ {} ------ #{}", conv.string_map.get(func.name), func.index.0);
 
                 let mut buf = vec![];
                 let mut stack = vec![];
@@ -313,10 +316,37 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
     }
 
 
-    fn get_func(&mut self, sym: SymbolId, gens_id: GenListId) -> Result<&Function<'me>, ErrorId> {
-        let ty = Sym::Ty(sym, gens_id);
-        let hash = ty.hash(self.syms);
-        if self.funcs.contains_key(&hash) { 
+    fn get_func(&mut self, ty: Sym) -> Result<&Function<'me>, ErrorId> {
+        assert!(ty.is_resolved(&mut self.syms));
+
+        let sym = ty.sym(self.syms).unwrap();
+        let gens_id = ty.gens(&self.syms);
+
+        println!("generating {}", ty.display(self.string_map, self.syms));
+
+
+        for g in self.syms.get_gens(gens_id) {
+            println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
+        }
+
+        let hash = ty.hash(&self.syms);
+
+        if let Some(func) = self.funcs.get(&hash) { 
+            println!("cached");
+            dbg!(func);
+
+            println!("found func:");
+            for g in self.syms.get_gens(func.sym.gens(self.syms)) {
+                println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
+            }
+
+            println!("wanted func:");
+            for g in self.syms.get_gens(ty.gens(self.syms)) {
+                println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
+            }
+
+
+            assert!(func.sym.eq(self.syms, ty));
             return Ok(self.funcs.get(&hash).unwrap())
         }
 
@@ -341,6 +371,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         match sym_func.kind() {
             crate::syms::func::FunctionKind::Extern(path) => {
                 let func = Function {
+                    sym: ty,
                     name: self.string_map.insert(self.string_map.get(path)),
                     index: self.next_func_id(),
                     kind: FunctionKind::Extern(path),
@@ -370,6 +401,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
                     let func = Function {
+                        sym: ty,
                         name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                         index: self.next_func_id(),
                         kind: FunctionKind::Code {
@@ -391,6 +423,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 assert!(err.is_none());
 
                 let func = Function {
+                    sym: ty,
                     name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     index: self.next_func_id(),
                     kind: FunctionKind::Code {
@@ -454,6 +487,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     blocks: env.blocks,
                 };
 
+                println!("done");
                 return Ok(func)
             },
 
@@ -470,6 +504,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 block.bytecode.const_int(id.0 as i64);
 
                 let func = Function {
+                    sym: ty,
                     name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     index: self.next_func_id(),
 
@@ -513,7 +548,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 let err = sym_func.decl().map(|t| self.ty_info.decl(t)).flatten();
                 let func = Function {
-                    name: sym.name(),
+                    sym: ty,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     index: self.next_func_id(),
                     kind: FunctionKind::Code {
                         local_count: 0,
@@ -670,7 +706,12 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     let Ok(sym) = ns.get_sym(StringMap::ITER_NEXT_FUNC).unwrap()
                     else { unreachable!() };
 
-                    let func = self.get_func(sym, iter_expr.gens(&self.syms))?.index;
+                    dbg!(self.syms.get_gens(iter_expr.gens(&self.syms)));
+                    let sym = Sym::Ty(sym, iter_expr.gens(&self.syms));
+                    println!("{}", sym.display(self.string_map, self.syms));
+                    let sym = sym.resolve(&[], self.syms);
+
+                    let func = self.get_func(sym)?.index;
                     func
                 };
 
@@ -780,30 +821,21 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
             parser::nodes::expr::Expr::Identifier(string_index, _) => {
                 let ty = out_if_err!();
+                // it's a function
                 if let Some(Some(func)) = self.ty_info.idents.get(&expr) {
                     let func_gens = ty.gens(self.syms);
-                    let func_gens = self.syms.get_gens(func_gens);
                     let env_gens = self.syms.get_gens(env.gens);
 
-                    let mut new_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
-                    for (name, sym) in func_gens {
-                        let symbol = sym.sym(self.syms).unwrap();
-                        let symbol = self.syms.sym(symbol);
-                        let sym =
-                            env_gens.iter().find(|x| x.0 == symbol.name())
-                            .map(|x| x.1).unwrap_or(*sym);
+                    let func = Sym::Ty(*func, func_gens).resolve(&[env_gens], self.syms);
 
-                        new_gens.push((*name, sym));
-                    }
-
-                    let gens = self.syms.add_gens(new_gens.leak());
-
-                    let func = self.get_func(*func, gens).unwrap();
+                    println!("{}", self.string_map.get(string_index));
+                    let func = self.get_func(func).unwrap();
                     block.bytecode.const_int(func.index.0 as i64);
                     block.bytecode.create_func_ref(0);
 
                     return Ok(());
                 }
+
 
                 if let Some(index) = env.find_var(string_index) {
                     block.bytecode.load(index.try_into().unwrap());
@@ -996,16 +1028,33 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         ContainerKind::Enum => {
                             block.bytecode.load_enum_field(i.try_into().unwrap());
                         },
+
+
+                        ContainerKind::Generic => unreachable!(),
                     }
 
                 } else {
+                    let env_gens = self.syms.get_gens(env.gens);
+                    let sym_gens = self.syms.get_gens(val.gens(self.syms));
+                    dbg!(env_gens);
+                    for g in sym_gens {
+                        println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
+                    }
+
                     let ns = self.syms.sym_ns(ty);
                     let ns = self.ns.get_ns(ns);
 
                     let sym = ns.get_sym(field_name).unwrap().unwrap();
                     let gens = slf.gens(self.syms);
 
-                    let func = self.get_func(sym, gens)?;
+                    let sym = Sym::Ty(sym, gens)
+                        .resolve(&[env_gens, sym_gens], self.syms);
+                    assert!(sym.is_resolved(self.syms));
+                    println!("from {}", val.display(self.string_map, self.syms));
+                    println!("accessing {}", sym.display(self.string_map, self.syms));
+                    println!("named {}", self.string_map.get(field_name));
+
+                    let func = self.get_func(sym)?;
 
                     if !is_fn_call_accessor {
                         block.bytecode.pop();
@@ -1203,35 +1252,47 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
             parser::nodes::expr::Expr::Closure { args, body } => {
                 let ty = out_if_err!();
                 let closure = ty.sym(self.syms).unwrap();
-                let closure = self.syms.sym(closure);
-                let SymbolKind::Function(func_ty) = closure.kind()
+                let sym = self.syms.sym(closure);
+                let SymbolKind::Function(func_ty) = sym.kind()
                 else { unreachable!() };
 
                 let syms::func::FunctionKind::Closure(closure) = func_ty.kind()
                 else { unreachable!() };
 
-                let func_gens = self.syms.get_gens(ty.gens(self.syms));
                 let env_gens = self.syms.get_gens(env.gens);
+                let ty = ty.resolve(&[env_gens], self.syms);
 
-                let mut new_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
-                for (name, sym) in func_gens {
-                    let sym =
-                        env_gens.iter().find(|x| x.0 == *name)
-                        .map(|x| x.1).unwrap_or(*sym);
 
-                    new_gens.push((*name, sym));
+                // @todo performance
+                let captured = self.syms.closure(closure).captured_variables.clone();
+
+
+                let mut hash = FxHasher64::new();
+                for capture in &captured {
+                    let ty = capture.1.resolve(&[env_gens], self.syms);
+                    ty.hash(self.syms).hash(&mut hash);
                 }
 
-                let gens = self.syms.add_gens(new_gens.leak());
-                let sym = ty.sym(self.syms).unwrap();
+                let hash = ty.hash_fn(self.syms, |h| {
+                    expr.hash(h);
+                    hash.hash.hash(h);
+                    self.funcs.len().hash(h);
+                });
 
-                let ty = Sym::Ty(sym, gens);
 
-                let hash = ty.hash_fn(self.syms, |h| expr.hash(h));
+
+                println!("closure");
+                for g in self.syms.get_gens(env.gens) {
+                    println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
+                }
+
+
+
+
+
                 let closure = self.syms.closure(closure);
-
                 for name in &closure.captured_variables {
-                    let index = env.find_var(*name).unwrap();
+                    let index = env.find_var(name.0).unwrap();
                     block.bytecode.load(index.try_into().unwrap());
                 }
                 
@@ -1245,7 +1306,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         blocks: vec![],
                         loop_brek: None,
                         loop_cont: None,
-                        gens: GenListId::EMPTY,
+                        gens: env.gens,
                     };
 
                     for arg in args {
@@ -1253,7 +1314,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     }
 
                     for capture in &closure.captured_variables {
-                        env.alloc_var(*capture);
+                        env.alloc_var(capture.0);
                     }
 
                     let argc = args.len() + closure.captured_variables.len();
@@ -1279,6 +1340,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     env.blocks.sort_by_key(|x| x.index.0);
 
                     let func = Function {
+                        sym: ty,
                         name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                         index: self.next_func_id(),
                         kind: FunctionKind::Code {
@@ -1444,6 +1506,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     // you can't assign to an enum field that's not unwrapped
                     // that just doesn't make sense
                     ContainerKind::Enum => unreachable!(),
+
+                    ContainerKind::Generic => unreachable!(),
                 }
             },
 
@@ -1496,6 +1560,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                                 })?;
 
                             },
+
+
+                            ContainerKind::Generic => unreachable!(),
                         }
                     }
 
@@ -1606,6 +1673,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                                 })?;
 
                             },
+
+
+                            ContainerKind::Generic => unreachable!(),
                         }
                     },
 

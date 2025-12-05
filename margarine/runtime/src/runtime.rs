@@ -140,7 +140,7 @@ impl<'src> VM<'src> {
 
 
                         crate::FunctionKind::Host(f) => {
-                            assert_eq!(captures.len(), 0);
+                            debug_assert_eq!(captures.len(), 0);
 
                             let bottom = self.stack.bottom;
                             self.stack.bottom = self.stack.curr - argc as usize;
@@ -187,7 +187,7 @@ impl<'src> VM<'src> {
                     }
 
                     let file_count = reader.next_u32();
-                    assert!(file <= file_count);
+                    debug_assert!(file <= file_count);
                     for _ in 0..file {
                         let err_count = reader.next_u32();
 
@@ -197,7 +197,7 @@ impl<'src> VM<'src> {
                     }
 
                     let err_count = reader.next_u32();
-                    assert!(index < err_count);
+                    debug_assert!(index < err_count);
                     for _ in 0..index {
                         reader.next_str();
                     }
@@ -801,7 +801,6 @@ impl<'src> VM<'src> {
                     self.curr.next_slice(index as usize * 4);
 
                     let offset = self.curr.next_i32();
-                    //self.curr.next_slice((count - index) as usize * 4);
 
                     self.curr.offset(offset as i32);
                 }
@@ -828,11 +827,13 @@ pub extern "C" fn ret_instr(vm: &mut VM, local_count: i64, ret: &mut Reg) {
     let return_val = vm.stack.pop();
     //dbg!(return_val);
 
+    /*
     if let Some(cache) = &mut vm.funcs[vm.curr.func as usize].cache {
         let args = &vm.stack.values.deref()[vm.stack.bottom..vm.stack.bottom + vm.curr.argc as usize];
         let args = Vec::from(args).leak();
         cache.insert(args, return_val);
     }
+    */
 
     vm.stack.curr -= local_count as usize;
     *ret = return_val;

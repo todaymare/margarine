@@ -17,6 +17,7 @@ pub enum ContainerKind {
     /// Assumptions
     /// * All fields are named
     Enum,
+    Generic,
     Tuple,
 }
 

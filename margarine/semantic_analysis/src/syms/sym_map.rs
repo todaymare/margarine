@@ -25,7 +25,7 @@ pub struct SymbolMap<'me> {
 
 #[derive(Debug)]
 pub struct Closure {
-    pub captured_variables: HashSet<StringIndex>,
+    pub captured_variables: HashSet<(StringIndex, Sym)>,
 }
 
 
@@ -68,8 +68,8 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn insert_closure_capture(&mut self, closure: ClosureId, name: StringIndex) {
-        self.closures[closure].captured_variables.insert(name);
+    pub fn insert_closure_capture(&mut self, closure: ClosureId, name: StringIndex, ty: Sym) {
+        self.closures[closure].captured_variables.insert((name, ty));
 
     }
 
@@ -165,7 +165,7 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn get_gens(&mut self, g: GenListId) -> &'me [(StringIndex, Sym)] {
+    pub fn get_gens(&self, g: GenListId) -> &'me [(StringIndex, Sym)] {
         self.gens[g]
     }
 
