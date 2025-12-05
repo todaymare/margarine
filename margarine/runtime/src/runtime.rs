@@ -51,7 +51,7 @@ impl<'src> VM<'src> {
         unsafe {
         loop {
             //println!(" - {} ", self.stack.curr);
-            //println!("{:?}", crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()));
+            println!("{:?}", crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()));
             let opcode = self.curr.next();
             //println!("{:?}", self.stack);
             

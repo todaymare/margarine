@@ -322,30 +322,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
         let sym = ty.sym(self.syms).unwrap();
         let gens_id = ty.gens(&self.syms);
 
-        println!("generating {}", ty.display(self.string_map, self.syms));
-
-
-        for g in self.syms.get_gens(gens_id) {
-            println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
-        }
-
         let hash = ty.hash(&self.syms);
 
         if let Some(func) = self.funcs.get(&hash) { 
-            println!("cached");
-            dbg!(func);
-
-            println!("found func:");
-            for g in self.syms.get_gens(func.sym.gens(self.syms)) {
-                println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
-            }
-
-            println!("wanted func:");
-            for g in self.syms.get_gens(ty.gens(self.syms)) {
-                println!("{}: {}", self.string_map.get(g.0), g.1.display(self.string_map, self.syms))
-            }
-
-
             assert!(func.sym.eq(self.syms, ty));
             return Ok(self.funcs.get(&hash).unwrap())
         }

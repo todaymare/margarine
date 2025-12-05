@@ -14,9 +14,14 @@ fn part1(input: str): str {
         .split(",")
         .filter(|n| !n.is_empty())
         .map(|range| {
+            println(range);
             var a, b = range.split_once("-")!;
+            println(a);
+            println(b);
             var start : int = a.parse()!;
             var end : int = b.parse()!;
+            println(start);
+            println(end);
 
             (start..=end)
                 .iter()
@@ -40,13 +45,8 @@ fn is_repeated(n: int): bool {
 
 
 fn part2(input: str){
-    input
-        .split(",")
-        .map(|range| {
-            var a, b = range.split_once("-")!;
-            0
-        });
-
+    var a, b = input.split_once("-")!;
+    input.split(",");
 }
 
 
