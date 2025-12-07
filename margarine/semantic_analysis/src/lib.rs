@@ -22,13 +22,13 @@ pub mod codegen;
 pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     output      : &'out Arena,
     temp        : &'temp Arena,
-    pub string_map: &'me mut StringMap<'str>,
+    string_map  : &'me mut StringMap<'str>,
     ast         : &'me AST<'ast>,
 
-    scopes      : ScopeMap<'out>,
-    namespaces  : NamespaceMap,
+    pub scopes      : ScopeMap<'out>,
+    pub namespaces  : NamespaceMap,
     pub syms    : SymbolMap<'out>,
-    type_info   : TyInfo,
+    pub type_info   : TyInfo,
     pub startups: Vec<SymbolId>,
     pub tests   : Vec<SymbolId>,
 

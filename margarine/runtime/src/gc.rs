@@ -5,6 +5,7 @@ use crate::{VM, Object, obj_map::{ObjectMap, ObjectData, ObjectIndex}};
 impl VM<'_> {
     pub fn run_garbage_collection(&mut self) {
         return;
+        println!("running gc");
         let instant = Instant::now();
         
         self.mark();
@@ -16,7 +17,7 @@ impl VM<'_> {
 
 
     fn mark(&mut self) {
-        for object in 0..(self.stack.curr + 100) {
+        for object in 0..self.stack.curr {
             let val = self.stack.values[object];
             if val.is_obj() {
                 self.objs.get(unsafe { val.as_obj() }).mark(true, &self.objs);

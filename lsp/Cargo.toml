@@ -1,0 +1,33 @@
+[package]
+name = "margarine-lsp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+env_logger = "0.11.5"
+ropey = "1.5.0"
+serde_json = "1.0.78"
+tokio = { version = "1.17.0", features = ["full"] }
+tower-lsp = { version = "0.20.0", features = ["proposed"]}
+serde = { version = "1.0", features = ["derive"] }
+dashmap = "6.1.0"
+anyhow = "1.0.93"
+thiserror = "2.0.3"
+
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
+tracing-appender="0.2.2"
+tracing-error="0.2.0"
+color-eyre="0.6.2"
+
+chrono = "0.4"
+
+lexer = { path = "../margarine/lexer" }
+parser = { path = "../margarine/parser" }
+semantic_analysis = { path = "../margarine/semantic_analysis" }
+common = { path = "../margarine/common" }
+runtime = { path = "../margarine/runtime" }
+errors = { path = "../margarine/errors" }
+margarine = { path = "../margarine" }
+sti = { path = "../vendor/sti" }
+
