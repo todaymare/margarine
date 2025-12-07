@@ -1,11 +1,14 @@
-//extern "https://github.com/todaymare/margarine-std" as std;
-
+extern "https://github.com/todaymare/margarine-std" as std;
+mod hello_world;
 
 fn main() {
     test();
 }
 
-
 fn test() {
+    println("Hello, Margaine!");
 }
 
+fn hello_world() {
+    println("Hello, World!");
+}

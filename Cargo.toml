@@ -13,7 +13,7 @@ members = [
     "margarine/semantic_analysis",
     "margarine/errors",
     "margarine/runtime",
-    "fuzz",
+    "fuzz", "lsp",
 ]
 
 

@@ -3,6 +3,10 @@ use std::collections::HashMap;
 use std::fs;
 
 use colourful::ColourBrush;
+use common::string_map::StringIndex;
+use errors::LexerError;
+use errors::ParserError;
+use errors::SemaError;
 use git2::Repository;
 pub use lexer::lex;
 use parser::nodes::decl::Decl;
@@ -13,272 +17,397 @@ pub use common::source::{FileData, Extension};
 pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
 use runtime::obj_map::ObjectData;
+use semantic_analysis::codegen;
 use semantic_analysis::syms::sym_map::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 pub use runtime::{VM, opcode, Status, FatalError, Reg};
 pub use sti::arena::Arena;
 use sti::format_in;
+use sti::vec::KVec;
 
 
-pub fn run<'str>(string_map: &mut StringMap<'str>, files: FileData) -> (Vec<u8>, Vec<String>) {
-    let arena = Arena::new();
-    let mut global = AST::new(&arena);
-    let mut lex_errors = vec![];
-    let mut parse_errors = vec![];
-    let mut build_lock = BuildLock::load();
-
-    let mut stack = vec![(None, files.clone(), 0)];
-    let mut source_offset = 0;
-    let mut counter = 0;
-
-    let mut root = None;
-
-    let mut files = vec![];
-    while let Some((decl, f, depth)) = stack.pop() {
-        if depth != 0 {
-            let name = string_map.get(f.name());
-
-            let name =
-            if name.starts_with("artifacts/") {
-                &name["artifacts/".len()..]
-            } else { &name };
-
-            println!(
-                "{}{}{} {} {}.mar", 
-                "|".dark_grey(), 
-                "-".repeat(depth).dark_grey(), 
-                ">".dark_grey(), 
-                "compiling:".green().bold(),
-                name.replace("<>", "::")
-            );
+struct Compiler<'me> {
+    pub files: Files,
+    pub arena: &'me Arena,
+    pub string_map: StringMap<'me>,
+    pub silent: bool,
+}
 
 
-        } else {
-            println!(
-                "{} {}.mar",
-                "compiling:".green().bold(),
-                string_map.get(f.name())
-            );
+struct Files {
+    files: Vec<FileData>,
+}
+
+
+struct CompilationResult<'a> {
+    file_offsets: Vec<(StringIndex, u32)>,
+    errors: CompilationErrors,
+    tests: Vec<SymbolId>,
+    ast: AST<'a>,
+    startups: KVec<u32, SymbolId>,
+    ty_info: semantic_analysis::TyInfo,
+    syms: semantic_analysis::syms::sym_map::SymbolMap<'a>,
+    namespaces: semantic_analysis::namespace::NamespaceMap,
+    scopes: semantic_analysis::scope::ScopeMap<'a>,
+}
+
+
+struct CompilationErrors {
+    lexer_errors : Vec<KVec<LexerError , lexer::errors::Error>>,
+    parser_errors: Vec<KVec<ParserError, parser::errors::Error>>,
+    sema_errors  : KVec<SemaError  , semantic_analysis::errors::Error>,
+}
+
+
+impl<'me> Compiler<'me> {
+    pub fn new(arena: &'me Arena) -> Self {
+        Self {
+            files: Files { files: vec![] },
+            arena,
+            string_map: StringMap::new(arena),
+            silent: false,
         }
+    }
 
 
-        let (tokens, le) = DropTimer::with_timer("tokenisation", || {
-            let tokens = lex(&f, string_map, source_offset);
-            tokens
-        });
-
-        let (body, imports, mut pe) = DropTimer::with_timer("parsing", || {
-            parse(tokens, counter, &arena, string_map, &mut global)
-        });
+    pub fn run<'out>(&mut self, arena: &'out Arena, entry: StringIndex) -> CompilationResult<'out> {
+        let mut global = AST::new(&arena);
+        let mut lex_errors = vec![];
+        let mut parse_errors = vec![];
+        let mut build_lock = BuildLock::load();
 
 
-        for (_, i) in imports {
-            let source = global.range(i);
-            match global.decl(i) {
-                Decl::ImportFile { name, .. } => {
-                    let path = string_map.get(f.name());
-                    let path = format_in!(&arena, "{}/{}.mar", path, string_map.get(name));
-                    let Ok(file) = FileData::open(&*path, string_map)
-                    else {
-                        let path_str = string_map.insert(&path);
-                        let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_str });
-                        global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                        
-                        continue;
-                    };
+        let mut stack = vec![(None, entry, 0)];
+        let mut source_offset = 0;
+        let mut counter = 0;
 
-                    stack.push((Some((i, name)), file, depth+1));
+        let mut root = None;
+
+        let mut file_offsets = vec![];
+
+        while let Some((decl, f, depth)) = stack.pop() {
+            let file_path = self.string_map.get(f);
+
+            if !self.silent {
+                if depth != 0 {
+                    let name =
+                    if file_path.starts_with("artifacts/") {
+                        &file_path["artifacts/".len()..]
+                    } else { &file_path };
+
+                    println!(
+                        "{}{}{} {} {}.mar", 
+                        "|".dark_grey(), 
+                        "-".repeat(depth).dark_grey(), 
+                        ">".dark_grey(), 
+                        "compiling:".green().bold(),
+                        name.replace("<>", "::")
+                    );
+                } else {
+                    println!(
+                        "{} {}.mar",
+                        "compiling:".green().bold(),
+                        file_path,
+                    );
                 }
 
-
-                Decl::ImportRepo { alias, repo } => {
-                    let repo_str = string_map.get(repo);
-                    let (url, commit) = if repo_str.contains('@') {
-                        let parts: Vec<_> = repo_str.splitn(2, '@').collect();
-                        (parts[0], Some(parts[1]))
-                    } else {
-                        (repo_str, None)
-                    };
+            }
 
 
+            let file = self.files.get(f).unwrap();
 
-                    let local_path = string_map.get(f.name())
-                        .replace("<>", "<_>")
-                        .replace("/", "<>");
-                    let alias_str = string_map.get(alias);
-                    let alias_str = format!("{local_path}<>{alias_str}");
+            let (tokens, le) = DropTimer::with_timer("tokenisation", || {
+                let tokens = lex(&file, &mut self.string_map, source_offset);
+                tokens
+            });
 
-                    // Convert github/owner/repo format to URL
-                    let url = if url.starts_with("github/") {
-                        let parts: Vec<&str> = url.split('/').collect();
-                        if parts.len() == 3 {
-                            format!("https://github.com/{}/{}.git", parts[1], parts[2])
-                        } else {
-                            let err = pe.push(parser::errors::Error::FileDoesntExist { 
-                                source, 
-                                path: repo 
-                            });
+            let (body, imports, mut pe) = DropTimer::with_timer("parsing", || {
+                parse(tokens, counter, &arena, &mut self.string_map, &mut global)
+            });
+
+
+            file_offsets.push((f, source_offset));
+            source_offset += file.read().len() as u32;
+
+
+            for (_, i) in imports {
+                let source = global.range(i);
+                match global.decl(i) {
+                    Decl::ImportFile { name, .. } => {
+                        let path = format_in!(&arena, "{}/{}.mar", file_path, self.string_map.get(name));
+                        let Ok(file) = FileData::open(&*path, &mut self.string_map)
+                        else {
+                            let path_str = self.string_map.insert(&path);
+                            let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_str });
                             global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                            
                             continue;
-                        }
-                    } else {
-                        url.to_string()
-                    };
+                        };
 
-                    let artifacts_dir = "artifacts";
-                    if !std::fs::exists(artifacts_dir).unwrap_or(false) {
-                        std::fs::create_dir(artifacts_dir).unwrap();
+                        let name = file.name();
+                        self.files.register(file);
+                        stack.push((Some((i, name)), name, depth+1));
                     }
 
-                    let local_path = format!("{}/{}", artifacts_dir, alias_str);
 
-                    if !std::fs::exists(&local_path).unwrap_or(false) {
-                        println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
+                    Decl::ImportRepo { alias, repo } => {
+                        let repo_str = self.string_map.get(repo);
+                        let (url, commit) = if repo_str.contains('@') {
+                            let parts: Vec<_> = repo_str.splitn(2, '@').collect();
+                            (parts[0], Some(parts[1]))
+                        } else {
+                            (repo_str, None)
+                        };
 
-                        let repo =
-                        match Repository::clone(&url, &local_path) {
-                            Ok(v) => v,
-                            Err(_) => {
+
+
+                        let local_path = self.string_map.get(f)
+                            .replace("<>", "<_>")
+                            .replace("/", "<>");
+                        let alias_str = self.string_map.get(alias);
+                        let alias_str = format!("{local_path}<>{alias_str}");
+
+                        // Convert github/owner/repo format to URL
+                        let url = if url.starts_with("github/") {
+                            let parts: Vec<&str> = url.split('/').collect();
+                            if parts.len() == 3 {
+                                format!("https://github.com/{}/{}.git", parts[1], parts[2])
+                            } else {
                                 let err = pe.push(parser::errors::Error::FileDoesntExist { 
                                     source, 
                                     path: repo 
                                 });
                                 global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
                                 continue;
-                            },
-                        };
-
-
-                        let target_commit =
-                        if let Some(commit) = commit {
-                            commit.to_string()
-                        } else if let Some(lock) = build_lock.get(&alias_str) {
-                            lock
-                        } else {
-                            // Get HEAD commit
-                            match repo.head() {
-                                Ok(head) => {
-                                    head.target()
-                                        .map(|oid| oid.to_string())
-                                        .unwrap_or_else(|| "HEAD".to_string())
-                                }
-                                Err(_) => "HEAD".to_string(),
                             }
+                        } else {
+                            url.to_string()
                         };
 
-                        // Checkout the commit
-                        if let Ok(obj) = repo.revparse_single(&target_commit) {
-                            let _ = repo.checkout_tree(&obj, None);
+                        let artifacts_dir = "artifacts";
+                        if !std::fs::exists(artifacts_dir).unwrap_or(false) {
+                            std::fs::create_dir(artifacts_dir).unwrap();
                         }
 
+                        let local_path = format!("{}/{}", artifacts_dir, alias_str);
 
-                        // Update lock file
-                        build_lock.set(alias_str.to_string(), target_commit);
+                        if !std::fs::exists(&local_path).unwrap_or(false) {
+                            println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
 
-                    } else if let Some(commit) = commit {
-                        // If repo exists but user specified a commit, checkout it
-                        if let Ok(repo) = Repository::open(&local_path) {
-                            if let Ok(obj) = repo.revparse_single(commit) {
+                            let repo =
+                            match Repository::clone(&url, &local_path) {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    let err = pe.push(parser::errors::Error::FileDoesntExist { 
+                                        source, 
+                                        path: repo 
+                                    });
+                                    global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                                    continue;
+                                },
+                            };
+
+
+                            let target_commit =
+                            if let Some(commit) = commit {
+                                commit.to_string()
+                            } else if let Some(lock) = build_lock.get(&alias_str) {
+                                lock
+                            } else {
+                                // Get HEAD commit
+                                match repo.head() {
+                                    Ok(head) => {
+                                        head.target()
+                                            .map(|oid| oid.to_string())
+                                            .unwrap_or_else(|| "HEAD".to_string())
+                                    }
+                                    Err(_) => "HEAD".to_string(),
+                                }
+                            };
+
+                            // Checkout the commit
+                            if let Ok(obj) = repo.revparse_single(&target_commit) {
                                 let _ = repo.checkout_tree(&obj, None);
                             }
-                            build_lock.set(alias_str.to_string(), commit.to_string());
+
+
+                            // Update lock file
+                            build_lock.set(alias_str.to_string(), target_commit);
+
+                        } else if let Some(commit) = commit {
+                            // If repo exists but user specified a commit, checkout it
+                            if let Ok(repo) = Repository::open(&local_path) {
+                                if let Ok(obj) = repo.revparse_single(commit) {
+                                    let _ = repo.checkout_tree(&obj, None);
+                                }
+                                build_lock.set(alias_str.to_string(), commit.to_string());
+                            }
                         }
+
+                        // Load lib.mar from the cloned repo
+                        let lib_path = format!("{}/lib.mar", local_path);
+                        let Ok(file) = FileData::open(&lib_path, &mut self.string_map)
+                        else {
+                            let lib_path_str = self.string_map.insert(&lib_path);
+                            let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: lib_path_str });
+                            global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                            
+                            continue;
+                        };
+
+                        let name = file.name();
+                        self.files.register(file);
+
+                        stack.push((Some((i, alias)), name, depth+1));
                     }
 
-                    // Load lib.mar from the cloned repo
-                    let lib_path = format!("{}/lib.mar", local_path);
-                    let Ok(file) = FileData::open(&lib_path, string_map)
-                    else {
-                        let lib_path_str = string_map.insert(&lib_path);
-                        let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: lib_path_str });
-                        global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                        
-                        continue;
-                    };
 
-                    stack.push((Some((i, alias)), file, depth+1));
+                    _ => unreachable!()
                 }
-
-
-                _ => unreachable!()
             }
 
+            if let Some((decl, name)) = decl {
+                let offset = global.range(decl);
+                global.set_decl(decl, Decl::Module { name, header: offset, body, user_defined: true });
+            } else {
+                root = Some(body);
+            }
+            
+
+            lex_errors.push(le);
+            parse_errors.push(pe);
+
+            counter += 1;
+
         }
 
-        if let Some((decl, name)) = decl {
-            let offset = global.range(decl);
-            global.set_decl(decl, Decl::Module { name, header: offset, body, user_defined: true });
+        let _ = build_lock.save();
+
+
+        let temp = Arena::new();
+        let sema = {
+            let _1 = DropTimer::new("semantic analysis");
+            TyChecker::run(&arena, &temp, &mut global, &root.unwrap(), &mut self.string_map)
+        };
+
+
+        let mut tests = Vec::with_capacity(sema.startups.len());
+
+        for t in sema.tests {
+            tests.push(t.1);
+        }
+
+
+        CompilationResult {
+            file_offsets,
+
+            errors: CompilationErrors {
+                lexer_errors: lex_errors,
+                parser_errors: parse_errors,
+                sema_errors: sema.errors,
+            },
+
+            tests,
+            startups: sema.startups,
+            ty_info: sema.type_info,
+            scopes: sema.scopes,
+            namespaces: sema.namespaces,
+            syms: sema.syms,
+
+            ast: global,
+        }
+    }
+
+}
+
+
+impl<'me> CompilationResult<'me> {
+    pub fn codegen(&mut self, comp: &mut Compiler) -> Vec<u8> {
+
+        // todo: find a way to comrpess these errors into vecs
+        let mut lex_error_files = Vec::with_capacity(self.errors.lexer_errors.len());
+        for l in &self.errors.lexer_errors {
+            let mut file = Vec::with_capacity(l.len());
+            for e in l.iter() {
+                let report = display(e, &comp.string_map, &comp.files.files, &mut ());
+                #[cfg(not(feature = "fuzzer"))]
+                println!("{report}");
+                file.push(report);
+            }
+
+            lex_error_files.push(file);
+        }
+
+        let mut parse_error_files = Vec::with_capacity(self.errors.parser_errors.len());
+        for l in &self.errors.parser_errors {
+            let mut file = Vec::with_capacity(l.len());
+            for e in l.iter() {
+                let report = display(e, &comp.string_map, &comp.files.files, &mut ());
+                #[cfg(not(feature = "fuzzer"))]
+                println!("{report}");
+                file.push(report);
+            }
+
+            parse_error_files.push(file);
+        }
+
+        let mut sema_errors = Vec::with_capacity(self.errors.sema_errors.len());
+        for s in &self.errors.sema_errors {
+            let report = display(s.1, &comp.string_map, &comp.files.files, &mut self.syms);
+
+            #[cfg(not(feature = "fuzzer"))]
+            println!("{report}");
+
+            sema_errors.push(report);
+        } 
+
+        codegen::run(
+            &mut comp.string_map, &mut self.syms, 
+            &mut self.namespaces, &mut self.ast,
+            &mut self.ty_info, [lex_error_files, parse_error_files, vec![sema_errors]],
+            &self.startups
+        )
+    }
+}
+
+
+impl Files {
+    pub fn register(&mut self, fd: FileData) {
+        if let Some(file) = self.get_mut(fd.name()) {
+            *file = fd;
         } else {
-            root = Some(body);
+            self.files.push(fd);
         }
-        
-
-        lex_errors.push(le);
-        parse_errors.push(pe);
-
-        counter += 1;
-
-        source_offset += f.read().len() as u32;
-        files.push(f);
     }
 
-    let sema_arena = Arena::new();
-    let temp = Arena::new();
-    let _scopes = Arena::new();
-    let mut sema = {
-        let _1 = DropTimer::new("semantic analysis");
-        TyChecker::run(&sema_arena, &temp, &mut global, &root.unwrap(), string_map)
-    };
 
-    // todo: find a way to comrpess these errors into vecs
-    let mut lex_error_files = Vec::with_capacity(lex_errors.len());
-    for l in lex_errors {
-        let mut file = Vec::with_capacity(l.len());
-        for e in l.iter() {
-            let report = display(e, &sema.string_map, &files, &mut ());
-            #[cfg(not(feature = "fuzzer"))]
-            println!("{report}");
-            file.push(report);
-        }
-
-        lex_error_files.push(file);
+    pub fn get(&self, name: StringIndex) -> Option<&FileData> {
+        self.files.iter().find(|x| x.name() == name)
     }
 
-    let mut parse_error_files = Vec::with_capacity(parse_errors.len());
-    for l in parse_errors {
-        let mut file = Vec::with_capacity(l.len());
-        for e in l.iter() {
-            let report = display(e, &sema.string_map, &files, &mut ());
-            #[cfg(not(feature = "fuzzer"))]
-            println!("{report}");
-            file.push(report);
-        }
 
-        parse_error_files.push(file);
+    pub fn get_mut(&mut self, name: StringIndex) -> Option<&mut FileData> {
+        self.files.iter_mut().find(|x| x.name() == name)
     }
-
-    let mut sema_errors = Vec::with_capacity(sema.errors.len());
-    for s in sema.errors.iter() {
-        let report = display(s, &sema.string_map, &files, &mut sema.syms);
-
-        #[cfg(not(feature = "fuzzer"))]
-        println!("{report}");
-
-        sema_errors.push(report);
-    } 
+}
 
 
-    let src = semantic_analysis::codegen::run(&mut sema, [lex_error_files, parse_error_files, vec![sema_errors]]);
-    let mut tests = Vec::with_capacity(sema.startups.len());
 
-    for t in sema.tests {
-        let name = sema.syms.sym(t.1).name();
-        tests.push(sema.string_map.get(name).to_string());
+pub fn run<'str>(files: FileData) -> (Vec<u8>, Vec<String>) {
+    let arena = Arena::new();
+
+    let name = files.name();
+    let mut comp = Compiler::new(&arena);
+    comp.files.register(files);
+
+    let mut result = comp.run(&arena, name);
+    let src = result.codegen(&mut comp);
+
+    let mut tests = vec![];
+    for test in &result.tests {
+        tests.push(comp.string_map.get(result.syms.sym(*test).name()).to_string());
     }
-
-    // Save the build lock file
-    let _ = build_lock.save();
 
     (src, tests)
 }

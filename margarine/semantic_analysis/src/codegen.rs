@@ -89,13 +89,16 @@ enum BlockTerminator<'a> {
 }
 
 
-pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8> {
+pub fn run(
+    string_map: &mut StringMap, syms: &mut SymbolMap, nss: &mut NamespaceMap,
+    ast: &mut AST, ty_info: &mut TyInfo, errors: [Vec<Vec<String>>; 3], startups: &[SymbolId],
+) -> Vec<u8> {
     let mut conv = Conversion {
-        string_map: ty_checker.string_map,
-        syms: &mut ty_checker.syms,
-        ns: &ty_checker.namespaces,
-        ast: ty_checker.ast,
-        ty_info: &ty_checker.type_info,
+        string_map,
+        syms,
+        ns: nss,
+        ast,
+        ty_info,
         funcs: HashMap::new(),
         const_strs: Vec::new(),
         func_counter: 0,
@@ -103,7 +106,7 @@ pub fn run(ty_checker: &mut TyChecker, errors: [Vec<Vec<String>>; 3]) -> Vec<u8>
 
 
     // create IR
-    for (_, sym) in &ty_checker.startups {
+    for sym in startups.iter() {
         let _ = conv.get_func(Sym::Ty(*sym, GenListId::EMPTY));
     }
 
@@ -910,7 +913,10 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     (SymbolId::BOOL, BinaryOperator::Ne) => block.bytecode.ne_bool(),
 
                     (_, BinaryOperator::Eq) => block.bytecode.eq_obj(),
-                    (_, BinaryOperator::Ne) => block.bytecode.ne_obj(),
+                    (_, BinaryOperator::Ne) => {
+                        block.bytecode.eq_obj();
+                        block.bytecode.not_bool();
+                    },
 
                     _ => unreachable!(),
                 };

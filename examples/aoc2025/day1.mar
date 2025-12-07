@@ -6,6 +6,7 @@ fn main() {
     var input = read_file("./examples/aoc2025/day1.txt");
 
     println(part1(input));
+    println(part2(input));
 }
 
 
@@ -77,6 +78,7 @@ fn part2(input: str): str {
 
             (start..=end)
                 .iter()
+                .filter(|n| is_repeated_at_least_twice(n))
                 .sum()
         })
         .sum()

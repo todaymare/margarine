@@ -144,7 +144,8 @@ impl<'src> VM<'src> {
         let Some(b"BUTTERY") = reader.try_next_n().as_ref()
         else { return Err(FatalError::new("invalid header")) };
 
-        let mut objs = ObjectMap::new(16 * 1024 * 1024);
+        let mut objs = ObjectMap::new(64 * 1024 * 1024);
+        //let mut objs = ObjectMap::new(64);
 
 
         // table sizes

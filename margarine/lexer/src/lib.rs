@@ -597,15 +597,15 @@ impl Lexer<'_, '_> {
         let (unicode, _) = self.reader.consume_while_slice(|x| x.is_ascii_hexdigit());
         let unicode = unsafe { core::str::from_utf8_unchecked(unicode) };
 
-        if self.reader.peek() != Some(b'}') {
+        if self.reader.peek() != Some(b'}') || unicode.is_empty() {
             return Err(Error::CorruptUnicodeEscape(SourceRange::new(
                 self.source_offset + start as u32, self.reader.offset() as u32
             )));
         }
 
+        let source = SourceRange::new(self.source_offset + start as u32, self.reader.offset() as u32);
         let _ = self.reader.next();
 
-        let source = SourceRange::new(self.source_offset + start as u32, self.reader.offset() as u32);
         
         let val = match u32::from_str_radix(unicode, 16) {
             Ok(v) => v,
