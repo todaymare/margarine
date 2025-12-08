@@ -829,6 +829,7 @@ dependencies = [
  "runtime",
  "semantic_analysis",
  "sti 0.200.0",
+ "tracing",
 ]
 
 [[package]]

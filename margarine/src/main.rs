@@ -21,7 +21,7 @@ fn main() {
             let arena = Arena::new();
             let mut sm = StringMap::new(&arena);
             let files = FileData::open(path, &mut sm).unwrap();
-            let (code, _) = margarine::run(&mut sm, files);
+            let (code, _) = margarine::run(sm, files);
 
             println!("running");
 
@@ -44,7 +44,7 @@ fn main() {
             let arena = Arena::new();
             let mut sm = StringMap::new(&arena);
             let files = FileData::open(path, &mut sm).unwrap();
-            let (code, tests) = margarine::run(&mut sm, files);
+            let (code, tests) = margarine::run(sm, files);
 
             let mut hosts : HashMap<String, _>= HashMap::new();
             stdlib(&mut hosts);
@@ -61,7 +61,7 @@ fn main() {
                 for t in tests {
                     let result = vm.run(&t, &[]);
 
-                    println!("test '{t}' .. {}", if result.as_err().is_some() { "FAILED".red() } else { "ok".green() }).bold();
+                    println!("test '{t}' .. {}", if result.as_err().is_some() { "FAILED".red() } else { "ok".green() });
 
                     if let Some(err) = result.as_err() {
                         let err_str = err.to_str().unwrap_or("unknown error");

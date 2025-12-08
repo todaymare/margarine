@@ -17,8 +17,6 @@ pub enum Error {
         to_ty: Sym,
     },
 
-    DerefOnNonPtr(SourceRange),
-
     InvalidValueForAttr {
         attr: (SourceRange, StringIndex),
         value: SourceRange,
@@ -152,17 +150,6 @@ pub enum Error {
         fields: sti::vec::Vec<StringIndex>,
     },
 
-    FunctionNotFound {
-        source: SourceRange,
-        name: StringIndex,
-    },
-
-    BindedFunctionNotFound {
-        source: SourceRange,
-        name: StringIndex,
-        bind: Sym,
-    },
-
     FunctionArgsMismatch {
         source: SourceRange,
         sig_len: usize,
@@ -230,8 +217,6 @@ pub enum Error {
     CantUseHoleHere { source: SourceRange },
 
     NameIsReservedForFunctions { source: SourceRange },
-
-    InvalidSystem(SourceRange),
 
     IndexOnNonList(SourceRange, Sym),
 
@@ -404,15 +389,6 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 fmt.error("struct creation on a type which is not a struct")
                     .highlight_with_note(*source, &msg);
             }
-             
-            Error::FunctionNotFound { name, source } => {
-                let msg = format!("there's no function named '{}' in the current scope",
-                    fmt.string(*name),
-                );
-
-                fmt.error("function not found")
-                    .highlight_with_note(*source, &msg)
-            },
 
             Error::CallOnNonFunction { source } => {
                 let msg = format!("the symbol isn't a function");
@@ -421,15 +397,6 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*source, &msg)
             },
             
-            Error::BindedFunctionNotFound { name, bind, source } => {                
-                let msg = format!("there's no function named '{}' in the namespace of '{}'",
-                    fmt.string(*name),
-                    bind.display(fmt.string_map(), types)
-                );
-
-                fmt.error("associated function not found")
-                    .highlight_with_note(*source, &msg)
-            },
             
             Error::FunctionArgsMismatch { source, sig_len, call_len } => {
                 let msg = format!("function has {} argument(s) but you've provided {} argument(s)",
@@ -681,11 +648,6 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*v, "signature must match 'fn __next__(&self): Option<[type]>`");
             },
 
-            Error::DerefOnNonPtr(v) => {
-                fmt.error("deref on non pointer")
-                    .highlight(*v);
-            },
-
             Error::CantUseHoleHere { source } => {
                 fmt.error("can't use the hole ('_') here")
                     .highlight(*source);
@@ -717,11 +679,6 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::NameIsReservedForFunctions { source } => {
                 fmt.error("this name is reserved for an overwritable function")
                     .highlight(*source);
-            },
-
-            Error::InvalidSystem(v) => {
-                fmt.error("system functions must be outside of an impl block & not have any generics")
-                    .highlight(*v)
             },
 
             Error::IndexOnNonList(range, sym) => {

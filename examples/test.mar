@@ -1,4 +1,7 @@
 extern "https://github.com/todaymare/margarine-std" as std;
+
+use std::*;
+
 mod hello_world;
 
 fn main() {
@@ -9,6 +12,6 @@ fn test() {
     println("Hello, Margaine!");
 }
 
-fn hello_world() {
+fn hello() {
     println("Hello, World!");
 }

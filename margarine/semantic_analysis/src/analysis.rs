@@ -995,7 +995,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let rhs_anal = self.expr(path, *scope, rhs);
 
                 if !lhs_anal.ty.eq(&mut self.syms, rhs_anal.ty) {
-                    self.error(id, Error::InvalidType { source, found: rhs_anal.ty, expected: lhs_anal.ty });
+                    self.error(id, Error::ValueUpdateTypeMismatch { lhs: lhs_anal.ty, rhs: rhs_anal.ty, source });
                 }
 
                 match self.ast.expr(lhs) {

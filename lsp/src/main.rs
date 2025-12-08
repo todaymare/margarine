@@ -1,13 +1,13 @@
 #![feature(backtrace_frames)]
 mod json;
 
-use std::{backtrace::Backtrace, cell::RefCell, collections::HashMap, fs::File, io::{Read, Write}, str::FromStr, sync::{Mutex, RwLock}, time::{Duration, Instant}};
+use std::{backtrace::Backtrace, cell::RefCell, collections::HashMap, fs::File, io::{Read, Write}, path::Path, str::FromStr, sync::{Mutex, RwLock}, time::{Duration, Instant}};
 
 use chrono::Local;
 use color_eyre::owo_colors::colored;
-use common::string_map::StringIndex;
+use common::string_map::{self, StringIndex};
 use dashmap::DashMap;
-use margarine::{Arena, FileData, SourceRange, StringMap};
+use margarine::{Arena, Compiler, FileData, SourceRange, StringMap};
 use parser::nodes::{decl::Decl, AST};
 use ropey::Rope;
 use sti::{ext::FromIn, key::Key};
@@ -35,180 +35,6 @@ macro_rules! send {
         });
     }};
 }
-
-
-
-/*
-
-struct Backend {
-    client: tower_lsp::Client,
-    docs: DashMap<Url, LspFile>,
-}
-
-
-struct LspFile {
-    rope: Rope,
-    file: FileData,
-}
-
-
-#[tower_lsp::async_trait]
-impl tower_lsp::LanguageServer for Backend {
-    async fn initialize(&self, _: tower_lsp::lsp_types::InitializeParams) -> tower_lsp::jsonrpc::Result<tower_lsp::lsp_types::InitializeResult> {
-        tracing::info!("initializing margarine server");
-        self.client.show_message(tower_lsp::lsp_types::MessageType::INFO, "hey").await;
-        Ok(tower_lsp::lsp_types::InitializeResult {
-            capabilities: tower_lsp::lsp_types::ServerCapabilities {
-                text_document_sync: Some(tower_lsp::lsp_types::TextDocumentSyncCapability::Kind(
-                    tower_lsp::lsp_types::TextDocumentSyncKind::FULL,
-                )),
-                ..Default::default()
-            },
-            server_info: None,
-            offset_encoding: None,
-        })
-    }
-
-    async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
-        Ok(())
-    }
-
-
-    async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        debug!("file opened");
-        self.on_change(TextDocumentItem {
-            uri: params.text_document.uri,
-            text: params.text_document.text,
-            version: params.text_document.version,
-            language_id: String::from("mar"),
-        })
-        .await
-    }
-
-    async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        self.on_change(TextDocumentItem {
-            text: params.content_changes[0].text.clone(),
-            uri: params.text_document.uri,
-            version: params.text_document.version,
-            language_id: String::from("mar"),
-        })
-        .await
-    }
-
-
-    async fn hover(&self, params: HoverParams) -> tower_lsp::jsonrpc::Result<Option<Hover>> {
-        error!("Got a textDocument/hover request, but it is not implemented");
-        todo!()
-    }
-
-}
-
-
-impl Backend {
-    pub async fn on_hover(&self, params: HoverParams) {
-        let rope = self.docs.get(&params.text_document_position_params.text_document.uri).unwrap();
-        rope.to_string();
-    }
-    
-
-    pub async fn on_change(&self, params: TextDocumentItem) {
-        info!("uri: {}", params.uri);
-        info!("version: {}", params.version);
-
-        let rope = ropey::Rope::from_str(&params.text);
-        self.docs.insert(params.uri.clone(), rope);
-
-        let rope = self.docs.get(&params.uri).unwrap();
-
-        let arena = Arena::new();
-        let mut sm = StringMap::new(&arena);
-
-        let file = FileData::new(params.text, sm.insert(params.uri.as_str()), margarine::Extension::Mar);
-        let result = margarine::lex(&file, &mut sm, 0);
-
-        let diagnostics = result.1.iter()
-            .filter_map(|e| {
-                let (message, span) = match e {
-                    lexer::errors::Error::InvalidCharacter { character, position } => {
-                        (format!("Syntax Error: invalid character '{character}'"), *position)
-                    },
-
-
-                    lexer::errors::Error::UnterminatedString(source_range) => {
-                        (format!("Syntax Error: unterminated string"), *source_range)
-                    },
-
-
-                    lexer::errors::Error::CorruptUnicodeEscape(source_range) => {
-                        (format!("Syntax Error: corrupt unicode escape"), *source_range)
-                    },
-
-
-                    lexer::errors::Error::InvalidUnicodeCharacter(source_range) => {
-                        (format!("Syntax Error: invalid unicode escape"),
-                        SourceRange::new(source_range.start(), source_range.end() + 1))
-                    },
-
-
-                    lexer::errors::Error::NumberTooLarge(source_range) => {
-                        (format!("Syntax: Error: constant number is too large to represent in an i64"),
-                         SourceRange::new(source_range.start(), source_range.end()))
-                    },
-
-
-                    lexer::errors::Error::TooManyDots(source_range) => {
-                        (format!("Syntax Error: number has too many dots"),
-                        SourceRange::new(source_range.start(), source_range.end() + 1))
-                    },
-                };
-
-
-                Some(Diagnostic::new_simple(
-                    to_range(&rope, span),
-                    message
-                ))
-            })
-            .collect();
-
-        self.client.publish_diagnostics(params.uri, diagnostics, Some(params.version)).await;
-    }
-}
-
-
-fn to_range(rope: &Rope, src: SourceRange) -> Range {
-    Range::new(
-        offset_to_position(src.start(), rope).unwrap(),
-        offset_to_position(src.end(), rope).unwrap(),
-    )
-}
-
-
-fn offset_to_position(offset: u32, rope: &Rope) -> Option<Position> {
-    let offset = offset as usize;
-    let line = rope.try_byte_to_line(offset).ok()?;
-    let first_char_of_line = rope.try_line_to_byte(line).ok()?;
-    let column = offset - first_char_of_line;
-    Some(Position::new(line as u32, column as u32))
-}
-
-
-#[tokio::main]
-async fn main() {
-    let _guard = tracing_init();
-    set_panic_hook();
-
-    info!("starting LSP server");
-
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-
-    let (service, socket) = tower_lsp::LspService::new(|client| Backend { client, docs: HashMap::new() });
-    tower_lsp::Server::new(stdin, stdout, socket)
-        .serve(service)
-        .await;
-}
-
-*/
 
 
 fn to_range(rope: &Rope, src: SourceRange) -> Range {
@@ -249,16 +75,16 @@ struct Lsp {
     active_requests: HashMap<u32, ()>,
 
     arena: &'static Arena,
-    string_map: StringMap<'static>,
 
-    files: HashMap<StringIndex, LspFile>,
+    files: HashMap<Url, LspFile>,
+    compiler: Compiler<'static>,
 }
 
 
 struct LspFile {
     root: StringIndex,
     module_name: StringIndex,
-    data: FileData,
+    file_path: StringIndex,
     version: u32,
     rope: Rope,
     modules: Vec<StringIndex>,
@@ -266,53 +92,58 @@ struct LspFile {
 
 
 impl Lsp {
-    fn resolve_file(&mut self, path_index: StringIndex) -> &mut LspFile {
-        if !self.files.contains_key(&path_index) {
-            self.resolve_file_ex(path_index)
+    /// Path index is in normal file system
+    fn resolve_file(&mut self, path: &Url) -> &mut LspFile {
+        if !self.files.contains_key(&path) {
+            self.resolve_file_ex(path)
         } else {
-            self.files.get_mut(&path_index).unwrap()
+            self.files.get_mut(&path).unwrap()
         }
     }
 
-    fn resolve_file_ex(&mut self, path_index: StringIndex) -> &mut LspFile {
-        let path = self.string_map.get(path_index);
 
-        trace!("margarine-lsp/resolve-file: path = '{path}'");
+    /// Path index is in normal file system
+    fn resolve_file_ex(&mut self, uri_path: &Url) -> &mut LspFile {
+        trace!("margarine-lsp/resolve-file: path = '{uri_path}'");
 
+        let path = uri_path.to_file_path().unwrap();
+        let path = path.to_string_lossy();
+        let path = &*path;
+        let module_path = &path[..path.len()-".mar".len()];
+        let path_index = self.compiler.string_map.insert(module_path);
         let parent = path.bytes().enumerate().rev().find(|b| b.1 == b'/');
+
+        let data = std::fs::read_to_string(path).unwrap();
 
         let mut file = LspFile {
             root: path_index,
-            data: FileData::new(String::new(), path_index, margarine::Extension::Mar),
             version: 0,
-            rope: Rope::new(),
+            rope: Rope::from_str(&data),
             modules: vec![],
             module_name: StringIndex::MAX,
+            file_path: path_index,
         };
 
 
 
         if let Some(parent) = parent {
             let parent_path = &path[..parent.0];
-            let url_parent_path = format!("{parent_path}.mar");
+            let parent_path = format!("{parent_path}.mar");
             trace!("path {parent_path}");
-            let parent_path = Url::from_str(&url_parent_path).unwrap();
-            let parent_path = parent_path.to_file_path().unwrap();
-            let parent_path = parent_path.to_string_lossy();
 
             let module_name = &path[(parent.0+1)..path.len()-".mar".len()];
-            let module_name = self.string_map.insert(module_name);
+            let module_name = self.compiler.string_map.insert(module_name);
 
             file.module_name = module_name;
 
 
             trace!("has parent {parent_path}");
-            let parent_path_index = self.string_map.insert(&*url_parent_path);
 
             if std::fs::exists(&*parent_path).unwrap() {
                 trace!("exists");
-                let parent = self.resolve_file(parent_path_index);
-                let parent = self.files.get(&parent_path_index).unwrap();
+                let parent_uri_path = Url::from_file_path(&parent_path).unwrap();
+                let _ = self.resolve_file(&parent_uri_path);
+                let parent = self.files.get(&parent_uri_path).unwrap();
 
 
                 if parent.modules.contains(&module_name) {
@@ -320,35 +151,30 @@ impl Lsp {
                     file.root = parent.root;
                 }
 
-                trace!("looking for {}", self.string_map.get(module_name));
+                trace!("looking for {}", self.compiler.string_map.get(module_name));
                 for module in &parent.modules {
-                    trace!("includes: {}", self.string_map.get(*module));
+                    trace!("includes: {}", self.compiler.string_map.get(*module));
                 }
             } else {
                 trace!("parent path doesn't exist");
             }
         } else {
             let module_name = &path[..path.len()-".mar".len()];
-            let module_name = self.string_map.insert(module_name);
+            let module_name = self.compiler.string_map.insert(module_name);
 
             file.module_name = module_name;
         }
 
 
         // try to figure out modules
-        'b: {
-            let path = Url::from_str(&path).unwrap();
-            let path = path.to_file_path().unwrap();
-            let Ok(data) = std::fs::read_to_string(path)
-            else { break 'b };
-
+        {
             let fd = FileData::new(data, path_index, margarine::Extension::Mar);
 
-            let (tokens, _) = margarine::lex(&fd, &mut self.string_map, 0);
+            let (tokens, _) = margarine::lex(&fd, &mut self.compiler.string_map, 0);
             
             let arena = Arena::new();
             let mut ast = AST::new(&arena);
-            let (_, modules, _) = margarine::parse(tokens, 0, &arena, &mut self.string_map, &mut ast);
+            let (_, modules, _) = margarine::parse(tokens, 0, &arena, &mut self.compiler.string_map, &mut ast);
 
             for module in modules {
                 let Decl::ImportFile { name, .. } = ast.decl(module.1)
@@ -356,43 +182,50 @@ impl Lsp {
 
                 file.modules.push(name);
             }
+
+            trace!("registering {}", self.compiler.string_map.get(fd.name()));
+            self.compiler.files.register(fd);
         }
 
 
-        self.files.insert(path_index, file);
-        self.files.get_mut(&path_index).unwrap()
+        self.files.insert(uri_path.clone(), file);
+        self.files.get_mut(&uri_path).unwrap()
     }
 
 
-    pub fn on_change(&mut self, version: u32, path: &str, text: &str) {
-        trace!("margarine-lsp/on-change: version = {version}, path = {path}");
+    pub fn on_change(&mut self, version: u32, uri_path: Url, text: &str) {
+        trace!("margarine-lsp/on-change: version = {version}, uri_path = {uri_path}");
 
-
-        let path = self.string_map.insert(path);
-
-        let fd = FileData::new(text.to_string(), path, margarine::Extension::Mar);
 
         // fanks rust. very cool
-        let _ = self.resolve_file(path);
-        let file = self.files.get_mut(&path).unwrap();
+        let _ = self.resolve_file(&uri_path);
+        let file = self.files.get_mut(&uri_path).unwrap();
 
         if file.version < version {
-            file.data = fd;
             file.rope = text.into();
             file.version = version;
         }
 
 
-        trace!("root of '{}' is {}", self.string_map.get(path), self.string_map.get(file.root));
+        trace!("root of '{}' is {}", self.compiler.string_map.get(file.file_path), self.compiler.string_map.get(file.root));
+        let fd = FileData::new(text.to_string(), file.file_path, margarine::Extension::Mar);
 
+        let compiler = &mut self.compiler;
+        compiler.files.register(fd);
 
-        let (tokens, result) = margarine::lex(&file.data, &mut self.string_map, 0);
+        let arena = Arena::new();
+        let mut result = compiler.run(&arena, file.root);
 
+        trace!("{:#?}", &result.errors);
 
         let mut diagnostics = vec![];
+
         result
+            .errors
+            .lexer_errors
             .iter()
-            .filter_map(|e| {
+            .flatten()
+            .filter_map(|(_, e)| {
                 let (message, span) = match e {
                     lexer::errors::Error::InvalidCharacter { character, position } => {
                         (format!("Syntax Error: invalid character '{character}'"), *position)
@@ -428,8 +261,8 @@ impl Lsp {
                 };
 
 
-                Some(Diagnostic::new_simple(
-                    to_range(&file.rope, span),
+                Some((
+                    span,
                     message,
                 ))
             })
@@ -437,14 +270,12 @@ impl Lsp {
             .for_each(|d| diagnostics.push(d));
 
 
-        let arena = Arena::new();
-        let mut ast = AST::new(&arena);
-        let (_, _, result) = margarine::parse(tokens, 0, &arena, &mut self.string_map, &mut ast);
-
-
         result
+            .errors
+            .parser_errors
             .iter()
-            .filter_map(|e| {
+            .flatten()
+            .filter_map(|(_, e)| {
                 let (message, &span) = match e {
                     parser::errors::Error::ExpectedLiteralString { source, token } => {
                         (format!("expected a string literal, found '{token:?}'"), source)
@@ -498,22 +329,600 @@ impl Lsp {
 
 
                     parser::errors::Error::FileDoesntExist { source, path } => {
-                        let path = self.string_map.get(*path);
+                        let path = self.compiler.string_map.get(*path);
                         (format!("file '{path}' doesn't exist"), source)
                     },
                 };
 
-                Some(Diagnostic::new_simple(
-                    to_range(&file.rope, span),
+
+
+
+                Some((
+                    span,
                     message,
                 ))
             })
 
-        .for_each(|d| diagnostics.push(d));
+            .for_each(|d| diagnostics.push(d));
+
+        let sm = &self.compiler.string_map;
+        let syms = &mut result.syms;
+
+        result
+            .errors
+            .sema_errors
+            .iter()
+            .filter_map(|e| {
+                let (message, &span) = match e {
+                    semantic_analysis::errors::Error::IteratorFunctionInvalidSig(source_range) => {
+                        (
+                            format!(
+                                "signature must match 'fn __next__(&self): Option<[type]>'",
+                            ),
+                            source_range,
+                        )
+
+                    },
 
 
-        let uri = self.string_map.get(path);
-        self.send_diagnostics(uri, &diagnostics);
+                    semantic_analysis::errors::Error::InvalidCast { range, from_ty, to_ty } => {
+                        (
+                            format!(
+                                "invalid cast from '{}' to '{}'",
+                                from_ty.display(sm, syms),
+                                to_ty.display(sm, syms),
+                            ),
+                            range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::InvalidValueForAttr { attr, value, expected } => {
+                        (
+                            format!("attribute '{}' expected '{expected}'", sm.get(attr.1)),
+                            value
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::UnknownAttr(source_range, string_index) => {
+                        (
+                            format!(
+                                "'{}' is not a valid attribute",
+                                sm.get(*string_index),
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::NameIsAlreadyDefined { source, name } => {
+                        (
+                            format!(
+                                "name '{}' is already defined",
+                                sm.get(*name),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::UnknownType(string_index, source_range) => {
+                        (
+                            format!(
+                                "unknown type '{}'",
+                                sm.get(*string_index),
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::FunctionBodyAndReturnMismatch { header, item, return_type, body_type } => {
+                        (
+                            format!(
+                                "function body returns '{}'",
+                                return_type.display(sm, syms),
+                            ),
+                            item,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::OutsideOfAFunction { source } => {
+                        (
+                            format!(
+                                "this can't be outside of a function",
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::InvalidType { source, found, expected } => {
+                        (
+                            format!(
+                                "expected '{}' found '{}'",
+                                expected.display(sm, syms),
+                                found.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::DuplicateField { declared_at, error_point } => {
+                        (
+                            format!(
+                                "duplicate field",
+                            ),
+                            error_point,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::DuplicateArg { declared_at, error_point } => {
+                        (
+                            format!(
+                                "duplicate argument",
+                            ),
+                            error_point,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::VariableValueAndHintDiffer { value_type, hint_type, source } => {
+                        (
+                            format!(
+                                "..is of type '{}' but the hint expects '{}'",
+                                value_type.display(sm, syms),
+                                hint_type.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::VariableValueNotTuple(source_range) => {
+                        (
+                            format!(
+                                "expected a tuple",
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::VariableTupleAndHintTupleSizeMismatch(source_range, found, expected) => {
+                        (
+                            format!(
+                                "expected a tuple of size '{expected}' but found a tuple of size '{found}'",
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::VariableNotFound { name, source } => {
+                        (
+                            format!(
+                                "variable '{}' not found",
+                                sm.get(*name),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::InvalidBinaryOp { operator, lhs, rhs, source } => {
+                        (
+                            format!(
+                                "can't apply binary op '{}' between '{}' and '{}'",
+                                operator,
+                                lhs.display(sm, syms),
+                                rhs.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::InvalidUnaryOp { operator, rhs, source } => {
+                        (
+                            format!(
+                                "can't apply unary op '{}' on '{}'",
+                                operator,
+                                rhs.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::IfMissingElse { body } => {
+                        (
+                            format!(
+                                "main branch returns '{}' but there's no else branch",
+                                body.1.display(sm, syms),
+                            ),
+                            &body.0,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::IfBodyAndElseMismatch { body, else_block } => {
+                        (
+                            format!(
+                                "main branch returns '{}' but this returns '{}'",
+                                body.1.display(sm, syms),
+                                else_block.1.display(sm, syms),
+                            ),
+                            &else_block.0,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::MatchValueIsntEnum { source, typ } => {
+                        (
+                            format!(
+                                "'{}' is not an enum",
+                                typ.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::MatchBranchesDifferInReturnType { initial_source, initial_typ, branch_source, branch_typ } => {
+                        (
+                            format!(
+                                "previously returned '{}' but this returns '{}'",
+                                initial_typ.display(sm, syms),
+                                branch_typ.display(sm, syms),
+                            ),
+                            branch_source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::DuplicateMatch { declared_at, error_point } => {
+                        (
+                            format!(
+                                "..is already handled",
+                            ),
+                            error_point,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::InvalidMatch { name, range, value } => {
+                        (
+                            format!(
+                                "there's no variant named '{}' in '{}'",
+                                sm.get(*name),
+                                value.display(sm, syms),
+                            ),
+                            range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::MissingMatch { name, range } => {
+                        let mut msg = format!("missing variants: ");
+                        let mut is_first = true;
+                        for n in name.iter() {
+                            if !is_first {
+                                sti::write!(&mut msg, ", ");
+                            }
+
+                            is_first = false;
+                            sti::write!(&mut msg, "{}", sm.get(*n));
+                        }
+
+
+                        (
+                            msg,
+                            range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::ValueIsntAnIterator { ty, range } => {
+                        (
+                            format!(
+                                "'{}' isn't an iterator",
+                                ty.display(sm, syms),
+                            ),
+                            range,
+                        )
+
+                    },
+
+
+                    semantic_analysis::errors::Error::StructCreationOnNonStruct { source, typ } => {
+                        (
+                            format!(
+                                "'{}' isn't a struct type",
+                                typ.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::FieldAccessOnNonEnumOrStruct { source, typ } => {
+                        (
+                            format!(
+                                "'{}' is an opaque type",
+                                typ.display(sm, syms)
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::FieldDoesntExist { source, field, typ } => {
+                        (
+                            format!(
+                                "'{}' doesn't have a field named '{}'",
+                                typ.display(sm, syms),
+                                sm.get(*field),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::MissingFields { source, fields } => {
+                        let mut msg = format!("missing fields: ");
+                        let mut is_first = true;
+                        for (_, n) in fields {
+                            if !is_first {
+                                sti::write!(&mut msg, ", ");
+                            }
+
+                            is_first = false;
+                            sti::write!(&mut msg, "{}", sm.get(*n));
+                        }
+
+                        (
+                            msg,
+                            source,
+                        )
+
+
+                    },
+
+                    semantic_analysis::errors::Error::FunctionArgsMismatch { source, sig_len, call_len } => {
+                        (
+                            format!(
+                                "expected '{}' args but found '{}",
+                                sig_len,
+                                call_len,
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::NamespaceNotFound { source, namespace } => {
+                        (
+                            format!(
+                                "namespace '{}' not found",
+                                sm.get(*namespace)
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::ValueUpdateTypeMismatch { lhs, rhs, source } => {
+                        (
+                            format!(
+                                "lhs is '{}' while the rhs is '{}'",
+                                lhs.display(sm, syms),
+                                rhs.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::ContinueOutsideOfLoop(source_range) => {
+                        (
+                            format!(
+                                "continue outside of a loop",
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::BreakOutsideOfLoop(source_range) => {
+                        (
+                            format!(
+                                "break outside of a loop",
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::CantUnwrapOnGivenType(source_range, sym) => {
+                        (
+                            format!(
+                                "can't unwrap on '{}'",
+                                sym.display(sm, syms),
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::CantTryOnGivenType(source_range, sym) => {
+                        (
+                            format!(
+                                "can't try on '{}'",
+                                sym.display(sm, syms),
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::FunctionDoesntReturnAnOption { source, func_typ } => {
+                        (
+                            format!(
+                                "function returns '{}' but an option is required",
+                                func_typ.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::FunctionDoesntReturnAResult { source, func_typ } => {
+                        (
+                            format!(
+                                "function returns '{}' but a result is required",
+                                func_typ.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::FunctionReturnsAResultButTheErrIsntTheSame { source, func_source, func_err_typ, err_typ } => {
+                        (
+                            format!(
+                                "function returns a result with '{}' as an error but '{}' is required",
+                                func_err_typ.display(sm, syms),
+                                err_typ.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::ReturnAndFuncTypDiffer { source, func_source, typ, func_typ } => {
+                        (
+                            format!(
+                                "function returns '{}', but tried to return '{}'",
+                                func_typ.display(sm, syms),
+                                typ.display(sm, syms)
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::AssignIsNotLHSValue { source } => {
+                        (
+                            format!(
+                                "..is not a valid LHS value",
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::UnableToInfer(source_range) => {
+                        (
+                            format!(
+                                "unable to infer type",
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::InvalidRange { source, ty } => {
+                        (
+                            format!(
+                                "can't create a range out of '{}'",
+                                ty.display(sm, syms),
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::ImplOnGeneric(source_range) => {
+                        (
+                            format!(
+                                "impl on a complete generic is not supported",
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::GenericLenMismatch { source, found, expected } => {
+                        (
+                            format!(
+                                "expected '{expected}' generics but found '{found}'",
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::CantUseHoleHere { source } => {
+                        (
+                            format!(
+                                "a hole isn't supported here",
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::NameIsReservedForFunctions { source } => {
+                        (
+                            format!(
+                                "this name is reserved for special functions",
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::IndexOnNonList(source_range, sym) => {
+                        (
+                            format!(
+                                "can't inedx '{}'",
+                                sym.display(sm, syms),
+                            ),
+                            source_range,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::CallOnNonFunction { source } => {
+                        (
+                            format!(
+                                "..is not a function",
+                            ),
+                            source,
+                        )
+                    },
+
+
+                    semantic_analysis::errors::Error::Bypass => return None,
+                };
+
+
+
+
+                Some((
+                    span,
+                    message,
+                ))
+            })
+
+            .for_each(|d| diagnostics.push(d));
+
+        self.send_diagnostics(diagnostics);
 
 
     }
@@ -730,7 +1139,7 @@ impl Lsp {
 
                 trace!("uri = '{path}', version = {version}");
 
-                self.on_change(version, path, text);
+                self.on_change(version, Url::from_str(path).unwrap(), text);
             }
 
 
@@ -748,7 +1157,7 @@ impl Lsp {
                 let text = changes[0]["text"];
                 trace!("uri = '{path}', version = {version}, text = '{text}'");
 
-                self.on_change(version, path, text.as_string());
+                self.on_change(version, Url::from_str(path).unwrap(), text.as_string());
             }
 
 
@@ -780,25 +1189,57 @@ impl Lsp {
 
     
 
-    fn send_diagnostics(&mut self, uri: &str, diag: &[Diagnostic]) {
-        trace!("margarine-lsp/send_diagnostics: uri = {uri}, len(diag) = {}", diag.len());
+    fn send_diagnostics(&mut self, diags: Vec<(SourceRange, String)>) {
+        let mut file_diags = HashMap::new();
 
-        let mut result = String::with_capacity(diag.len() * 64);
 
-        sti::write!(&mut result, "{{\"uri\":\"{uri}\",\"diagnostics\":[");
+        let mut result = String::with_capacity(diags.len() * 64);
 
-        for (i, d) in diag.iter().enumerate() {
-            if i != 0 { _ = sti::write!(&mut result, ","); }
-            sti::write!(&mut result, "{{");
-            sti::write!(&mut result, "\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}}",
-                d.range.start.line, d.range.start.character, d.range.end.line, d.range.end.character);
-            sti::write!(&mut result, ",\"message\":{:?}", d.message);
-            sti::write!(&mut result, "}}");
+        for (span, msg) in diags {
+            let (file, offset) = span.file(self.compiler.files.files());
+            let span = span.base(offset);
+            let path = Path::new(self.compiler.string_map.get(file.name()));
+            let path = path.with_extension("mar");
+            let uri = Url::from_file_path(path).unwrap();
+
+            if !file_diags.contains_key(&uri) {
+                file_diags.insert(uri.clone(), vec![]);
+            }
+
+            let vec = file_diags.get_mut(&uri).unwrap();
+
+            trace!("file {}", uri);
+            let rope = &self.resolve_file(&uri).rope;
+            vec.push(Diagnostic::new_simple(to_range(rope, span), msg));
         }
 
-        sti::write!(&mut result, "]}}");
 
-        self.send_notification("textDocument/publishDiagnostics", json::Value::Encoded(&result));
+        for (uri, _) in &self.files {
+            let diags = 
+            if let Some(diags) = file_diags.remove(uri) { diags }
+            else { vec![] };
+            trace!("margarine-lsp/send_diagnostics: uri = {uri}, len(diag) = {}", diags.len());
+
+
+            sti::write!(&mut result, "{{\"uri\":\"{uri}\",\"diagnostics\":[");
+
+            for (i, d) in diags.iter().enumerate() {
+                if i != 0 { _ = sti::write!(&mut result, ","); }
+                sti::write!(&mut result, "{{");
+                sti::write!(&mut result, "\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}}",
+                    d.range.start.line, d.range.start.character, d.range.end.line, d.range.end.character);
+                sti::write!(&mut result, ",\"message\":{:?}", d.message);
+                sti::write!(&mut result, "}}");
+            }
+
+            sti::write!(&mut result, "]}}");
+
+            self.send_notification("textDocument/publishDiagnostics", json::Value::Encoded(&result));
+
+            result.clear();
+
+        }
+
     }
 
 
@@ -818,7 +1259,7 @@ impl Lsp {
     }
 
 
-    fn send_notification(&mut self, method: &str, params: json::Value) {
+    fn send_notification(&self, method: &str, params: json::Value) {
         trace!("margarine-lsp/send_notification: method = '{}'", method);
 
         send!("{}", json::Value::Object(&[
@@ -855,9 +1296,9 @@ fn main() {
         initialized: false,
         next_request_id: 1,
         active_requests: HashMap::new(),
-        string_map: StringMap::new(arena),
         arena,
         files: HashMap::new(),
+        compiler: Compiler::new(arena),
     };
 
     
