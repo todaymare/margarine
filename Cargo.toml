@@ -16,4 +16,9 @@ members = [
     "fuzz", "lsp",
 ]
 
-
+[profile.release]
+debug = true
+lto = false
+opt-level = 2
+codegen-units = 1
+split-debuginfo = "packed"

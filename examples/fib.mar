@@ -7,7 +7,5 @@ fn fib(n: int): int {
 
 
 fn main() {
-    var now = std::duration::Duration::now();
     fib(40);
-    std::println(now.elapsed().as_secs_float());
 }
