@@ -24,7 +24,7 @@ pub enum Stmt<'a> {
 
 
     ForLoop {
-        binding: (StringIndex, SourceRange),
+        binding: Pattern<'a>,
         expr: ExprId,
         body: Block<'a>,
     }

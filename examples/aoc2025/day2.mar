@@ -19,8 +19,7 @@ fn part1(input: str): str {
         var max_joltage = -1;
         var largest_seen = 0;
 
-        for ch in line.chars().enumerate() {
-            var i, ch = ch;
+        for i, ch in line.chars().enumerate() {
             if ch == "\n" { continue }
 
             var num = ch.parse::<int>()!;

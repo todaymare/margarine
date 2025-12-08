@@ -627,7 +627,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
     fn resolve_pattern(
-        &mut self, env: &mut Env<'me>, block: &mut Block<'me>,
+        env: &mut Env<'me>, block: &mut Block<'me>,
         pattern: Pattern,
     ) {
         match pattern.kind() {
@@ -671,7 +671,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 self.expr(env, block, rhs)?;
                 out_if_err!();
 
-                self.resolve_pattern(env, block, pat);
+                Self::resolve_pattern(env, block, pat);
             },
 
 /*
@@ -725,7 +725,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
 
                 let func = env.alloc_anon_var();
-                let value = env.alloc_var(binding.0);
 
                 block.bytecode.const_int(iter_fn.0 as i64);
                 block.bytecode.create_func_ref(0);
@@ -748,7 +747,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     this.build_ite(env, block,
                     |this, env, block| {
                         block.bytecode.load_field(1);
-                        block.bytecode.store(value.try_into().unwrap());
+                        Self::resolve_pattern(env, block, binding);
 
                         this.process(env, block, &body)?;
                         block.bytecode.pop();
