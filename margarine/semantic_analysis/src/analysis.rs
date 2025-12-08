@@ -939,57 +939,6 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
-            /*
-            Stmt::VariableTuple { names, rhs, .. } => {
-                let rhs_anal = self.expr(path, *scope, rhs);
-
-                let place_dummy = |slf: &mut TyChecker<'_, 'out, '_, '_, '_>, scope: &mut ScopeId| {
-                    for n in names {
-                        let vs = VariableScope::new(*n, Sym::ERROR);
-                        *scope = slf.scopes.push(Scope::new(*scope, ScopeKind::VariableScope(vs)));
-                    }
-                };
-
-                // check if rhs is a tuple
-                let sym = match rhs_anal.ty.sym(&mut self.syms) {
-                    Ok(v) => v,
-                    Err(v) => {
-                        place_dummy(self, scope);
-                        self.error(id, v);
-                        return;
-                    },
-                };
-
-                let sym = self.syms.sym(sym);
-                let SymbolKind::Container(cont) = sym.kind()
-                else {
-                    place_dummy(self, scope);
-                    let range = self.ast.range(rhs);
-                    self.error(id, Error::VariableValueNotTuple(range));
-                    return;
-                };
-
-
-                if cont.kind() != ContainerKind::Tuple {
-                    place_dummy(self, scope);
-                    let range = self.ast.range(rhs);
-                    self.error(id, Error::VariableValueNotTuple(range));
-                    return;
-                }
-
-
-                if cont.fields().len() != names.len() {
-                    place_dummy(self, scope);
-                    let range = self.ast.range(rhs);
-                    self.error(id, Error::VariableTupleAndHintTupleSizeMismatch(range, cont.fields().len(), names.len()));
-                    return;
-                }
-
-
-            },
-
-            */
-
             Stmt::UpdateValue { lhs, rhs  } => {
                 let lhs_anal = self.expr(path, *scope, lhs);
                 let rhs_anal = self.expr(path, *scope, rhs);
@@ -1023,14 +972,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     self.error(id, Error::ValueIsntAnIterator { ty: anal.ty, range });
 
                     let scope = Scope::new(*scope, ScopeKind::Loop);
-                    let scope = self.scopes.push(scope);
+                    let mut scope = self.scopes.push(scope);
 
-                    let vs = VariableScope::new(binding.0, Sym::ERROR);
-                    let scope = self.scopes.push(Scope::new(scope, ScopeKind::VariableScope(vs)));
+                    self.resolve_pattern(
+                        id.into(), &mut scope, binding, 
+                        AnalysisResult::error(), range
+                    );
 
                     let _ = self.block(path, scope, &body);
-
-
 
                     return;
                 };
@@ -1043,10 +992,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                     self.error(id, Error::ValueIsntAnIterator { ty: anal.ty, range });
 
                     let scope = Scope::new(*scope, ScopeKind::Loop);
-                    let scope = self.scopes.push(scope);
+                    let mut scope = self.scopes.push(scope);
 
-                    let vs = VariableScope::new(binding.0, Sym::ERROR);
-                    let scope = self.scopes.push(Scope::new(scope, ScopeKind::VariableScope(vs)));
+                    self.resolve_pattern(
+                        id.into(), &mut scope, binding, 
+                        AnalysisResult::error(), range
+                    );
 
                     let _ = self.block(path, scope, &body);
 
@@ -1080,10 +1031,13 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let binding_ty = binding_ty[0].1;
 
                 let scope = Scope::new(*scope, ScopeKind::Loop);
-                let scope = self.scopes.push(scope);
+                let mut scope = self.scopes.push(scope);
 
-                let vs = VariableScope::new(binding.0, binding_ty);
-                let scope = self.scopes.push(Scope::new(scope, ScopeKind::VariableScope(vs)));
+                self.resolve_pattern(
+                    id.into(), &mut scope, binding, 
+                    AnalysisResult::new(binding_ty), source
+                );
+
 
                 let _ = self.block(path, scope, &body);
 

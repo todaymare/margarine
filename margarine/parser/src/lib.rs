@@ -512,16 +512,15 @@ impl<'out> Parser<'_, 'out, '_> {
             
 
             let name = self.expect_identifier()?;
-            self.advance();
-            
             bindings.push(name);
-            if self.current_is(TokenKind::Equals) || self.current_is(TokenKind::Colon) {
+
+            if !self.peek_is(TokenKind::Comma) {
                 break
             }
-        }
 
-        if bindings.len() == 0 {
-            self.expect_identifier()?;
+            self.advance();
+            
+
         }
 
         if bindings.len() == 1 {
@@ -1061,10 +1060,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::For))?;
         self.advance();
 
-        let binding_start = self.current_range().start();
-
-        let binding = self.expect_identifier()?;
-        let binding_range = SourceRange::new(binding_start, self.current_range().end());
+        let binding = self.parse_pattern()?;
         self.advance();
 
         self.expect(TokenKind::Keyword(Keyword::In))?;
@@ -1083,7 +1079,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(self.ast.add_stmt(
             Stmt::ForLoop {
-                binding: (binding, binding_range),
+                binding,
                 expr,
                 body: block
             },
@@ -1097,6 +1093,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let pattern = self.parse_pattern()?;
+        self.advance();
 
         let hint =
             if self.current_is(TokenKind::Colon) {
