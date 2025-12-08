@@ -389,7 +389,7 @@ impl Lexer<'_, '_> {
                 TokenKind::Error(
                 self.errors.push(Error::InvalidCharacter { 
                     character: char, 
-                    position: SourceRange::new(self.source_offset + start, self.source_offset + start) 
+                    position: SourceRange::new(self.source_offset + start, self.source_offset + start + len) 
                 }))
             }
         };

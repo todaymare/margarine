@@ -2,13 +2,13 @@ use std::assert;
 
 @test
 fn test_basic_assert_true() {
-    assert(true, "true should pass");
+    assert(true, "true should pass");££
 }
 
 @test
 fn test_basic_assert_false_value() {
     var x = 5;
-    var y = 5;
+    var y = 5;£
     assert(x == y, "equality check should pass");
 }
 

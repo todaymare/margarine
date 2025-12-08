@@ -23,7 +23,8 @@ impl FileData {
 
 
     pub fn open<P: AsRef<Path>>(path: P, string_map: &mut StringMap) -> Result<Self, std::io::Error> {
-        let new_path = path.as_ref().with_extension("");
+        let path = std::fs::canonicalize(path)?;
+        let new_path = path.with_extension("");
         let name = new_path.to_string_lossy();
 
         Self::open_ex(path, string_map.insert(&name), string_map)
@@ -107,6 +108,14 @@ impl SourceRange {
     }
 
 
+    pub const fn base(self, num: u32) -> SourceRange {
+        SourceRange::new(self.start - num, self.end - num)
+    }
+
+
+    ///
+    /// returns the file and that file's offset
+    ///
     #[inline(always)]
     pub fn file(self, files: &[FileData]) -> (&FileData, u32) {
         let mut start = 0;
@@ -116,7 +125,7 @@ impl SourceRange {
             end = start + f.read().len() as u32;
 
             if self.start < end {
-                assert!(self.end <= end, "Range {}..{} exceeds file bounds {}..{}", self.start, self.end, start, end);
+                //assert!(self.end <= end, "Range {}..{} exceeds file bounds {}..{}", self.start, self.end, start, end);
                 return (f, start);
             }
 

@@ -23,3 +23,5 @@ colourful = { git = "https://github.com/rookieCookies/colourful" }
 rand = "*"
 git2 = "0.20.2"
 
+
+tracing = "*"

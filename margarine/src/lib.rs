@@ -25,9 +25,10 @@ pub use runtime::{VM, opcode, Status, FatalError, Reg};
 pub use sti::arena::Arena;
 use sti::format_in;
 use sti::vec::KVec;
+use tracing::trace;
 
 
-struct Compiler<'me> {
+pub struct Compiler<'me> {
     pub files: Files,
     pub arena: &'me Arena,
     pub string_map: StringMap<'me>,
@@ -35,28 +36,29 @@ struct Compiler<'me> {
 }
 
 
-struct Files {
+pub struct Files {
     files: Vec<FileData>,
 }
 
 
-struct CompilationResult<'a> {
+pub struct CompilationResult<'a> {
     file_offsets: Vec<(StringIndex, u32)>,
-    errors: CompilationErrors,
+    pub errors: CompilationErrors,
     tests: Vec<SymbolId>,
     ast: AST<'a>,
     startups: KVec<u32, SymbolId>,
     ty_info: semantic_analysis::TyInfo,
-    syms: semantic_analysis::syms::sym_map::SymbolMap<'a>,
+    pub syms: semantic_analysis::syms::sym_map::SymbolMap<'a>,
     namespaces: semantic_analysis::namespace::NamespaceMap,
     scopes: semantic_analysis::scope::ScopeMap<'a>,
 }
 
 
-struct CompilationErrors {
-    lexer_errors : Vec<KVec<LexerError , lexer::errors::Error>>,
-    parser_errors: Vec<KVec<ParserError, parser::errors::Error>>,
-    sema_errors  : KVec<SemaError  , semantic_analysis::errors::Error>,
+#[derive(Debug)]
+pub struct CompilationErrors {
+    pub lexer_errors : Vec<KVec<LexerError , lexer::errors::Error>>,
+    pub parser_errors: Vec<KVec<ParserError, parser::errors::Error>>,
+    pub sema_errors  : KVec<SemaError  , semantic_analysis::errors::Error>,
 }
 
 
@@ -66,12 +68,14 @@ impl<'me> Compiler<'me> {
             files: Files { files: vec![] },
             arena,
             string_map: StringMap::new(arena),
-            silent: false,
+            silent: true,
         }
     }
 
 
     pub fn run<'out>(&mut self, arena: &'out Arena, entry: StringIndex) -> CompilationResult<'out> {
+        tracing::trace!("compiling program. entry point is '{}'", self.string_map.get(entry));
+
         let mut global = AST::new(&arena);
         let mut lex_errors = vec![];
         let mut parse_errors = vec![];
@@ -136,18 +140,27 @@ impl<'me> Compiler<'me> {
                 match global.decl(i) {
                     Decl::ImportFile { name, .. } => {
                         let path = format_in!(&arena, "{}/{}.mar", file_path, self.string_map.get(name));
-                        let Ok(file) = FileData::open(&*path, &mut self.string_map)
-                        else {
-                            let path_str = self.string_map.insert(&path);
-                            let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_str });
-                            global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                            
-                            continue;
-                        };
+                        let path = std::fs::canonicalize(&*path).unwrap();
+                        let path_idx = self.string_map.insert(&*path.with_extension("").to_string_lossy());
 
-                        let name = file.name();
-                        self.files.register(file);
-                        stack.push((Some((i, name)), name, depth+1));
+                        if self.files.get(path_idx).is_none() {
+                            let Ok(file) = FileData::open(&*path, &mut self.string_map)
+                            else {
+                                let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_idx });
+                                global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                                
+                                continue;
+                            };
+
+                            assert_eq!(file.name(), path_idx, "{}(@{}) vs {}(@{})",
+                                self.string_map.get(file.name()), file.name().0,
+                                self.string_map.get(path_idx), path_idx.0,
+                            );
+
+                            self.files.register(file);
+                        }
+
+                        stack.push((Some((i, name)), path_idx, depth+1));
                     }
 
 
@@ -193,7 +206,9 @@ impl<'me> Compiler<'me> {
                         let local_path = format!("{}/{}", artifacts_dir, alias_str);
 
                         if !std::fs::exists(&local_path).unwrap_or(false) {
-                            println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
+                            if !self.silent {
+                                println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
+                            }
 
                             let repo =
                             match Repository::clone(&url, &local_path) {
@@ -283,6 +298,8 @@ impl<'me> Compiler<'me> {
         }
 
         let _ = build_lock.save();
+
+        self.files.sort_by(&file_offsets);
 
 
         let temp = Arena::new();
@@ -378,7 +395,7 @@ impl Files {
             *file = fd;
         } else {
             self.files.push(fd);
-        }
+        };
     }
 
 
@@ -387,21 +404,33 @@ impl Files {
     }
 
 
-    pub fn get_mut(&mut self, name: StringIndex) -> Option<&mut FileData> {
+    fn get_mut(&mut self, name: StringIndex) -> Option<&mut FileData> {
         self.files.iter_mut().find(|x| x.name() == name)
+    }
+
+
+    pub fn files(&self) -> &[FileData] {
+        &self.files
+    }
+
+
+    pub fn sort_by(&mut self, offsets: &[(StringIndex, u32)]) {
+        self.files.sort_by_key(|f| offsets.iter().find(|n| n.0 == f.name()).map(|x| x.1).unwrap_or(u32::MAX));
     }
 }
 
 
 
-pub fn run<'str>(files: FileData) -> (Vec<u8>, Vec<String>) {
-    let arena = Arena::new();
-
+pub fn run<'str>(string_map: StringMap, files: FileData) -> (Vec<u8>, Vec<String>) {
     let name = files.name();
+    let arena = string_map.arena();
     let mut comp = Compiler::new(&arena);
+    comp.string_map = string_map;
+    comp.silent = false;
     comp.files.register(files);
 
     let mut result = comp.run(&arena, name);
+    dbg!(&comp.string_map);
     let src = result.codegen(&mut comp);
 
     let mut tests = vec![];
