@@ -1067,6 +1067,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             },
 
 
+            Expr::Paren(e) => self.expr(path, scope, e),
+
+
             Expr::Identifier(ident, gens) => {
                 let Some(variable) = self.scopes.get(scope).find_var(ident, &self.scopes, &self.namespaces, &mut self.syms)
                 else {
@@ -1653,7 +1656,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                         if let SymbolKind::Container(cont) = sym.kind()
                         && cont.fields().iter().find(|x| x.0 == field_name).is_some() {
-                            is_accessor = false;
+                            return Err(Error::CallOnField { source: lhs_range, field_name })
                         } else {
                             is_accessor = true;
                             vec.push((range, Some(anal), val));

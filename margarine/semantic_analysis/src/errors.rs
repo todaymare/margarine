@@ -220,9 +220,11 @@ pub enum Error {
 
     IndexOnNonList(SourceRange, Sym),
 
-    Bypass,
-
     CallOnNonFunction { source: SourceRange },
+
+    CallOnField { source: SourceRange, field_name: StringIndex, },
+
+    Bypass,
 }
 
 
@@ -689,6 +691,13 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
 
             Error::VariableTupleAndHintTupleSizeMismatch(..) => {
                 todo!()
+            },
+
+
+            Error::CallOnField { source, field_name } => {
+                let msg = format!("'{}' is a field. you can add parenthesis around it in order to call it", fmt.string(*field_name));
+                fmt.error("direct call on field")
+                    .highlight_with_note(*source, &msg);
             },
 
 

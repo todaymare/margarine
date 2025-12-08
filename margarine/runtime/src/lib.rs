@@ -118,6 +118,10 @@ struct CallFrame<'me> {
     /// The bottom of the previous frame's stack.
     previous_offset: usize,
 
+
+    /// The bottom of the previous frame's stack.
+    previous_top: usize,
+
     func: u32,
 
     argc: u8,
@@ -144,7 +148,7 @@ impl<'src> VM<'src> {
         let Some(b"BUTTERY") = reader.try_next_n().as_ref()
         else { return Err(FatalError::new("invalid header")) };
 
-        let mut objs = ObjectMap::new(64 * 1024 * 1024);
+        let mut objs = ObjectMap::new(64 * 1024);
         //let mut objs = ObjectMap::new(64);
 
 
@@ -273,9 +277,9 @@ impl<'src> VM<'src> {
         }
 
         Ok(Self {
-            stack: Stack::new(1024),
+            stack: Stack::new(256),
             callstack: Callstack::new(256, code_section),
-            curr: CallFrame::new(code_section, 0, 0, 0),
+            curr: CallFrame::new(code_section, 0, 0, 0, 0),
             funcs,
             error_table: errs,
             objs,
@@ -297,7 +301,6 @@ impl<'src> VM<'src> {
         match id {
             Ok(v) => Ok(Reg::new_obj(v)),
             Err(obj) => {
-                self.run_garbage_collection();
 
                 match self.objs.put(obj) {
                     Ok(v) => Ok(Reg::new_obj(v)),
@@ -313,6 +316,7 @@ impl<'me> CallFrame<'me> {
     pub fn new(
         code: &'me [u8],
         previous_offset: usize,
+        previous_top: usize,
         argc: u8,
         func: u32,
     ) -> Self {
@@ -320,6 +324,7 @@ impl<'me> CallFrame<'me> {
         Self {
             reader: Reader::new(code),
             previous_offset,
+            previous_top,
             argc,
             func,
         }
@@ -759,7 +764,7 @@ impl Reg {
 
 
     pub unsafe fn as_obj(self) -> ObjectIndex {
-        debug_assert!(self.is_obj());
+        debug_assert!(self.is_obj(), "expected an object, found {self:?}");
         unsafe { self.data.as_obj }
     }
 

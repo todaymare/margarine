@@ -16,6 +16,8 @@ pub enum Expr<'a> {
     
     Literal(Literal),
 
+    Paren(ExprId),
+
     Identifier(StringIndex, Option<&'a [DataType<'a>]>),
 
     Range {
