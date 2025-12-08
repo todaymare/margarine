@@ -575,7 +575,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     unsafe extern "C" fn len_list(vm: &mut VM, ret: &mut Reg, _: &mut Status) {
         let list = unsafe { vm.stack.reg(0) };
         let list = unsafe { &mut vm.objs[list.as_obj()] };
-        *ret = Reg::new_int(list.as_list().len() as i64);
+        *ret = Reg::new_int(list.as_list().len() as _);
     }
 
 
@@ -585,7 +585,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         else { panic!("failed to get the epoch") };
 
         let secs = time.as_secs();
-        *ret = Reg::new_int(secs as i64)
+        *ret = Reg::new_int(secs as _)
     }
 
 
@@ -595,7 +595,7 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
         else { panic!("failed to get the epoch") };
 
         let secs = time.subsec_nanos();
-        *ret = Reg::new_int(secs as i64)
+        *ret = Reg::new_int(secs as _)
     }
 
 

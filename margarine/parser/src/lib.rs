@@ -1192,7 +1192,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
         self.advance();
 
-        let rhs = self.logical_and(settings)?;
+        let rhs = self.logical_or(settings)?;
 
         let range = SourceRange::new(self.ast.range(lhs).start(), self.ast.range(rhs).end());
 
@@ -1218,10 +1218,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
         if self.peek_kind() != Some(TokenKind::LogicalAnd) {
             return Ok(lhs)
         }
+
         self.advance();
         self.advance();
 
-        let rhs = self.unary_not(settings)?;
+        let rhs = self.logical_and(settings)?;
 
         let range = SourceRange::new(self.ast.range(lhs).start(), self.ast.range(rhs).end());
 
@@ -1554,7 +1555,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
                 self.expect(TokenKind::RightParenthesis)?;
 
-                Ok(expr)
+                Ok(self.ast.add_expr(
+                    Expr::Paren(expr),
+                    SourceRange::new(start, self.current_range().end()),
+                ))
+
             },
 
 

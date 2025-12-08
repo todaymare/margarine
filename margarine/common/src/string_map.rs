@@ -11,10 +11,6 @@ pub struct StringMap<'a> {
 }
 
 
-unsafe impl Send for StringMap<'_> {}
-unsafe impl Sync for StringMap<'_> {}
-
-
 impl<'str> StringMap<'str> {
     pub const INIT_FUNC : StringIndex = StringIndex(0);
     pub const TRUE : StringIndex = StringIndex(1);

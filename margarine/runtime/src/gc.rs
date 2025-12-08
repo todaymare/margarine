@@ -4,15 +4,14 @@ use crate::{VM, Object, obj_map::{ObjectMap, ObjectData, ObjectIndex}};
 
 impl VM<'_> {
     pub fn run_garbage_collection(&mut self) {
-        return;
-        println!("running gc");
+        //println!("running gc");
         let instant = Instant::now();
         
         self.mark();
         self.sweep();
 
         let elapsed = instant.elapsed();
-        println!("took {elapsed:?} to run gc")
+        //println!("took {elapsed:?} to run gc")
     }
 
 

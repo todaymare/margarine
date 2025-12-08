@@ -18,3 +18,20 @@ use std::assert;
 fn test_root_module() {
     assert(true, "root module test passes");
 }
+
+
+@test
+fn for_loops() {
+    for i in 0..10 { () }
+
+    var x = 0;
+    ()
+}
+
+
+@test
+fn for_loop_break() {
+    for i in 0..10 {
+        if i == 5 { break }
+    }
+}

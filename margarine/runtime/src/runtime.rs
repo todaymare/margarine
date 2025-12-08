@@ -27,6 +27,7 @@ impl<'src> VM<'src> {
                 let cf = CallFrame::new(
                     &self.callstack.src[byte_offset..byte_offset + byte_size],
                     self.stack.bottom,
+                    self.stack.curr - func.argc as usize,
                     func.argc,
                     index as _,
                 );
@@ -54,10 +55,13 @@ impl<'src> VM<'src> {
         unsafe {
         loop {
             //println!(" - {:?} ", &(*self.stack.values)[..self.stack.curr]);
-            //println!("{:?}", );
             //let decode = crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()).unwrap();
             let opcode = self.curr.next();
+            //println!("{:?} - {}", decode.1, self.stack.curr);
             self.cycle += 1;
+
+
+            if self.cycle % 1000000 == 0 { self.run_garbage_collection(); }
             //println!("{:?}", self.stack);
             
             match opcode {
@@ -73,15 +77,21 @@ impl<'src> VM<'src> {
                     let mut ret_value = Reg::new_unit();
                     ret_instr(self, local_count as _, &mut ret_value);
 
-                    if self.callstack.stack.len() == bottom { break; }
-                    let Some(prev_frame) = self.callstack.pop()
-                    else { break; };
-
                     self.stack.set_bottom(self.curr.previous_offset);
 
                     self.stack.curr -= self.curr.argc as usize;
 
+                    assert_eq!(self.stack.curr, self.curr.previous_top);
+
                     self.stack.push(ret_value);
+
+
+                    if self.callstack.stack.len() == bottom { 
+                        break; 
+                    }
+
+                    let Some(prev_frame) = self.callstack.pop()
+                    else { break; };
 
                     self.curr = prev_frame; 
 
@@ -98,6 +108,8 @@ impl<'src> VM<'src> {
                         else { unreachable!() };
                         (*func_index, captures.as_slice())
                     };
+
+                    //println!("calling {}", self.funcs[func_index as usize].name);
 
                     let argc = self.curr.next();
                     
@@ -132,6 +144,7 @@ impl<'src> VM<'src> {
                             let mut call_frame = CallFrame::new(
                                 &self.callstack.src[byte_offset..byte_offset+byte_size],
                                 self.stack.bottom,
+                                self.stack.curr - argc as usize,
                                 argc,
                                 func_index,
                             );
@@ -331,13 +344,13 @@ impl<'src> VM<'src> {
 
                 consts::CastFloatToInt => {
                     let v = self.stack.pop().as_float();
-                    self.stack.push(Reg::new_int(v as i64));
+                    self.stack.push(Reg::new_int(v as _));
                 }
 
 
                 consts::CastBoolToInt => {
                     let v = self.stack.pop().as_bool();
-                    self.stack.push(Reg::new_int(v as i64));
+                    self.stack.push(Reg::new_int(v as _));
                 }
 
 
@@ -406,7 +419,7 @@ impl<'src> VM<'src> {
 
 
                 consts::ConstInt => {
-                    self.stack.push(Reg::new_int(self.curr.next_i64()));
+                    self.stack.push(Reg::new_int(self.curr.next_i64() as _));
                 }
 
 
@@ -823,8 +836,8 @@ impl<'src> VM<'src> {
         }
 
 
-        //debug_assert_eq!(self.stack.top, 1);
-        debug_assert!(self.stack.bottom == 0);
+        assert_eq!(self.stack.bottom, 0);
+        assert_eq!(self.stack.curr, 1);
 
 
         Status::ok()

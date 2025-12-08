@@ -908,6 +908,16 @@ impl Lsp {
                     },
 
 
+                    semantic_analysis::errors::Error::CallOnField { source, .. } => {
+                        (
+                            format!(
+                                "..is a field. add parenthesis around it",
+                            ),
+                            source,
+                        )
+                    },
+
+
                     semantic_analysis::errors::Error::Bypass => return None,
                 };
 

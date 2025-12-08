@@ -19,7 +19,7 @@ fn part1(input: str): str {
         var max_joltage = -1;
         var largest_seen = 0;
 
-        for i, ch in line.chars().enumerate() {
+        for ch in line.chars() {
             if ch == "\n" { continue }
 
             var num = ch.parse::<int>()!;
@@ -29,7 +29,7 @@ fn part1(input: str): str {
             largest_seen = largest_seen.max(num);
         }
 
-        assert(max_joltage >= 10, "max jaltage must be a 2-digit value");
+        assert(max_joltage >= 10, "max joltage must be a 2-digit value");
         sum += max_joltage;
     }
 
@@ -37,50 +37,51 @@ fn part1(input: str): str {
 }
 
 
-fn part2(input: str): str { todo }
+fn part2(input: str): str { 
+    var sum = 0;
+    var k = 12;
 
+    for line in input.lines() {
+        if line.is_empty() { continue }
 
-impl int {
-    fn max(self, oth: int): int {
-        if self > oth { self }
-        else { oth }
-    }
-}
+        var nums = [];
+        var index = -1;
 
+        while nums.len() < k {
+            var largest_seen = -1;
+            var largest_index = index;
+            for i, ch in line.chars().enumerate().skip(index) {
+                if ch == "\n" { continue }
 
-impl str {
-    fn nth(self, n: int): str {
-        extern {
-            fn str_nth(s: str, n: int): str
-        }
+                var num = ch.parse::<int>()!;
 
-        str_nth(self, n)
-    }
-
-
-    fn chars(self): Iter<str> {
-        var chars = Chars { s: self };
-        Iter {
-            next: || {
-                if chars.s.is_empty() {
-                    return none()
+                if num > largest_seen {
+                    largest_seen = num;
+                    largest_index = i+1;
                 }
 
-                if chars.s.len() == 1 {
-                    var s = chars.s;
-                    chars.s = "";
-                    return some(s);
+                // we need enough digits to fill k
+                if i + (k - nums.len()) >= line.len() {
+                    break;
                 }
-
-                var ch, rest = chars.s.split_at(1);
-                chars.s = rest;
-                some(ch)
             }
+
+
+            index = largest_index;
+            assert(largest_seen < 10, "largest seen must be 1-digit");
+            assert(index - 1 + (k - nums.len()) <= line.len(), "we need to have enough digits to fill up to k");
+            nums.push(largest_seen);
         }
+
+        var num = 0;
+        for i, n in nums.iter().enumerate() {
+            num += n * 10.pow(nums.len() - i - 1);
+        }
+
+        sum += num;
     }
+
+    sum.to_str()
 }
 
 
-struct Chars {
-    s: str,
-}

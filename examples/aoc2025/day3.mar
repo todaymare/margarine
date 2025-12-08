@@ -1,0 +1,147 @@
+extern "https://github.com/todaymare/margarine-std" as std;
+use std::*;
+use std::io::read_file;
+
+fn main() {
+    var input = read_file("./examples/aoc2025/day3.txt");
+
+    println(part1(input));
+    println(part2(input));
+}
+
+
+fn create_grid(input: str): [[str]] {
+    var height = input.lines().filter(|n| !n.is_empty()).count();
+    var width = input.lines().__next__()!.len(); // exclude newline
+
+    var grid = [];
+
+    var height = input.lines().filter(|n| !n.is_empty()).count();
+    var width = input.lines().__next__()!.len();
+
+    for line in input.lines() {
+        if line.is_empty() { continue }
+
+        var row = [];
+        for ch in line.chars() {
+            row.push(ch);
+        }
+
+        assert(row.len() == width, "row.len() == width");
+
+        grid.push(row);
+    }
+
+    assert(grid.len() == height, "grid.len() == height");
+
+    grid
+}
+
+
+fn part1(input: str): str {
+    var sum = 0;
+
+    var grid   = create_grid(input);
+    var height = grid.len();
+    var width  = grid[0].len();
+
+    for y in 0..height {
+        for x in 0..width {
+            var cell = grid[y][x];
+
+            // hole
+            if cell == "." {
+                continue
+            }
+            
+
+            var roll_count = 0;
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    if dx == 0 && dy == 0 {
+                        continue
+                    }
+
+                    var nx = x + dx;
+                    var ny = y + dy;
+
+                    if (nx < 0 || nx >= width) || (ny < 0 || ny >= height) {
+                        continue
+                    }
+
+                    var ncell = grid[ny][nx];
+
+                    if ncell == "@" {
+                        roll_count += 1;
+                    }
+                }
+            }
+
+            if roll_count < 4 {
+                sum += 1;
+            }
+        }
+    }
+
+    sum.to_str()
+}
+
+
+fn part2(input: str): str { 
+    var sum = 0;
+
+    var grid   = create_grid(input);
+    var height = grid.len();
+    var width  = grid[0].len();
+
+    loop {
+        var prev_sum = sum;
+        for y in 0..height {
+            for x in 0..width {
+                var cell = grid[y][x];
+
+                // hole
+                if cell == "." {
+                    continue
+                }
+                
+
+                var roll_count = 0;
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        if dx == 0 && dy == 0 {
+                            continue
+                        }
+
+                        var nx = x + dx;
+                        var ny = y + dy;
+
+                        if (nx < 0 || nx >= width) || (ny < 0 || ny >= height) {
+                            continue
+                        }
+
+                        var ncell = grid[ny][nx];
+
+                        if ncell == "@" {
+                            roll_count += 1;
+                        }
+                    }
+                }
+
+                if roll_count < 4 {
+                    grid[y][x] = ".";
+                    sum += 1;
+                }
+            }
+        }
+
+        if prev_sum == sum { break }
+    }
+
+
+    sum.to_str()
+}
+
+
+
+

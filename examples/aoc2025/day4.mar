@@ -1,0 +1,128 @@
+extern "https://github.com/todaymare/margarine-std" as std;
+use std::*;
+use std::io::read_file;
+
+fn main() {
+    var input = read_file("./examples/aoc2025/day4.txt");
+
+    println(part1(input));
+    println(part2(input));
+}
+
+
+
+fn part1(input: str): str {
+    var lines = input.lines();
+    var ranges = [];
+
+    for line in lines {
+        if line.is_empty() { break }
+
+        var min, max = line.split_once("-")!;
+
+        var min : int = min.parse()!;
+        var max : int = max.parse()!;
+
+        ranges.push(min..=max);
+    }
+
+    var fresh_ingredients = 0;
+    for line in lines {
+        var ingredient = line.parse()!;
+
+        if ranges.iter().any(|r| r.contains(ingredient)) {
+            fresh_ingredients += 1;
+        }
+    }
+    
+    fresh_ingredients.to_str()
+}
+
+
+fn part2(input: str): str {
+    var lines = input.lines();
+    var ranges : [Range] = [];
+
+    for line in lines {
+        if line.is_empty() { break }
+
+        var min, max = line.split_once("-")!;
+
+        var min : int = min.parse()!;
+        var max : int = max.parse()!;
+
+        var consumed = false;
+        loop {
+            var changed = false;
+            for range in ranges.iter() {
+                if range.min <= min && max <= range.max { 
+                    consumed = true;
+                    break;
+                }
+
+
+                if range.min < min
+                && min < range.max
+                && range.max < max {
+                    min = range.max + 1;
+                    changed = true;
+                }
+
+
+                if range.max > max
+                && max > range.min
+                && min < range.min {
+                    max = range.min - 1;
+                    changed = true;
+                }
+            }
+
+            if !changed { break }
+            if consumed { break }
+        }
+
+
+        if !consumed { ranges.push(min..max) }
+    }
+
+
+    var count = 0;
+    for range in ranges.iter() {
+        print(range.min);
+        print("..");
+        println(range.max);
+
+        count += range.len() + 1
+    }
+
+    count.to_str()
+}
+
+
+
+impl Range {
+    fn contains(self, num: int): bool {
+        self.min <= num && num < self.max
+    }
+
+
+    fn len(self): int {
+        self.max - self.min
+    }
+}
+
+
+impl<T> Iter<T> {
+    fn any(self, f: fn(T): bool): bool {
+        for val in self {
+            if f(val) { return true }
+        }
+
+        false
+    }
+
+
+    fn all(self, f: fn(T): bool): bool {
+        !self.any(f)
+    }
+}

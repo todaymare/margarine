@@ -95,6 +95,10 @@ fn main() {
             if std::fs::exists("build.lock").unwrap() {
                 std::fs::remove_file("build.lock").unwrap();
             }
+
+            if std::fs::exists("artifacts").unwrap() {
+                std::fs::remove_dir_all("artifacts").unwrap();
+            }
         }
 
 

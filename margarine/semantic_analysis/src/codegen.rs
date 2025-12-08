@@ -626,6 +626,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
     }
 
 
+    /// expects the top of the stack to be the value
     fn resolve_pattern(
         env: &mut Env<'me>, block: &mut Block<'me>,
         pattern: Pattern,
@@ -704,6 +705,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
                 let iter_expr = self.ty_info.expr(expr).unwrap();
                 let iter_fn = {
+                    let env_gens = self.syms.get_gens(env.gens);
+                    let iter_expr = iter_expr.resolve(&[env_gens], self.syms);
                     let sym = iter_expr.sym(self.syms).unwrap();
                     let ns = self.syms.sym_ns(sym);
                     let ns = self.ns.get_ns(ns);
@@ -735,14 +738,14 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 |this, env, block| {
                     block.bytecode.load(iterable as u8);
                     block.bytecode.load(func as u8);
-                    block.bytecode.call_func_ref(1);
+                    block.bytecode.call_func_ref(1); // call __next__
 
                     block.bytecode.copy();
 
                     block.bytecode.load_field(0);
-                    block.bytecode.const_int(0);
+                    block.bytecode.const_int(0); // some = type 0
 
-                    block.bytecode.eq_int();
+                    block.bytecode.eq_int(); // check if it's some
 
                     this.build_ite(env, block,
                     |this, env, block| {
@@ -755,8 +758,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                         Ok(())
                     },
                     |_, env, block| {
-                        block.bytecode.pop();
-
                         let goto = env.loop_brek.unwrap();
                         let mut cont_block = env.next_block();
                         cont_block.terminator = block.terminator;
@@ -769,6 +770,8 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     )?;
                     Ok(())
                 })?;
+
+                block.bytecode.pop();
 
                 env.vars.truncate(len);
             },
@@ -820,6 +823,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                     lexer::Literal::Bool(v) => block.bytecode.const_bool(v as u8),
                 };
             },
+
+
+            parser::nodes::expr::Expr::Paren(e) => return self.expr(env, block, e),
 
 
             parser::nodes::expr::Expr::Identifier(string_index, _) => {
@@ -1373,7 +1379,7 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
 
     fn build_loop(
         &mut self, env: &mut Env<'me>, block: &mut Block<'me>,
-        f: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ErrorId>
+        f: impl FnOnce(&mut Self, &mut Env<'me>, &mut Block<'me>) -> Result<(), ErrorId>,
     ) -> Result<(), ErrorId> {
 
         let mut loop_block = env.next_block();
@@ -1481,6 +1487,9 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 self.expr(env, block, index)?;
                 block.bytecode.store_list();
             }
+
+
+            parser::nodes::expr::Expr::Paren(e) => return self.update_value(env, block, e),
 
 
             parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
