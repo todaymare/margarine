@@ -1,0 +1,87 @@
+extern "https://github.com/todaymare/margarine-std" as std;
+use std::*;
+use std::io::read_file;
+
+fn main() {
+    var input = read_file("./examples/aoc2025/day2.txt");
+
+    println(part1(input));
+    println(part2(input));
+}
+
+
+fn part1(input: str): str {
+    var sum = 0;
+
+    for line in input.lines() {
+        if line.is_empty() { continue }
+
+        var max_joltage = -1;
+        var largest_seen = 0;
+
+        for ch in line.chars().enumerate() {
+            var i, ch = ch;
+            if ch == "\n" { continue }
+
+            var num = ch.parse::<int>()!;
+
+            var joltage = largest_seen * 10 + num;
+            max_joltage = max_joltage.max(joltage);
+            largest_seen = largest_seen.max(num);
+        }
+
+        assert(max_joltage >= 10, "max jaltage must be a 2-digit value");
+        sum += max_joltage;
+    }
+
+    sum.to_str()
+}
+
+
+fn part2(input: str): str { todo }
+
+
+impl int {
+    fn max(self, oth: int): int {
+        if self > oth { self }
+        else { oth }
+    }
+}
+
+
+impl str {
+    fn nth(self, n: int): str {
+        extern {
+            fn str_nth(s: str, n: int): str
+        }
+
+        str_nth(self, n)
+    }
+
+
+    fn chars(self): Iter<str> {
+        var chars = Chars { s: self };
+        Iter {
+            next: || {
+                if chars.s.is_empty() {
+                    return none()
+                }
+
+                if chars.s.len() == 1 {
+                    var s = chars.s;
+                    chars.s = "";
+                    return some(s);
+                }
+
+                var ch, rest = chars.s.split_at(1);
+                chars.s = rest;
+                some(ch)
+            }
+        }
+    }
+}
+
+
+struct Chars {
+    s: str,
+}

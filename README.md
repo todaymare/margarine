@@ -1,6 +1,6 @@
 # margarine
 
-> Imagine a language that feels like Rust, but without the fights I used to lose with the borrow checker
+> Imagine a language that feels like Rust, but without the fights I used to lose with the borrow checker. 
 
 The syntax of margarine is very akin to Rust with iterators, closures, and much more!
 
@@ -30,7 +30,7 @@ extern "https://github.com/todaymare/margarine-std" as std;
 use std::*;
 
 fn main() {
-    print("hello, margarine!");
+    println("hello, margarine!");
 }
 ```
 
@@ -60,7 +60,7 @@ Which just imports everything that the `std` library provides.
 
 ```rs
 fn main() {
-    print("hello, margarine!");
+    println("hello, margarine!");
 }
 ```
 Defines a function named `main`. The CLI runtime assumes the `main` function is the entry-point.  

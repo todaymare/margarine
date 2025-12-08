@@ -891,6 +891,24 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     }
 
 
+    unsafe extern "C" fn str_nth(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
+        let str_id = vm.stack.reg(0).as_obj();
+        let str = vm.objs.get(str_id).as_str();
+
+        let n = vm.stack.reg(1).as_int();
+
+        let s = str.chars().nth(n as usize).unwrap();
+
+        *ret = match vm.new_obj(ObjectData::String(s.to_string().into())) {
+            Ok(v) => v,
+            Err(e) => {
+                *status = Status::err(e);
+                return;
+            },
+        };
+    }
+
+
     unsafe extern "C" fn str_slice(vm: &mut VM, ret: &mut Reg, status: &mut Status) {
         let str_id = vm.stack.reg(0).as_obj();
         let str = vm.objs.get(str_id).as_str();
@@ -1015,5 +1033,6 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("str_len".to_string(), str_len);
     hosts.insert("str_slice".to_string(), str_slice);
     hosts.insert("str_split_once".to_string(), str_split_once);
+    hosts.insert("str_nth".to_string(), str_nth);
     hosts.insert("panic".to_string(), panic);
 }

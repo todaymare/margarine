@@ -3,12 +3,16 @@ use std::*;
 
 
 fn main() {
-    println("Guess the number:");
-    println("Please input your guess.");£
+    loop {
+        println("Guess the number:");
+        println("Please input your guess.");
 
-    var guess = io::read_line()!;
+        var guess = io::read_line()!;
 
-    print("You guessed: ");
-    println(guess);
+        print("You guessed: ");
+        println(guess);
+
+        println(rand::random())
+    }
 }
 
