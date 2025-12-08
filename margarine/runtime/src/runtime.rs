@@ -54,15 +54,10 @@ impl<'src> VM<'src> {
 
         unsafe {
         loop {
-            //println!(" - {:?} ", &(*self.stack.values)[..self.stack.curr]);
-            //let decode = crate::opcode::runtime::OpCode::decode(&mut self.curr.clone()).unwrap();
             let opcode = self.curr.next();
-            //println!("{:?} - {}", decode.1, self.stack.curr);
             self.cycle += 1;
 
-
             if self.cycle % 1000000 == 0 { self.run_garbage_collection(); }
-            //println!("{:?}", self.stack);
             
             match opcode {
                 consts::PushLocalSpace => {
