@@ -63,7 +63,7 @@ fn is_repeated_at_least_twice(n: int): bool {
     }
 
 
-    true
+    false
 }
 
 

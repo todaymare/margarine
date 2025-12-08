@@ -1561,6 +1561,10 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             Expr::AccessField { val, field_name, gens: expr_gens } => {
                 let expr = self.expr(path, scope, val);
 
+                if expr.ty.is_err(&mut self.syms) {
+                    return Err(Error::Bypass)
+                }
+
                 let sym_id = expr.ty.sym(&mut self.syms)?;
                 let sym = self.syms.sym(sym_id);
 
