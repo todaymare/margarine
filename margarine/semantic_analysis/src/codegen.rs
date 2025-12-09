@@ -120,20 +120,6 @@ pub fn run(
         func_sec.push(opcode::func::consts::Func);
         let name = conv.string_map.get(func.name);
 
-        /*
-        println!("Generating function: {} (hits: {}, index: {})", name, func.hits, func.index.0);
-        println!("-----------------------------------");
-        for bb in match &func.kind {
-            FunctionKind::Code { blocks, .. } => &*blocks,
-            _ => [].as_slice(),
-        } {
-            println!("Basic Block {:?}:", bb.index);
-            println!("{:#?}", bb.bytecode);
-            println!("Terminator: {:?}", bb.terminator);
-            println!();
-        }
-        */
-
         // func meta
         func_sec.extend_from_slice(&(name.len() as u32).to_le_bytes());
         func_sec.extend_from_slice(name.as_bytes());
