@@ -1,4 +1,6 @@
 #![feature(try_trait_v2)]
+#![feature(likely_unlikely)]
+#![feature(cold_path)]
 
 #[cfg(not(debug_assertions))]
 use std::marker::PhantomData;
@@ -46,7 +48,6 @@ pub struct VM<'src> {
     pub funcs: Vec<Function<'src>>,
     error_table: &'src [u8],
     pub objs: ObjectMap,
-    pub cycle: usize,
     //jit: JIT,
 }
 
@@ -112,6 +113,7 @@ pub struct FatalError {
 ///
 /// A stack frame
 ///
+#[derive(Clone)]
 struct CallFrame<'me> {
     reader: Reader<'me>,
     
@@ -283,7 +285,6 @@ impl<'src> VM<'src> {
             funcs,
             error_table: errs,
             objs,
-            cycle: 0,
             //jit: JIT::default(),
         })
     }

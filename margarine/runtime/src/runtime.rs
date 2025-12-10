@@ -1,6 +1,6 @@
 use std::{hint::select_unpredictable, ops::Deref};
 
-use crate::{obj_map::{ObjectData, ObjectIndex}, opcode::runtime::consts, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
+use crate::{obj_map::{ObjectData, ObjectIndex}, opcode::runtime::{consts, OpCode}, CallFrame, FatalError, Object, Reader, Reg, Status, VM};
 
 impl<'src> VM<'src> {
     pub fn run(&mut self, func: &str, args: &[Reg]) -> Status {
@@ -11,12 +11,10 @@ impl<'src> VM<'src> {
             self.stack.push(arg);
         }
 
-        self.cycle = 0;
-        let now = std::time::Instant::now();
         let result = self.run_func(*index);
-        println!("ran {} cycles in {:?}. {} MIPS", self.cycle, now.elapsed(), (self.cycle as f64) / (now.elapsed().as_secs_f64() * 1_000_000.0));
         result
     }
+
 
     pub extern "C" fn run_func(&mut self, index: usize) -> Status {
 
@@ -50,45 +48,47 @@ impl<'src> VM<'src> {
 
 
         let prev = std::mem::replace(&mut self.curr, callframe);
+        let mut curr = self.curr.clone();
         let bottom = self.callstack.stack.len();
+        
+        let mut cycles = 0;
 
         unsafe {
         loop {
-            let opcode = self.curr.next();
-            self.cycle += 1;
+            let opcode = curr.next();
+            cycles += 1;
 
-            if self.cycle % 1000000 == 0 { self.run_garbage_collection(); }
+            if core::hint::unlikely(cycles % 1_000_000 == 0) { self.run_garbage_collection(); }
             
             match opcode {
                 consts::PushLocalSpace => {
-                    let amount = self.curr.next();
+                    let amount = curr.next();
                     self.stack.curr += amount as usize;
                 }
 
 
                 consts::Ret => {
-                    let local_count = self.curr.next();
+                    let local_count = curr.next();
 
                     let mut ret_value = Reg::new_unit();
                     ret_instr(self, local_count as _, &mut ret_value);
 
-                    self.stack.set_bottom(self.curr.previous_offset);
+                    self.stack.set_bottom(curr.previous_offset);
 
-                    self.stack.curr -= self.curr.argc as usize;
+                    self.stack.curr -= curr.argc as usize;
 
-                    assert_eq!(self.stack.curr, self.curr.previous_top);
+                    //assert_eq!(self.stack.curr, curr.previous_top);
 
                     self.stack.push(ret_value);
 
-
-                    if self.callstack.stack.len() == bottom { 
+                    if core::hint::unlikely(self.callstack.stack.len() == bottom) { 
                         break; 
                     }
 
                     let Some(prev_frame) = self.callstack.pop()
-                    else { break; };
+                    else { core::hint::cold_path(); break; };
 
-                    self.curr = prev_frame; 
+                    curr = prev_frame; 
 
                 },
 
@@ -106,7 +106,7 @@ impl<'src> VM<'src> {
 
                     //println!("calling {}", self.funcs[func_index as usize].name);
 
-                    let argc = self.curr.next();
+                    let argc = curr.next();
                     
                     // 
                     // prepare the call frame
@@ -146,7 +146,7 @@ impl<'src> VM<'src> {
 
                             self.stack.set_bottom(self.stack.curr - argc as usize);
 
-                            core::mem::swap(&mut self.curr, &mut call_frame);
+                            core::mem::swap(&mut curr, &mut call_frame);
 
                             self.callstack.push(call_frame);
                         },
@@ -180,9 +180,9 @@ impl<'src> VM<'src> {
 
 
                 consts::Err => {
-                    let ty = self.curr.next();
-                    let file = self.curr.next_u32();
-                    let index = self.curr.next_u32();
+                    let ty = curr.next();
+                    let file = curr.next_u32();
+                    let index = curr.next_u32();
 
                     if ty == 3 {
                         panic!("a bypass error was reached. uh oh");
@@ -222,7 +222,7 @@ impl<'src> VM<'src> {
 
 
                 consts::CreateFuncRef => {
-                    let capture_count = self.curr.next();
+                    let capture_count = curr.next();
                     let func = self.stack.pop().as_int() as u32;
 
                     if capture_count == 0 {
@@ -248,7 +248,7 @@ impl<'src> VM<'src> {
 
 
                 consts::CreateStruct => {
-                    let field_count = self.curr.next();
+                    let field_count = curr.next();
                     let mut vec = Vec::with_capacity(field_count as usize);
 
                     for _ in 0..field_count {
@@ -267,7 +267,7 @@ impl<'src> VM<'src> {
 
 
                 consts::CreateList => {
-                    let field_count = self.curr.next_u32();
+                    let field_count = curr.next_u32();
                     let mut vec = Vec::with_capacity(field_count as usize);
 
                     for _ in 0..field_count {
@@ -312,7 +312,7 @@ impl<'src> VM<'src> {
 
 
                 consts::LoadField => {
-                    let index = self.curr.next();
+                    let index = curr.next();
                     let val = self.stack.pop();
                     let obj_index = val.as_obj();
                     let obj = &self.objs[obj_index];
@@ -322,7 +322,7 @@ impl<'src> VM<'src> {
 
 
                 consts::StoreField => {
-                    let index = self.curr.next();
+                    let index = curr.next();
                     let target = self.stack.pop();
                     let val = self.stack.pop();
                     let obj_index = target.as_obj();
@@ -381,7 +381,7 @@ impl<'src> VM<'src> {
 
 
                 consts::LoadEnumField => {
-                    let index = self.curr.next_u32();
+                    let index = curr.next_u32();
                     let val = self.stack.pop();
                     let obj_index = val.as_obj();
                     let obj = &self.objs[obj_index];
@@ -414,22 +414,22 @@ impl<'src> VM<'src> {
 
 
                 consts::ConstInt => {
-                    self.stack.push(Reg::new_int(self.curr.next_i64() as _));
+                    self.stack.push(Reg::new_int(curr.next_i64() as _));
                 }
 
 
                 consts::ConstFloat => {
-                    self.stack.push(Reg::new_float(self.curr.next_f64()));
+                    self.stack.push(Reg::new_float(curr.next_f64()));
                 }
 
 
                 consts::ConstBool => {
-                    self.stack.push(Reg::new_bool(self.curr.next() == 1));
+                    self.stack.push(Reg::new_bool(curr.next() == 1));
                 }
 
 
                 consts::ConstStr => {
-                    let index = self.curr.next_u32();
+                    let index = curr.next_u32();
                     self.stack.push(Reg::new_obj(ObjectIndex::new(index as _)));
                 }
 
@@ -773,7 +773,7 @@ impl<'src> VM<'src> {
 
 
                 consts::Load => {
-                    let reg = self.curr.next();
+                    let reg = curr.next();
                     let val = self.stack.reg(reg);
 
                     self.stack.push(val);
@@ -781,7 +781,7 @@ impl<'src> VM<'src> {
 
 
                 consts::Store => {
-                    let reg = self.curr.next();
+                    let reg = curr.next();
                     let data = self.stack.pop();
 
 
@@ -795,33 +795,33 @@ impl<'src> VM<'src> {
 
 
                 consts::Jump => {
-                    let offset = self.curr.next_i32();
+                    let offset = curr.next_i32();
 
-                    self.curr.offset(offset);
+                    curr.offset(offset);
                 }
 
 
                 consts::SwitchOn => {
-                    let t = self.curr.next_i32();
-                    let f = self.curr.next_i32();
+                    let t = curr.next_i32();
+                    let f = curr.next_i32();
 
                     let val = self.stack.pop().as_bool();
                     let offset = select_unpredictable(val, t, f);
-                    self.curr.offset(offset);
+                    curr.offset(offset);
                 }
 
 
                 consts::Switch => {
                     let index = self.stack.pop().as_int() as u32;
-                    let byte_size = self.curr.next_u32();
+                    let byte_size = curr.next_u32();
                     let count = byte_size / 4;
                     debug_assert!(index < count);
 
-                    self.curr.next_slice(index as usize * 4);
+                    curr.next_slice(index as usize * 4);
 
-                    let offset = self.curr.next_i32();
+                    let offset = curr.next_i32();
 
-                    self.curr.offset(offset as i32);
+                    curr.offset(offset as i32);
                 }
 
 
@@ -833,7 +833,6 @@ impl<'src> VM<'src> {
 
         assert_eq!(self.stack.bottom, 0);
         assert_eq!(self.stack.curr, 1);
-
 
         Status::ok()
     }
