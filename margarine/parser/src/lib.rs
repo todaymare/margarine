@@ -1409,6 +1409,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn accessors(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
         let mut result = self.atom(settings)?;
 
+        if self.current_is(TokenKind::SemiColon) { return Ok(result) }
+
         while 
             self.peek_kind() == Some(TokenKind::Dot) 
             || self.peek_kind() == Some(TokenKind::Bang)

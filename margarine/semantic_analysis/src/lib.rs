@@ -18,6 +18,7 @@ pub mod errors;
 pub mod analysis;
 pub mod syms;
 pub mod codegen;
+pub mod llvm_codegen;
 
 pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     output      : &'out Arena,

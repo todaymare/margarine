@@ -1,6 +1,6 @@
-use std::{ffi::CStr, ops::Deref, ptr::{null_mut, NonNull}};
+use std::{ffi::CStr, ops::Deref, ptr::{null, null_mut, NonNull}};
 
-use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMConstStructInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleType, LLVMDoubleTypeInContext, LLVMFloatType, LLVMFloatTypeInContext, LLVMGetDataLayout, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMVoidTypeInContext}, target::{LLVMGetModuleDataLayout, LLVMPointerSize, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineRef}, LLVMContext};
+use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMConstStructInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleType, LLVMDoubleTypeInContext, LLVMFloatType, LLVMFloatTypeInContext, LLVMGetDataLayout, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMVoidTypeInContext}, target::{LLVMGetModuleDataLayout, LLVMPointerSize, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineRef}, LLVMContext};
 use sti::{arena::Arena, format_in};
 
 use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{array::Array, bool::Bool, fp::FP, int::Integer, strct::Struct, string::StringValue, unit::Unit, Value}};
@@ -22,18 +22,20 @@ pub struct ContextImpl<'me> {
     bool: BoolTy<'me>,
     unit: UnitTy<'me>,
     void: Void<'me>,
+    pub arena: &'me Arena,
 }
 
 
 impl<'ctx> Context<'ctx> {
-    pub fn new() -> Self {
-        Self(ContextRef(ContextImpl::new()))
+    pub fn new(arena: &'ctx Arena) -> Self {
+        Self(ContextRef(ContextImpl::new(arena)))
     }
 }
 
 
 impl<'me> ContextImpl<'me> {
-    fn new() -> Self {
+    fn new(arena: &'me Arena) -> Self {
+        println!("hiii?");
         unsafe { LLVM_InitializeAllTargets() };
         unsafe { LLVM_InitializeAllTargetInfos() };
         unsafe { LLVM_InitializeAllTargetMCs() };
@@ -53,8 +55,8 @@ impl<'me> ContextImpl<'me> {
                 panic!("{}", cstr.to_str().unwrap());
             }
 
-            unsafe { LLVMCreateTargetMachine(target, tt, "".as_ptr() as _,
-                                     "".as_ptr() as _,
+            unsafe { LLVMCreateTargetMachine(target, tt, c"".as_ptr() as _,
+                                     c"".as_ptr() as _,
                                      llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
                                      llvm_sys::target_machine::LLVMRelocMode::LLVMRelocDefault,
                                      llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault) }
@@ -74,7 +76,7 @@ impl<'me> ContextImpl<'me> {
         let bool = NonNull::new(bool).expect("failed to create a bool type");
         let bool = unsafe { BoolTy::new(Type::new(bool)) };
 
-        let unit = unsafe { LLVMIntTypeInContext(ptr, 1) };
+        let unit = unsafe { LLVMStructTypeInContext(ptr, null_mut(), 0, 0) };
         let unit = NonNull::new(unit).expect("failed to create a unit type");
         let unit = unsafe { UnitTy::new(Type::new(unit)) };
 
@@ -82,14 +84,14 @@ impl<'me> ContextImpl<'me> {
         let void = NonNull::new(void).expect("failed to create a void type");
         let void = unsafe { Void::new(Type::new(void)) };
 
-        Self { ptr: ctx, f32, f64, bool, unit, void, target_machine: tm }
+        Self { ptr: ctx, f32, f64, bool, unit, void, target_machine: tm, arena }
     }
     
 
     pub fn module(&self, name: &str) -> Module<'me> {
         assert!(!name.contains('\0'), "the module name can't contain null bytes");
 
-        let pool = Arena::tls_get_temp();
+        let pool = self.arena;
         let name = sti::format_in!(&*pool, "{name}\0");
 
         let module = unsafe { LLVMModuleCreateWithNameInContext(name.as_ptr() as *const i8,
@@ -97,7 +99,7 @@ impl<'me> ContextImpl<'me> {
 
         let module = NonNull::new(module).expect("failed to create a module");
 
-        Module::new(module)
+        Module::new(module, self.arena)
     }
 
         
@@ -133,7 +135,7 @@ impl<'me> ContextImpl<'me> {
 
     pub fn structure(&self, name: &str) -> StructTy<'me> {
         assert!(!name.contains('\0'));
-        let pool = Arena::tls_get_temp();
+        let pool = self.arena;
         let name = format_in!(&*pool, "{name}\0");
 
         let ptr = unsafe { LLVMStructCreateNamed(self.ptr.as_ptr(),
@@ -145,7 +147,7 @@ impl<'me> ContextImpl<'me> {
 
     pub fn union(&self, name: &str) -> UnionTy<'me> {
         assert!(!name.contains('\0'));
-        let pool = Arena::tls_get_temp();
+        let pool = self.arena;
         let name = format_in!(&*pool, "{name}\0");
 
         let ptr = unsafe { LLVMStructCreateNamed(self.ptr.as_ptr(),
@@ -174,17 +176,18 @@ impl<'me> ContextImpl<'me> {
 
 
     pub fn const_unit(&self) -> Unit<'me> {
-        let ptr = unsafe { LLVMConstInt(LLVMIntTypeInContext(self.ptr.as_ptr(), 1), 0, 0) };
-        let ptr = NonNull::new(ptr).unwrap();
-        let ptr = Value::new(ptr);
-        unsafe { Unit::new(ptr) }
+        let strct = unsafe { LLVMConstNamedStruct(self.unit.llvm_ty().as_ptr(), null_mut(), 0) };
+        unsafe { Unit::new(Value::new(NonNull::new(strct).unwrap())) }
     }
 
 
     pub fn const_array(&self, ty: Type<'me>, vals: &[Value<'me>]) -> Array<'me> {
-        let pool = Arena::tls_get_rec();
+        let pool = self.arena;
         let mut vec = sti::vec::Vec::with_cap_in(&*pool, vals.len());
-        for v in vals { assert_eq!(ty, v.ty()); vec.push(unsafe { v.llvm_val().as_ptr() }) }
+        for v in vals {
+            assert_eq!(ty, v.ty());
+            vec.push(unsafe { v.llvm_val().as_ptr() });
+        }
 
         let ptr = unsafe { LLVMConstArray2(ty.llvm_ty().as_ptr(), vec.as_mut_ptr(), vec.len() as u64) };
         let ptr = NonNull::new(ptr).unwrap();
@@ -233,9 +236,9 @@ impl<'me> ContextImpl<'me> {
         assert!(!ty.is_opaque(), "can't create a non-opaque type");
         assert_eq!(ty.fields_count(), fields.len());
 
-        let arena = Arena::tls_get_rec();
+        let arena = self.arena;
         for (f, sf) in fields.iter().zip(ty.fields(&*arena)) {
-            assert_eq!(f.ty(), sf);
+            assert_eq!(f.ty(), sf.1);
         }
 
 

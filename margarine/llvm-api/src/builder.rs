@@ -1,12 +1,12 @@
 use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFPCast, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetParam, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
-use sti::{arena::Arena, define_key, keyed::KVec};
+use llvm_sys::{core::{LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetParam, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
+use sti::{arena::Arena, define_key, vec::KVec};
 
 use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
 
 
-define_key!(u32, pub Local);
+define_key!(pub Local(u32));
 
 
 #[derive(Debug, Clone, Copy)]
@@ -28,6 +28,7 @@ pub struct Builder<'ctx> {
     entry  : NonNull<LLVMBasicBlock>,
     argc   : usize,
     locals : KVec<Local, (Ptr<'ctx>, Type<'ctx>)>,
+    arena  : Arena,
 }
 
 
@@ -54,6 +55,7 @@ impl<'ctx> Builder<'ctx> {
             entry,
             argc: ty.argument_count(),
             ctx,
+            arena: Arena::new(),
         };
 
 
@@ -107,7 +109,7 @@ impl<'ctx> Builder<'ctx> {
 
     pub fn unreachable(&self) {
         unsafe { LLVMBuildUnreachable(self.ptr.as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), "".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
     
@@ -136,14 +138,14 @@ impl<'ctx> Builder<'ctx> {
 
     pub fn loop_continue(&mut self, l: Loop) {
         unsafe { LLVMBuildBr(self.ptr.as_ptr(), l.body_bb.as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), "".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
 
 
     pub fn loop_break(&mut self, l: Loop) {
         unsafe { LLVMBuildBr(self.ptr.as_ptr(), l.cont_bb.as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), "".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
 
@@ -205,7 +207,7 @@ impl<'ctx> Builder<'ctx> {
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), self.prelude.as_ptr()) };
         let ptr = unsafe { LLVMBuildAlloca(self.ptr.as_ptr(),
                                             ty.llvm_ty().as_ptr(),
-                                            "".as_ptr().cast()) };
+                                            c"".as_ptr().cast()) };
 
         // switch back to the original position
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
@@ -298,11 +300,17 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
+    pub fn ptr_null(&self) -> Ptr<'ctx> {
+        let value = unsafe { LLVMConstNull(self.ctx.ptr().llvm_ty().as_ptr()) };
+        unsafe { Ptr::new(Value::new(NonNull::new(value).unwrap())) }
+    }
+
+
     pub fn struct_instance(&self, ty: StructTy<'ctx>, fields: &[Value<'ctx>]) -> Struct<'ctx> {
         assert!(!ty.is_opaque(), "can't create a non-opaque type");
         assert_eq!(ty.fields_count(), fields.len());
 
-        let arena = Arena::tls_get_temp();
+        let arena = &self.arena;
         let ptr = self.alloca(*ty);
         for (i, (sf, ff)) in ty.fields(&*arena).iter().zip(fields.iter()).enumerate() {
             assert_eq!(*sf, ff.ty());
@@ -365,7 +373,7 @@ impl<'ctx> Builder<'ctx> {
 
 
     pub fn mul_fp(&self, lhs: FP<'ctx>, rhs: FP<'ctx>) -> FP<'ctx> {
-        unsafe { FP::new(self.internal_call(LLVMBuildMul, lhs, rhs, cstr!("mulfp"))) }
+        unsafe { FP::new(self.internal_call(LLVMBuildFMul, lhs, rhs, cstr!("mulfp"))) }
     }
 
 
@@ -425,6 +433,11 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
+    pub fn bool_and(&self, lhs: Bool<'ctx>, rhs: Bool<'ctx>) -> Bool<'ctx> {
+        unsafe { Bool::new(*self.and(lhs.as_integer(), rhs.as_integer())) }
+    }
+
+
     pub fn bool_ne(&self, lhs: Bool<'ctx>, rhs: Bool<'ctx>) -> Bool<'ctx> {
         self.cmp_int(lhs.as_integer(), rhs.as_integer(), IntCmp::Ne)
     }
@@ -474,9 +487,27 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
+
+    pub fn si_to_fp(&self, from: Integer<'ctx>, to: Type<'ctx>) -> Value<'ctx> {
+        let ptr = unsafe { LLVMBuildSIToFP(self.ptr.as_ptr(), from.llvm_val().as_ptr(),
+                                             to.llvm_ty().as_ptr(),
+                                             cstr!("icast")) };
+
+        Value::new(NonNull::new(ptr).unwrap())
+    }
+
+
     pub fn fp_cast(&self, from: FP<'ctx>, to: Type<'ctx>) -> Value<'ctx> {
         let ptr = unsafe { LLVMBuildFPCast(self.ptr.as_ptr(), from.llvm_val().as_ptr(),
                                              to.llvm_ty().as_ptr(), cstr!("fcast")) };
+
+        Value::new(NonNull::new(ptr).unwrap())
+    }
+
+
+    pub fn fp_to_si(&self, from: FP<'ctx>, to: IntegerTy<'ctx>) -> Value<'ctx> {
+        let ptr = unsafe { LLVMBuildFPToSI(self.ptr.as_ptr(), from.llvm_val().as_ptr(),
+                                             to.llvm_ty().as_ptr(), cstr!("fp_to_si")) };
 
         Value::new(NonNull::new(ptr).unwrap())
     }
@@ -499,9 +530,9 @@ impl<'ctx> Builder<'ctx> {
                                                cstr!("field_load")) };
 
         let ptr = unsafe { Ptr::new(Value::new(NonNull::new(ptr).unwrap())) };
-        let arena = Arena::tls_get_rec();
+        let arena = &self.arena;
         let arr = lhs.ty().fields(&*arena);
-        self.load(ptr, arr[index])
+        self.load(ptr, arr[index as u32])
     }
 
 
@@ -510,7 +541,19 @@ impl<'ctx> Builder<'ctx> {
                                                ty.llvm_ty().as_ptr(),
                                                lhs.llvm_val().as_ptr(),
                                                index as u32,
-                                               cstr!("field_load")) };
+                                               cstr!("field_ptr")) };
+
+        unsafe { Ptr::new(Value::new(NonNull::new(ptr).unwrap())) }
+    }
+
+
+    pub fn gep(&self, lhs: Ptr<'ctx>, ty: Type<'ctx>, index: Integer<'ctx>) -> Ptr<'ctx> {
+        let ptr = unsafe { LLVMBuildGEP2(self.ptr.as_ptr(),
+                                         ty.llvm_ty().as_ptr(),
+                                         lhs.llvm_val().as_ptr(),
+                                         &mut index.llvm_val().as_ptr(),
+                                         1,
+                                         cstr!("gep")) };
 
         unsafe { Ptr::new(Value::new(NonNull::new(ptr).unwrap())) }
     }
@@ -518,14 +561,14 @@ impl<'ctx> Builder<'ctx> {
 
     pub fn ret(&self, val: Value<'ctx>) {
         unsafe { LLVMBuildRet(self.ptr.as_ptr(), val.llvm_val().as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), "".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
 
 
     pub fn ret_void(&self) {
         unsafe { LLVMBuildRetVoid(self.ptr.as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), "".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
 
@@ -542,12 +585,13 @@ impl<'ctx> Builder<'ctx> {
     }
 
     pub fn call(&self, func: FunctionPtr<'ctx>, func_ty: FunctionType<'ctx>, args: &[Value<'ctx>]) -> Value<'ctx> {
+        assert_eq!(func_ty.args().len(), args.len());
         for (af, aa) in func_ty.args().iter().zip(args.iter()) {
             assert_eq!(*af, aa.ty());
         }
 
         let is_void = func_ty.ret().kind() == TypeKind::Void;
-        let name = if is_void { "".as_ptr() as *const i8 }
+        let name = if is_void { c"".as_ptr() as *const i8 }
                    else { cstr!("name") };
 
         let ptr = unsafe { LLVMBuildCall2(self.ptr.as_ptr(), func_ty.llvm_ty().as_ptr(),

@@ -8,19 +8,19 @@ use crate::{cstr, info::Message, tys::{func::FunctionType, Type}, values::{func:
 #[derive(Clone, Copy)]
 pub struct Module<'ctx> {
     pub(crate) ptr: NonNull<LLVMModule>,
-    phantom: PhantomData<&'ctx ()>
+    arena: &'ctx Arena,
 }
 
 impl<'ctx> Module<'ctx> {
-    pub fn new(ptr: NonNull<LLVMModule>) -> Self {
-        Self { ptr, phantom: PhantomData }
+    pub fn new(ptr: NonNull<LLVMModule>, arena: &'ctx Arena) -> Self {
+        Self { ptr, arena }
     }
 
 
     pub fn function(&self, name: &str, ty: FunctionType<'ctx>) -> FunctionPtr<'ctx> {
         assert!(!name.contains('\0'), "the function name can't contain null bytes");
 
-        let pool = Arena::tls_get_temp();
+        let pool = self.arena;
         let name = sti::format_in!(&*pool, "{name}\0");
 
         let func = unsafe { LLVMAddFunction(self.ptr.as_ptr(),
@@ -36,7 +36,7 @@ impl<'ctx> Module<'ctx> {
     pub fn add_global(&self, ty: Type<'ctx>, name: &str) -> GlobalPtr<'ctx> {
         assert!(!name.contains('\0'), "the function name can't contain null bytes");
 
-        let pool = Arena::tls_get_temp();
+        let pool = self.arena;
         let name = sti::format_in!(&*pool, "{name}\0");
 
         let ptr = unsafe { LLVMAddGlobal(self.ptr.as_ptr(), ty.llvm_ty().as_ptr(), name.as_ptr() as *const i8) };

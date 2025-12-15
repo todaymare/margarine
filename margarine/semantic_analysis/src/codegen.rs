@@ -1266,7 +1266,6 @@ impl<'me, 'out, 'ast, 'str> Conversion<'me, 'out, 'ast, 'str> {
                 // @todo performance
                 let captured = self.syms.closure(closure).captured_variables.clone();
 
-
                 let mut hash = FxHasher64::new();
                 for capture in &captured {
                     let ty = capture.1.resolve(&[env_gens], self.syms);

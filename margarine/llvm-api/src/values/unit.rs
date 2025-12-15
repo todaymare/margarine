@@ -12,7 +12,7 @@ impl<'ctx> Unit<'ctx> {
     /// # Safety
     /// Undefined behaviour if the value isn't a function
     pub unsafe fn new(val: Value<'ctx>) -> Self {
-        debug_assert_eq!(val.ty().kind(), TypeKind::Integer);
+        debug_assert_eq!(val.ty().kind(), TypeKind::Struct);
 
         Self(val)
     }

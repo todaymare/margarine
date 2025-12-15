@@ -1,17 +1,89 @@
-extern "https://github.com/todaymare/margarine-std" as std;
-
-use std::*;
-
-mod hello_world;
+extern { fn print_int(i: int) }
 
 fn main() {
-    test();
+    print_int(69);
+    var i = 0;
+
+    while i < 10 {
+        print_int(i);
+        i += 1;
+    }
+
+    var i = Bar { count: i };
+
+    while i.count < 20 {
+        print_int(i.count);
+        i.count += 1;
+    }
+
+    var test = some(i.count);
+
+    while test! < 30 {
+        print_int(test!);
+        test! += 1;
+    }
+
+
+    var test = Test { bar: test };
+
+    while test.bar! < 40 {
+        print_int(test.bar!);
+        test.bar! += 1;
+    }
+
+    var test = Hey::Foo(Bar { count: test.bar! });
+    while test.Foo!.count < 50 {
+        print_int(test.Foo!.count);
+        test.Foo!.count += 1;
+    }
+
+    var test = Test { bar: some(test.Foo!.count) };
+
+    while test.bar.some! < 60 {
+        print_int(test.bar.some!);
+        test.bar.some! += 1;
+    }
+
+    print_int(false as int);
+    print_int(3.4 as int);
+
+    match test.bar {
+        some: val => print_int(val),
+        none => print_int(67),
+    };
+
+
+    (3.0, 5, false);
+    print_int([5, 3, 4, 7][3]);
+
+    var a = 6;
+    var x = hey();
+    x(5);
 }
 
-fn test() {
-    println("Hello, Margaine!");
+
+
+fn hey(): fn(int) {
+    |a| print_int(a)
 }
 
-fn hello() {
-    println("Hello, World!");
+
+struct Foo {
+    bar: Bar,
+    count: int,
+}
+
+
+struct Test {
+    bar: Option<int>,
+}
+
+
+struct Bar { count: int }
+
+
+enum Hey {
+    Foo: Bar,
+    Hey: Hey,
+    Bar,
 }

@@ -18,6 +18,7 @@ pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
 use runtime::obj_map::ObjectData;
 use semantic_analysis::codegen;
+use semantic_analysis::llvm_codegen;
 use semantic_analysis::syms::sym_map::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
@@ -379,12 +380,23 @@ impl<'me> CompilationResult<'me> {
             sema_errors.push(report);
         } 
 
+        /*
         codegen::run(
             &mut comp.string_map, &mut self.syms, 
             &mut self.namespaces, &mut self.ast,
             &mut self.ty_info, [lex_error_files, parse_error_files, vec![sema_errors]],
             &self.startups
-        )
+        )*/
+
+        llvm_codegen::run(
+            &mut comp.string_map, &mut self.syms, 
+            &mut self.namespaces, &mut self.ast,
+            &mut self.ty_info, [lex_error_files, parse_error_files, vec![sema_errors]],
+            self.file_offsets.len() as u32,
+            &self.startups
+        );
+
+        todo!()
     }
 }
 

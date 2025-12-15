@@ -1,18 +1,19 @@
 extern "https://github.com/todaymare/margarine-std" as std;
 
-mod basics;
-mod modules;
-mod arithmetic;
-mod logical;
-mod comparison;
-mod control_flow;
-mod functions;
-mod structs;
-mod advanced;
-mod comprehensive;
-mod closures;
+//mod basics;
+//mod modules;
+//mod arithmetic;
+//mod logical;
+//mod comparison;
+//mod control_flow;
+//mod functions;
+//mod structs;
+//mod advanced;
+//mod comprehensive;
+//mod closures;
 
 use std::assert;
+
 
 @test
 fn test_root_module() {

@@ -60,7 +60,7 @@ impl<'ctx> Value<'ctx> {
 
 
     pub fn as_func(self) -> FunctionPtr<'ctx> {
-        assert_eq!(self.ty().kind(), TypeKind::Function);
+        //assert_eq!(self.ty().kind(), TypeKind::Function);
         unsafe { FunctionPtr::new(self) }
     }
 

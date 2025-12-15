@@ -54,7 +54,9 @@ impl<'ctx> StructTy<'ctx> {
 
         let args = {
             let mut vec = sti::vec::Vec::with_cap_in(arena, argc);
-            for i in args { vec.push(Type::new(NonNull::new(i).unwrap())) };
+            for (_, i) in args {
+                vec.push(Type::new(NonNull::new(i).unwrap())); 
+            };
             vec
         };
 

@@ -235,7 +235,7 @@ impl<'me> Generic<'me> {
                     .copied()
                     .map(|x| x.1)
                     .expect(&format!("COMPILER ERROR: a generic name can't be missing as \
-                            if it was the case it would've been a custom type. {v:?}")))
+                            if it was the case it would've been a custom type. {v:?}. {gens:?}")))
             },
 
 

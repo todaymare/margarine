@@ -13,7 +13,7 @@ pub mod string;
 use std::{marker::PhantomData, ptr::NonNull};
 
 use llvm_sys::{core::{LLVMFunctionType, LLVMGetTypeKind, LLVMPrintTypeToString, LLVMTypeIsSized}, target::{LLVMABISizeOfType, LLVMGetModuleDataLayout}, LLVMType};
-use sti::{arena::Arena, traits::FromIn};
+use sti::{arena::Arena, ext::FromIn};
 
 use crate::{info::Message, module::Module};
 
@@ -60,8 +60,7 @@ impl<'ctx> Type<'ctx> {
     }
 
 
-    pub fn fn_ty(self, args: &[Type<'ctx>], is_variadic: bool) -> FunctionType<'ctx> {
-        let pool = Arena::tls_get_temp();
+    pub fn fn_ty(self, pool: &'ctx Arena, args: &[Type<'ctx>], is_variadic: bool) -> FunctionType<'ctx> {
         let mut args = sti::vec::Vec::from_in(&*pool, args.iter().map(|x| x.ptr.as_ptr()));
 
         let ty = unsafe { LLVMFunctionType(self.ptr.as_ptr(),
@@ -80,9 +79,12 @@ impl<'ctx> Type<'ctx> {
     }
 
 
+    /// returns the size of the type in bytes
     pub fn size_of(self, module: Module<'ctx>) -> Option<usize> {
         let dl = unsafe { LLVMGetModuleDataLayout(module.ptr.as_ptr()) };
         if dl.is_null() { panic!("data layout is not set"); }
+
+        dbg!(self);
 
         if !self.is_sized() { return None };
         Some(unsafe { LLVMABISizeOfType(dl, self.ptr.as_ptr()) as usize })
@@ -142,8 +144,7 @@ impl<'ctx> Type<'ctx> {
 
 
     pub fn as_unit(self) -> UnitTy<'ctx> {
-        assert_eq!(self.kind(), TypeKind::Integer);
-        assert_eq!(self.as_integer().bit_size(), 1);
+        assert_eq!(self.kind(), TypeKind::Struct);
         unsafe { UnitTy::new(self) }
     }
 

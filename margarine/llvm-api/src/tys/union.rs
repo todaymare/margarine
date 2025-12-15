@@ -29,20 +29,19 @@ impl<'ctx> UnionTy<'ctx> {
     pub fn set_fields(self, ctx: ContextRef<'ctx>, module: Module<'ctx>, fields: &[Type<'ctx>]) {
         assert!(self.is_opaque());
 
-        let index_ty = ctx.integer(fields.len().count_ones().next_power_of_two());
-
         let mut max = 0;
 
+        dbg!(fields);
         for ty in fields {
             max = max.max(ty.size_of(module).unwrap());
         }
 
-        let unit = ctx.integer(8);
-        let array = ctx.array(*unit, max);
+        let array = ctx.integer(max as u32 * 8);
+        dbg!(array);
 
         unsafe { LLVMStructSetBody(self.llvm_ty().as_ptr(),
-                                   [index_ty.llvm_ty().as_ptr(), array.llvm_ty().as_ptr()].as_mut_ptr(),
-                                   2, 0) };
+                                   [array.llvm_ty().as_ptr()].as_mut_ptr(),
+                                   1, 0) };
     }
 }
 

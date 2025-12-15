@@ -12,7 +12,7 @@ impl<'ctx> UnitTy<'ctx> {
     /// # Safety
     /// Undefined behaviour if `ty` isn't a unit type
     pub unsafe fn new(ty: Type<'ctx>) -> Self {
-        debug_assert!(matches!(ty.kind(), TypeKind::Integer));
+        debug_assert!(matches!(ty.kind(), TypeKind::Struct));
 
         Self(ty)
     }

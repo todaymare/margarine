@@ -22,20 +22,31 @@ impl Sym {
 
     pub fn resolve(self, env_gens: &[&[(StringIndex, Sym)]], map: &mut SymbolMap) -> Sym {
         let ty = self.instantiate(map, 0);
+
         let func_gens = map.get_gens(ty.gens(map));
 
         let mut new_gens = sti::vec::Vec::with_cap_in(map.arena(), func_gens.len());
         for (name, sym) in func_gens {
+            dbg!(sym);
             let sym_id = sym.sym(map).unwrap();
-            let sym_name = map.sym(sym_id).name;
+            let sym_data = map.sym(sym_id);
 
-            let mut iter = env_gens.iter().map(|x| x.iter()).flatten();
 
-            let sym =
+            let ty = 
+            if let SymbolKind::Container(cont) = sym_data.kind()
+            && cont.kind() == ContainerKind::Generic {
+                let sym_name = sym_data.name;
+                let mut iter = env_gens.iter().map(|x| x.iter()).flatten();
+
                 iter
-                .find(|x| x.0 == sym_name)
-                .map(|x| x.1).unwrap_or(*sym);
+                    .find(|x| x.0 == sym_name)
+                    .map(|x| x.1)
+            } else {
+                None
+            };
 
+
+            let sym = ty.unwrap_or(*sym);
             let sym = sym.resolve(env_gens, map);
 
             new_gens.push((*name, sym));
@@ -43,33 +54,47 @@ impl Sym {
 
         let gens = map.add_gens(new_gens.leak());
         let sym = ty.sym(map).unwrap();
-        let ty = Sym::Ty(sym, gens);
+
+        let sym_data = map.sym(sym);
+
+        let ty = 
+        if let SymbolKind::Container(cont) = sym_data.kind()
+        && cont.kind() == ContainerKind::Generic {
+            let sym_name = sym_data.name;
+            let mut iter = env_gens.iter().map(|x| x.iter()).flatten();
+
+            iter
+                .find(|x| x.0 == sym_name)
+                .map(|x| x.1.resolve(env_gens, map))
+        } else {
+            None
+        };
+
+
+
+        let ty = ty.unwrap_or(Sym::Ty(sym, gens));
 
         ty
     }
 
 
-    pub fn is_resolved(self, map: &mut SymbolMap) -> bool {
+    pub fn is_resolved(self, map: &SymbolMap) -> bool {
         match self {
             Sym::Ty(symbol_id, gen_list_id) => {
                 if let SymbolKind::Container(cont) = map.sym(symbol_id).kind()
                 && let ContainerKind::Generic = cont.kind() {
-                    dbg!(cont);
                     return false;
                 }
 
-                for (name, sym) in map.get_gens(gen_list_id) {
+                for (_, sym) in map.get_gens(gen_list_id) {
                     if !sym.is_resolved(map) {
-                        println!("generic {name:?}");
                         return false 
                     }
                 }
 
                 true
             },
-            Sym::Var(v) => {
-                dbg!("is a variable");
-                dbg!(map.vars_mut()[v]);
+            Sym::Var(_) => {
                 false
             },
         }
@@ -86,6 +111,7 @@ impl Sym {
                 let gens = map.gens()[gens];
                 let is_tuple = matches!(sym.kind, SymbolKind::Container(cont)
                                                     if cont.kind() == ContainerKind::Tuple);
+                dbg!(sym, gens);
 
                 if is_tuple {
                     let SymbolKind::Container(cont) = sym.kind
@@ -296,11 +322,10 @@ impl Sym {
     }
 
 
-    pub fn sym(self, map: &mut SymbolMap) -> Result<SymbolId, Error> {
+    pub fn sym(self, map: &SymbolMap) -> Result<SymbolId, Error> {
         match self.instantiate_shallow(map) {
             Sym::Ty(sym, _) => Ok(sym),
             Sym::Var(id) => {
-                dbg!(id);
                 let var = &map.vars()[id];
                 Err(Error::UnableToInfer(var.range()))
             },
