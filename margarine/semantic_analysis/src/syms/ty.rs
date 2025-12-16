@@ -64,12 +64,10 @@ impl Sym {
 
             iter
                 .find(|x| x.0 == sym_name)
-                .map(|x| x.1.resolve(env_gens, map))
+                .map(|x| x.1)
         } else {
             None
         };
-
-
 
         let ty = ty.unwrap_or(Sym::Ty(sym, gens));
 

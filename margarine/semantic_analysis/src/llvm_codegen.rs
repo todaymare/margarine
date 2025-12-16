@@ -1331,6 +1331,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 out_if_err!();
 
                 let sym = self.ty_info.expr(lhs).unwrap();
+                let sym = sym.resolve(&[env.gens], self.syms);
 
                 let result = match operator {
                     BinaryOperator::Eq => {
@@ -2277,7 +2278,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                     SymbolKind::Opaque => {
-                        self.eq(builder, ty, accum, lhs, rhs);
+                        unreachable!()
                     },
 
 

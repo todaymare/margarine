@@ -383,7 +383,7 @@ impl<'me> SymbolMap<'me> {
         }
 
 
-        // type_id
+        // $type_id
         {
             let pending = slf.pending(ns_map, StringMap::BUILTIN_TYPE_ID, 1);
             assert_eq!(pending, SymbolId::BUILTIN_TYPE_ID);
@@ -482,8 +482,6 @@ impl<'me> SymbolMap<'me> {
         }
 
 
-
-
         slf
     }
 }
@@ -560,7 +558,7 @@ impl SymbolId {
     }
 
     pub fn supports_eq(self) -> bool {
-        true
+        self.is_float() || self.is_num()
     }
 
 

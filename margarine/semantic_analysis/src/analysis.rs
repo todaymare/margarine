@@ -1257,6 +1257,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                 let mut validate = || {
                     if !lhs_anal.ty.eq(&mut self.syms, rhs_anal.ty) { return Ok(false) }
+
                     let sym = match lhs_anal.ty.sym(&mut self.syms) {
                         Ok(v) => v,
                         Err(v) => return Err(v),
