@@ -1,6 +1,6 @@
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}, Once};
 use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
-use sti::{alloc::GlobalAlloc, ext::FromIn, vec::{KVec, Vec}};
+use sti::{alloc::GlobalAlloc, ext::FromIn, key::Key, vec::{KVec, Vec}};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{Generic, GenericKind, SymbolId}, ty::Sym, Symbol, SymbolKind}, AnalysisResult, TyChecker};
 
@@ -170,9 +170,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         },
                     };
 
+                    let source = self.ast.range(*n);
                     let Some(sym) = ty.sym()
                     else {
-                        let source = self.ast.range(*n);
                         self.error(*n, Error::ImplOnGeneric(source));
                         continue;
                     };
@@ -318,7 +318,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
     // `Self::collect_names` must be ran before this
     pub fn compute_types(&mut self, path: StringIndex, scope: ScopeId,
-                         ns: NamespaceId, nodes: &[NodeId], impl_block: Option<&[StringIndex]>) {
+                         ns: NamespaceId, nodes: &[NodeId], impl_block: Option<(SymbolId, &[StringIndex])>) {
         for id in nodes {
             let NodeId::Decl(id) = id
             else { continue };
@@ -352,7 +352,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                     // finalise
                     let generics = {
-                        let impl_gens = impl_block.unwrap_or(&[]);
+                        let (_, impl_gens) = impl_block.unwrap_or((SymbolId::MAX, &[]));
                         let mut vec = Buffer::new(self.output, impl_gens.len() + generics.len());
                         vec.extend_from_slice(impl_gens);
                         vec.extend_from_slice(generics);
@@ -376,7 +376,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                     let generics = {
-                        let impl_gens = impl_block.unwrap_or(&[]);
+                        let (_, impl_gens) = impl_block.unwrap_or((SymbolId::MAX, &[]));
                         let mut vec = Buffer::new(self.output, impl_gens.len() + gens.len());
                         vec.extend_from_slice(impl_gens);
                         vec.extend_from_slice(gens);
@@ -414,7 +414,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
                     // finalise
                     let generics = {
-                        let impl_gens = impl_block.unwrap_or(&[]);
+                        let (_, impl_gens) = impl_block.unwrap_or((SymbolId::MAX, &[]));
                         let mut vec = Buffer::new(self.output, impl_gens.len() + generics.len());
                         vec.extend_from_slice(impl_gens);
                         vec.extend_from_slice(generics);
@@ -430,9 +430,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 },
 
 
-                Decl::Function { sig, is_in_impl, .. } => {
+                Decl::Function { sig, .. } => {
                     let generics = {
-                        let impl_gens = impl_block.unwrap_or(&[]);
+                        let (_, impl_gens) = impl_block.unwrap_or((SymbolId::MAX, &[]));
                         let mut vec = Buffer::new(self.output, impl_gens.len() + sig.generics.len());
                         vec.extend_from_slice(impl_gens);
                         vec.extend_from_slice(sig.generics);
@@ -471,11 +471,14 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                     // Check for special functions
-                    if is_in_impl.is_some() && sig.name == StringMap::ITER_NEXT_FUNC {
+                    if impl_block.is_some() && sig.name == StringMap::ITER_NEXT_FUNC {
                         let validate_sig = || {
                             if sig.arguments.len() != 1 { return false }
-                            let impl_ty = is_in_impl.unwrap();
-                            if sig.arguments[0].data_type().kind() != impl_ty.kind() { return false; }
+                            let (impl_ty, _) = impl_block.unwrap_or((SymbolId::MAX, &[]));
+                            let Some(val) = args[0].symbol().sym()
+                            else { return false };
+
+                            if val != impl_ty { return false; }
 
                             //if !sig.arguments[0].is_inout() { return false; }
                             if ret.sym() != Some(SymbolId::OPTION) { return false; }
@@ -572,8 +575,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                     let ns = self.syms.sym_ns(sym);
+                    let scope = self.scopes.push(Scope::new(scope, ScopeKind::Alias(StringMap::SELF_TY, ty)));
 
-                    self.compute_types(path, scope, ns, &body, Some(gens));
+                    self.compute_types(path, scope, ns, &body, Some((sym, gens)));
                 }
 
                 Decl::Attribute { decl, .. } => {
@@ -623,6 +627,9 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             Decl::ImportFile { .. } => unreachable!(),
             Decl::ImportRepo { .. } => unreachable!(),
             Decl::Error(_) => unreachable!(),
+
+
+            Decl::Trait { functions, .. } => panic!("{:?}", decl),
 
             
             Decl::Function { sig, body, .. } => {

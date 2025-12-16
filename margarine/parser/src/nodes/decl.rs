@@ -25,7 +25,6 @@ pub enum Decl<'a> {
     Function {
         sig: FunctionSignature<'a>,
         body: Block<'a>,
-        is_in_impl: Option<DataType<'a>>,
     },
     
     Impl {
@@ -57,6 +56,11 @@ pub enum Decl<'a> {
 
     Extern {
         functions: &'a [ExternFunction<'a>],
+    },
+
+    Trait {
+        name: StringIndex,
+        functions: &'a [FunctionSignature<'a>],
     },
 
     OpaqueType {

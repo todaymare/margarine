@@ -189,7 +189,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     }
     
 
-    fn dt_to_gen(&mut self, scope: Scope, dt: DataType,
+    fn dt_to_gen(&mut self, scope: Scope<'out>, dt: DataType,
                  gens: &[StringIndex]) -> Result<Generic<'out>, Error> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::UNIT, &[]), None)),
@@ -283,6 +283,12 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
             DataTypeKind::CustomType(name, generics) => {
+                if name == StringMap::SELF_TY
+                && let Some(sym) = scope.find_self(&self.scopes) {
+                    return Ok(sym)
+                }
+
+
                 if gens.contains(&name) { return Ok(Generic::new(dt.range(),
                                                     GenericKind::Generic(name), None)) }
 

@@ -211,6 +211,7 @@ pub enum Keyword {
     As,
     For,
     In,
+    Trait,
     Static,
 }
 
@@ -449,6 +450,8 @@ impl Lexer<'_, '_> {
             "as"        => TokenKind::Keyword(Keyword::As),
             "for"       => TokenKind::Keyword(Keyword::For),
             "in"        => TokenKind::Keyword(Keyword::In),
+            "trait"      => TokenKind::Keyword(Keyword::Trait),
+
 
             "true"      => TokenKind::Literal(Literal::Bool(true)),
             "false"     => TokenKind::Literal(Literal::Bool(false)),

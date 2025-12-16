@@ -1,7 +1,7 @@
-use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
+use common::{source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use sti::{define_key, vec::KVec};
 
-use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{sym_map::{ClosureId, SymbolId, SymbolMap}, ty::Sym}};
+use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{sym_map::{ClosureId, Generic, SymbolId, SymbolMap}, ty::Sym}};
 
 define_key!(pub ScopeId(u32));
 
@@ -17,6 +17,7 @@ pub struct Scope<'me> {
 #[non_exhaustive]
 pub enum ScopeKind<'me> {
     ImplicitNamespace(NamespaceId),
+    Alias(StringIndex, Generic<'me>),
     VariableScope(VariableScope),
     Generics(GenericsScope<'me>),
     Loop,
@@ -49,6 +50,18 @@ impl<'me> ScopeMap<'me> {
 
 impl<'me> Scope<'me> {
     pub fn new(parent: impl Into<Option<ScopeId>>, kind: ScopeKind<'me>) -> Self { Self { parent: parent.into(), kind } }
+
+
+    pub fn find_self(self, scope_map: &ScopeMap<'me>) -> Option<Generic<'me>> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::Alias(sym_name, sym) = scope.kind {
+                if sym_name == StringMap::SELF_TY { return Some(sym) }
+            }
+
+            None
+        })
+    }
+
 
     pub fn find_sym(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<Result<SymbolId, Error>> {
         self.over(scope_map, |scope| {

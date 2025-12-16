@@ -51,16 +51,16 @@ pub fn parse<'a>(
 
 
 // Internal
-struct ParserSettings<'a> {
-    is_in_impl: Option<DataType<'a>>,
+struct ParserSettings {
+    is_in_impl: bool,
     can_parse_struct_creation: bool,
 }
 
 
-impl Default for ParserSettings<'_> {
+impl Default for ParserSettings {
     fn default() -> Self {
         Self {
-            is_in_impl: None,
+            is_in_impl: false,
             can_parse_struct_creation: true,
         }
     }
@@ -360,7 +360,7 @@ impl<'out> Parser<'_, 'out, '_> {
         &mut self, 
         terminator: TokenKind, 
         start: u32,
-        settings: &ParserSettings<'out>
+        settings: &ParserSettings
     ) -> Result<Block<'out>, ErrorId> {
 
         let mut storage : Vec<NodeId, _> = Vec::with_cap_in(self.arena, 1);
@@ -448,7 +448,7 @@ impl<'out> Parser<'_, 'out, '_> {
         &mut self, 
         terminator: TokenKind, 
         start: u32,
-        settings: &ParserSettings<'out>
+        settings: &ParserSettings
     ) -> Result<Block<'out>, ErrorId> {
         let parse_till = self.parse_till(terminator, start, settings)?;
 
@@ -538,7 +538,7 @@ impl<'out> Parser<'_, 'out, '_> {
 }
 
 impl<'ta> Parser<'_, 'ta, '_> {
-    fn statement(&mut self, settings: &ParserSettings<'ta>) -> Result<NodeId, ErrorId> {
+    fn statement(&mut self, settings: &ParserSettings) -> Result<NodeId, ErrorId> {
         let node = match self.current_kind() {
             | TokenKind::Keyword(Keyword::Struct)
             => self.struct_declaration()?.into(),
@@ -547,6 +547,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Fn) => self.function_declaration(&settings)?.into(),
 
             TokenKind::Keyword(Keyword::Impl) => self.impl_declaration()?.into(),
+            TokenKind::Keyword(Keyword::Trait) => self.trait_declaration()?.into(),
             TokenKind::Keyword(Keyword::Mod) => self.mod_declaration()?.into(),
             TokenKind::Keyword(Keyword::Extern) => self.extern_declaration(settings)?.into(),
             TokenKind::Keyword(Keyword::Enum) => self.enum_declaration()?.into(),
@@ -649,11 +650,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
 
-    fn function_declaration(
-        &mut self, 
-        settings: &ParserSettings<'ta>
-    ) -> DeclResult<'ta> {
-
+    fn function_sig(
+        &mut self,
+        settings: &ParserSettings,
+    ) -> Result<FunctionSignature<'ta>, ErrorId> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Fn))?;
         self.advance();
@@ -672,10 +672,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             if index == 0
                 && name == StringMap::SELF {
-                if let Some(parser_type) = settings.is_in_impl {
+                if settings.is_in_impl {
                     return Ok(FunctionArgument::new(
                         name,
-                        parser_type,
+                        DataType::new(parser.current_range(), DataTypeKind::CustomType(StringMap::SELF_TY, &[])),
                         parser.current_range(),
                     ));
                 }
@@ -701,14 +701,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         self.expect(TokenKind::RightParenthesis)?;
         let args_end = self.current_range();
-        self.advance();
 
         let return_type = {
-            if self.current_is(TokenKind::Colon) {
+            if self.peek_is(TokenKind::Colon) {
+                self.advance();
                 self.advance();
 
                 let typ = self.expect_type()?;
-                self.advance();
                 typ
             } else {
                 DataType::new(
@@ -718,8 +717,26 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
         };
         
-
         let header = SourceRange::new(start, return_type.range().end());
+
+        Ok(FunctionSignature::new(
+             name, 
+             header,
+             arguments,
+             generics,
+             return_type,
+        ))
+    }
+
+
+    fn function_declaration(
+        &mut self, 
+        settings: &ParserSettings
+    ) -> DeclResult<'ta> {
+        let start = self.current_range().start();
+        let sig = self.function_sig(settings)?;
+        self.advance();
+
         self.expect(TokenKind::LeftBracket)?;
         let body_start = self.current_range().start();
         self.advance();
@@ -729,20 +746,42 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(self.ast.add_decl(
             Decl::Function {
-                sig: FunctionSignature::new(
-                     name, 
-                     header,
-                     arguments,
-                     generics,
-                     return_type,
-                ),
+                sig,
                 body,
-                is_in_impl: settings.is_in_impl,
             },
 
             SourceRange::new(start, end)
         ))
     }
+
+
+    fn trait_declaration(&mut self) -> DeclResult<'ta> {
+        let start = self.current_range().start();
+        self.expect(TokenKind::Keyword(Keyword::Trait))?;
+        self.advance();
+
+        let name = self.expect_identifier()?;
+        self.advance();
+
+        self.expect(TokenKind::LeftBracket)?;
+        self.advance();
+
+        let mut set = ParserSettings::default();
+        set.is_in_impl = true;
+        let functions = self.list(
+            TokenKind::RightBracket,
+            None,
+            |parser, _| {
+                parser.function_sig(&set)
+            }
+        )?;
+
+        Ok(self.ast.add_decl(
+            Decl::Trait { functions, name },
+            SourceRange::new(start, self.current_range().end())
+        ))
+    }
+
 
 
     fn impl_declaration(&mut self) -> DeclResult<'ta> {
@@ -760,7 +799,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let settings = ParserSettings {
-            is_in_impl: Some(data_type),
+            is_in_impl: true,
             ..Default::default()
         };
         
@@ -814,7 +853,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn extern_declaration(&mut self, settings: &ParserSettings<'ta>) -> DeclResult<'ta> {
+    fn extern_declaration(&mut self, settings: &ParserSettings) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
         self.advance();
@@ -872,10 +911,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
                 if index == 0
                     && identifier == StringMap::SELF {
-                    if let Some(parser_type) = settings.is_in_impl {
+                    if settings.is_in_impl {
                         return Ok(FunctionArgument::new(
                             name,
-                            parser_type,
+                            DataType::new(parser.current_range(), DataTypeKind::CustomType(StringMap::SELF_TY, &[])),
                             parser.current_range(),
                         ));
                     }
@@ -1117,12 +1156,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
 
-    fn assignment(&mut self, settings: &ParserSettings<'ta>) -> Result<NodeId, ErrorId> {
+    fn assignment(&mut self, settings: &ParserSettings) -> Result<NodeId, ErrorId> {
         fn binary_op_assignment<'la>(
             parser: &mut Parser<'_, 'la, '_>, 
             operator: BinaryOperator, 
             lhs: ExprId, 
-            settings: &ParserSettings<'la>
+            settings: &ParserSettings
         ) -> StmtResult<'la> {
 
             parser.advance();
@@ -1177,12 +1216,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
 impl<'ta> Parser<'_, 'ta, '_> {
-    fn expression(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn expression(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.logical_or(settings)
     }
 
 
-    fn logical_or(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn logical_or(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         let lhs = self.logical_and(settings)?;
 
         if self.peek_kind() != Some(TokenKind::LogicalOr) {
@@ -1211,7 +1250,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn logical_and(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn logical_and(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         let lhs = self.unary_not(settings)?;
 
         if self.peek_kind() != Some(TokenKind::LogicalAnd) {
@@ -1241,7 +1280,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn unary_not(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn unary_not(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         if self.current_is(TokenKind::Bang) {
             let start = self.current_range().start();
             self.advance();
@@ -1259,7 +1298,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn comparisson(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn comparisson(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
             Self::bitwise_or, 
             Self::bitwise_or, 
@@ -1273,7 +1312,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
     
 
-    fn bitwise_or(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn bitwise_or(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
             Self::bitwise_xor, 
             Self::bitwise_xor, 
@@ -1284,7 +1323,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn bitwise_xor(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn bitwise_xor(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
             Self::bitwise_and, 
             Self::bitwise_and, 
@@ -1295,7 +1334,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn bitwise_and(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn bitwise_and(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
             Self::bitshifts, 
             Self::bitshifts, 
@@ -1306,7 +1345,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
     
 
-    fn bitshifts(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn bitshifts(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
             Self::arithmetic, 
             Self::arithmetic, 
@@ -1317,7 +1356,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
     
 
-    fn arithmetic(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn arithmetic(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
             Self::product, 
             Self::product, 
@@ -1327,7 +1366,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn product(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn product(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
             Self::range_expr, 
             Self::range_expr, 
@@ -1336,7 +1375,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         )
     }
 
-    fn range_expr(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn range_expr(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         let lhs = self.unary_neg(settings)?;
 
         if !self.peek_is(TokenKind::DoubleDot) {
@@ -1372,7 +1411,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
     
 
-    fn unary_neg(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn unary_neg(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         if self.current_is(TokenKind::Minus) {
             let start = self.current_range().start();
             self.advance();
@@ -1390,7 +1429,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn as_cast(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn as_cast(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         let mut expr = self.accessors(settings)?;
         while self.peek_is(TokenKind::Keyword(Keyword::As)) {
             self.advance();
@@ -1405,7 +1444,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn accessors(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn accessors(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         let mut result = self.atom(settings)?;
 
         if self.current_is(TokenKind::SemiColon) { return Ok(result) }
@@ -1512,7 +1551,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
     
 
-    fn atom(&mut self, settings: &ParserSettings<'ta>) -> ExprResult<'ta> {
+    fn atom(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.is_error_token()?;
 
         match self.current_kind() {
@@ -2020,10 +2059,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
 impl<'ta> Parser<'_, 'ta, '_> {
     fn binary_operation(
         &mut self,
-        lhs: fn(&mut Self, &ParserSettings<'ta>) -> ExprResult<'ta>,
-        rhs: fn(&mut Self, &ParserSettings<'ta>) -> ExprResult<'ta>,
+        lhs: fn(&mut Self, &ParserSettings) -> ExprResult<'ta>,
+        rhs: fn(&mut Self, &ParserSettings) -> ExprResult<'ta>,
         tokens: &[TokenKind],
-        settings: &ParserSettings<'ta>,
+        settings: &ParserSettings,
     ) -> ExprResult<'ta> {
         let mut lhs = lhs(self, settings)?;
 
