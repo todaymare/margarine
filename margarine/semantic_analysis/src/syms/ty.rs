@@ -27,7 +27,6 @@ impl Sym {
 
         let mut new_gens = sti::vec::Vec::with_cap_in(map.arena(), func_gens.len());
         for (name, sym) in func_gens {
-            dbg!(sym);
             let sym_id = sym.sym(map).unwrap();
             let sym_data = map.sym(sym_id);
 
@@ -111,7 +110,6 @@ impl Sym {
                 let gens = map.gens()[gens];
                 let is_tuple = matches!(sym.kind, SymbolKind::Container(cont)
                                                     if cont.kind() == ContainerKind::Tuple);
-                dbg!(sym, gens);
 
                 if is_tuple {
                     let SymbolKind::Container(cont) = sym.kind
@@ -132,7 +130,22 @@ impl Sym {
                 else if let SymbolKind::Function(func) = sym.kind
                         && matches!(func.kind(), FunctionKind::Closure(_)) {
 
-                    str.push("fn(");
+                    str.push("fn");
+                    if !gens.is_empty() {
+                        str.push_char('<');
+
+                        for (i, g) in gens.iter().enumerate() {
+                            if i != 0 { str.push(", ") }
+
+                            str.push(g.1.display_ex(string_map, map, Some(g.0)));
+                        }
+
+
+                        str.push_char('>');
+                    }
+
+
+                    str.push_char('(');
                     for (i, f) in func.args().iter().enumerate() {
                         if i != 0 {
                             str.push(", ");

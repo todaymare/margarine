@@ -1086,8 +1086,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
 
 
                     Err(sym) => {
-                        let Ok(sym_id) = sym
-                        else { return Err(Error::Bypass) };
+                        let sym_id = sym?;
 
                         let sym = self.syms.sym(sym_id);
 
@@ -1435,6 +1434,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                         self.error(m.expr(), Error::InvalidType {
                             source: range, found: anal.ty, expected: ret_ty });
                     }
+
                 }
                 
 
@@ -1689,6 +1689,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 let func_args = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.args().len());
                     for g in func.args() {
+                        dbg!(g, gens);
                         vec.push(g.symbol().to_ty(gens, &mut self.syms)?);
                     }
 

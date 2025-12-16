@@ -260,7 +260,7 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
-    pub fn local_get(&mut self, local: Local) -> Value<'ctx> {
+    pub fn local_get(&self, local: Local) -> Value<'ctx> {
         let local_ptr = self.local_ptr(local);
         let local_ty  = self.local_ty (local);
 

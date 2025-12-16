@@ -848,7 +848,6 @@ dependencies = [
  "lexer",
  "parser",
  "rand",
- "runtime",
  "semantic_analysis",
  "sti 0.200.0",
  "tracing",
@@ -869,7 +868,6 @@ dependencies = [
  "margarine",
  "parser",
  "ropey",
- "runtime",
  "semantic_analysis",
  "serde",
  "serde_json",
@@ -1213,6 +1211,11 @@ dependencies = [
 [[package]]
 name = "runtime"
 version = "0.1.0"
+dependencies = [
+ "itoa",
+ "ryu",
+ "semantic_analysis",
+]
 
 [[package]]
 name = "rustc-demangle"
@@ -1256,7 +1259,6 @@ dependencies = [
  "lexer",
  "llvm-api",
  "parser",
- "runtime",
  "sti 0.200.0",
 ]
 

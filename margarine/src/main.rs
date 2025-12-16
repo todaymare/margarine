@@ -2,8 +2,6 @@ use std::{collections::HashMap, fmt::Write};
 
 use colourful::ColourBrush;
 use common::{source::FileData, string_map::StringMap, DropTimer};
-use margarine::stdlib;
-use runtime::VM;
 use sti::{arena::Arena};
 
 fn main() {
@@ -25,6 +23,7 @@ fn main() {
 
             println!("running");
 
+            /*
             let mut hosts : HashMap<String, _>= HashMap::new();
             stdlib(&mut hosts);
 
@@ -35,6 +34,7 @@ fn main() {
                     println!("{}", e.to_str().unwrap());
                 }
             }
+            */
             return;
         },
 
@@ -46,6 +46,7 @@ fn main() {
             let files = FileData::open(path, &mut sm).unwrap();
             let (code, tests) = margarine::run(sm, files);
 
+            /*
             let mut hosts : HashMap<String, _>= HashMap::new();
             stdlib(&mut hosts);
 
@@ -80,6 +81,7 @@ fn main() {
                 }
 
             }
+            */
             return;
         },
 

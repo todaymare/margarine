@@ -17,7 +17,6 @@ pub mod namespace;
 pub mod errors;
 pub mod analysis;
 pub mod syms;
-pub mod codegen;
 pub mod llvm_codegen;
 
 pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
@@ -123,7 +122,11 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
             let _ = add_sym!(RESULT);
             let _ = add_sym!(STR);
             let _ = add_sym!(RANGE);
-            let _ = add_sym!(TYPE_ID);
+            let _ = add_sym!(BUILTIN_TYPE_ID);
+            let _ = add_sym!(BUILTIN_ANY);
+            let _ = add_sym!(BUILTIN_DOWNCAST_ANY);
+            let _ = add_sym!(BUILTIN_SIZE_OF);
+            let _ = add_sym!(ANY);
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));

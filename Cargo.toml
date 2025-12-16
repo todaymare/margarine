@@ -12,8 +12,7 @@ members = [
     "margarine/parser",
     "margarine/semantic_analysis",
     "margarine/errors",
-    "margarine/runtime",
-    "fuzz", "lsp",
+    "fuzz", "lsp", "runtime",
 ]
 
 [profile.release]

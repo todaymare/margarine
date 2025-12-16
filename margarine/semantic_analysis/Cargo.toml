@@ -10,5 +10,4 @@ parser = { path = "../parser" }
 lexer  = { path = "../lexer" }
 sti = { path = "../../vendor/sti" }
 
-runtime = { path = "../runtime" }
 llvm-api = { path = "../llvm-api" }

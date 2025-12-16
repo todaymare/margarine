@@ -26,7 +26,6 @@ lexer = { path = "../margarine/lexer" }
 parser = { path = "../margarine/parser" }
 semantic_analysis = { path = "../margarine/semantic_analysis" }
 common = { path = "../margarine/common" }
-runtime = { path = "../margarine/runtime" }
 errors = { path = "../margarine/errors" }
 margarine = { path = "../margarine" }
 sti = { path = "../vendor/sti" }

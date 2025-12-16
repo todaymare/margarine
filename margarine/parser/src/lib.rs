@@ -478,7 +478,6 @@ impl<'out> Parser<'_, 'out, '_> {
             let ident = slf.expect_type()?;
             Ok(ident)
         })?;
-        self.advance();
 
         Ok(Some(list))
     }
@@ -1481,7 +1480,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     self.advance();
 
                     let gens = self.parse_generic_usage()?;
-                    self.index -= 1;
 
                     result = self.ast.add_expr(
                         Expr::AccessField { 
@@ -1568,6 +1566,28 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::LeftBracket => self.block_expression(),
 
 
+            TokenKind::DollarSign => {
+                let start = self.current_range().start();
+
+                self.advance();
+                let ident = self.expect_identifier()?;
+                let ident = self.string_map.concat_with(StringMap::DOLLAR, ident, "");
+
+                let gens = 
+                if self.peek_is(TokenKind::DoubleColon) {
+                    self.advance();
+                    self.parse_generic_usage()?
+                } else {
+                    None
+                };
+
+                Ok(self.ast.add_expr(
+                    Expr::Identifier(ident, gens),
+                    SourceRange::new(start, self.current_range().end())
+                ))
+            }
+
+
             TokenKind::Identifier(v) => {
 
                 if settings.can_parse_struct_creation 
@@ -1586,7 +1606,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         self.advance();
 
                         let gens = self.parse_generic_usage()?;
-                        self.index -= 1;
 
                         return Ok(self.ast.add_expr(
                             Expr::Identifier(v, gens),

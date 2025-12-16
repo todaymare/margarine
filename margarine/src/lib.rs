@@ -16,17 +16,17 @@ pub use parser::nodes;
 pub use common::source::{FileData, Extension};
 pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
-use runtime::obj_map::ObjectData;
-use semantic_analysis::codegen;
 use semantic_analysis::llvm_codegen;
 use semantic_analysis::syms::sym_map::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
-pub use runtime::{VM, opcode, Status, FatalError, Reg};
 pub use sti::arena::Arena;
 use sti::format_in;
 use sti::vec::KVec;
 use tracing::trace;
+
+
+pub use semantic_analysis;
 
 
 pub struct Compiler<'me> {
@@ -495,6 +495,7 @@ impl BuildLock {
 }
 
 
+/*
 pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg, &mut Status)>) {
 
     unsafe extern "C" fn print_raw(vm: &mut VM, _: &mut Reg, _: &mut Status) {
@@ -1047,4 +1048,4 @@ pub fn stdlib(hosts: &mut HashMap<String, unsafe extern "C" fn(&mut VM, &mut Reg
     hosts.insert("str_split_once".to_string(), str_split_once);
     hosts.insert("str_nth".to_string(), str_nth);
     hosts.insert("panic".to_string(), panic);
-}
+}*/

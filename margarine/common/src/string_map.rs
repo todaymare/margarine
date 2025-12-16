@@ -43,9 +43,15 @@ impl<'str> StringMap<'str> {
 
     pub const ITER_NEXT_FUNC : StringIndex = StringIndex(28);
     pub const TO_STR_FUNC : StringIndex = StringIndex(29);
-    pub const TYPE_ID : StringIndex = StringIndex(30);
-    pub const LIST : StringIndex = StringIndex(31);
-    pub const CLOSURE : StringIndex = StringIndex(32);
+    pub const BUILTIN_TYPE_ID : StringIndex = StringIndex(30);
+    pub const BUILTIN_ANY : StringIndex = StringIndex(31);
+    pub const BUILTIN_DOWNCAST_ANY : StringIndex = StringIndex(32);
+    pub const BUILTIN_SIZE_OF : StringIndex = StringIndex(33);
+    pub const ANY : StringIndex = StringIndex(34);
+    pub const LIST : StringIndex = StringIndex(35);
+    pub const CLOSURE : StringIndex = StringIndex(36);
+    pub const DOLLAR : StringIndex = StringIndex(37);
+    pub const HASH : StringIndex = StringIndex(38);
 
  
     #[inline(always)]
@@ -95,9 +101,15 @@ impl<'str> StringMap<'str> {
 
         assert_eq!(s.insert("__next__"), Self::ITER_NEXT_FUNC);
         assert_eq!(s.insert("__to_str__"), Self::TO_STR_FUNC);
-        assert_eq!(s.insert("type_id"), Self::TYPE_ID);
+        assert_eq!(s.insert("$type_id"), Self::BUILTIN_TYPE_ID);
+        assert_eq!(s.insert("$any"), Self::BUILTIN_ANY);
+        assert_eq!(s.insert("$downcast_any"), Self::BUILTIN_DOWNCAST_ANY);
+        assert_eq!(s.insert("$sizeof"), Self::BUILTIN_SIZE_OF);
+        assert_eq!(s.insert("any"), Self::ANY);
         assert_eq!(s.insert("List"), Self::LIST);
         assert_eq!(s.insert("{closure}"), Self::CLOSURE);
+        assert_eq!(s.insert("$"), Self::DOLLAR);
+        assert_eq!(s.insert("hash"), Self::HASH);
         s
     }
 
@@ -175,13 +187,18 @@ impl<'str> StringMap<'str> {
 
 
     pub fn concat(&mut self, a: StringIndex, b: StringIndex) -> StringIndex {
+        self.concat_with(a, b, "::")
+    }
+
+
+    pub fn concat_with(&mut self, a: StringIndex, b: StringIndex, s: &'static str) -> StringIndex {
         let a = self.get(a);
         if a.is_empty() { return b }
 
         let b = self.get(b);
 
         let temp = self.arena();
-        let str = format_in!(&*temp, "{}::{}", a, b);
+        let str = format_in!(&*temp, "{}{s}{}", a, b);
         self.insert(&*str)
     }
 }

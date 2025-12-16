@@ -1,4 +1,6 @@
 extern "https://github.com/todaymare/margarine-std" as std;
+use std::*;
+
 
 fn fib(n: int): int {
     if n <= 1 { n }
@@ -7,5 +9,56 @@ fn fib(n: int): int {
 
 
 fn main() {
-    fib(40);
+    var now = duration::Duration::now();
+    println(fib(40));
+
+    var x = $any("hello world");
+    println::<str>($downcast_any(x)!);
+
+    println(69.to_str());
+    println(69.67.to_str());
+
+    var s = io::read_file("Cargo.toml")!;
+
+    for s in s.lines() {
+        println("---------");
+        println(s);
+    }
+
+
+    var a, b = "hello world".split_at(5);
+    print(a);
+    print(b);
+    println("");
+
+    var a, b = "hello world".split_once(" ")!;
+    print(a);
+    print(b);
+    println("");
+
+    println("hey".nth(2));
+
+    println("hello world".slice(2..5));
+
+    var x = "67".parse::<int>()!;
+    println("hey");
+    println(x);
+    println("4.20".parse::<float>()!);
+
+    println($sizeof::<int>());
+
+    var list = [5, 4, 3, 2, 1];
+
+    println(list.pop()!);
+    println(list.pop()!);
+    for i in 0..10 {
+        list.push(i);
+    }
+
+    println(list.pop()!);
+    println(list.pop()!);
+
+    println(now.elapsed().as_secs_float().to_str());
+    panic("paniced")
 }
+

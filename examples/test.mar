@@ -59,6 +59,9 @@ fn main() {
     var a = 6;
     var x = hey();
     x(5);
+
+    print_int($type_id::<int>());
+    $any::<int>(50);
 }
 
 

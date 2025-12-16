@@ -170,6 +170,9 @@ pub enum TokenKind {
 
     /// '|'
     Pipe,
+
+    /// '$'
+    DollarSign,
     
     EndOfFile,
 
@@ -297,6 +300,7 @@ impl Lexer<'_, '_> {
             b'~' => TokenKind::SquigglyDash,
             b'^' => TokenKind::BitwiseXor,
             b';' => TokenKind::SemiColon,
+            b'$' => TokenKind::DollarSign,
 
             b'&' => {
                 if self.reader.consume_if_eq(&b'&') { TokenKind::LogicalAnd }

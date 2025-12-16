@@ -17,6 +17,7 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     ty_info: &'me TyInfo,
     ty_mappings: HashMap<TypeHash, TypeMapping<'ctx>>,
 
+    externs: HashMap<StringIndex, (FunctionType<'ctx>, FunctionPtr<'ctx>)>,
     funcs: HashMap<TypeHash, Function<'ctx>>,
     const_strs: Vec<StringIndex>,
 
@@ -38,8 +39,12 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     func_ref: StructTy<'ctx>,
 
     // tag is a u32
-    // ptr is a u64 that can either encode primitives or a pointer
+    // ptr is a ptr
     enum_ref: StructTy<'ctx>,
+
+    // tag is a u64
+    // ptr is a ptr
+    any_ref: StructTy<'ctx>,
 
     list_ty: StructTy<'ctx>,
 
@@ -140,7 +145,7 @@ pub fn run<'a>(
 
         let ptr = ctx.ptr();
         let i32_ty = ctx.integer(32);
-        let alloc_fn_ty = ptr.fn_ty(ctx.arena, &[*i32_ty], false);
+        let alloc_fn_ty = ptr.fn_ty(ctx.arena, &[*ctx.integer(64)], false);
         let alloc_fn = module.function("margarineAlloc", alloc_fn_ty);
         alloc_fn.set_linkage(Linkage::External);
 
@@ -148,7 +153,11 @@ pub fn run<'a>(
         func_ref.set_fields(&[*ctx.ptr(), *ctx.ptr()], false);
 
         let enum_ref = ctx.structure("enumRef");
-        enum_ref.set_fields(&[*i32_ty, *ctx.ptr()], false);
+        enum_ref.set_fields(&[*ctx.ptr(), *i32_ty], false);
+
+
+        let any_ref = ctx.structure("anyType");
+        any_ref.set_fields(&[*ctx.ptr(), *i32_ty], false);
 
 
         let list_ty = ctx.structure("listType");
@@ -161,6 +170,7 @@ pub fn run<'a>(
             ast,
             ty_info,
             funcs: HashMap::new(),
+            externs: HashMap::new(),
             ty_mappings: HashMap::new(),
             const_strs: Vec::new(),
             func_counter: 0,
@@ -174,7 +184,11 @@ pub fn run<'a>(
             enum_ref,
             module,
             list_ty,
+            any_ref,
         };
+
+        conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn));
+        conv.externs.insert(conv.string_map.insert("margarineAbort"), (abort_fn_ty, abort_fn));
 
 
         // register primitives
@@ -193,30 +207,10 @@ pub fn run<'a>(
         }
 
 
-        let void = ctx.void();
-        let func_ty = void.fn_ty(ctx.arena, &[], false);
-        let func = module.function("__initStartupSystems__", func_ty);
-        func.set_linkage(Linkage::External);
-        let mut b = func.builder(ctx.as_ctx_ref(), func_ty);
-
-
         // create IR
         for sym in startups.iter() {
-            match conv.get_func(Sym::Ty(*sym, GenListId::EMPTY)) {
-                Ok(func) => {
-                    b.call(func.func_ptr, func_ty, &[]);
-                },
-
-
-                Err(v) => {
-                    conv.error(&mut b, v);
-                },
-            }
+            let _ = conv.get_func(Sym::Ty(*sym, GenListId::EMPTY));
         }
-
-
-        b.ret_void();
-        b.build();
 
         module = conv.module;
     }
@@ -327,6 +321,12 @@ pub fn run<'a>(
         let ptr = module.add_global(*sema_err_array_ty, "semaErrors");
         let array = ctx.const_array(*ptr.ty(), &arr_values);
         ptr.set_initialiser(*array);
+
+
+        let ptr = module.add_global(*u32_ty, "semaErrorsLen");
+        let num = ctx.const_int(u32_ty, sema_errors.len().try_into().unwrap(), false);
+        ptr.set_initialiser(*num);
+
     }
 
 
@@ -347,6 +347,10 @@ pub fn run<'a>(
             .arg("-O3")
             .arg("program.o")
             .arg("libmargarine.a")
+            .arg("-lzstd")
+            .arg("-lz")
+            .arg("-lc++")
+            .arg("-lc++abi")
             .arg("-o")
             .arg("program")
             .output()
@@ -392,6 +396,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
+        let is_never = ret.is_never(self.syms);
 
         let llvm_ret = self.to_llvm_ty(ret);
 
@@ -417,15 +422,26 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         match sym_func.kind() {
             syms::func::FunctionKind::Extern(path) => {
-                let func_ty = llvm_ret.repr.fn_ty(
-                    self.ctx.arena, 
-                    llvm_args.as_slice(),
-                    false,
-                );
+                let (func_ty, func_ptr) =
+                if let Some(vals) = self.externs.get(&path) { *vals }
+                else {
+                    let func_ty = llvm_ret.repr.fn_ty(
+                        self.ctx.arena, 
+                        llvm_args.as_slice(),
+                        false,
+                    );
 
 
-                let func_ptr = self.module.function(self.string_map.get(path), func_ty);
-                func_ptr.set_linkage(Linkage::External);
+                    let func_ptr = self.module.function(self.string_map.get(path), func_ty);
+                    func_ptr.set_linkage(Linkage::External);
+
+                    if is_never {
+                        func_ptr.set_noreturn(self.ctx);
+                    }
+
+                    self.externs.insert(path, (func_ty, func_ptr));
+                    self.externs[&path]
+                };
 
                 let func = Function {
                     sym: ty,
@@ -451,6 +467,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
+
+                if is_never {
+                    func_ptr.set_noreturn(self.ctx);
+                }
 
 
                 let func = Function {
@@ -482,7 +502,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 else { unreachable!() };
 
 
-                dbg!(env.gens);
                 let result = self.block(&mut env, &mut builder, &*body);
                 
                 if let Some(e) = self.ty_info.decl(sym_func.decl().unwrap()) {
@@ -492,7 +511,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 match result {
                     Ok(v) => {
-                        builder.ret(v);
+                        if !is_never {
+                            builder.ret(v);
+                        }
                     },
 
 
@@ -512,15 +533,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     false,
                 );
 
-
                 let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
-
 
                 let func = Function {
                     sym: ty,
                     name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     kind: FunctionKind::Code,
-                    error: self.ty_info.decl(sym_func.decl().unwrap()),
+                    error: None,
 
                     func_ty,
                     func_ptr,
@@ -531,8 +550,132 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let builder = func_ptr.builder(self.ctx, func_ty);
                 
                 let id = gens[0].1.sym(self.syms).unwrap();
-                let num = builder.const_int(self.i32, id.0 as i64, false);
+                let num = builder.const_int(self.i64, id.0 as i64, false);
                 builder.ret(*num);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::SizeOf => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena, 
+                    &[],
+                    false,
+                );
+
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+                
+                let sym = gens[0].1;
+                let ty = self.to_llvm_ty(sym);
+                let size = ty.repr.size_of(self.module).unwrap();
+
+                let num = builder.const_int(self.i64, size as i64, false);
+                builder.ret(*num);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::Any => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena, 
+                    &llvm_args,
+                    false,
+                );
+
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+                
+                let sym = gens[0].1;
+                let ty = self.to_llvm_ty(sym);
+
+                let size = ty.repr.size_of(self.module).unwrap();
+                let id = sym.sym(self.syms).unwrap();
+
+                let size = builder.const_int(self.i64, size as i64, false);
+                let id = builder.const_int(self.i32, id.0 as i64, false);
+
+                let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]).as_ptr();
+
+                let arg = builder.arg(0).unwrap();
+                let arg = builder.local_get(arg);
+
+                builder.store(ptr, arg);
+
+                let strct = builder.struct_instance(self.any_ref, &[*ptr, *id]);
+                builder.ret(*strct);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+
+            syms::func::FunctionKind::DowncastAny => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena, 
+                    &llvm_args,
+                    false,
+                );
+
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+                
+                let target_sym = gens[0].1;
+                let target_id = target_sym.sym(self.syms).unwrap();
+
+                let target_id = builder.const_int(self.i32, target_id.0 as i64, false);
+
+                let curr = builder.arg(0).unwrap();
+                let curr = builder.local_get(curr).as_struct();
+                let curr_id = builder.field_load(curr, 1).as_integer();
+
+                let cmp = builder.cmp_int(target_id, curr_id, IntCmp::Ne);
+                let cmp = builder.int_cast(cmp.as_integer(), *self.i32, false);
+                let payload = builder.field_load(curr, 0);
+
+                let buf = builder.struct_instance(self.enum_ref, &[payload, cmp]);
+                builder.ret(*buf);
 
                 return Ok(&self.funcs[&hash]);
             },
@@ -636,6 +779,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         if let Some(ty) = self.ty_mappings.get(&hash) { return *ty }
 
         let sym_id = ty.sym(self.syms).unwrap();
+
+        if sym_id == SymbolId::ANY {
+            self.ty_mappings.insert(hash, TypeMapping { repr: *self.any_ref, strct: *self.any_ref });
+            return self.ty_mappings[&hash]
+        }
+
         let sym = self.syms.sym(sym_id);
 
         let gens = ty.gens(self.syms);
@@ -664,6 +813,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     vec.leak()
                 };
 
+
                 let strct = ret.fn_ty(self.ctx.arena, llvm_args, false);
                 let mapping = TypeMapping { repr: *self.func_ref, strct: *strct };
                 self.ty_mappings.insert(hash, mapping);
@@ -691,7 +841,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         };
 
                         strct.set_fields(fields.as_slice(), false);
-                        dbg!(strct);
                     },
 
 
@@ -741,6 +890,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 NodeId::Expr(expr_id) => {
                     let result = self.expr(env, builder, expr_id)?;
+                    if self.ty_info.expr(expr_id).unwrap().is_never(self.syms) {
+                        builder.unreachable();
+                        has_ret = None;
+                        break
+                    }
+
                     has_ret = Some(result);
                 },
 
@@ -786,12 +941,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let value = self.expr(env, builder, rhs)?;
                 out_if_err!();
 
-                dbg!(env.gens);
                 let ty = self.ty_info.expr(rhs).unwrap();
                 let ty = ty.resolve(&[env.gens], self.syms);
-                dbg!(self.syms.sym(ty.sym(self.syms).unwrap()));
 
-                dbg!(ty.display(self.string_map, self.syms));
                 let ty = self.to_llvm_ty(ty);
 
                 Self::resolve_pattern(env, builder, ty, value, pat);
@@ -852,16 +1004,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let lo = env.loop_id.swap(Some(l));
 
-                    let index = builder.field_load(call_ret_value, 0).as_integer();
-                    let none_case = builder.const_int(index.as_integer().ty(), 1, false);
-                    let cond = builder.cmp_int(index, none_case, IntCmp::Eq);
+                    let tag = builder.field_load(call_ret_value, 1).as_integer();
+                    let none_case = builder.const_int(tag.as_integer().ty(), 1, false);
+                    let cond = builder.cmp_int(tag, none_case, IntCmp::Eq);
 
                     builder.ite(&mut (), cond, 
                     |builder, _| {
                         builder.loop_break(l);
                     }, |_, _| {});
 
-                    let value = builder.field_load(call_ret_value, 1).as_ptr();
+                    let value = builder.field_load(call_ret_value, 0).as_ptr();
                     let value = builder.load(value, iter_fn_binding_value_ty_llvm.repr);
 
                     Self::resolve_pattern(env, builder, iter_fn_binding_value_ty_llvm, value, binding);
@@ -943,7 +1095,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         // unwrap
                         let some = builder.const_int(self.i32, 0, false);
-                        let tag = builder.field_load(enum_ref, 0);
+                        let tag = builder.field_load(enum_ref, 1);
 
                         let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -996,7 +1148,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                                 // unwrap
                                 let some = builder.const_int(self.i32, 0, false);
-                                let tag = builder.field_load(enum_ref, 0);
+                                let tag = builder.field_load(enum_ref, 1);
 
                                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -1020,12 +1172,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                                 let tag = builder.field_load(
                                     strct.as_struct(),
-                                    0
+                                    1
                                 );
 
                                 let payload = builder.field_load(
                                     strct.as_struct(),
-                                    1
+                                    0
                                 );
 
                                 // unwrap
@@ -1272,15 +1424,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let rhs = self.expr(env, builder, rhs)?;
                 out_if_err!();
                 
-                dbg!(rhs);
                 match operator {
                     UnaryOperator::Not => {
-                        let value = builder.field_load(rhs.as_struct(), 0);
+                        let value = builder.field_load(rhs.as_struct(), 1).as_integer();
                         let value = builder.int_cast(value.as_integer(), *self.ctx.bool(), false);
                         let value = builder.bool_not(value.as_bool());
 
                         let ptr = builder.alloca_store(rhs);
-                        let ptr = builder.field_ptr(ptr, rhs.ty().as_struct(), 0);
+                        let ptr = builder.field_ptr(ptr, rhs.ty().as_struct(), 1);
                         builder.store(ptr, *value);
 
                         builder.load(ptr, rhs.ty())
@@ -1309,7 +1460,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     Some(builder.local(ty.repr))
                 };
 
-                let tag = builder.field_load(cond.as_struct(), 0).as_integer();
+                let tag = builder.field_load(cond.as_struct(), 1).as_integer();
                 let tag = builder.int_cast(tag, *self.ctx.bool(), false).as_bool();
 
                 builder.ite(&mut (self, env), tag,
@@ -1359,7 +1510,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 else { unreachable!() };
 
                 let value_ty = val.as_struct();
-                let value_index = builder.field_load(value_ty, 0).as_integer();
+                let value_tag = builder.field_load(value_ty, 1).as_integer();
 
                 let iter = cont.fields().iter().map(|sf| {
                     let name = sf.0;
@@ -1369,7 +1520,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let ret_ty = self.to_llvm_ty(ty);
                 let ret_local = builder.local(ret_ty.repr);
 
-                builder.switch(value_index, iter,
+                builder.switch(value_tag, iter,
                 |builder, (field, mapping)| {
                     // initialize the binding
                     let gens = self.syms.get_gens(gens);
@@ -1378,8 +1529,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let field_ty_llvm = self.to_llvm_ty(field_ty);
 
                     let local = builder.local(field_ty_llvm.repr);
-                    let value_ptr = builder.field_load(val.as_struct(), 1);
-                    let value = builder.load(value_ptr.as_ptr(), field_ty_llvm.repr);
+                    let value_ptr = builder.field_load(val.as_struct(), 0).as_ptr();
+                    let value = builder.load(value_ptr, field_ty_llvm.repr);
                     builder.local_set(local, value);
 
                     env.vars.push((mapping.binding(), local));
@@ -1483,7 +1634,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         ContainerKind::Enum => {
                             let ptr = builder.alloca_store(value);
-                            let tag_ptr = builder.field_ptr(ptr, value.ty().as_struct(), 0);
+                            let tag_ptr = builder.field_ptr(ptr, value.ty().as_struct(), 1);
 
                             let field = builder.load(tag_ptr, *self.i32).as_integer();
                             let index = builder.const_int(self.i32, i as _, false);
@@ -1543,7 +1694,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     );
 
 
-                    dbg!(func_ref);
                     return Ok(*func_ref)
                 }
 
@@ -1565,16 +1715,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     llvm_args.insert(0, env.info[&lhs]);
                 }
 
-                dbg!(&llvm_args);
 
                 let func_ty = self.ty_info.expr(lhs).unwrap();
                 let func_ty = func_ty.resolve(&[env.gens], self.syms);
                 let func_ty = self.to_llvm_ty(func_ty);
-                dbg!(func_ty);
 
                 let func_ptr = builder.field_load(func.as_struct(), 0);
                 let capture_ptr = builder.field_load(func.as_struct(), 1);
-                dbg!(func_ptr);
 
                 llvm_args.push(capture_ptr);
                 builder.call(func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args)
@@ -1592,9 +1739,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let syms::func::FunctionKind::Closure(closure) = func_ty.kind()
                 else { unreachable!() };
 
-                dbg!("><<<<<<<", ty);
                 let ty = ty.resolve(&[env.gens], self.syms);
-                dbg!(ty);
                 let llvm_ty = self.to_llvm_ty(ty);
 
                 let captured = self.syms.closure(closure).captured_variables.clone();
@@ -1628,7 +1773,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let captures = builder.struct_instance(strct_ty, &vals);
 
                 let size = strct_ty.size_of(self.module);
-                let size = builder.const_int(self.i32, size.unwrap() as _, false);
+                let size = builder.const_int(self.i64, size.unwrap() as _, false);
                 let buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]).as_ptr();
                 builder.store(buf, *captures);
 
@@ -1658,7 +1803,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         info: HashMap::new(),
                     };
 
-                    dbg!(env.gens);
 
                     let captured_ptr = builder.arg(func_ty.args().len() as _).unwrap();
                     let captured_ptr = builder.local_get(captured_ptr).as_ptr();
@@ -1756,11 +1900,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
                 let ty = self.ty_info.expr(expr).unwrap();
-                dbg!("-------------------------", ty);
 
                 let ty = ty.resolve(&[env.gens], self.syms);
 
-                dbg!(ty);
 
                 self.create_struct(builder, ty, &llvm_exprs)
             },
@@ -1781,7 +1923,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 } else if lsym.is_float() && ty.is_int(self.syms) {
                     builder.fp_to_si(lhs.as_fp(), dest.repr.as_integer())
                 } else if lsym == SymbolId::BOOL && ty.is_int(self.syms) {
-                    let tag = builder.field_load(lhs.as_struct(), 0);
+                    let tag = builder.field_load(lhs.as_struct(), 1);
                     builder.int_cast(tag.as_integer(), dest.repr, false)
                 } else if lsym == ty.sym(self.syms).unwrap() {
                     lhs
@@ -1807,7 +1949,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let buf = {
                     let buf_size = list_ty.repr.size_of(self.module).unwrap() * exprs.len();
-                    let buf_size = builder.const_int(self.i32, buf_size as i64, false);
+                    let buf_size = builder.const_int(self.i64, buf_size as i64, false);
                     let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*buf_size]);
                     ptr.as_ptr()
                 };
@@ -1823,7 +1965,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let len = builder.const_int(self.i32, exprs.len() as i64, false);
 
                 let size = self.list_ty.size_of(self.module).unwrap();
-                let size = builder.const_int(self.i32, size as i64, false);
+                let size = builder.const_int(self.i64, size as i64, false);
 
                 let strct = builder.struct_instance(self.list_ty, &[*len, *len, *buf]);
                 let buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]);
@@ -1840,7 +1982,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 let some = builder.const_int(self.i32, 0, false);
-                let tag = builder.field_load(value.as_struct(), 0);
+                let tag = builder.field_load(value.as_struct(), 1);
 
                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -1853,7 +1995,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }, 
                 );
 
-                let payload_ptr = builder.field_load(value.as_struct(), 1);
+                let payload_ptr = builder.field_load(value.as_struct(), 0);
                 let field_ty = self.ty_info.expr(expr_id).unwrap();
                 let gens = field_ty.gens(self.syms);
                 let payload_ty = self.syms.get_gens(gens)[0].1;
@@ -1870,8 +2012,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let some = builder.const_int(self.i32, 0, false);
 
-                let tag = builder.field_load(value.as_struct(), 0);
-                let payload = builder.field_load(value.as_struct(), 1).as_ptr();
+                let tag = builder.field_load(value.as_struct(), 1);
+                let payload = builder.field_load(value.as_struct(), 0).as_ptr();
 
                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -1951,7 +2093,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let size = strct.size_of(self.module).unwrap();
 
         // allocate the struct
-        let size = builder.const_int(self.i32, size as i64, false);
+        let size = builder.const_int(self.i64, size as i64, false);
         let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]);
         let ptr = ptr.as_ptr();
 
@@ -2002,7 +2144,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let size = value.ty().size_of(self.module).unwrap();
         let ptr = 
         if size > 0 {
-            let size = builder.const_int(self.i32, size as i64, false);
+            let size = builder.const_int(self.i64, size as i64, false);
             let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]);
             builder.store(ptr.as_ptr(), value);
             ptr
@@ -2013,7 +2155,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let repr = {
             builder.struct_instance(
                 self.enum_ref, 
-                &[tag, ptr]
+                &[ptr, tag]
             )
         };
 
@@ -2108,8 +2250,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                             ContainerKind::Enum => {
-                                let tag_lhs = builder.field_load(lhs.as_struct(), 0);
-                                let tag_rhs = builder.field_load(rhs.as_struct(), 0);
+                                let tag_lhs = builder.field_load(lhs.as_struct(), 1);
+                                let tag_rhs = builder.field_load(rhs.as_struct(), 1);
 
                                 let cmp = builder.cmp_int(tag_lhs.as_integer(), tag_rhs.as_integer(), IntCmp::Eq);
 

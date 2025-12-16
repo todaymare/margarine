@@ -259,6 +259,9 @@ impl<'me> Generic<'me> {
 impl<'me> SymbolMap<'me> {
     pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap, string_map: &mut StringMap) -> Self {
         let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new(), closures: KVec::new(), };
+
+        assert_eq!(slf.gens.push(&[]), GenListId::EMPTY);
+
         macro_rules! init {
             ($name: ident) => {
                 let pending = slf.pending(ns_map, StringMap::$name, 0);
@@ -362,14 +365,32 @@ impl<'me> SymbolMap<'me> {
         }
 
 
+        // any
+        {
+            let pending = slf.pending(ns_map, StringMap::ANY, 0);
+            assert_eq!(pending, SymbolId::ANY);
+
+            let sym = Symbol::new(StringMap::ANY, &[], SymbolKind::Opaque);
+            slf.add_sym(pending, sym);
+        }
+
+
+        // list
+        {
+            let pending = slf.pending(ns_map, StringMap::LIST, 1);
+            assert_eq!(pending, SymbolId::LIST);
+            slf.add_sym(pending, Symbol::new(StringMap::LIST, &[StringMap::T], SymbolKind::Opaque));
+        }
+
+
         // type_id
         {
-            let pending = slf.pending(ns_map, StringMap::TYPE_ID, 1);
-            assert_eq!(pending, SymbolId::TYPE_ID);
+            let pending = slf.pending(ns_map, StringMap::BUILTIN_TYPE_ID, 1);
+            assert_eq!(pending, SymbolId::BUILTIN_TYPE_ID);
 
             let sym = Symbol::new(
-                StringMap::TYPE_ID,
-                &[StringMap::INVALID_IDENT],
+                StringMap::BUILTIN_TYPE_ID,
+                &[StringMap::T],
                 SymbolKind::Function(FunctionTy::new(
                         &[],
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None),
@@ -380,16 +401,87 @@ impl<'me> SymbolMap<'me> {
             slf.add_sym(pending, sym);
         }
 
-        // list
+
+        // $any
         {
-            let pending = slf.pending(ns_map, StringMap::LIST, 1);
-            assert_eq!(pending, SymbolId::LIST);
-            slf.add_sym(pending, Symbol::new(StringMap::LIST, &[StringMap::T], SymbolKind::Opaque));
+            let pending = slf.pending(ns_map, StringMap::BUILTIN_ANY, 1);
+            assert_eq!(pending, SymbolId::BUILTIN_ANY);
+
+            let args = [
+                FunctionArgument::new(
+                    StringMap::VALUE, 
+                    Generic::new(
+                        SourceRange::ZERO, 
+                        GenericKind::Generic(StringMap::T),
+                        None
+                    )
+                )
+            ];
+
+            let sym = Symbol::new(
+                StringMap::BUILTIN_ANY,
+                &[StringMap::T],
+                SymbolKind::Function(FunctionTy::new(
+                        arena.alloc_new(args),
+                        Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::ANY, &[]), None),
+                        FunctionKind::Any,
+                        None,
+                )));
+
+            slf.add_sym(pending, sym);
         }
 
 
+        // $downcast_any
+        {
+            let pending = slf.pending(ns_map, StringMap::BUILTIN_DOWNCAST_ANY, 1);
+            assert_eq!(pending, SymbolId::BUILTIN_DOWNCAST_ANY);
 
-        assert_eq!(slf.gens.push(&[]), GenListId::EMPTY);
+            let args = [
+                FunctionArgument::new(
+                    StringMap::VALUE, 
+                    Generic::new(
+                        SourceRange::ZERO, 
+                        GenericKind::Sym(SymbolId::ANY, &[]),
+                        None
+                    )
+                )
+            ];
+
+            let opt_gens = [Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T), None)];
+
+            let sym = Symbol::new(
+                StringMap::BUILTIN_DOWNCAST_ANY,
+                &[StringMap::T],
+                SymbolKind::Function(FunctionTy::new(
+                    arena.alloc_new(args),
+                    Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::OPTION, arena.alloc_new(opt_gens)), None),
+                    FunctionKind::DowncastAny,
+                    None,
+                )));
+
+            slf.add_sym(pending, sym);
+        }
+
+        // $size_of
+        {
+            let pending = slf.pending(ns_map, StringMap::BUILTIN_SIZE_OF, 1);
+            assert_eq!(pending, SymbolId::BUILTIN_SIZE_OF);
+
+            let sym = Symbol::new(
+                StringMap::BUILTIN_SIZE_OF,
+                &[StringMap::T],
+                SymbolKind::Function(FunctionTy::new(
+                        &[],
+                        Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None),
+                        FunctionKind::SizeOf,
+                        None,
+                )));
+
+            slf.add_sym(pending, sym);
+        }
+
+
 
 
         slf
@@ -434,8 +526,12 @@ impl SymbolId {
     pub const OPTION : Self = Self(10); // +2 for variants
     pub const RESULT : Self = Self(13); // +2 for variants
     pub const STR    : Self = Self(16);
-    pub const TYPE_ID: Self = Self(17);
+    pub const ANY    : Self = Self(17);
     pub const LIST   : Self = Self(18);
+    pub const BUILTIN_TYPE_ID: Self = Self(19);
+    pub const BUILTIN_ANY    : Self = Self(20);
+    pub const BUILTIN_DOWNCAST_ANY : Self = Self(21);
+    pub const BUILTIN_SIZE_OF : Self = Self(22);
 
 
     pub fn supports_arith(self) -> bool {
