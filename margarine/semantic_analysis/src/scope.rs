@@ -183,7 +183,7 @@ impl<'me> Scope<'me> {
     }
 
 
-    fn over<T>(self, scope_map: &ScopeMap<'me>, mut func: impl FnMut(Scope<'me>) -> Option<T>) -> Option<T> {
+    pub fn over<T>(self, scope_map: &ScopeMap<'me>, mut func: impl FnMut(Scope<'me>) -> Option<T>) -> Option<T> {
         let mut this = Some(self);
         while let Some(scope) = this {
             if let Some(val) = func(scope) { return Some(val) }

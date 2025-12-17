@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use common::{copy_slice_in, source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use errors::ErrorId;
@@ -15,7 +15,7 @@ define_key!(pub VarId(pub u32));
 define_key!(pub ClosureId(pub u32));
 
 pub struct SymbolMap<'me> {
-    syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId)>,
+    syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId, HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [StringIndex])>)>,
     gens : KVec<GenListId, &'me [(StringIndex, Sym)]>,
     vars : KVec<VarId, Var>,
     closures: KVec<ClosureId, Closure>,
@@ -52,7 +52,7 @@ pub struct Generic<'me> {
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GenericKind<'me> {
     Generic(StringIndex),
     Sym(SymbolId, &'me [Generic<'me>]),
@@ -64,13 +64,17 @@ impl<'me> SymbolMap<'me> {
     pub fn pending(&mut self, ns_map: &mut NamespaceMap,
                    path: StringIndex, gen_count: usize) -> SymbolId {
 
-        self.syms.push((Err(gen_count), ns_map.push(Namespace::new(path))))
+        self.syms.push((Err(gen_count), ns_map.push(Namespace::new(path)), HashMap::new()))
     }
 
 
     pub fn insert_closure_capture(&mut self, closure: ClosureId, name: StringIndex, ty: Sym) {
         self.closures[closure].captured_variables.insert((name, ty));
+    }
 
+
+    pub fn traits(&mut self, sym: SymbolId) -> &mut HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [StringIndex])> {
+        &mut self.syms[sym].2
     }
 
 
@@ -250,6 +254,28 @@ impl<'me> Generic<'me> {
                 };
                 
                 Ok(map.get_ty(symbol, &generics))
+            },
+        }
+    }
+
+    pub fn rec_replace(self, alloc: &'me Arena, gen_name: StringIndex, repl: Generic<'me>) -> Generic<'me> {
+        match self.kind {
+            GenericKind::Generic(v) => {
+                if v == gen_name { repl }
+                else { self }
+            },
+
+
+            GenericKind::Sym(symbol, generics) => {
+                let generics = {
+                    let mut vec = sti::vec::Vec::with_cap_in(alloc, generics.len());
+                    for g in generics {
+                        vec.push(g.rec_replace(alloc, gen_name, repl));
+                    }
+                    vec
+                };
+                
+                Generic::new(self.range, GenericKind::Sym(symbol, generics.leak()), self.err)
             },
         }
     }
@@ -602,4 +628,11 @@ impl GenListId {
 
 impl<'me> GenericKind<'me> {
     pub const ERROR : Self = Self::Sym(SymbolId::ERR, &[]);
+}
+
+
+impl PartialEq for Generic<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind() == other.kind()
+    }
 }

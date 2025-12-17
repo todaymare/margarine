@@ -44,6 +44,7 @@ pub struct TyInfo {
     decls: KVec<DeclId, Option<ErrorId>>,
     funcs: HashMap<ExprId, (SymbolId, GenListId)>,
     idents: HashMap<ExprId, Option<SymbolId>>,
+    accesses: HashMap<ExprId, SymbolId>,
 }
 
 
@@ -91,6 +92,7 @@ impl<'me, 'out, 'temp, 'ast, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
                 decls: KVec::new(),
                 funcs: HashMap::new(),
                 idents: HashMap::new(),
+                accesses: HashMap::new(),
             },
             ast,
             startups: Vec::new(),
@@ -540,6 +542,11 @@ impl TyInfo {
 
     pub fn set_ident(&mut self, expr: ExprId, call: Option<SymbolId>) {
         self.idents.insert(expr, call);
+    }
+
+
+    pub fn set_acc(&mut self, expr: ExprId, tra: SymbolId) {
+        self.accesses.insert(expr, tra);
     }
 
 

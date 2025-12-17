@@ -745,6 +745,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             syms::func::FunctionKind::Closure(_) => unreachable!(),
+            syms::func::FunctionKind::Trait => unreachable!(),
         }
     }
 
@@ -863,6 +864,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             SymbolKind::Namespace => unreachable!(),
+            SymbolKind::Trait(_) => unreachable!(),
         };
 
 
@@ -1630,7 +1632,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         | ContainerKind::Struct => {
                             let llvm_ty = self.to_llvm_ty(val);
                             let value = builder.load(value.as_ptr(), llvm_ty.strct).as_struct();
-                            builder.field_load(value, i as _)
+                            return Ok(builder.field_load(value, i as _))
                         },
 
                         ContainerKind::Enum => {
@@ -1659,20 +1661,31 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 },
                             );
 
-                            builder.load(ptr, value.ty())
+                            return Ok(builder.load(ptr, value.ty()))
                         },
 
 
                         ContainerKind::Generic => unreachable!(),
                     }
 
+                }
+
+
+                let sym_gens = self.syms.get_gens(val.gens(self.syms));
+
+                let ns = 
+                if let Some(tr) = self.ty_info.accesses.get(&expr) {
+                    self.syms.traits(ty)[tr].0
                 } else {
-                    let sym_gens = self.syms.get_gens(val.gens(self.syms));
+                    self.syms.sym_ns(ty)
+                };
 
-                    let ns = self.syms.sym_ns(ty);
-                    let ns = self.ns.get_ns(ns);
 
-                    let sym = ns.get_sym(field_name).unwrap().unwrap();
+                let ns = self.ns.get_ns(ns);
+
+
+                if let Some(sym) = ns.get_sym(field_name) {
+                    let sym = sym.unwrap();
                     let gens = slf.gens(self.syms);
 
                     let sym = Sym::Ty(sym, gens)
@@ -1694,9 +1707,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         &[*ptr, *null],
                     );
 
-
                     return Ok(*func_ref)
                 }
+
+                todo!()
 
             },
 
@@ -2225,6 +2239,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     SymbolKind::Function(_) => {
                         todo!()
                     },
+
+
+                    SymbolKind::Trait(_) => {
+                        unreachable!()
+                    }
 
 
                     SymbolKind::Container(container) => {

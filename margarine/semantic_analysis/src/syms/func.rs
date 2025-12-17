@@ -5,7 +5,7 @@ use crate::syms::sym_map::ClosureId;
 
 use super::sym_map::{Generic, SymbolId};
 
-#[derive(Debug, Clone, Copy, ImmutableData)]
+#[derive(Debug, Clone, Copy, ImmutableData, PartialEq)]
 pub struct FunctionTy<'me> {
     args: &'me [FunctionArgument<'me>],
     ret : Generic<'me>,
@@ -17,7 +17,7 @@ pub struct FunctionTy<'me> {
 }
 
 
-#[derive(Debug, Clone, Copy, ImmutableData)]
+#[derive(Debug, Clone, Copy, ImmutableData, PartialEq)]
 pub struct FunctionArgument<'me> {
     name  : StringIndex,
     symbol: Generic<'me>,
@@ -36,6 +36,8 @@ pub enum FunctionKind {
     SizeOf,
     Any,
     DowncastAny,
+
+    Trait,
 
     Enum {
         sym: SymbolId,

@@ -33,6 +33,14 @@ pub enum Decl<'a> {
         body: Block<'a>,
     },
 
+    ImplTrait {
+        header: SourceRange,
+        trait_name: DataType<'a>,
+        data_type: DataType<'a>,
+        gens: &'a [StringIndex],
+        body: Block<'a>,
+    },
+
     Using {
         item: UseItem<'a>,
     },
@@ -60,6 +68,7 @@ pub enum Decl<'a> {
 
     Trait {
         name: StringIndex,
+        header: SourceRange,
         functions: &'a [FunctionSignature<'a>],
     },
 
@@ -88,12 +97,28 @@ pub struct FunctionSignature<'a> {
     pub return_type: DataType<'a>,
 }
 
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Generic<'a> {
+    name: StringIndex,
+    bounds: &'a [DataType<'a>],
+}
+
+
+
 impl<'a> FunctionSignature<'a> {
     pub fn new(
         name: StringIndex, 
         source: SourceRange, arguments: &'a [FunctionArgument<'a>], 
         generics: &'a [StringIndex], return_type: DataType<'a>) -> Self { 
         Self { name, source, arguments, return_type, generics }
+    }
+}
+
+
+impl<'a> Generic<'a> {
+    pub fn new(name: StringIndex, bounds: &'a [DataType<'a>]) -> Self {
+        Self { name, bounds }
     }
 }
 

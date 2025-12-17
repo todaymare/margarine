@@ -20,8 +20,15 @@ pub struct Symbol<'me> {
 pub enum SymbolKind<'me> {
     Function(FunctionTy<'me>),
     Container(Container<'me>),
+    Trait(Trait<'me>),
     Opaque,
     Namespace,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct Trait<'me> {
+    pub funcs: &'me [(StringIndex, FunctionTy<'me>)],
 }
 
 

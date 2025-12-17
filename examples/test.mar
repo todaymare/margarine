@@ -1,4 +1,21 @@
+extern "https://github.com/todaymare/margarine-std" as std;
+
 fn main() {
-    "hi".hey()
+    std::println("hi".hey());
+}
+
+impl Foo for str {
+    fn hey(self): Self {
+        "hello world"
+    }
+}
+
+trait Foo {
+    fn hey(self): Self
+}
+
+
+struct Bar<T> {
+    foo: int,
 }
 

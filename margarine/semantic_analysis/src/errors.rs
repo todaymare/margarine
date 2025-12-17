@@ -150,6 +150,11 @@ pub enum Error {
         fields: sti::vec::Vec<StringIndex>,
     },
 
+    MissingFuncs {
+        source: SourceRange,
+        fields: sti::vec::Vec<StringIndex>,
+    },
+
     FunctionArgsMismatch {
         source: SourceRange,
         sig_len: usize,
@@ -223,6 +228,9 @@ pub enum Error {
     CallOnNonFunction { source: SourceRange },
 
     CallOnField { source: SourceRange, field_name: StringIndex, },
+
+
+    ImplTraitOnNonTrait(SourceRange),
 
     Bypass,
 }
@@ -488,9 +496,27 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*range, &msg)
             },
             
-            
+             
             Error::MissingFields { source, fields } => {
                 let mut msg = format!("missing fields: ");
+                let mut is_first = true;
+                for (_, n) in fields {
+                    if !is_first {
+                        let _ = write!(msg, ", ");
+                    }
+
+                    is_first = false;
+                    let _ = write!(msg, "{}", fmt.string(*n));
+                }
+
+                fmt.error("missing fields")
+                    .highlight_with_note(*source, &msg)
+                
+            },
+            
+
+            Error::MissingFuncs { source, fields } => {
+                let mut msg = format!("missing functions: ");
                 let mut is_first = true;
                 for (_, n) in fields {
                     if !is_first {
@@ -691,6 +717,11 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
 
             Error::VariableTupleAndHintTupleSizeMismatch(..) => {
                 todo!()
+            },
+
+            Error::ImplTraitOnNonTrait(src) => {
+                fmt.error("can't impl a non-trait")
+                    .highlight(*src)
             },
 
 

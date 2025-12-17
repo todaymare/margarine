@@ -919,6 +919,7 @@ impl Lsp {
 
 
                     semantic_analysis::errors::Error::Bypass => return None,
+                    _ => todo!(),
                 };
 
 
