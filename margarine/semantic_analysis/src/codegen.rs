@@ -256,7 +256,7 @@ pub fn run(
                 }
 
 
-                func_sec.extend(&((code.len() - code_sec_start) as u32).to_le_bytes());
+  winfo              func_sec.extend(&((code.len() - code_sec_start) as u32).to_le_bytes());
 
             },
 

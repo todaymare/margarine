@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use common::{copy_slice_in, source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use errors::ErrorId;
-use parser::nodes::{decl::DeclId, NodeId};
+use parser::nodes::{decl::{DeclId}, NodeId};
 use sti::{arena::Arena, define_key, ext::FromIn, vec::KVec};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind}};
 
-use super::{ty::Sym, Symbol};
+use super::{ty::Type, Symbol};
 
 define_key!(pub SymbolId(pub u32));
 define_key!(pub GenListId(pub u32));
@@ -15,8 +15,8 @@ define_key!(pub VarId(pub u32));
 define_key!(pub ClosureId(pub u32));
 
 pub struct SymbolMap<'me> {
-    syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId, HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [StringIndex])>)>,
-    gens : KVec<GenListId, &'me [(StringIndex, Sym)]>,
+    syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId, HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [BoundedGeneric<'me>])>)>,
+    gens : KVec<GenListId, &'me [(BoundedGeneric<'me>, Type)]>,
     vars : KVec<VarId, Var>,
     closures: KVec<ClosureId, Closure>,
     arena: &'me Arena,
@@ -25,7 +25,7 @@ pub struct SymbolMap<'me> {
 
 #[derive(Debug)]
 pub struct Closure {
-    pub captured_variables: HashSet<(StringIndex, Sym)>,
+    pub captured_variables: HashSet<(StringIndex, Type)>,
 }
 
 
@@ -39,7 +39,7 @@ pub struct Var {
 
 #[derive(Debug, Clone, Copy)]
 pub enum VarSub {
-    Concrete(Sym),
+    Concrete(Type),
     None,
 }
 
@@ -52,9 +52,27 @@ pub struct Generic<'me> {
 }
 
 
+#[derive(Clone, Copy, Debug, PartialEq, ImmutableData)]
+pub struct BoundedGeneric<'me> {
+    pub name: StringIndex,
+    pub bounds: &'me [SymbolId],
+}
+
+
+impl<'me> BoundedGeneric<'me> {
+    pub const T : Self = Self::new(StringMap::T, &[]);
+    pub const A : Self = Self::new(StringMap::A, &[]);
+
+
+    pub const fn new(name: StringIndex, bounds: &'me [SymbolId]) -> Self {
+        Self { name, bounds }
+    }
+}
+
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GenericKind<'me> {
-    Generic(StringIndex),
+    Generic(BoundedGeneric<'me>),
     Sym(SymbolId, &'me [Generic<'me>]),
 }
 
@@ -68,20 +86,25 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn insert_closure_capture(&mut self, closure: ClosureId, name: StringIndex, ty: Sym) {
+    pub fn insert_closure_capture(&mut self, closure: ClosureId, name: StringIndex, ty: Type) {
         self.closures[closure].captured_variables.insert((name, ty));
     }
 
 
-    pub fn traits(&mut self, sym: SymbolId) -> &mut HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [StringIndex])> {
+    pub fn traits(&mut self, sym: SymbolId) -> &mut HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [BoundedGeneric<'me>])> {
         &mut self.syms[sym].2
+    }
+
+
+    pub fn set_err(&mut self, sym: SymbolId, err: ErrorId) {
+        self.syms[sym].0.as_mut().unwrap().err = Some(err);
     }
 
 
     pub fn add_enum(&mut self, id: SymbolId, ns_map: &mut NamespaceMap,
                     string_map: &mut StringMap, range: SourceRange,
                     name: StringIndex, mappings: &'me [(StringIndex, Generic<'me>)],
-                    generics: &'me [StringIndex], decl: Option<DeclId>) {
+                    generics: &'me [BoundedGeneric<'me>], decl: Option<DeclId>) {
 
         let sk = SymbolKind::Container(Container::new(mappings, ContainerKind::Enum));
         let sym = Symbol::new(name, generics, sk);
@@ -159,33 +182,33 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn new_var(&mut self, node: impl Into<NodeId>, range: SourceRange) -> Sym {
+    pub fn new_var(&mut self, node: impl Into<NodeId>, range: SourceRange) -> Type {
         self.new_var_ex(node, range, VarSub::None)
     }
 
 
-    pub fn new_var_ex(&mut self, node: impl Into<NodeId>, range: SourceRange, sub: VarSub) -> Sym {
-        Sym::Var(self.vars.push(Var { sub, node: node.into(), range }))
+    pub fn new_var_ex(&mut self, node: impl Into<NodeId>, range: SourceRange, sub: VarSub) -> Type {
+        Type::Var(self.vars.push(Var { sub, node: node.into(), range }))
     }
 
 
-    pub fn get_gens(&self, g: GenListId) -> &'me [(StringIndex, Sym)] {
+    pub fn get_gens(&self, g: GenListId) -> &'me [(BoundedGeneric<'me>, Type)] {
         self.gens[g]
     }
 
 
-    pub fn add_gens(&mut self, generics: &'me [(StringIndex, Sym)]) -> GenListId {
+    pub fn add_gens(&mut self, generics: &'me [(BoundedGeneric<'me>, Type)]) -> GenListId {
         if generics.is_empty() { return GenListId::EMPTY }
         self.gens.push(generics)
     }
 
 
-    pub fn get_ty(&mut self, ty: SymbolId, generics: &[Sym]) -> Sym {
+    pub fn get_ty(&mut self, ty: SymbolId, generics: &[Type]) -> Type {
         let sym = self.sym(ty);
         let vec = sti::vec::Vec::from_in(self.arena, sym.generics.iter().copied().zip(generics.iter().copied()));
         let generics = if generics.is_empty() { GenListId::EMPTY }
                        else { self.add_gens(copy_slice_in(self.arena, vec.leak())) };
-        Sym::Ty(ty, generics)
+        Type::Ty(ty, generics)
     }
 
 
@@ -194,7 +217,7 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn gens(&self) -> &KVec<GenListId, &'me [(StringIndex, Sym)]> {
+    pub fn gens(&self) -> &KVec<GenListId, &'me [(BoundedGeneric<'me>, Type)]> {
         &self.gens
     }
 
@@ -231,11 +254,11 @@ impl<'me> Generic<'me> {
     }
     
 
-    pub fn to_ty(self, gens: &[(StringIndex, Sym)], map: &mut SymbolMap) -> Result<Sym, Error> {
+    pub fn to_ty(self, gens: &[(BoundedGeneric<'me>, Type)], map: &mut SymbolMap) -> Result<Type, Error> {
         match self.kind {
             GenericKind::Generic(v) => {
                 Ok(gens.iter()
-                    .find(|x| x.0 == v)
+                    .find(|x| x.0.name() == v.name())
                     .copied()
                     .map(|x| x.1)
                     .expect(&format!("COMPILER ERROR: a generic name can't be missing as \
@@ -252,6 +275,8 @@ impl<'me> Generic<'me> {
                     }
                     vec
                 };
+
+                //dbg!(symbol, &generics);
                 
                 Ok(map.get_ty(symbol, &generics))
             },
@@ -261,7 +286,7 @@ impl<'me> Generic<'me> {
     pub fn rec_replace(self, alloc: &'me Arena, gen_name: StringIndex, repl: Generic<'me>) -> Generic<'me> {
         match self.kind {
             GenericKind::Generic(v) => {
-                if v == gen_name { repl }
+                if v.name() == gen_name { repl }
                 else { self }
             },
 
@@ -319,17 +344,18 @@ impl<'me> SymbolMap<'me> {
 
         // ptr 
         {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
             let pending = slf.pending(ns_map, StringMap::PTR, 1);
             assert_eq!(pending, SymbolId::PTR);
             let fields = [
                 (StringMap::COUNT, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None)),
-                (StringMap::VALUE, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T), None)),
+                (StringMap::VALUE, Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)),
             ];
 
             let cont = Container::new(arena.alloc_new(fields), ContainerKind::Struct);
             let kind = SymbolKind::Container(cont);
 
-            slf.add_sym(pending, Symbol::new(StringMap::PTR, &[StringMap::T], kind));
+            slf.add_sym(pending, Symbol::new(StringMap::PTR, arena.alloc_new([t]), kind));
         }
 
         // range
@@ -350,14 +376,15 @@ impl<'me> SymbolMap<'me> {
 
         // option 
         {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
             let pending = slf.pending(ns_map, StringMap::OPTION, 1);
             assert_eq!(pending, SymbolId::OPTION);
             let fields = [
-                (StringMap::SOME, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T), None)),
+                (StringMap::SOME, Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)),
                 (StringMap::NONE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None)),
             ];
 
-            let gens = slf.arena.alloc_new([StringMap::T]);
+            let gens = slf.arena.alloc_new([t]);
 
             slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
                          StringMap::OPTION, slf.arena.alloc_new(fields), gens, None);
@@ -366,14 +393,17 @@ impl<'me> SymbolMap<'me> {
 
         // result 
         {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let a = BoundedGeneric::new(StringMap::A, &[]);
+
             let pending = slf.pending(ns_map, StringMap::RESULT, 2);
             assert_eq!(pending, SymbolId::RESULT);
             let fields = [
-                (StringMap::OK , Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T), None)),
-                (StringMap::ERR, Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::A), None)),
+                (StringMap::OK , Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)),
+                (StringMap::ERR, Generic::new(SourceRange::ZERO, GenericKind::Generic(a), None)),
             ];
 
-            let gens = slf.arena.alloc_new([StringMap::T, StringMap::A]);
+            let gens = slf.arena.alloc_new([t, a]);
 
             slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
                          StringMap::RESULT, slf.arena.alloc_new(fields), gens, None);
@@ -403,20 +433,24 @@ impl<'me> SymbolMap<'me> {
 
         // list
         {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+
             let pending = slf.pending(ns_map, StringMap::LIST, 1);
             assert_eq!(pending, SymbolId::LIST);
-            slf.add_sym(pending, Symbol::new(StringMap::LIST, &[StringMap::T], SymbolKind::Opaque));
+            slf.add_sym(pending, Symbol::new(StringMap::LIST, arena.alloc_new([t]), SymbolKind::Opaque));
         }
 
 
         // $type_id
         {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+
             let pending = slf.pending(ns_map, StringMap::BUILTIN_TYPE_ID, 1);
             assert_eq!(pending, SymbolId::BUILTIN_TYPE_ID);
 
             let sym = Symbol::new(
                 StringMap::BUILTIN_TYPE_ID,
-                &[StringMap::T],
+                arena.alloc_new([t]),
                 SymbolKind::Function(FunctionTy::new(
                         &[],
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None),
@@ -430,6 +464,7 @@ impl<'me> SymbolMap<'me> {
 
         // $any
         {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
             let pending = slf.pending(ns_map, StringMap::BUILTIN_ANY, 1);
             assert_eq!(pending, SymbolId::BUILTIN_ANY);
 
@@ -438,7 +473,7 @@ impl<'me> SymbolMap<'me> {
                     StringMap::VALUE, 
                     Generic::new(
                         SourceRange::ZERO, 
-                        GenericKind::Generic(StringMap::T),
+                        GenericKind::Generic(t),
                         None
                     )
                 )
@@ -446,7 +481,7 @@ impl<'me> SymbolMap<'me> {
 
             let sym = Symbol::new(
                 StringMap::BUILTIN_ANY,
-                &[StringMap::T],
+                arena.alloc_new([t]),
                 SymbolKind::Function(FunctionTy::new(
                         arena.alloc_new(args),
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::ANY, &[]), None),
@@ -460,6 +495,8 @@ impl<'me> SymbolMap<'me> {
 
         // $downcast_any
         {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+
             let pending = slf.pending(ns_map, StringMap::BUILTIN_DOWNCAST_ANY, 1);
             assert_eq!(pending, SymbolId::BUILTIN_DOWNCAST_ANY);
 
@@ -474,11 +511,11 @@ impl<'me> SymbolMap<'me> {
                 )
             ];
 
-            let opt_gens = [Generic::new(SourceRange::ZERO, GenericKind::Generic(StringMap::T), None)];
+            let opt_gens = [Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)];
 
             let sym = Symbol::new(
                 StringMap::BUILTIN_DOWNCAST_ANY,
-                &[StringMap::T],
+                arena.alloc_new([t]),
                 SymbolKind::Function(FunctionTy::new(
                     arena.alloc_new(args),
                     Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::OPTION, arena.alloc_new(opt_gens)), None),
@@ -491,12 +528,13 @@ impl<'me> SymbolMap<'me> {
 
         // $size_of
         {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
             let pending = slf.pending(ns_map, StringMap::BUILTIN_SIZE_OF, 1);
             assert_eq!(pending, SymbolId::BUILTIN_SIZE_OF);
 
             let sym = Symbol::new(
                 StringMap::BUILTIN_SIZE_OF,
-                &[StringMap::T],
+                arena.alloc_new([t]),
                 SymbolKind::Function(FunctionTy::new(
                         &[],
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None),
@@ -514,10 +552,10 @@ impl<'me> SymbolMap<'me> {
 
 
 impl VarId {
-    pub fn occurs_in(self, map: &SymbolMap, ty: Sym) -> bool {
+    pub fn occurs_in(self, map: &SymbolMap, ty: Type) -> bool {
         match ty {
-            Sym::Ty(_, gens) => map.gens[gens].iter().any(|x| self.occurs_in(map, x.1)),
-            Sym::Var(v) => {
+            Type::Ty(_, gens) => map.gens[gens].iter().any(|x| self.occurs_in(map, x.1)),
+            Type::Var(v) => {
                 if self == v { return true }
 
                 let sub = map.vars[v].sub;

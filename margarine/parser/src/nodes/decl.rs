@@ -1,4 +1,4 @@
-use common::{string_map::StringIndex, source::SourceRange};
+use common::{source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use errors::ErrorId;
 use sti::define_key;
 
@@ -12,14 +12,14 @@ pub enum Decl<'a> {
         name: StringIndex,
         header: SourceRange,
         fields: &'a [(StringIndex, DataType<'a>, SourceRange)],
-        generics: &'a [StringIndex],
+        generics: &'a [DeclGeneric<'a>],
     },
 
     Enum {
         name: StringIndex,
         header: SourceRange,
         mappings: &'a [EnumMapping<'a>],
-        generics: &'a [StringIndex],
+        generics: &'a [DeclGeneric<'a>],
     },
 
     Function {
@@ -29,7 +29,7 @@ pub enum Decl<'a> {
     
     Impl {
         data_type: DataType<'a>,
-        gens: &'a [StringIndex],
+        gens: &'a [DeclGeneric<'a>],
         body: Block<'a>,
     },
 
@@ -37,7 +37,7 @@ pub enum Decl<'a> {
         header: SourceRange,
         trait_name: DataType<'a>,
         data_type: DataType<'a>,
-        gens: &'a [StringIndex],
+        gens: &'a [DeclGeneric<'a>],
         body: Block<'a>,
     },
 
@@ -75,7 +75,7 @@ pub enum Decl<'a> {
     OpaqueType {
         name: StringIndex,
         header: SourceRange,
-        gens: &'a [StringIndex],
+        gens: &'a [DeclGeneric<'a>],
     },
 
     Attribute {
@@ -93,13 +93,13 @@ pub struct FunctionSignature<'a> {
     pub name       : StringIndex,
     pub source     : SourceRange,
     pub arguments  : &'a [FunctionArgument<'a>],
-    pub generics   : &'a [StringIndex],
+    pub generics   : &'a [DeclGeneric<'a>],
     pub return_type: DataType<'a>,
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Generic<'a> {
+#[derive(Debug, Clone, Copy, PartialEq, ImmutableData)]
+pub struct DeclGeneric<'a> {
     name: StringIndex,
     bounds: &'a [DataType<'a>],
 }
@@ -110,14 +110,17 @@ impl<'a> FunctionSignature<'a> {
     pub fn new(
         name: StringIndex, 
         source: SourceRange, arguments: &'a [FunctionArgument<'a>], 
-        generics: &'a [StringIndex], return_type: DataType<'a>) -> Self { 
+        generics: &'a [DeclGeneric<'a>], return_type: DataType<'a>) -> Self { 
         Self { name, source, arguments, return_type, generics }
     }
 }
 
 
-impl<'a> Generic<'a> {
-    pub fn new(name: StringIndex, bounds: &'a [DataType<'a>]) -> Self {
+impl<'a> DeclGeneric<'a> {
+    pub const T : Self = Self::new(StringMap::T, &[]);
+    pub const A : Self = Self::new(StringMap::A, &[]);
+
+    pub const fn new(name: StringIndex, bounds: &'a [DataType<'a>]) -> Self {
         Self { name, bounds }
     }
 }
@@ -127,14 +130,14 @@ impl<'a> Generic<'a> {
 pub struct ExternFunction<'a> {
     name: StringIndex,
     path: StringIndex,
-    gens: &'a [StringIndex],
+    gens: &'a [DeclGeneric<'a>],
     args: &'a [FunctionArgument<'a>],
     return_type: DataType<'a>,
     source_range: SourceRange,
 }
 
 impl<'a> ExternFunction<'a> {
-    pub(crate) fn new(name: StringIndex, path: StringIndex, gens: &'a [StringIndex], args: &'a [FunctionArgument<'a>], return_type: DataType<'a>, source_range: SourceRange) -> Self { 
+    pub(crate) fn new(name: StringIndex, path: StringIndex, gens: &'a [DeclGeneric<'a>], args: &'a [FunctionArgument<'a>], return_type: DataType<'a>, source_range: SourceRange) -> Self { 
         Self { name, gens, args, return_type, source_range, path } 
     }
 
@@ -144,7 +147,7 @@ impl<'a> ExternFunction<'a> {
     #[inline(always)]
     pub fn path(&self) -> StringIndex { self.path }
     #[inline(always)]
-    pub fn gens(&self) -> &[StringIndex] { &self.gens }
+    pub fn gens(&self) -> &[DeclGeneric<'a>] { &self.gens }
     #[inline(always)]
     pub fn args(&self) -> &[FunctionArgument<'a>] { &self.args }
     #[inline(always)]

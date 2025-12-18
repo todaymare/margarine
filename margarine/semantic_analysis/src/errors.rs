@@ -5,7 +5,7 @@ use errors::ErrorType;
 use parser::nodes::expr::{BinaryOperator, UnaryOperator};
 use sti::vec::Vec;
 
-use crate::syms::{ty::Sym, sym_map::SymbolMap};
+use crate::syms::{sym_map::{GenListId, SymbolId, SymbolMap}, ty::Type};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Error {
@@ -13,8 +13,8 @@ pub enum Error {
 
     InvalidCast {
         range: SourceRange,
-        from_ty: Sym,
-        to_ty: Sym,
+        from_ty: Type,
+        to_ty: Type,
     },
 
     InvalidValueForAttr {
@@ -35,8 +35,8 @@ pub enum Error {
     FunctionBodyAndReturnMismatch {
         header: SourceRange,
         item: SourceRange,
-        return_type: Sym,
-        body_type: Sym,
+        return_type: Type,
+        body_type: Type,
     },
 
     OutsideOfAFunction {
@@ -45,8 +45,8 @@ pub enum Error {
 
     InvalidType {
         source: SourceRange,
-        found: Sym,
-        expected: Sym,
+        found: Type,
+        expected: Type,
     },
 
     DuplicateField {
@@ -60,8 +60,8 @@ pub enum Error {
     },
 
     VariableValueAndHintDiffer {
-        value_type: Sym,
-        hint_type: Sym,
+        value_type: Type,
+        hint_type: Type,
         source: SourceRange,
     },
 
@@ -76,36 +76,36 @@ pub enum Error {
 
     InvalidBinaryOp {
         operator: BinaryOperator,
-        lhs: Sym,
-        rhs: Sym,
+        lhs: Type,
+        rhs: Type,
         source: SourceRange,
     },
 
     InvalidUnaryOp {
         operator: UnaryOperator,
-        rhs: Sym,
+        rhs: Type,
         source: SourceRange,
     },
 
     IfMissingElse {
-        body: (SourceRange, Sym),
+        body: (SourceRange, Type),
     },
 
     IfBodyAndElseMismatch {
-        body: (SourceRange, Sym),
-        else_block: (SourceRange, Sym),
+        body: (SourceRange, Type),
+        else_block: (SourceRange, Type),
     },
     
     MatchValueIsntEnum {
         source: SourceRange,
-        typ: Sym,
+        typ: Type,
     },
     
     MatchBranchesDifferInReturnType {
         initial_source: SourceRange,
-        initial_typ: Sym,
+        initial_typ: Type,
         branch_source: SourceRange,
-        branch_typ: Sym,
+        branch_typ: Type,
     },
 
     DuplicateMatch {
@@ -116,7 +116,7 @@ pub enum Error {
     InvalidMatch {
         name: StringIndex,
         range: SourceRange,
-        value: Sym,
+        value: Type,
     },
      
     MissingMatch {
@@ -125,24 +125,24 @@ pub enum Error {
     },
 
     ValueIsntAnIterator {
-        ty: Sym,
+        ty: Type,
         range: SourceRange,
     },
 
     StructCreationOnNonStruct {
         source: SourceRange,
-        typ: Sym,
+        typ: Type,
     },
     
     FieldAccessOnNonEnumOrStruct {
         source: SourceRange,
-        typ: Sym,
+        typ: Type,
     },
 
     FieldDoesntExist {
         source: SourceRange,
         field: StringIndex,
-        typ: Sym,
+        typ: Type,
     },
 
     MissingFields {
@@ -167,8 +167,8 @@ pub enum Error {
     },
 
     ValueUpdateTypeMismatch {
-        lhs: Sym,
-        rhs: Sym,
+        lhs: Type,
+        rhs: Type,
         source: SourceRange,
     },
 
@@ -176,32 +176,32 @@ pub enum Error {
 
     BreakOutsideOfLoop(SourceRange),
 
-    CantUnwrapOnGivenType(SourceRange, Sym),
+    CantUnwrapOnGivenType(SourceRange, Type),
 
-    CantTryOnGivenType(SourceRange, Sym),
+    CantTryOnGivenType(SourceRange, Type),
 
     FunctionDoesntReturnAnOption {
         source: SourceRange,
-        func_typ: Sym,
+        func_typ: Type,
     },
 
     FunctionDoesntReturnAResult {
         source: SourceRange,
-        func_typ: Sym,
+        func_typ: Type,
     },
     
     FunctionReturnsAResultButTheErrIsntTheSame {
         source: SourceRange,
         func_source: SourceRange,
-        func_err_typ: Sym,
-        err_typ: Sym,
+        func_err_typ: Type,
+        err_typ: Type,
     },
 
     ReturnAndFuncTypDiffer {
         source: SourceRange,
         func_source: SourceRange,
-        typ: Sym,
-        func_typ: Sym,
+        typ: Type,
+        func_typ: Type,
     },
 
     AssignIsNotLHSValue {
@@ -212,7 +212,7 @@ pub enum Error {
 
     InvalidRange {
         source: SourceRange,
-        ty: Sym,
+        ty: Type,
     },
 
     ImplOnGeneric(SourceRange),
@@ -223,14 +223,17 @@ pub enum Error {
 
     NameIsReservedForFunctions { source: SourceRange },
 
-    IndexOnNonList(SourceRange, Sym),
+    IndexOnNonList(SourceRange, Type),
 
     CallOnNonFunction { source: SourceRange },
 
     CallOnField { source: SourceRange, field_name: StringIndex, },
 
-
     ImplTraitOnNonTrait(SourceRange),
+
+    TypeDoesntImplTrait { source: SourceRange, ty: Type, tr: SymbolId },
+
+    InvalidArgument { source: SourceRange },
 
     Bypass,
 }
@@ -715,9 +718,15 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*range, &msg)
             },
 
-            Error::VariableTupleAndHintTupleSizeMismatch(..) => {
-                todo!()
-            },
+            Error::VariableTupleAndHintTupleSizeMismatch(source, found, expected) => {
+                let msg = format!(
+                    "expected a tuple of size '{expected}' but found a tuple of size '{found}'",
+                );
+
+                fmt.error("tuple size mismatch")
+                    .highlight_with_note(*source, &msg)
+
+            }
 
             Error::ImplTraitOnNonTrait(src) => {
                 fmt.error("can't impl a non-trait")
@@ -725,10 +734,30 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             },
 
 
+            Error::TypeDoesntImplTrait { source, ty, tr } => {
+                let msg = format!(
+                    "requires trait bound '{}' but '{}' doesn't implement it", 
+                    Type::Ty(*tr, GenListId::EMPTY).display(fmt.string_map(), types),
+                    ty.display(fmt.string_map(), types),
+                );
+
+
+                fmt.error("type doesn't implement required bound")
+                    .highlight_with_note(*source, &msg)
+            },
+
+
             Error::CallOnField { source, field_name } => {
                 let msg = format!("'{}' is a field. you can add parenthesis around it in order to call it", fmt.string(*field_name));
                 fmt.error("direct call on field")
                     .highlight_with_note(*source, &msg);
+            },
+
+
+
+            Error::InvalidArgument { source } => {
+                fmt.error("invalid argument for this trait function")
+                    .highlight(*source);
             },
 
 

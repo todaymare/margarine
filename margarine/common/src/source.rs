@@ -113,6 +113,11 @@ impl SourceRange {
     }
 
 
+    pub const fn offset(self, num: u32) -> SourceRange {
+        SourceRange::new(self.start + num, self.end + num)
+    }
+
+
     ///
     /// returns the file and that file's offset
     ///

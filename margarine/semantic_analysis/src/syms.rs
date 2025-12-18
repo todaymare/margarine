@@ -4,15 +4,18 @@ pub mod func;
 pub mod sym_map;
 
 use common::{string_map::StringIndex, ImmutableData};
-use crate::namespace::NamespaceId;
+use errors::ErrorId;
+use parser::nodes::decl::DeclGeneric;
+use crate::{namespace::NamespaceId, syms::sym_map::BoundedGeneric};
 
 use self::{containers::Container, func::FunctionTy};
 
 #[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Symbol<'me> {
     name    : StringIndex,
-    generics: &'me [StringIndex],
+    generics: &'me [BoundedGeneric<'me>],
     kind    : SymbolKind<'me>,
+    err     : Option<ErrorId>,
 }
 
 
@@ -33,8 +36,8 @@ pub struct Trait<'me> {
 
 
 impl<'me> Symbol<'me> {
-    pub fn new(name: StringIndex, generics: &'me [StringIndex], kind: SymbolKind<'me>) -> Self {
-        Self { name, generics, kind }
+    pub fn new(name: StringIndex, generics: &'me [BoundedGeneric<'me>], kind: SymbolKind<'me>) -> Self {
+        Self { name, generics, kind, err: None }
     }
 
     pub fn new_ns(name: StringIndex) -> Self {

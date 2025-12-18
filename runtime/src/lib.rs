@@ -49,6 +49,7 @@ unsafe extern "C" fn print_raw(value: Any) {
     match SymbolId(value.ty as u32) {
         SymbolId::I64 => print!("{}", unsafe { *value.ptr.cast::<i64>() }),
         SymbolId::F64 => print!("{}", unsafe { *value.ptr.cast::<f64>() }),
+        SymbolId::BOOL => print!("{}", unsafe { *value.ptr.cast::<Enum>() }.tag != 0),
         SymbolId::STR => {
             let s = unsafe { *value.ptr.cast::<Str>() };
             print!("{}", s.read());
@@ -233,7 +234,7 @@ unsafe extern "C" fn str_slice(s: Str, min: i64, max: i64) -> Str {
 unsafe extern "C" fn list_push(list: *mut List, elem: Any, elem_size: u64) {
     let list = unsafe { &mut *list };
 
-    if list.len == list.cap - 1 {
+    if list.len == list.cap {
         let ptr = margarineAlloc(
             (list.cap as usize * 2 * elem_size as usize).max(1) as u64);
 
@@ -285,6 +286,23 @@ unsafe extern "C" fn list_len(list: *const List) -> i64 {
     unsafe { *list }.len as i64
 }
 
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn test(list: FuncRef) {
+    unsafe {
+        let func = core::mem::transmute::<_, unsafe extern "C" fn(*const u8)>(list.ptr);
+        func(list.captures)
+    }
+
+}
+
+
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+struct FuncRef {
+    ptr: unsafe extern "C" fn(),
+    captures: *const u8,
+}
 
 
 #[derive(Clone, Copy)]

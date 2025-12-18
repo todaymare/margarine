@@ -17,6 +17,8 @@ pub enum Error {
     NumberTooLarge(SourceRange),
 
     TooManyDots(SourceRange),
+    BasedFloatsArentSupported(SourceRange),
+    InvalidBaseForNumber(SourceRange),
 }
 
 
@@ -61,6 +63,18 @@ impl ErrorType<()> for Error {
             
             Error::TooManyDots(pos) => {
                 fmt.error("too many dots")
+                    .highlight(*pos)
+            },
+
+            
+            Error::BasedFloatsArentSupported(pos) => {
+                fmt.error("based floats are not supported")
+                    .highlight(*pos)
+            },
+
+
+            Error::InvalidBaseForNumber(pos) => {
+                fmt.error("invalid base for this number")
                     .highlight(*pos)
             },
         }

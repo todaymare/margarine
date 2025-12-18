@@ -2,11 +2,11 @@ use std::{collections::HashMap, hash::Hash, os::unix::process::CommandExt, proce
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
-use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type, TypeKind}, values::{bool::Bool, func::{FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
-use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
+use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
+use parser::nodes::{decl::{DeclGeneric, Decl}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
 use sti::{hash::fxhash::{FxHasher32, FxHasher64}, static_assert};
 
-use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{GenListId, SymbolId, SymbolMap}, ty::{Sym, TypeHash}, SymbolKind}, TyChecker, TyInfo};
+use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind}, AnalysisResult, TyChecker, TyInfo};
 
 pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     string_map: &'me mut StringMap<'str>,
@@ -14,7 +14,7 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     ns: &'me NamespaceMap,
     ast: &'me AST<'ast>,
 
-    ty_info: &'me TyInfo,
+    ty_info: &'me TyInfo<'out>,
     ty_mappings: HashMap<TypeHash, TypeMapping<'ctx>>,
 
     externs: HashMap<StringIndex, (FunctionType<'ctx>, FunctionPtr<'ctx>)>,
@@ -65,19 +65,20 @@ struct TypeMapping<'ctx> {
     /// for primitives: the native representation
     /// for structs: a pointer
     /// for enums: a (tag: i32, union repr of variants)
-    repr: Type<'ctx>,
+    repr: LLVMType<'ctx>,
 
 
     /// this is either a native representation for stuff like primitives
     /// or the struct type for user types
-    strct: Type<'ctx>
+    strct: LLVMType<'ctx>
 
 
 }
 
 
+#[derive(Debug)]
 struct Function<'ctx> {
-    sym: Sym,
+    sym: Type,
 
     name: StringIndex,
 
@@ -89,6 +90,7 @@ struct Function<'ctx> {
 }
 
 
+#[derive(Debug)]
 enum FunctionKind {
     Code,
     Extern(StringIndex),
@@ -98,7 +100,7 @@ enum FunctionKind {
 struct Env<'a, 'ctx> {
     vars: Vec<(StringIndex, Local)>,
     loop_id: Option<Loop>,
-    gens: &'a [(StringIndex, Sym)],
+    gens: &'a [(BoundedGeneric<'a>, Type)],
     info: HashMap<ExprId, Value<'ctx>>,
 }
 
@@ -121,8 +123,8 @@ enum BlockTerminator<'a> {
 
 
 pub fn run<'a>(
-    string_map: &mut StringMap, syms: &mut SymbolMap, nss: &mut NamespaceMap,
-    ast: &mut AST<'a>, ty_info: &mut TyInfo, errors: [Vec<Vec<String>>; 3], file_count: u32, startups: &[SymbolId],
+    string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
+    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], file_count: u32, startups: &[SymbolId],
 ) {
     println!("running llvm");
 
@@ -196,7 +198,7 @@ pub fn run<'a>(
             macro_rules! register {
                 ($enum: ident, $call: expr) => {{
                     let val = $call;
-                    conv.ty_mappings.insert(Sym::$enum.hash(conv.syms), TypeMapping { repr: *val, strct: *val });
+                    conv.ty_mappings.insert(Type::$enum.hash(conv.syms), TypeMapping { repr: *val, strct: *val });
                 }};
             }
 
@@ -209,7 +211,7 @@ pub fn run<'a>(
 
         // create IR
         for sym in startups.iter() {
-            let _ = conv.get_func(Sym::Ty(*sym, GenListId::EMPTY));
+            let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
         }
 
         module = conv.module;
@@ -370,8 +372,10 @@ pub fn run<'a>(
 
 
 impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
-    fn get_func(&mut self, ty: Sym) -> Result<&Function<'ctx>, ErrorId> {
+    fn get_func(&mut self, ty: Type) -> Result<&Function<'ctx>, ErrorId> {
         assert!(ty.is_resolved(&mut self.syms));
+        println!("getting func {}", ty.display(self.string_map, self.syms));
+        println!("{:?}", self.syms.get_gens(ty.gens(self.syms)));
 
         let sym_id = ty.sym(self.syms).unwrap();
         let gens_id = ty.gens(&self.syms);
@@ -385,6 +389,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         // create
         let sym = self.syms.sym(sym_id);
+        if let Some(err) = sym.err() { return Err(err) }
+
         let SymbolKind::Function(sym_func) = sym.kind()
         else { unreachable!() };
 
@@ -392,10 +398,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         assert_eq!(gens.len(), sym.generics().len());
         for ((g0, _), n1) in gens.iter().zip(sym.generics()) {
-            assert_eq!(*g0, *n1);
+            assert_eq!(g0.name, n1.name);
         }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
+        println!("returns {}", ret.display(self.string_map, self.syms));
         let is_never = ret.is_never(self.syms);
 
         let llvm_ret = self.to_llvm_ty(ret);
@@ -407,6 +414,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 .to_ty(gens, self.syms).unwrap()
             ).collect::<Vec<_>>();
 
+        for (i, a) in args.iter().enumerate() {
+            println!("arg {i}: {}", a.display(self.string_map, self.syms));
+        }
 
         let llvm_args = {
             let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, sym_func.args().len());
@@ -502,6 +512,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 else { unreachable!() };
 
 
+                println!("---------");
                 let result = self.block(&mut env, &mut builder, &*body);
                 
                 if let Some(e) = self.ty_info.decl(sym_func.decl().unwrap()) {
@@ -772,7 +783,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    fn to_llvm_ty(&mut self, ty: Sym) -> TypeMapping<'ctx> {
+    fn to_llvm_ty(&mut self, ty: Type) -> TypeMapping<'ctx> {
+        //dbg!(ty.display(self.string_map, self.syms));
         assert!(ty.is_resolved(self.syms));
 
         let hash = ty.hash(self.syms);
@@ -799,6 +811,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 self.ty_mappings.insert(hash, mapping);
 
                 let ret = function_ty.ret().to_ty(gens, self.syms).unwrap();
+                //dbg!(ret.display(self.string_map, self.syms));
+
                 let ret = self.to_llvm_ty(ret).repr;
 
                 let llvm_args = {
@@ -980,7 +994,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let Ok(sym) = ns.get_sym(StringMap::ITER_NEXT_FUNC).unwrap()
                     else { unreachable!() };
 
-                    let func = Sym::Ty(sym, iter_sym.gens(&self.syms));
+                    let func = Type::Ty(sym, iter_sym.gens(&self.syms));
                     let func = func.resolve(&[], self.syms);
 
                     let ret_ty = self.syms.sym(sym);
@@ -1055,6 +1069,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let sym = ty.sym(self.syms).unwrap();
                 let sym = self.syms.sym(sym);
+
+                let ty = ty.resolve(&[env.gens], self.syms);
                 let llvm_ty = self.to_llvm_ty(ty);
 
                 let SymbolKind::Container(cont) = sym.kind()
@@ -1219,6 +1235,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         &mut self, env: &mut Env<'_, 'ctx>,
         builder: &mut Builder<'ctx>, expr: ExprId
     ) -> Result<Value<'ctx>, ErrorId> {
+        self.expr_ex(env, builder, expr).map(|x| x.0)
+    }
+
+
+    fn expr_ex(
+        &mut self, env: &mut Env<'_, 'ctx>,
+        builder: &mut Builder<'ctx>, expr: ExprId
+    ) -> Result<(Value<'ctx>, Type), ErrorId> {
         macro_rules! out_if_err {
             () => {{
 
@@ -1233,9 +1257,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
         let val = self.ast.expr(expr);
+        let ty = self.ty_info.exprs[expr];
 
 
-        Ok(match val {
+        Ok((match val {
             parser::nodes::expr::Expr::Unit => *builder.const_unit(),
             parser::nodes::expr::Expr::Literal(literal) => {
                 match literal {
@@ -1267,7 +1292,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     lexer::Literal::Bool(v) => {
                         let kind = builder.const_bool(v);
                         let value = *builder.const_unit();
-                        *self.create_enum(builder, Sym::BOOL, *kind, value)
+                        *self.create_enum(builder, Type::BOOL, *kind, value)
                     },
                 }
             },
@@ -1281,14 +1306,35 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let ty = ty.resolve(&[env.gens], self.syms);
 
+                let func = 
+                // its a trait func
+                if let Some(tr) = self.ty_info.trait_funcs.get(&expr) {
+                    let sym = self.ty_info.idents.get(&expr).unwrap().unwrap();
+                    let sym = Type::Ty(sym, GenListId::EMPTY);
+                    let sym = sym.resolve(&[env.gens], self.syms);
+                    println!("trait ident resolved as: {}", sym.display(self.string_map, self.syms));
+
+                    let sym = sym.sym(self.syms).unwrap();
+
+                    let (ns, _, _) = self.syms.traits(sym).get(tr).unwrap();
+                    self.ns.get_ns(*ns).get_sym(name).unwrap().ok()
+                    
+                } else if let Some(Some(sym)) = self.ty_info.idents.get(&expr) {
+                    Some(*sym)
+
+                } else {
+                    None
+                };
+
                 // it's a function
-                if let Some(Some(func)) = self.ty_info.idents.get(&expr) {
+                if let Some(func) = func {
                     let func_gens = ty.gens(self.syms);
-                    let func = Sym::Ty(*func, func_gens);
+                    let sym = Type::Ty(func, func_gens);
 
-                    let func = func.resolve(&[env.gens], self.syms);
+                    let sym = sym.resolve(&[env.gens], self.syms);
 
-                    let func = self.get_func(func).unwrap();
+                    let func = self.get_func(sym).unwrap();
+                    //dbg!(func.func_ty);
 
                     // create func ref
                     // we want a null ptr as the environment pointer
@@ -1303,7 +1349,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     );
 
 
-                    return Ok(*func_ref)
+                    return Ok((*func_ref, sym))
                 }
 
 
@@ -1323,7 +1369,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     (StringMap::MAX, rhs),
                 ];
 
-                self.create_struct(builder, Sym::RANGE, &fields)
+                self.create_struct(builder, Type::RANGE, &fields)
             },
 
 
@@ -1414,7 +1460,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     *self.create_enum(
                         builder,
-                        Sym::BOOL,
+                        Type::BOOL,
                         result,
                         value,
                     )
@@ -1632,7 +1678,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         | ContainerKind::Struct => {
                             let llvm_ty = self.to_llvm_ty(val);
                             let value = builder.load(value.as_ptr(), llvm_ty.strct).as_struct();
-                            return Ok(builder.field_load(value, i as _))
+                            return Ok((builder.field_load(value, i as _), slf))
                         },
 
                         ContainerKind::Enum => {
@@ -1661,7 +1707,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 },
                             );
 
-                            return Ok(builder.load(ptr, value.ty()))
+                            return Ok((builder.load(ptr, value.ty()), slf))
                         },
 
 
@@ -1674,7 +1720,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let sym_gens = self.syms.get_gens(val.gens(self.syms));
 
                 let ns = 
-                if let Some(tr) = self.ty_info.accesses.get(&expr) {
+                if let Some(tr) = self.ty_info.trait_funcs.get(&expr) {
                     self.syms.traits(ty)[tr].0
                 } else {
                     self.syms.sym_ns(ty)
@@ -1687,13 +1733,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 if let Some(sym) = ns.get_sym(field_name) {
                     let sym = sym.unwrap();
                     let gens = slf.gens(self.syms);
+                    //dbg!(self.syms.get_gens(gens));
 
-                    let sym = Sym::Ty(sym, gens)
+                    let sym = Type::Ty(sym, gens)
                         .resolve(&[env.gens, sym_gens], self.syms);
 
                     assert!(sym.is_resolved(self.syms));
 
                     let func = self.get_func(sym)?;
+                    dbg!(func);
 
                     // create func ref
                     // we want a null ptr as the environment pointer
@@ -1707,16 +1755,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         &[*ptr, *null],
                     );
 
-                    return Ok(*func_ref)
+                    return Ok((*func_ref, sym))
                 }
 
-                todo!()
+                unreachable!()
 
             },
 
 
             parser::nodes::expr::Expr::CallFunction { lhs, args } => {
-                let func = self.expr(env, builder, lhs)?;
+                let (func, func_ty) = self.expr_ex(env, builder, lhs)?;
 
                 let mut llvm_args = sti::vec::Vec::with_cap_in(self.ctx.arena, args.len());
                 for arg in args {
@@ -1731,14 +1779,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
 
-                let func_ty = self.ty_info.expr(lhs).unwrap();
+                dbg!(self.ast.expr(lhs));
+                dbg!(func);
+                dbg!(func_ty.display(self.string_map, self.syms));
                 let func_ty = func_ty.resolve(&[env.gens], self.syms);
+                dbg!(env.gens);
                 let func_ty = self.to_llvm_ty(func_ty);
+                dbg!(func_ty);
 
                 let func_ptr = builder.field_load(func.as_struct(), 0);
                 let capture_ptr = builder.field_load(func.as_struct(), 1);
 
                 llvm_args.push(capture_ptr);
+                dbg!(&llvm_args);
                 builder.call(func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args)
             },
 
@@ -2052,7 +2105,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 payload
             },
-        })
+        }, match ty.unwrap() {
+            crate::ExprInfo::Result { ty } => ty,
+            crate::ExprInfo::Errored(_) => unreachable!(),
+        }))
     }
 
 
@@ -2090,7 +2146,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn create_struct(
         &mut self,
         builder: &mut Builder<'ctx>,
-        ty: Sym,
+        ty: Type,
         values: &[(StringIndex, Value<'ctx>)]
     ) -> Value<'ctx> {
         let sym_id = ty.sym(self.syms).unwrap();
@@ -2128,7 +2184,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn create_enum(
         &mut self,
         builder: &mut Builder<'ctx>,
-        ty: Sym,
+        ty: Type,
         kind: Value<'ctx>,
         value: Value<'ctx>,
     ) -> Struct<'ctx> {
@@ -2181,7 +2237,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn eq(
         &mut self,
         builder: &mut Builder<'ctx>,
-        ty: Sym,
+        ty: Type,
         accum: Local,
         lhs: Value<'ctx>,
         rhs: Value<'ctx>,

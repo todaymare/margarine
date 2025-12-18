@@ -1,7 +1,8 @@
 use common::{source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
+use parser::nodes::decl::DeclGeneric;
 use sti::{define_key, vec::KVec};
 
-use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{sym_map::{ClosureId, Generic, SymbolId, SymbolMap}, ty::Sym}};
+use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{sym_map::{BoundedGeneric, ClosureId, Generic, SymbolId, SymbolMap}, ty::Type, SymbolKind}};
 
 define_key!(pub ScopeId(u32));
 
@@ -17,7 +18,8 @@ pub struct Scope<'me> {
 #[non_exhaustive]
 pub enum ScopeKind<'me> {
     ImplicitNamespace(NamespaceId),
-    Alias(StringIndex, Generic<'me>),
+    ImplicitTrait(SymbolId),
+    AliasDecl(StringIndex, Generic<'me>),
     VariableScope(VariableScope),
     Generics(GenericsScope<'me>),
     Loop,
@@ -54,8 +56,19 @@ impl<'me> Scope<'me> {
 
     pub fn find_self(self, scope_map: &ScopeMap<'me>) -> Option<Generic<'me>> {
         self.over(scope_map, |scope| {
-            if let ScopeKind::Alias(sym_name, sym) = scope.kind {
+            if let ScopeKind::AliasDecl(sym_name, sym) = scope.kind {
                 if sym_name == StringMap::SELF_TY { return Some(sym) }
+            }
+
+            None
+        })
+    }
+
+
+    pub fn find_super(self, scope_map: &ScopeMap<'me>) -> Option<SymbolId> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::ImplicitTrait(sym) = scope.kind {
+                return Some(sym)
             }
 
             None
@@ -73,8 +86,16 @@ impl<'me> Scope<'me> {
             }
 
 
+            if let ScopeKind::AliasDecl(ident, ty) = scope.kind {
+                if name == ident 
+                && let Some(sym) = ty.sym() {
+                    return Some(Ok(sym))
+                }
+            }
+
+
             if let ScopeKind::Generics(generics_scope) = scope.kind {
-                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0 == name) {
+                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0.name() == name) {
                     return Some(Ok(ty.1.sym(symbols).expect("please work")))
                 }
             }
@@ -84,10 +105,10 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_gen(self, name: StringIndex, scope_map: &ScopeMap) -> Option<Sym> {
+    pub fn find_gen(self, name: StringIndex, scope_map: &ScopeMap) -> Option<Type> {
         self.over(scope_map, |scope| {
             if let ScopeKind::Generics(generics_scope) = scope.kind {
-                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0 == name) {
+                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0.name() == name) {
                     return Some(ty.1)
                 }
             }
@@ -131,7 +152,7 @@ impl<'me> Scope<'me> {
             }
 
             if let ScopeKind::Generics(generics_scope) = scope.kind {
-                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0 == name) {
+                if let Some(ty) = generics_scope.generics.iter().find(|x| x.0.name() == name) {
                     return Some(Err(Ok(ty.1.sym(symbols).expect("please work"))))
                 }
             }
@@ -199,14 +220,14 @@ impl<'me> Scope<'me> {
 #[derive(Debug, Clone, Copy)]
 pub struct VariableScope {
     name  : StringIndex,
-    ty    : Sym,
+    ty    : Type,
 }
 
 impl VariableScope {
-    pub fn new(name: StringIndex, ty: Sym) -> Self { Self { name, ty } }
+    pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty } }
 
     #[inline(always)]
-    pub fn ty(&self) -> Sym { self.ty }
+    pub fn ty(&self) -> Type { self.ty }
 
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
@@ -215,24 +236,24 @@ impl VariableScope {
 
 #[derive(Debug, ImmutableData, Clone, Copy)]
 pub struct GenericsScope<'me> {
-    generics: &'me [(StringIndex, Sym)],
+    generics: &'me [(BoundedGeneric<'me>, Type)],
 }
 
 
 impl<'me> GenericsScope<'me> {
-    pub fn new(generics: &'me [(StringIndex, Sym)]) -> Self { Self { generics } }
+    pub fn new(generics: &'me [(BoundedGeneric<'me>, Type)]) -> Self { Self { generics } }
 }
 
 
 #[derive(Debug, Clone, Copy)]
 pub struct FunctionScope {
-    pub ret: Sym,
+    pub ret: Type,
     pub ret_source: SourceRange,
         
 }
 
 
 impl FunctionScope {
-    pub fn new(ret: Sym, ret_source: SourceRange) -> Self { Self { ret, ret_source } }
+    pub fn new(ret: Type, ret_source: SourceRange) -> Self { Self { ret, ret_source } }
 
 }

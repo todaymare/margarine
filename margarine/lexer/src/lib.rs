@@ -376,7 +376,7 @@ impl Lexer<'_, '_> {
             _ if val.is_ascii_alphabetic() || val == b'_' => self.identifier(start as usize),
 
 
-            _ if val.is_ascii_digit() => self.number(start as usize),
+            _ if val.is_ascii_digit() => self.number(start, true),
             
 
             _ => {
@@ -464,6 +464,7 @@ impl Lexer<'_, '_> {
     }
 
 
+    /*
     fn number(&mut self, begin: usize) -> TokenKind {
         let mut dot_count = 0;
         let value = {
@@ -522,7 +523,7 @@ impl Lexer<'_, '_> {
 
 
         TokenKind::Literal(kind)
-    }
+    }*/
 
 
     fn string(&mut self, start: usize) -> TokenKind {
@@ -624,4 +625,142 @@ impl Lexer<'_, '_> {
             None => Err(Error::InvalidUnicodeCharacter(source))
         }
     }
+
+
+
+    fn number(&mut self, start: u32, supports_dot: bool) -> TokenKind {
+        self.reader.set_offset(start as usize);
+        if true {
+            if self.reader.starts_with(b"0b") { return self.based_integer(2) }
+            if self.reader.starts_with(b"0o") { return self.based_integer(8) }
+            if self.reader.starts_with(b"0x") { return self.based_integer(16) }
+        }
+
+        // before decimal 
+
+        let mut has_dot = false;
+        let str = self.reader.consume_while_slice(|a| {
+            if *a == b'.' {
+                if has_dot { return false }
+                has_dot = true;
+                return true;
+            }
+
+            a.is_ascii_digit()
+        });
+
+        let mut str = core::str::from_utf8(str.0).unwrap();
+
+        println!("{:?}", self.reader.peek().map(|x| x as char));
+        println!("{str}, has_dot: {has_dot}");
+        if has_dot && self.reader.peek().map_or(true, |v| !v.is_ascii_digit() && !v.is_ascii_whitespace()) {
+            has_dot = false;
+            self.reader.set_offset(self.reader.offset()-1);
+            str = &str[..str.len()-1];
+        }
+
+
+        if (!has_dot && self.reader.peek() != Some(b'e'))
+        || !supports_dot {
+            let Ok(int) = i64::from_str_radix(str, 10)
+            else {
+                dbg!(self.reader.offset());
+                panic!();
+                let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
+                let err = Error::NumberTooLarge(source);
+                return TokenKind::Error(self.errors.push(err))
+            };
+
+
+            return TokenKind::Literal(Literal::Integer(int))
+        }
+
+
+        let Ok(float) = str.parse::<f64>()
+        else {
+            let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
+            let err = Error::NumberTooLarge(source);
+            return TokenKind::Error(self.errors.push(err))
+        };
+
+
+        if self.reader.peek() != Some(b'e') {
+            return TokenKind::Literal(Literal::Float(NonNaNF64::new(float)))
+        }
+
+        self.reader.consume(1);
+
+        let is_neg = self.reader.next_if(|a| *a == b'-').is_some();
+
+        let TokenKind::Literal(Literal::Integer(exponent)) = self.number(self.reader.offset() as u32, false)
+        else { unreachable!() };
+
+        let exponent = exponent as i128;
+        let exponent = 
+            if is_neg { -exponent }
+            else { exponent };
+
+        let float = float * 10f64.powi(exponent as i32);
+
+        TokenKind::Literal(Literal::Float(NonNaNF64::new(float)))
+    }
+
+
+    fn based_integer(&mut self, base: u8) -> TokenKind {
+        let start = self.reader.offset();
+        self.reader.consume(2);
+        
+        let mut max_base = 0;
+        let mut has_dot = false;
+
+        let str = self.reader.consume_while_slice(|a| {
+            if a.is_ascii_digit() {
+                let digit = a - b'0';
+                max_base = max_base.max(digit + 1);
+                return true;
+            }
+
+            if a.is_ascii_hexdigit() {
+                let digit = a.to_ascii_uppercase() - b'A';
+                max_base = max_base.max(digit + 10);
+                return true;
+            }
+
+            if *a == b'.' {
+                if has_dot { return false }
+                has_dot = true;
+                return true;
+            }
+
+            return false;
+        });
+
+
+        if has_dot {
+            let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
+            let err = Error::BasedFloatsArentSupported(source);
+            return TokenKind::Error(self.errors.push(err))
+        }
+
+
+        if max_base > base {
+            let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
+            let err = Error::InvalidBaseForNumber(source);
+            return TokenKind::Error(self.errors.push(err))
+        }
+
+
+        let str = core::str::from_utf8(str.0).unwrap();
+        let Ok(num) = i64::from_str_radix(str, base as u32)
+        else { 
+            let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
+            let err = Error::NumberTooLarge(source);
+            return TokenKind::Error(self.errors.push(err))
+        };
+
+
+        TokenKind::Literal(Literal::Integer(num))
+    }
+
+
 }

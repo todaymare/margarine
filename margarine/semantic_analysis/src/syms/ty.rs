@@ -1,26 +1,27 @@
 use std::hash::{Hash, Hasher};
 
 use common::string_map::{StringIndex, StringMap};
+use parser::nodes::decl::DeclGeneric;
 use sti::{hash::fxhash::FxHasher32, ext::FromIn};
 
-use crate::{errors::Error, syms::{containers::ContainerKind, func::FunctionKind, SymbolKind}};
+use crate::{errors::Error, syms::{containers::ContainerKind, func::FunctionKind, sym_map::BoundedGeneric, SymbolKind}};
 
 use super::sym_map::{GenListId, SymbolId, SymbolMap, VarId, VarSub};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Sym {
+pub enum Type {
     Ty (SymbolId, GenListId),
     Var(VarId),
 }
 
 
-impl Sym {
+impl Type {
     pub fn display<'str>(self, string_map: &StringMap<'str>, map: &mut SymbolMap) -> &'str str {
         self.display_ex(string_map, map, None)
     }
 
 
-    pub fn resolve(self, env_gens: &[&[(StringIndex, Sym)]], map: &mut SymbolMap) -> Sym {
+    pub fn resolve(self, env_gens: &[&[(BoundedGeneric<'_>, Type)]], map: &mut SymbolMap) -> Type {
         let ty = self.instantiate(map, 0);
 
         let func_gens = map.get_gens(ty.gens(map));
@@ -38,7 +39,7 @@ impl Sym {
                 let mut iter = env_gens.iter().map(|x| x.iter()).flatten();
 
                 iter
-                    .find(|x| x.0 == sym_name)
+                    .find(|x| x.0.name() == sym_name)
                     .map(|x| x.1)
             } else {
                 None
@@ -63,13 +64,13 @@ impl Sym {
             let mut iter = env_gens.iter().map(|x| x.iter()).flatten();
 
             iter
-                .find(|x| x.0 == sym_name)
+                .find(|x| x.0.name() == sym_name)
                 .map(|x| x.1)
         } else {
             None
         };
 
-        let ty = ty.unwrap_or(Sym::Ty(sym, gens));
+        let ty = ty.unwrap_or(Type::Ty(sym, gens));
 
         ty
     }
@@ -77,7 +78,7 @@ impl Sym {
 
     pub fn is_resolved(self, map: &SymbolMap) -> bool {
         match self {
-            Sym::Ty(symbol_id, gen_list_id) => {
+            Type::Ty(symbol_id, gen_list_id) => {
                 if let SymbolKind::Container(cont) = map.sym(symbol_id).kind()
                 && let ContainerKind::Generic = cont.kind() {
                     return false;
@@ -91,7 +92,7 @@ impl Sym {
 
                 true
             },
-            Sym::Var(_) => {
+            Type::Var(_) => {
                 false
             },
         }
@@ -101,7 +102,7 @@ impl Sym {
     fn display_ex<'str>(self, string_map: &StringMap<'str>,
                             map: &mut SymbolMap, def: Option<StringIndex>) -> &'str str {
         match self.instantiate_shallow(map) {
-            Sym::Ty(sym, gens) => {
+            Type::Ty(sym, gens) => {
                 let mut str = sti::string::String::new_in(string_map.arena());
                 let sym = map.sym(sym);
 
@@ -135,7 +136,7 @@ impl Sym {
                         for (i, g) in gens.iter().enumerate() {
                             if i != 0 { str.push(", ") }
 
-                            str.push(g.1.display_ex(string_map, map, Some(g.0)));
+                            str.push(g.1.display_ex(string_map, map, Some(g.0.name())));
                         }
 
 
@@ -154,7 +155,7 @@ impl Sym {
                     str.push(")");
 
                     let ret = func.ret().to_ty(gens, map).unwrap();
-                    if ret != Sym::UNIT {
+                    if ret != Type::UNIT {
                         str.push(": ");
                         str.push(ret.display(string_map, map));
                     }
@@ -174,7 +175,7 @@ impl Sym {
                         for (i, g) in gens.iter().enumerate() {
                             if i != 0 { str.push(", ") }
 
-                            str.push(g.1.display_ex(string_map, map, Some(g.0)));
+                            str.push(g.1.display_ex(string_map, map, Some(g.0.name())));
                         }
 
                         str.push_char('>');
@@ -185,7 +186,7 @@ impl Sym {
             },
 
 
-            Sym::Var(v) => {
+            Type::Var(v) => {
                 if let Some(def) = def {
                     return string_map.get(def)
                 }
@@ -198,21 +199,24 @@ impl Sym {
         }
     }
 
-    pub fn eq(self, map: &mut SymbolMap, oth: Sym) -> bool {
+    pub fn eq(self, map: &mut SymbolMap, oth: Type) -> bool {
         let a = self.instantiate_shallow(map);
         let b = oth.instantiate_shallow(map);
         match (a, b) {
-            (Sym::Ty(symida, gena), Sym::Ty(symidb, genb)) => {
+            (Type::Ty(symida, gena), Type::Ty(symidb, genb)) => {
                 if matches!(symida, SymbolId::ERR | SymbolId::NEVER) { return true; }
                 if matches!(symidb, SymbolId::ERR | SymbolId::NEVER) { return true; }
 
                 let gena = instantiate_gens(map, gena);
                 let gena = map.gens()[gena];
+                dbg!(gena, symida, map.sym(symida));
                 assert_eq!(map.sym(symida).generics().len(), gena.len());
 
                 let genb = instantiate_gens(map, genb);
                 let genb = map.gens()[genb];
+                dbg!(genb, symidb, map.sym(symidb));
                 assert_eq!(map.sym(symidb).generics().len(), genb.len());
+
 
                 if symida == symidb {
                     return gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1));
@@ -258,8 +262,8 @@ impl Sym {
                         if ca.fields().len() != cb.fields().len() { return false; }
 
                         for (fa, fb) in ca.fields().iter().zip(cb.fields().iter()) {
-                            let tfa = fa.1.to_ty(gena, map).unwrap_or(Sym::ERROR);
-                            let tfb = fb.1.to_ty(genb, map).unwrap_or(Sym::ERROR);
+                            let tfa = fa.1.to_ty(gena, map).unwrap_or(Type::ERROR);
+                            let tfb = fb.1.to_ty(genb, map).unwrap_or(Type::ERROR);
 
                             if !tfa.eq(map, tfb) { return false; }
                         }
@@ -275,18 +279,18 @@ impl Sym {
                 return true
             },
 
-            (Sym::Var(ida), Sym::Var(idb)) if ida == idb => {
+            (Type::Var(ida), Type::Var(idb)) if ida == idb => {
                 return true 
             }
 
-            (Sym::Var(ida), _) => {
+            (Type::Var(ida), _) => {
                 if ida.occurs_in(map, b) { return false }
 
                 let var = map.vars()[ida].sub();
  
                 match var {
                     VarSub::Concrete(ta) 
-                        if !matches!(ta, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _))
+                        if !matches!(ta, Type::Ty(SymbolId::ERR | SymbolId::NEVER, _))
                         => b.eq(map, ta),
 
                     _ => {
@@ -297,13 +301,13 @@ impl Sym {
             },
 
 
-            (_, Sym::Var(idb)) => {
+            (_, Type::Var(idb)) => {
                 if idb.occurs_in(map, a) { return false }
 
                 let var = map.vars()[idb].sub();
                 match var {
                     VarSub::Concrete(tb)
-                        if !matches!(tb, Sym::Ty(SymbolId::ERR | SymbolId::NEVER, _)) 
+                        if !matches!(tb, Type::Ty(SymbolId::ERR | SymbolId::NEVER, _)) 
                         => a.eq(map, tb),
 
                     _ => {
@@ -328,15 +332,15 @@ impl Sym {
     }
     
 
-    pub fn ne(self, map: &mut SymbolMap, oth: Sym) -> bool {
+    pub fn ne(self, map: &mut SymbolMap, oth: Type) -> bool {
         !self.eq(map, oth)
     }
 
 
     pub fn sym(self, map: &SymbolMap) -> Result<SymbolId, Error> {
         match self.instantiate_shallow(map) {
-            Sym::Ty(sym, _) => Ok(sym),
-            Sym::Var(id) => {
+            Type::Ty(sym, _) => Ok(sym),
+            Type::Var(id) => {
                 let var = &map.vars()[id];
                 Err(Error::UnableToInfer(var.range()))
             },
@@ -346,22 +350,22 @@ impl Sym {
 
     pub fn gens<'a>(self, map: &SymbolMap<'a>) -> GenListId {
         match self.instantiate_shallow(map) {
-            Sym::Ty(_, v) => v,
-            Sym::Var(_) => GenListId::EMPTY,
+            Type::Ty(_, v) => v,
+            Type::Var(_) => GenListId::EMPTY,
         }
     }
 
 
-    pub fn instantiate(self, map: &mut SymbolMap, depth: usize) -> Sym {
+    pub fn instantiate(self, map: &mut SymbolMap, depth: usize) -> Type {
         if depth == 100 { panic!() }
 
         match self {
-            Sym::Ty(sym, gens) => {
-                Sym::Ty(sym, instantiate_gens(map, gens))
+            Type::Ty(sym, gens) => {
+                Type::Ty(sym, instantiate_gens(map, gens))
             },
 
 
-            Sym::Var(v) => {
+            Type::Var(v) => {
                 match map.vars()[v].sub() {
                     VarSub::Concrete(v) => v.instantiate(map, depth + 1),
                     VarSub::None => self,
@@ -371,14 +375,14 @@ impl Sym {
     }
 
 
-    pub fn instantiate_shallow(self, map: &SymbolMap) -> Sym {
+    pub fn instantiate_shallow(self, map: &SymbolMap) -> Type {
         match self {
-            Sym::Ty(_, _) => self,
+            Type::Ty(_, _) => self,
 
-            Sym::Var(v) => {
+            Type::Var(v) => {
                 match map.vars()[v].sub() {
-                    VarSub::Concrete(v) if matches!(v, Sym::Ty(..)) => v,
-                    VarSub::Concrete(v) if matches!(v, Sym::Var(..)) => v.instantiate_shallow(map),
+                    VarSub::Concrete(v) if matches!(v, Type::Ty(..)) => v,
+                    VarSub::Concrete(v) if matches!(v, Type::Var(..)) => v.instantiate_shallow(map),
                     _ => self
                 }
             },
@@ -401,18 +405,18 @@ impl Sym {
 
     fn hash_ex(self, map: &SymbolMap, hasher: &mut impl Hasher) {
         match self {
-            Sym::Ty(v, g) => {
+            Type::Ty(v, g) => {
                 v.hash(hasher);
 
                 let arr = map.gens()[g];
                 for g in arr.iter() {
-                    g.0.hash(hasher);
+                    g.0.name().hash(hasher);
                     g.1.hash_ex(map, hasher)
                 }
             },
 
 
-            Sym::Var(_) => unreachable!(),
+            Type::Var(_) => unreachable!(),
         }
 
     }
@@ -426,8 +430,8 @@ impl Sym {
     pub fn is_int(self, map: &mut SymbolMap) -> bool {
         let ty = self.instantiate_shallow(map);
         match ty {
-            Sym::Ty(v, _) => v.is_int(),
-            Sym::Var(v) => {
+            Type::Ty(v, _) => v.is_int(),
+            Type::Var(v) => {
                 let var = map.vars_mut()[v].sub();
                 match var {
                     VarSub::Concrete(v) => v.is_int(map),
@@ -443,8 +447,8 @@ impl Sym {
     pub fn is_float(self, map: &mut SymbolMap) -> bool {
         let ty = self.instantiate_shallow(map);
         match ty {
-            Sym::Ty(v, _) => v.is_float(),
-            Sym::Var(v) => {
+            Type::Ty(v, _) => v.is_float(),
+            Type::Var(v) => {
                 let var = map.vars_mut()[v].sub();
                 match var {
                     VarSub::Concrete(v) => v.is_float(map),
@@ -470,7 +474,7 @@ fn instantiate_gens(map: &mut SymbolMap, g: GenListId) -> GenListId {
 }
 
 
-impl Sym {
+impl Type {
     pub const UNIT : Self = Self::Ty(SymbolId::UNIT , GenListId::EMPTY);
     pub const I64  : Self = Self::Ty(SymbolId::I64  , GenListId::EMPTY);
     pub const F64  : Self = Self::Ty(SymbolId::F64  , GenListId::EMPTY);

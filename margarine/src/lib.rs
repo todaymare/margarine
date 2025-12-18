@@ -48,7 +48,7 @@ pub struct CompilationResult<'a> {
     tests: Vec<SymbolId>,
     ast: AST<'a>,
     startups: KVec<u32, SymbolId>,
-    ty_info: semantic_analysis::TyInfo,
+    ty_info: semantic_analysis::TyInfo<'a>,
     pub syms: semantic_analysis::syms::sym_map::SymbolMap<'a>,
     namespaces: semantic_analysis::namespace::NamespaceMap,
     scopes: semantic_analysis::scope::ScopeMap<'a>,
@@ -442,7 +442,6 @@ pub fn run<'str>(string_map: StringMap, files: FileData) -> (Vec<u8>, Vec<String
     comp.files.register(files);
 
     let mut result = comp.run(&arena, name);
-    dbg!(&comp.string_map);
     let src = result.codegen(&mut comp);
 
     let mut tests = vec![];

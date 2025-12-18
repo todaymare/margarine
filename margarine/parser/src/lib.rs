@@ -10,7 +10,7 @@ use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{alloc::Alloc, arena::Arena, vec::{KVec, Vec}};
 
-use crate::nodes::{decl::Generic, expr::{BinaryOperator, ExprId}, Pattern};
+use crate::nodes::{decl::DeclGeneric, expr::{BinaryOperator, ExprId}, Pattern};
 
 pub fn parse<'a>(
     tokens: TokenList, 
@@ -499,25 +499,7 @@ impl<'out> Parser<'_, 'out, '_> {
         Ok(Some(list))
     }
 
-
-    fn legacy_generic_decl(&mut self) -> Result<&'out [StringIndex], ErrorId> {
-        if !self.current_is(TokenKind::LeftAngle) {
-            return Ok(&[]);
-        }
-
-        self.advance();
-        let list = self.list(TokenKind::RightAngle, Some(TokenKind::Comma),
-        |slf, _| {
-            let ident = slf.expect_identifier()?;
-            Ok(ident)
-        })?;
-        self.advance();
-
-        Ok(list)
-    }
-
-
-    fn generic_decl(&mut self) -> Result<&'out [Generic<'out>], ErrorId> {
+    fn generic_decl(&mut self) -> Result<&'out [DeclGeneric<'out>], ErrorId> {
         if !self.current_is(TokenKind::LeftAngle) {
             return Ok(&[]);
         }
@@ -528,18 +510,28 @@ impl<'out> Parser<'_, 'out, '_> {
             let ident = slf.expect_identifier()?;
 
             if !slf.peek_is(TokenKind::Colon) {
-                return Ok(Generic::new(ident, &[]))
+                return Ok(DeclGeneric::new(ident, &[]))
             }
 
+            slf.advance(); // :
             slf.advance();
 
-            let bounds = slf.list_multi(&[TokenKind::Comma, TokenKind::RightSquare], Some(TokenKind::Plus),
-            |slf, _| {
-                slf.expect_type()
-            })?;
+            let bounds = slf.list_multi(
+                &[TokenKind::Comma, TokenKind::RightAngle], 
+                Some(TokenKind::Plus),
+                |slf, _| {
+                    let x = slf.expect_type();
+                    x
+                }
+            )?;
+
+            println!("{:?}", slf.current());
+            if slf.current_is(TokenKind::Comma) || slf.current_is(TokenKind::RightAngle) {
+                slf.index -= 1;
+            }
 
 
-            Ok(Generic::new(ident, bounds))
+            Ok(DeclGeneric::new(ident, bounds))
         })?;
 
         self.advance();
@@ -608,7 +600,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 let ident = self.expect_identifier()?;
                 let gens = if self.peek_is(TokenKind::LeftAngle) {
                     self.advance();
-                    let res = self.legacy_generic_decl()?;
+                    let res = self.generic_decl()?;
                     self.index -= 1;
                     res
                 } else { &[] };
@@ -664,7 +656,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
 
-        let generics = self.legacy_generic_decl()?;
+        let generics = self.generic_decl()?;
 
         let header = SourceRange::new(start, self.current_range().end());
 
@@ -709,7 +701,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
 
-        let generics = self.legacy_generic_decl()?;
+        let generics = self.generic_decl()?;
 
         self.expect(TokenKind::LeftParenthesis)?;
         self.advance();
@@ -838,7 +830,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Impl))?;
         self.advance();
 
-        let gens = self.legacy_generic_decl()?;
+        let gens = self.generic_decl()?;
 
         let data_type = self.expect_type()?;
 
@@ -975,7 +967,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             };
             
             parser.advance();
-            let gens = parser.legacy_generic_decl()?;
+            let gens = parser.generic_decl()?;
 
             parser.expect(TokenKind::LeftParenthesis)?;
             parser.advance();
@@ -1065,7 +1057,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let name = self.expect_identifier()?;
         self.advance();
             
-        let generics = self.legacy_generic_decl()?;
+        let generics = self.generic_decl()?;
 
         let header = SourceRange::new(start, self.current_range().end());
 
