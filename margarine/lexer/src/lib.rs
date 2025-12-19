@@ -646,14 +646,15 @@ impl Lexer<'_, '_> {
                 return true;
             }
 
-            a.is_ascii_digit()
+
+            a.is_ascii_digit() || *a == b'_'
         });
 
-        let mut str = core::str::from_utf8(str.0).unwrap();
+        let str = core::str::from_utf8(str.0).unwrap();
+        let str = str.replace("_", "");
+        let mut str = str.as_str();
 
-        println!("{:?}", self.reader.peek().map(|x| x as char));
-        println!("{str}, has_dot: {has_dot}");
-        if has_dot && self.reader.peek().map_or(true, |v| !v.is_ascii_digit() && !v.is_ascii_whitespace()) {
+        if str.ends_with(".") && self.reader.peek().map_or(true, |v| !v.is_ascii_digit() && !v.is_ascii_whitespace()) {
             has_dot = false;
             self.reader.set_offset(self.reader.offset()-1);
             str = &str[..str.len()-1];
@@ -664,8 +665,6 @@ impl Lexer<'_, '_> {
         || !supports_dot {
             let Ok(int) = i64::from_str_radix(str, 10)
             else {
-                dbg!(self.reader.offset());
-                panic!();
                 let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
                 let err = Error::NumberTooLarge(source);
                 return TokenKind::Error(self.errors.push(err))

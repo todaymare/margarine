@@ -126,7 +126,7 @@ pub fn run<'a>(
     string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
     ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], file_count: u32, startups: &[SymbolId],
 ) {
-    println!("running llvm");
+    //println!("running llvm");
 
     let ctx = Context::new(ast.arena);
     let mut module = ctx.module("margarine");
@@ -374,8 +374,8 @@ pub fn run<'a>(
 impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn get_func(&mut self, ty: Type) -> Result<&Function<'ctx>, ErrorId> {
         assert!(ty.is_resolved(&mut self.syms));
-        println!("getting func {}", ty.display(self.string_map, self.syms));
-        println!("{:?}", self.syms.get_gens(ty.gens(self.syms)));
+        //println!("getting func {}", ty.display(self.string_map, self.syms));
+        //println!("{:?}", self.syms.get_gens(ty.gens(self.syms)));
 
         let sym_id = ty.sym(self.syms).unwrap();
         let gens_id = ty.gens(&self.syms);
@@ -402,7 +402,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
-        println!("returns {}", ret.display(self.string_map, self.syms));
+        //println!("returns {}", ret.display(self.string_map, self.syms));
         let is_never = ret.is_never(self.syms);
 
         let llvm_ret = self.to_llvm_ty(ret);
@@ -413,10 +413,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 x.symbol()
                 .to_ty(gens, self.syms).unwrap()
             ).collect::<Vec<_>>();
-
-        for (i, a) in args.iter().enumerate() {
-            println!("arg {i}: {}", a.display(self.string_map, self.syms));
-        }
 
         let llvm_args = {
             let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, sym_func.args().len());
@@ -512,7 +508,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 else { unreachable!() };
 
 
-                println!("---------");
+                //println!("---------");
                 let result = self.block(&mut env, &mut builder, &*body);
                 
                 if let Some(e) = self.ty_info.decl(sym_func.decl().unwrap()) {
@@ -1312,7 +1308,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let sym = self.ty_info.idents.get(&expr).unwrap().unwrap();
                     let sym = Type::Ty(sym, GenListId::EMPTY);
                     let sym = sym.resolve(&[env.gens], self.syms);
-                    println!("trait ident resolved as: {}", sym.display(self.string_map, self.syms));
+                    //println!("trait ident resolved as: {}", sym.display(self.string_map, self.syms));
 
                     let sym = sym.sym(self.syms).unwrap();
 
@@ -1741,7 +1737,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     assert!(sym.is_resolved(self.syms));
 
                     let func = self.get_func(sym)?;
-                    dbg!(func);
 
                     // create func ref
                     // we want a null ptr as the environment pointer
@@ -1779,19 +1774,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
 
-                dbg!(self.ast.expr(lhs));
-                dbg!(func);
-                dbg!(func_ty.display(self.string_map, self.syms));
+                //dbg!(self.ast.expr(lhs));
+                //dbg!(func);
+                //dbg!(func_ty.display(self.string_map, self.syms));
                 let func_ty = func_ty.resolve(&[env.gens], self.syms);
-                dbg!(env.gens);
+                //dbg!(env.gens);
                 let func_ty = self.to_llvm_ty(func_ty);
-                dbg!(func_ty);
+                //dbg!(func_ty);
 
                 let func_ptr = builder.field_load(func.as_struct(), 0);
                 let capture_ptr = builder.field_load(func.as_struct(), 1);
 
                 llvm_args.push(capture_ptr);
-                dbg!(&llvm_args);
+                //dbg!(&llvm_args);
                 builder.call(func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args)
             },
 
@@ -2107,7 +2102,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             },
         }, match ty.unwrap() {
             crate::ExprInfo::Result { ty } => ty,
-            crate::ExprInfo::Errored(_) => unreachable!(),
+            crate::ExprInfo::Errored(e) => return Err(e),
         }))
     }
 
@@ -2290,75 +2285,22 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             _ => {
-                let sym = self.syms.sym(sym);
-                match sym.kind() {
-                    SymbolKind::Function(_) => {
-                        todo!()
-                    },
+                let traits = self.syms.traits(sym);
+                let (ns, _, _) = traits[&SymbolId::EQ_TRAIT];
 
+                let func = self.ns.get_ns(ns).get_sym(StringMap::EQ_FUNC).unwrap().unwrap();
 
-                    SymbolKind::Trait(_) => {
-                        unreachable!()
-                    }
+                let func = self.get_func(Type::Ty(func, ty.gens(self.syms))).unwrap();
 
+                let null = builder.ptr_null();
+                let b = builder.call(func.func_ptr, func.func_ty, &[lhs, rhs, *null]).as_struct();
+                let b = builder.field_load(b, 1).as_integer();
+                let b = builder.int_cast(b, *self.ctx.bool(), false).as_bool();
 
-                    SymbolKind::Container(container) => {
-                        let ty = self.to_llvm_ty(ty);
+                let a = builder.local_get(accum).as_bool();
 
-                        assert_eq!(ty.strct.kind(), TypeKind::Struct);
-
-                        match container.kind() {
-                              ContainerKind::Struct
-                            | ContainerKind::Tuple => {
-                                assert_eq!(ty.repr.kind(), TypeKind::Ptr);
-                                for (i, (_, field_ty)) in container.fields().iter().enumerate() {
-                                    let field_ty = field_ty.to_ty(gens, self.syms).unwrap();
-
-                                    let lhs = builder.field_ptr(lhs.as_ptr(), ty.strct.as_struct(), i);
-                                    let lhs = builder.load(lhs, ty.strct);
-
-                                    let rhs = builder.field_ptr(rhs.as_ptr(), ty.strct.as_struct(), i);
-                                    let rhs = builder.load(rhs, ty.strct);
-
-                                    self.eq(builder, field_ty, accum, lhs, rhs);
-                                }
-                            },
-
-
-                            ContainerKind::Enum => {
-                                let tag_lhs = builder.field_load(lhs.as_struct(), 1);
-                                let tag_rhs = builder.field_load(rhs.as_struct(), 1);
-
-                                let cmp = builder.cmp_int(tag_lhs.as_integer(), tag_rhs.as_integer(), IntCmp::Eq);
-
-                                builder.ite(
-                                &mut (),
-                                cmp,
-                                |builder, _| {
-                                    // @todo
-                                    builder.call(self.abort_fn.0, self.abort_fn.1, &[]);
-                                },
-
-
-                                |builder, _| {
-                                    let c = builder.const_bool(false);
-                                    builder.local_set(accum, *c);
-                                });
-                            },
-
-
-                            ContainerKind::Generic => unreachable!(),
-                        }
-                    },
-
-
-                    SymbolKind::Opaque => {
-                        unreachable!()
-                    },
-
-
-                    SymbolKind::Namespace => unreachable!(),
-                };
+                let result = builder.bool_and(a, b);
+                builder.local_set(accum, *result);
 
             }
         }

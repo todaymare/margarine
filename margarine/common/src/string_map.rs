@@ -53,6 +53,8 @@ impl<'str> StringMap<'str> {
     pub const CLOSURE : StringIndex = StringIndex(37);
     pub const DOLLAR : StringIndex = StringIndex(38);
     pub const HASH : StringIndex = StringIndex(39);
+    pub const EQ_TRAIT : StringIndex = StringIndex(40);
+    pub const EQ_FUNC : StringIndex = StringIndex(41);
 
  
     #[inline(always)]
@@ -64,7 +66,7 @@ impl<'str> StringMap<'str> {
     #[inline(always)]
     pub fn with_capacity(cap: usize, arena: &'str Arena) -> Self {
         let mut s = Self {
-            map: HashMap::with_hash_and_cap_in(GlobalAlloc, HashStrHashFn, cap),
+            map: HashMap::with_hash_and_cap_in(GlobalAlloc, HashStrHashFn, cap + 128),
             vec: Vec::with_capacity(cap),
             arena,
         };
@@ -112,6 +114,8 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("{closure}"), Self::CLOSURE);
         assert_eq!(s.insert("$"), Self::DOLLAR);
         assert_eq!(s.insert("hash"), Self::HASH);
+        assert_eq!(s.insert("Eq"), Self::EQ_TRAIT);
+        assert_eq!(s.insert("eq"), Self::EQ_FUNC);
         s
     }
 

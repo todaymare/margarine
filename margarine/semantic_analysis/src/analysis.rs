@@ -964,12 +964,16 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let scope = self.scopes.push(scope);
 
                 let scope = Scope::new(scope, ScopeKind::AliasDecl(StringMap::SELF_TY, ty));
-                let scope = self.scopes.push(scope);
+                let mut scope = self.scopes.push(scope);
 
                 self.collect_names(path, ns_id, &body, gens.len());
                 self.collect_impls(path, scope, ns_id, &body);
                 self.compute_types(path, scope, ns_id, &body, Some((sym, gens)));
-                self.block(path, scope, &body);
+
+
+                for node in body.iter() {
+                    self.node(path, &mut scope, ns_id, *node);
+                }
 
                 let mut ns = self.namespaces.get_ns_mut(ns_id);
 
@@ -1429,6 +1433,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                                 if candidate.is_none() {
                                     candidate = Some((*s, ft.1, *g, generics));
+                                    return Some(());
                                 } else {
                                     todo!("ambigious");
                                 }
@@ -1495,7 +1500,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         match sym.kind() {
                             SymbolKind::Function(func) => {
                                 self.type_info.set_ident(id, Some(sym_id));
-
 
                                 if let Some(gens) = gens
                                 && sym.generics().len() != gens.len() {
@@ -1679,32 +1683,52 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let validate = validate()?;
 
-                if !validate {
-                    return Err(Error::InvalidBinaryOp {
-                        operator, lhs: lhs_anal.ty, rhs: rhs_anal.ty, source: range });
+                if validate {
+                    let result = match operator {
+                          BinaryOperator::Add 
+                        | BinaryOperator::Sub
+                        | BinaryOperator::Mul
+                        | BinaryOperator::Div
+                        | BinaryOperator::Rem
+                        | BinaryOperator::BitshiftLeft
+                        | BinaryOperator::BitshiftRight
+                        | BinaryOperator::BitwiseAnd 
+                        | BinaryOperator::BitwiseOr 
+                        | BinaryOperator::BitwiseXor => lhs_anal.ty,
+
+                          BinaryOperator::Eq 
+                        | BinaryOperator::Ne 
+                        | BinaryOperator::Gt 
+                        | BinaryOperator::Ge 
+                        | BinaryOperator::Lt 
+                        | BinaryOperator::Le => Type::BOOL
+                    };
+
+                    return Ok(AnalysisResult::new(result))
                 }
 
-                let result = match operator {
-                      BinaryOperator::Add 
-                    | BinaryOperator::Sub
-                    | BinaryOperator::Mul
-                    | BinaryOperator::Div
-                    | BinaryOperator::Rem
-                    | BinaryOperator::BitshiftLeft
-                    | BinaryOperator::BitshiftRight
-                    | BinaryOperator::BitwiseAnd 
-                    | BinaryOperator::BitwiseOr 
-                    | BinaryOperator::BitwiseXor => lhs_anal.ty,
 
-                      BinaryOperator::Eq 
-                    | BinaryOperator::Ne 
-                    | BinaryOperator::Gt 
-                    | BinaryOperator::Ge 
-                    | BinaryOperator::Lt 
-                    | BinaryOperator::Le => Type::BOOL
-                };
 
-                AnalysisResult::new(result)
+                let can_trait =
+                   lhs_anal.ty.eq(&mut self.syms, rhs_anal.ty)
+                && operator.is_ecomp();
+
+
+                if !can_trait {
+                    return Err(Error::InvalidBinaryOp {
+                        operator, lhs: lhs_anal.ty, rhs: rhs_anal.ty, source: range });
+
+                }
+
+
+                let lhs_sym = lhs_anal.ty.sym(&self.syms)?;
+                let traits = self.syms.traits(lhs_sym);
+
+                if traits.contains_key(&SymbolId::EQ_TRAIT) {
+                    return Ok(AnalysisResult::new(Type::BOOL));
+                }
+
+                return Err(Error::TypeDoesntImplTrait { source: range, ty: lhs_anal.ty, tr: SymbolId::EQ_TRAIT });
             },
 
 
@@ -2078,6 +2102,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         if candidate.is_none() {
                             candidate = Some((*s, ft.1, *g, generics));
+                            return Some(());
                         } else {
                             todo!("ambigious");
                         }

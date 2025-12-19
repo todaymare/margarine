@@ -1,5 +1,5 @@
 extern "https://github.com/todaymare/margarine-std" as std;
-
+use std::hashmap::*;
 
 fn main() {
     var hasher = Hasher::new();
@@ -13,120 +13,9 @@ fn main() {
         entry_count: 0,
     };
 
-    hm.insert(69, "hello world");
-    std::println(hm.get(69)!);
+    hm.insert("boobs", "fart");
+    hm.insert("boobs", "whatever");
+    std::println(hm.get("boobs")!);
 }
 
 
-struct HashMap<K, V> {
-    tables: [[(K, V, int)]],
-    entry_count: int,
-}
-
-
-impl<K: Hash + Eq, V> HashMap<K, V> {
-    fn insert(self, k: K, v: V) {
-        if self.tables.len() == 0 {
-            self.tables = [[], [], []];
-        }
-
-        self.entry_count += 1;
-
-        if (self.entry_count as float / self.tables.len() as float) > 0.75 {
-            var old_tables = self.tables;
-            self.tables = [];
-            for _ in 0..(old_tables.len() * 2) {
-                self.tables.push([]);
-            }
-
-            for bucket in old_tables.iter() {
-                for k, v, h in bucket.iter() {
-                    var bucket = self.tables[h % self.tables.len()];
-                    bucket.push((k, v, h));
-                }
-            }
-        }
-
-
-        var hasher = Hasher::new();
-        k.hash(hasher);
-        var hash = hasher.finalize();
-
-        var bucket = self.tables[hash % self.tables.len()];
-        bucket.push((k, v, hash));
-    }
-
-
-    fn get(self, k: K): Option<V> {
-        var hasher = Hasher::new();
-        k.hash(hasher);
-        var hash = hasher.finalize();
-
-        var bucket = self.tables[hash % self.tables.len()];
-        for vk, v, _ in bucket.iter() {
-            if k.eq(vk) {
-                return some(v)
-            }
-        }
-
-        none()
-    }
-}
-
-
-trait Eq {
-    fn eq(self, oth: Self): bool
-}
-
-
-struct Hasher {
-    _write_int: fn(Hasher, int),
-    _finalize: fn(Hasher): int,
-    state: int,
-}
-
-
-trait Hash {
-    fn hash(self, hasher: Hasher)
-}
-
-
-impl Hash for int {
-    fn hash(self, hasher: Hasher) {
-        hasher.write_int(self)
-    }
-}
-
-
-impl Eq for int {
-    fn eq(self, oth: Self): bool {
-        self == oth
-    }
-}
-
-
-impl Hasher {
-    fn new(): Self {
-        Self {
-            _write_int: |hasher: Self, value| {
-                var k = 0x517cc1b727220a95;
-                hasher.state *= k;
-                hasher.state = hasher.state ^ value;
-            },
-
-            _finalize: |hasher: Hasher| {
-                hasher.state
-            },
-
-            state: 0,
-        }
-    }
-
-
-    fn write_int(self, value: int) {
-        (self._write_int)(self, value)
-    }
-
-
-    fn finalize(self): int { (self._finalize)(self) }
-}

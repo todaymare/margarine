@@ -209,12 +209,12 @@ impl Type {
 
                 let gena = instantiate_gens(map, gena);
                 let gena = map.gens()[gena];
-                dbg!(gena, symida, map.sym(symida));
+                //dbg!(gena, symida, map.sym(symida));
                 assert_eq!(map.sym(symida).generics().len(), gena.len());
 
                 let genb = instantiate_gens(map, genb);
                 let genb = map.gens()[genb];
-                dbg!(genb, symidb, map.sym(symidb));
+                //dbg!(genb, symidb, map.sym(symidb));
                 assert_eq!(map.sym(symidb).generics().len(), genb.len());
 
 

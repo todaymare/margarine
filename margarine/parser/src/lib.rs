@@ -525,7 +525,6 @@ impl<'out> Parser<'_, 'out, '_> {
                 }
             )?;
 
-            println!("{:?}", slf.current());
             if slf.current_is(TokenKind::Comma) || slf.current_is(TokenKind::RightAngle) {
                 slf.index -= 1;
             }

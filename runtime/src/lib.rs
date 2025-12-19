@@ -180,6 +180,33 @@ unsafe extern "C" fn str_split_at(s: Str, idx: i64) -> Tuple2<Str, Str>{
 
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn str_hash(s: Str, hasher: *const ()) {
+    let func_ref = unsafe { *hasher.cast::<FuncRef>() };
+    let func = unsafe {
+        core::mem::transmute::<_, extern "C" fn(*const (), i64, *const u8)>(func_ref.ptr)
+    };
+
+    let bytes = s.read().as_bytes();
+    for i in 0..=(bytes.len() / 8) {
+        let i = i * 8;
+        let b = i64::from_ne_bytes([
+            bytes.get(i).copied().unwrap_or(0),
+            bytes.get(i+1).copied().unwrap_or(0),
+            bytes.get(i+2).copied().unwrap_or(0),
+            bytes.get(i+3).copied().unwrap_or(0),
+            bytes.get(i+4).copied().unwrap_or(0),
+            bytes.get(i+5).copied().unwrap_or(0),
+            bytes.get(i+6).copied().unwrap_or(0),
+            bytes.get(i+7).copied().unwrap_or(0),
+        ]);
+
+        func(hasher, b, func_ref.captures);
+    };
+
+}
+
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn str_parse(s: Str, ty: i64) -> Enum {
     match SymbolId(ty as u32) {
        SymbolId::I64 => {
@@ -227,6 +254,20 @@ unsafe extern "C" fn str_slice(s: Str, min: i64, max: i64) -> Str {
         .collect::<String>();
 
     Str::new(&sliced)
+}
+
+
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn str_cmp(a: Str, b: Str) -> Enum {
+    let result = 
+        a.len() == b.len()
+        && a.read() == b.read();
+
+    Enum {
+        tag: result as u32,
+        data: null(),
+    }
 }
 
 
@@ -278,6 +319,13 @@ unsafe extern "C" fn list_pop(list: *mut List, elem_size: u64) -> Enum {
         data: buf,
         tag: 0,
     }
+}
+
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn list_clear(list: *mut List) {
+    let list = unsafe { &mut *list };
+    list.len = 0;
 }
 
 

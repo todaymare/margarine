@@ -131,6 +131,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let _ = add_sym!(BUILTIN_DOWNCAST_ANY);
             let _ = add_sym!(BUILTIN_SIZE_OF);
             let _ = add_sym!(ANY);
+            let _ = add_sym!(EQ_TRAIT);
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
@@ -197,7 +198,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                  gens: &[BoundedGeneric<'out>]) -> Result<Generic<'out>, Error> {
         let mut used_gens = sti::vec::Vec::from_value(gens.len(), false);
         let res = self.dt_to_gen_ex(scope, dt, gens, &mut used_gens);
-        dbg!(used_gens, gens);
         res
 
     }
@@ -629,7 +629,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 gens.push(str);
 
                 let name = name.unwrap_or_else(|| self.string_map.num(index));
-                sym_fields.push((name, Generic::new(range, GenericKind::Generic(str), None)));
+                let g = Generic::new(range, GenericKind::Generic(str), None);
+                sym_fields.push((name, g));
             }
 
             (sym_fields.leak(), gens.leak())
@@ -705,7 +706,6 @@ impl TyInfo<'_> {
 
     pub fn set_ident(&mut self, expr: ExprId, call: Option<SymbolId>) {
         if self.idents.contains_key(&expr) {
-            assert!(self.trait_funcs.contains_key(&expr));
             return;
         }
 

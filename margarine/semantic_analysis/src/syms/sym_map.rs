@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use common::{copy_slice_in, source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use errors::ErrorId;
 use parser::nodes::{decl::{DeclId}, NodeId};
-use sti::{arena::Arena, define_key, ext::FromIn, vec::KVec};
+use sti::{arena::Arena, define_key, ext::FromIn, key::Key, vec::KVec};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind}};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind, Trait}};
 
 use super::{ty::Type, Symbol};
 
@@ -546,6 +546,53 @@ impl<'me> SymbolMap<'me> {
         }
 
 
+        // $size_of
+        {
+            let pending = slf.pending(ns_map, StringMap::EQ_TRAIT, 0);
+            assert_eq!(pending, SymbolId::EQ_TRAIT);
+
+            let sym = Symbol::new(
+                StringMap::EQ_TRAIT,
+                &[],
+                SymbolKind::Trait(Trait {
+                    funcs: arena.alloc_new([
+                       (StringMap::EQ_FUNC, FunctionTy::new(
+                            arena.alloc_new([
+                                FunctionArgument::new(
+                                    StringMap::SELF,
+                                    Generic::new(
+                                        SourceRange::ZERO,
+                                        GenericKind::Generic(BoundedGeneric::new(StringMap::SELF_TY, &[])), 
+                                        None
+                                    )
+                                ),
+                                FunctionArgument::new(
+                                    StringMap::VALUE,
+                                    Generic::new(
+                                        SourceRange::ZERO,
+                                        GenericKind::Generic(BoundedGeneric::new(StringMap::SELF_TY, &[])), 
+                                        None
+                                    )
+                                )
+                            ]),
+
+                            Generic::new(
+                                SourceRange::ZERO,
+                                GenericKind::Sym(SymbolId::BOOL, &[]),
+                                None,
+                            ),
+
+                            FunctionKind::Trait,
+                            None,
+                        )
+                    )]),
+                })
+            );
+
+            slf.add_sym(pending, sym);
+        }
+
+
         slf
     }
 }
@@ -594,6 +641,8 @@ impl SymbolId {
     pub const BUILTIN_ANY    : Self = Self(20);
     pub const BUILTIN_DOWNCAST_ANY : Self = Self(21);
     pub const BUILTIN_SIZE_OF : Self = Self(22);
+    pub const EQ_TRAIT : Self = Self(23);
+    pub const EQ_FUNC : Self = Self(24);
 
 
     pub fn supports_arith(self) -> bool {

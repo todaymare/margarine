@@ -84,8 +84,6 @@ impl<'ctx> Type<'ctx> {
         let dl = unsafe { LLVMGetModuleDataLayout(module.ptr.as_ptr()) };
         if dl.is_null() { panic!("data layout is not set"); }
 
-        dbg!(self);
-
         if !self.is_sized() { return None };
         Some(unsafe { LLVMABISizeOfType(dl, self.ptr.as_ptr()) as usize })
     }

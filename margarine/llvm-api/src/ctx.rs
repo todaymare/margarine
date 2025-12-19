@@ -35,7 +35,6 @@ impl<'ctx> Context<'ctx> {
 
 impl<'me> ContextImpl<'me> {
     fn new(arena: &'me Arena) -> Self {
-        println!("hiii?");
         unsafe { LLVM_InitializeAllTargets() };
         unsafe { LLVM_InitializeAllTargetInfos() };
         unsafe { LLVM_InitializeAllTargetMCs() };
