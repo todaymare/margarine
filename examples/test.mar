@@ -1,21 +1,14 @@
 extern "https://github.com/todaymare/margarine-std" as std;
-use std::hashmap::*;
+
 
 fn main() {
-    var hasher = Hasher::new();
-    hasher.write_int(69);
-    hasher.write_int(420);
-    std::println(hasher.finalize());
+    var grid = [["hello world"]];
 
+    var a = [];
+    a.push("boobs fart boobs whatever");
 
-    var hm = HashMap {
-        tables: [],
-        entry_count: 0,
-    };
+    grid.push(a);
 
-    hm.insert("boobs", "fart");
-    hm.insert("boobs", "whatever");
-    std::println(hm.get("boobs")!);
+    std::println(grid[1][0]);
 }
-
 

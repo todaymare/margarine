@@ -4,9 +4,9 @@ pub mod decl;
 pub mod err;
 
 
-use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
+use common::{source::{FileData, SourceRange}, string_map::StringIndex, ImmutableData};
 use errors::ErrorId;
-use sti::{arena::Arena, slice::KSlice, vec::KVec};
+use sti::{arena::Arena, key::Key, slice::KSlice, vec::KVec};
 
 use self::{decl::{Decl, DeclId}, expr::{Expr, ExprId}, stmt::{Stmt, StmtId}};
 
@@ -123,5 +123,72 @@ impl<'out> Pattern<'out> {
             source: range,
             kind,
         }
+    }
+}
+
+
+impl AST<'_> {
+    pub fn to_graph(&self, files: &[FileData]) -> String {
+        let mut s = String::new();
+
+        sti::write!(&mut s, "digraph {{");
+        sti::write!(&mut s, "node [shape=box];");
+        sti::write!(&mut s, "edge [color=gray];");
+
+
+        for (id, (stmt, src)) in &self.stmts {
+            sti::write!(
+                &mut s, 
+                "{id} [label=\"{}\"];", 
+                src.as_str(files),
+            );
+
+            match stmt {
+                Stmt::Variable { pat, hint, rhs } => {
+                    sti::write!(&mut s, "{id} -> {rhs};");
+                },
+
+
+                Stmt::UpdateValue { lhs, rhs } => {
+                    sti::write!(&mut s, "{id} -> {lhs};");
+                    sti::write!(&mut s, "{id} -> {rhs};");
+                },
+
+
+                Stmt::ForLoop { binding, expr, body } => {
+                    sti::write!(&mut s, "{id} -> {expr};");
+                },
+            }
+        }
+
+
+
+
+
+
+        sti::write!(&mut s, "}}");
+
+        s
+    }
+}
+
+
+
+
+impl std::fmt::Display for StmtId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "stmt_{}", self.usize())
+    }
+}
+
+impl std::fmt::Display for ExprId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "expr_{}", self.usize())
+    }
+}
+
+impl std::fmt::Display for DeclId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "expr_{}", self.usize())
     }
 }

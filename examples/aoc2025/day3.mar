@@ -3,7 +3,7 @@ use std::*;
 use std::io::read_file;
 
 fn main() {
-    var input = read_file("./examples/aoc2025/day3.txt");
+    var input = read_file("./examples/aoc2025/day3.txt")!;
 
     println(part1(input));
     println(part2(input));

@@ -342,24 +342,38 @@ impl<'out> Parser<'_, 'out, '_> {
     ) -> Result<&'out [T], ErrorId> {
         let mut arguments = Vec::new_in(self.arena);
 
-        loop {
-            if self.current_kind() == TokenKind::EndOfFile { break }
-            if terminator.contains(&self.current_kind()) { break }
 
-            if let Some(punctuation) = punctuation {
-                if !arguments.is_empty() {
-                    self.expect(punctuation)?;
-                    self.advance();
-                }
-                
-                // allow for trailing punctuation
+        let result : Result<(), ErrorId> = (|| {
+            loop {
+                if self.current_kind() == TokenKind::EndOfFile { break }
                 if terminator.contains(&self.current_kind()) { break }
+
+                if let Some(punctuation) = punctuation {
+                    if !arguments.is_empty() {
+                        self.expect(punctuation)?;
+                        self.advance();
+                    }
+                    
+                    // allow for trailing punctuation
+                    if terminator.contains(&self.current_kind()) { break }
+                }
+
+
+                let result = func(self, arguments.len())?;
+                self.advance();
+                arguments.push(result);
+            };
+
+            Ok(())
+        })();
+
+
+        if let Err(e) = result {
+            while !terminator.contains(&self.current_kind()) {
+                self.advance();
             }
 
-
-            let result = func(self, arguments.len())?;
-            self.advance();
-            arguments.push(result);
+            return Err(e);
         }
 
         if terminator.contains(&self.current_kind()) { return Ok(arguments.leak()) }
@@ -470,7 +484,7 @@ impl<'out> Parser<'_, 'out, '_> {
         let parse_till = self.parse_till(terminator, start, settings)?;
 
         for node in parse_till.into_iter() {
-            if !matches!(node, NodeId::Decl(_)) {
+            if !matches!(node, NodeId::Decl(_) | NodeId::Err(_)) {
                 self.errors.push(Error::DeclarationOnlyBlock { source: self.ast.range(*node) });
                 continue;
             };

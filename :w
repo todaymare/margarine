@@ -426,9 +426,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             vec.leak()
         };
 
-        let name = ty.display(self.string_map, self.syms);
-        let name_idx = self.string_map.insert(name);
-
         match sym_func.kind() {
             syms::func::FunctionKind::Extern(path) => {
                 let (func_ty, func_ptr) =
@@ -475,7 +472,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 );
 
 
-                let func_ptr = self.module.function(name, func_ty);
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
 
                 if is_never {
                     func_ptr.set_noreturn(self.ctx);
@@ -484,7 +481,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let func = Function {
                     sym: ty,
-                    name: name_idx,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     kind: FunctionKind::Code,
                     error: self.ty_info.decl(sym_func.decl().unwrap()),
 
@@ -542,11 +539,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     false,
                 );
 
-                let func_ptr = self.module.function(name, func_ty);
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
 
                 let func = Function {
                     sym: ty,
-                    name: name_idx,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     kind: FunctionKind::Code,
                     error: None,
 
@@ -573,11 +570,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     false,
                 );
 
-                let func_ptr = self.module.function(name, func_ty);
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
 
                 let func = Function {
                     sym: ty,
-                    name: name_idx,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     kind: FunctionKind::Code,
                     error: None,
 
@@ -607,11 +604,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     false,
                 );
 
-                let func_ptr = self.module.function(name, func_ty);
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
 
                 let func = Function {
                     sym: ty,
-                    name: name_idx,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     kind: FunctionKind::Code,
                     error: None,
 
@@ -654,11 +651,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     false,
                 );
 
-                let func_ptr = self.module.function(name, func_ty);
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
 
                 let func = Function {
                     sym: ty,
-                    name: name_idx,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     kind: FunctionKind::Code,
                     error: None,
 
@@ -718,12 +715,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
 
+                let func_ptr = self.module.function(self.string_map.get(sym.name()), func_ty);
 
-                let func_ptr = self.module.function(name, func_ty);
 
                 let func = Function {
                     sym: ty,
-                    name: name_idx,
+                    name: self.string_map.insert(ty.display(self.string_map, self.syms)),
                     kind: FunctionKind::Code,
                     error: sym_func.decl().map(|e| self.ty_info.decl(e)).flatten(),
 
@@ -793,12 +790,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         if sym_id == SymbolId::ANY {
             self.ty_mappings.insert(hash, TypeMapping { repr: *self.any_ref, strct: *self.any_ref });
-            return self.ty_mappings[&hash]
-        }
-
-
-        if sym_id == SymbolId::LIST {
-            self.ty_mappings.insert(hash, TypeMapping { repr: *self.ctx.ptr(), strct: *self.list_ty });
             return self.ty_mappings[&hash]
         }
 
@@ -911,8 +902,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 NodeId::Expr(expr_id) => {
                     let result = self.expr(env, builder, expr_id)?;
                     if self.ty_info.expr(expr_id).unwrap().is_never(self.syms) {
-                        env.vars.truncate(len);
-                        return Err(ErrorId::Bypass);
+                        builder.unreachable();
+                        has_ret = None;
+                        break
                     }
 
                     has_ret = Some(result);
@@ -1229,153 +1221,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             }
 
 
-            parser::nodes::expr::Expr::OrReturn(expr) => {
-                match self.ast.expr(expr) {
-                    parser::nodes::expr::Expr::Identifier(name, _) => {
-                        let local = env.find_var(name).unwrap();
-                        let enum_ref = builder.local_get(local).as_struct();
-
-                        let ty = self.ty_info.expr(expr).unwrap();
-                        if ty.is_err(self.syms) { unreachable!() }
-
-                        // unwrap
-                        let some = builder.const_int(self.i32, 0, false);
-                        let tag = builder.field_load(enum_ref, 1);
-
-                        let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
-
-                        builder.ite(&mut (), comp,
-                        |_, _| {}, 
-
-
-                        |builder, _| {
-                            builder.ret(*enum_ref);
-                        }, 
-                        );
-
-
-                        let value = self.create_enum_from_llvm(builder, tag, value);
-                        builder.local_set(local, *value);
-                    },
-
-
-                    parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
-                        let ty = self.ty_info.expr(val).unwrap();
-                        if ty.is_err(self.syms) { unreachable!() }
-
-                        let sym = ty.sym(self.syms).unwrap();
-                        let sym = self.syms.sym(sym);
-                        let llvm_ty = self.to_llvm_ty(ty);
-
-                        let SymbolKind::Container(cont) = sym.kind()
-                        else { unreachable!() };
-
-                        let (i, _) = cont.fields().iter().enumerate().find(|(_, f)| {
-                            let name = f.0;
-                            field_name == name
-                        }).unwrap();
-
-
-                        match cont.kind() {
-                              ContainerKind::Tuple
-                            | ContainerKind::Struct => {
-                                let strct = self.expr(env, builder, val).unwrap();
-
-                                let field = builder.field_ptr(
-                                    strct.as_ptr(), 
-                                    llvm_ty.strct.as_struct(),
-                                    i as _
-                                );
-
-
-                                let enum_ref = builder
-                                    .load(field, *self.enum_ref).as_struct();
-
-                                // unwrap
-                                let some = builder.const_int(self.i32, 0, false);
-                                let tag = builder.field_load(enum_ref, 1);
-
-                                let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
-
-                                builder.ite(&mut (), comp,
-                                |_, _| {}, 
-
-
-                                |builder, _| {
-                                    builder.ret(*enum_ref);
-                                }, 
-                                );
-
-
-                                let value = self.create_enum_from_llvm(builder, tag, value);
-                                builder.store(field, *value);
-                            },
-
-
-                            ContainerKind::Enum => {
-                                let strct = self.expr(env, builder, val).unwrap();
-
-                                let tag = builder.field_load(
-                                    strct.as_struct(),
-                                    1
-                                );
-
-                                let payload = builder.field_load(
-                                    strct.as_struct(),
-                                    0
-                                );
-
-                                // unwrap
-                                let some = builder.const_int(self.i32, i as i64, false);
-                                let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
-
-                                builder.ite(&mut (), comp,
-                                |_, _| {}, 
-
-
-                                |builder, _| {
-                                    let tag = builder.const_int(self.i32, 1, false);
-                                    let payload = builder.ptr_null();
-                                    let strct = builder.struct_instance(self.enum_ref, &[*payload, *tag]);
-                                    builder.ret(*strct);
-                                }, 
-                                );
-
-
-                                builder.store(payload.as_ptr(), value);
-                            },
-
-
-                            ContainerKind::Generic => unreachable!(),
-                        }
-
-
-                    }
-                    _ => (),
-                }
-            }
-
-
-            Expr::IndexList { list, index } => {
-                let list_val = self.expr(env, builder, list).unwrap().as_ptr();
-                let index_val = self.expr(env, builder, index).unwrap().as_integer();
-
-                let size = self.ty_info.expr(list).unwrap();
-                let size = size.gens(self.syms);
-                let size = self.syms.get_gens(size)[0].1;
-                let size = size.resolve(&[env.gens], self.syms);
-
-                let llvm_ty = self.to_llvm_ty(size);
-
-                let buf_ptr = builder.field_ptr(list_val, self.list_ty, 2);
-                let buf_ptr = builder.load(buf_ptr, *self.ctx.ptr()).as_ptr();
-
-                let ptr = builder.gep(buf_ptr, llvm_ty.repr, index_val);
-                builder.store(ptr, value);
-            }
-
-
-            _ => unreachable!("{:?}", self.ast.expr(expr)),
+            _ => unreachable!(),
         }
     }
 
@@ -1624,15 +1470,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 
                 match operator {
                     UnaryOperator::Not => {
+                        let value = builder.field_load(rhs.as_struct(), 1).as_integer();
+                        let value = builder.int_cast(value.as_integer(), *self.ctx.bool(), false);
+                        let value = builder.bool_not(value.as_bool());
+
                         let buf = builder.alloca_store(rhs);
-                        let tag_ptr = builder.field_ptr(buf, rhs.ty().as_struct(), 1);
+                        let ptr = builder.field_ptr(buf, rhs.ty().as_struct(), 1);
+                        builder.store(ptr, *value);
 
-                        let value = builder.load(tag_ptr, *self.i32).as_integer();
-                        let value = builder.int_cast(value, *self.ctx.bool(), false);
-                        let value = builder.bool_not(value.as_bool()).as_integer();
-                        let value = builder.int_cast(value, *self.i32, false);
-
-                        builder.store(tag_ptr, value);
                         builder.load(buf, rhs.ty())
                     },
 
@@ -1913,6 +1758,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::CallFunction { lhs, args } => {
+                let (func, func_ty) = self.expr_ex(env, builder, lhs)?;
+                out_if_err!();
+
                 let mut llvm_args = sti::vec::Vec::with_cap_in(self.ctx.arena, args.len());
                 for arg in args {
                     let arg = self.expr(env, builder, *arg)?;
@@ -1920,7 +1768,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
                 out_if_err!();
-                let (func, func_ty) = self.expr_ex(env, builder, lhs)?;
 
                 if let Expr::AccessField { .. } = self.ast.expr(lhs) {
                     llvm_args.insert(0, env.info[&lhs]);
@@ -2068,13 +1915,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     env.loop_id = Some(l);
                     let result = self.block(env, builder, &body);
 
-                    if let Err(e) = result {
-                        self.error(builder, e);
-                        value = Err(e) 
-                    };
+                    if let Err(e) = result { value = Err(e) };
                 });
 
                 env.loop_id = lid;
+                value?;
                 out_if_err!();
 
                 *builder.const_unit()

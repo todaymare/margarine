@@ -302,6 +302,26 @@ impl<'me> Compiler<'me> {
 
         self.files.sort_by(&file_offsets);
 
+        // todo: find a way to comrpess these errors into vecs
+        for l in &lex_errors {
+            let mut file = Vec::with_capacity(l.len());
+            for e in l.iter() {
+                let report = display(e, &self.string_map, &self.files.files, &mut ());
+                #[cfg(not(feature = "fuzzer"))]
+                println!("{report}");
+                file.push(report);
+            }
+        }
+
+        for l in &parse_errors {
+            let mut file = Vec::with_capacity(l.len());
+            for e in l.iter() {
+                let report = display(e, &self.string_map, &self.files.files, &mut ());
+                #[cfg(not(feature = "fuzzer"))]
+                println!("{report}");
+                file.push(report);
+            }
+        }
 
         let temp = Arena::new();
         let sema = {

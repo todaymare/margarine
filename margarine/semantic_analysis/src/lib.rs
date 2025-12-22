@@ -148,6 +148,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             analyzer.namespaces.push(namespace)
         };
 
+        panic!("{:?}", core_ns);
+        analyzer.namespaces.core_ns = core_ns;
         let scope = Scope::new(None, ScopeKind::ImplicitNamespace(core_ns));
         let scope = analyzer.scopes.push(scope);
         analyzer.base_scope = scope;

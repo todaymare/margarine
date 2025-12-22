@@ -102,6 +102,14 @@ impl SourceRange {
     }
 
 
+    pub fn as_str(mut self, files: &[FileData]) -> &str {
+        let (file, base) = self.file(files);
+        self = self.base(base);
+
+        &file.read()[self.start as usize..self.end as usize]
+    }
+
+
     #[inline(always)]
     pub const fn range(self) -> (u32, u32) {
         (self.start, self.end)

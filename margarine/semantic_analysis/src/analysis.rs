@@ -2,7 +2,7 @@ use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, Stri
 use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{DeclGeneric, Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
 use sti::{alloc::GlobalAlloc, ext::FromIn, key::Key, vec::{KVec, Vec}};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, Generic, GenericKind, SymbolId}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, GenListId, Generic, GenericKind, SymbolId}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
@@ -407,6 +407,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             else { continue };
 
             let decl = self.ast.decl(*id);
+            println!("computing for");
             match decl {
                  Decl::Struct { name, fields, generics, .. } => {
                     let generics = match self.resolve_generics(scope, *n, generics) {
@@ -549,6 +550,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     match self.resolve_generics(scope, (*id).into(), sig.generics) {
                         Ok(e) => e,
                         Err(e) => {
+                            println!("errored while resolving generics");
+                            let ns = self.namespaces.get_ns_mut(ns);
+                            ns.set_err_sym(sig.name, e.clone());
                             self.error(*id, e);
                             continue;
                         },
@@ -564,7 +568,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     let ns = self.namespaces.get_ns(ns);
                     let Some(Ok(fid)) = ns.get_sym(sig.name)
-                    else { continue };
+                    else { println!("symbol is errored"); continue };
 
                     let mut args = Buffer::new(self.output, sig.arguments.len());
 
@@ -624,6 +628,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let func = Symbol::new(sym_name, generics, SymbolKind::Function(func));
 
                     self.syms.add_sym(fid, func);
+                    println!("computed");
                 }
 
 
@@ -828,6 +833,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let ns = self.namespaces.get_ns(ns);
                 let Some(Ok(func_id)) = ns.get_sym(sig.name)
                 else { return };
+
 
                 // we need a scope that'd fake the generics
                 let sym = self.syms.sym(func_id);
@@ -1408,6 +1414,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         let mut candidate = None;
                         let candidates = self.syms.traits(sym_id).clone();
+                        dbg!(&candidates);
 
                         self.scopes.get(scope)
                         .over::<()>(&self.scopes,
@@ -2175,6 +2182,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
             Expr::CallFunction { lhs: lhs_expr, args } => {
+                dbg!(self.ast.expr(lhs_expr));
                 let lhs = self.expr(path, scope, lhs_expr);
                 
                 if lhs.ty.is_err(&mut self.syms) {
@@ -2188,12 +2196,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let mut is_accessor = false;
                 let args_anals = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, args.len());
-
-                    for &expr in args {
-                        let range = self.ast.range(expr);
-                        let anal = self.expr(path, scope, expr);
-                        vec.push((range, anal, expr));
-                    }
 
                     if let Expr::AccessField { val, field_name, .. } = self.ast.expr(lhs_expr) {
                         let range = self.ast.range(val);
@@ -2209,10 +2211,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             return Err(Error::CallOnField { source: lhs_range, field_name })
                         } else {
                             is_accessor = true;
-                            vec.insert(0, (range, anal, val));
+                            vec.push((range, Some(anal), val));
                         }
                     }
 
+                    for a in args {
+                        vec.push((self.ast.range(*a), None, *a));
+                    }
 
                     vec.leak()
                 };
@@ -2244,7 +2249,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 // ty check args
                 for (a, &fa) in args_anals.iter().zip(func_args.iter()) {
-                    let anal = a.1;
+                    let anal = self.expr_ex(path, scope, a.2, Some(fa));
 
                     if !anal.ty.eq(&mut self.syms, fa) {
                         self.error(a.2, Error::InvalidType {
@@ -2299,12 +2304,16 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     return Err(sym.unwrap_err());
                 };
 
+                println!("within ns of {}", Type::Ty(sym, GenListId::EMPTY).display(&mut self.string_map, &mut self.syms));
                 let ns = self.syms.sym_ns(sym);
 
+                let scope = Scope::new(scope, ScopeKind::NamespaceFence);
+                let scope = self.scopes.push(scope);
                 let scope = Scope::new(scope, ScopeKind::ImplicitNamespace(ns));
                 let scope = self.scopes.push(scope);
                 let scope = Scope::new(scope, ScopeKind::ImplicitTrait(sym));
                 let scope = self.scopes.push(scope);
+
 
                 self.expr(path, scope, action)
             },

@@ -79,6 +79,11 @@ impl Type {
     pub fn is_resolved(self, map: &SymbolMap) -> bool {
         match self {
             Type::Ty(symbol_id, gen_list_id) => {
+                if symbol_id == SymbolId::ERR {
+                    return false;
+                }
+
+
                 if let SymbolKind::Container(cont) = map.sym(symbol_id).kind()
                 && let ContainerKind::Generic = cont.kind() {
                     return false;

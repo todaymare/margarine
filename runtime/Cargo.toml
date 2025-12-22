@@ -10,3 +10,4 @@ crate-type = ["staticlib"]
 semantic_analysis = { path = "../margarine/semantic_analysis" }
 itoa = "*"
 ryu = "*"
+rand = "*"

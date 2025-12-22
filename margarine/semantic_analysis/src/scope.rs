@@ -1,6 +1,6 @@
 use common::{source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use parser::nodes::decl::DeclGeneric;
-use sti::{define_key, vec::KVec};
+use sti::{define_key, key::Key, vec::KVec};
 
 use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{sym_map::{BoundedGeneric, ClosureId, Generic, SymbolId, SymbolMap}, ty::Type, SymbolKind}};
 
@@ -19,6 +19,7 @@ pub struct Scope<'me> {
 pub enum ScopeKind<'me> {
     ImplicitNamespace(NamespaceId),
     ImplicitTrait(SymbolId),
+    NamespaceFence,
     AliasDecl(StringIndex, Generic<'me>),
     VariableScope(VariableScope),
     Generics(GenericsScope<'me>),
@@ -77,8 +78,15 @@ impl<'me> Scope<'me> {
 
 
     pub fn find_sym(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<Result<SymbolId, Error>> {
-        self.over(scope_map, |scope| {
-            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
+        let mut fence = false;
+        let r = self.over(scope_map, |scope| {
+            if let ScopeKind::NamespaceFence = scope.kind {
+                fence = true;
+            }
+
+
+            if !fence 
+            && let ScopeKind::ImplicitNamespace(ns) = scope.kind {
                 let ns = namespaces.get_ns(ns);
                 if let Some(ty) = ns.get_sym(name) {
                     return Some(ty)
@@ -101,12 +109,22 @@ impl<'me> Scope<'me> {
             }
 
             None
-        })
+        });
+
+        if fence { None }
+        else { r }
     }
 
 
     pub fn find_gen(self, name: StringIndex, scope_map: &ScopeMap) -> Option<Type> {
-        self.over(scope_map, |scope| {
+        let mut fence = false;
+        let r = self.over(scope_map, |scope| {
+            if let ScopeKind::NamespaceFence = scope.kind {
+                fence = true;
+                return Some(Type::I64);
+            }
+
+
             if let ScopeKind::Generics(generics_scope) = scope.kind {
                 if let Some(ty) = generics_scope.generics.iter().find(|x| x.0.name() == name) {
                     return Some(ty.1)
@@ -114,7 +132,10 @@ impl<'me> Scope<'me> {
             }
 
             None
-        })
+        });
+
+        if fence { None }
+        else { r }
     }
 
 
@@ -126,7 +147,13 @@ impl<'me> Scope<'me> {
         symbols: &mut SymbolMap
     ) -> Option<Result<VariableScope, Result<SymbolId, Error>>> {
 
+        let mut fence = false;
         self.over(scope_map, |scope| {
+            if let ScopeKind::NamespaceFence = scope.kind {
+                fence = true;
+            }
+
+
             if let ScopeKind::VariableScope(v) = scope.kind {
                 if v.name() != name { return None }
                 self.over(scope_map, |scope| {
@@ -144,12 +171,6 @@ impl<'me> Scope<'me> {
                 return Some(Ok(v))
             }
 
-            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
-                let ns = namespaces.get_ns(ns);
-                if let Some(ty) = ns.get_sym(name) {
-                    return Some(Err(ty))
-                }
-            }
 
             if let ScopeKind::Generics(generics_scope) = scope.kind {
                 if let Some(ty) = generics_scope.generics.iter().find(|x| x.0.name() == name) {
@@ -157,6 +178,15 @@ impl<'me> Scope<'me> {
                 }
             }
 
+
+            if fence && scope.parent().is_some() { return None }
+
+            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
+                let ns = namespaces.get_ns(ns);
+                if let Some(ty) = ns.get_sym(name) {
+                    return Some(Err(ty))
+                }
+            }
 
 
             None

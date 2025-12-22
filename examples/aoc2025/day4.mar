@@ -3,7 +3,7 @@ use std::*;
 use std::io::read_file;
 
 fn main() {
-    var input = read_file("./examples/aoc2025/day4.txt");
+    var input = read_file("./examples/aoc2025/day4.txt")!;
 
     println(part1(input));
     println(part2(input));
@@ -22,19 +22,24 @@ fn part1(input: str): str {
 
         var min : int = min.parse()!;
         var max : int = max.parse()!;
-
+        
         ranges.push(min..=max);
     }
+
 
     var fresh_ingredients = 0;
     for line in lines {
         var ingredient = line.parse()!;
 
-        if ranges.iter().any(|r| r.contains(ingredient)) {
+        if ranges.iter().any(|r| {
+            r.contains(ingredient)
+        }) {
             fresh_ingredients += 1;
         }
     }
     
+
+    println(fresh_ingredients);
     fresh_ingredients.to_str()
 }
 
@@ -88,10 +93,6 @@ fn part2(input: str): str {
 
     var count = 0;
     for range in ranges.iter() {
-        print(range.min);
-        print("..");
-        println(range.max);
-
         count += range.len() + 1
     }
 
@@ -100,29 +101,3 @@ fn part2(input: str): str {
 
 
 
-impl Range {
-    fn contains(self, num: int): bool {
-        self.min <= num && num < self.max
-    }
-
-
-    fn len(self): int {
-        self.max - self.min
-    }
-}
-
-
-impl<T> Iter<T> {
-    fn any(self, f: fn(T): bool): bool {
-        for val in self {
-            if f(val) { return true }
-        }
-
-        false
-    }
-
-
-    fn all(self, f: fn(T): bool): bool {
-        !self.any(f)
-    }
-}

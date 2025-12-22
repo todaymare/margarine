@@ -27,6 +27,7 @@ unsafe extern "C" {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
+    //println!("malloc {size}");
     unsafe { std::alloc::alloc(Layout::from_size_align(size as _, 8).unwrap()) }
 }
 
@@ -208,16 +209,17 @@ unsafe extern "C" fn str_hash(s: Str, hasher: *const ()) {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_parse(s: Str, ty: i64) -> Enum {
+    let s = s.read().trim();
     match SymbolId(ty as u32) {
        SymbolId::I64 => {
-            let Ok(data) = s.read().parse::<i64>()
+            let Ok(data) = s.parse::<i64>()
             else { return Enum::option_none() };
 
             Enum::option_some(Any::new(data, SymbolId::I64.0))
         }
 
         SymbolId::F64 => {
-            let Ok(data) = s.read().parse::<f64>()
+            let Ok(data) = s.parse::<f64>()
             else { return Enum::option_none() };
 
             Enum::option_some(Any::new(data, SymbolId::F64.0))
@@ -272,20 +274,48 @@ unsafe extern "C" fn str_cmp(a: Str, b: Str) -> Enum {
 
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn random_int() -> i64 {
+    rand::random()
+}
+
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn list_push(list: *mut List, elem: Any, elem_size: u64) {
     let list = unsafe { &mut *list };
 
+
     if list.len == list.cap {
         let ptr = margarineAlloc(
-            (list.cap as usize * 2 * elem_size as usize).max(1) as u64);
+            (list.cap as usize * 2 * elem_size as usize) as u64);
 
         unsafe {
         core::ptr::copy(list.data, ptr, list.len as usize * elem_size as usize);
         }
 
         list.cap *= 2;
+        list.cap = list.cap.max(1);
+
         list.data = ptr;
     }
+
+    /*
+    println!(
+        "PUSH: 
+        list.buf_ptr: {:?}, 
+        list.len: {:?}, 
+        list.cap: {:?}, 
+        elem.ptr={:?}, 
+        first8={:016x}, 
+        elem_size: {:x}",
+        list.data,
+        list.len,
+        list.cap,
+        elem.ptr,
+        unsafe { *(elem.ptr as *const u64) },
+        elem_size,
+    );
+    */
+
 
     let ptr = elem.ptr.cast::<u8>();
     let buf = unsafe { list.data.add((list.len as u64 * elem_size) as usize) };
@@ -413,7 +443,7 @@ struct Enum {
 
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct Str {
     data: *const u8,
 }
@@ -425,6 +455,18 @@ struct List {
     len: u32,
     cap: u32,
     data: *mut u8,
+}
+
+
+macro_rules! test {
+    ($($e: expr),* ; $($f: expr),*) => {
+        $(
+            println!("arg: {}", $e);
+        )*
+        $(
+            println!("field: {}", $f);
+        )*
+    };
 }
 
 
@@ -454,7 +496,9 @@ impl Str {
         let data = self.data.cast::<u32>().add(1).cast::<u8>();
         let slice = core::slice::from_raw_parts(data, len as usize);
 
-        core::str::from_utf8(slice).unwrap()
+        let result = core::str::from_utf8(slice).unwrap();
+        result
+
         }
     }
 }
