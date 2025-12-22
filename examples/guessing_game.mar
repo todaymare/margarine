@@ -4,7 +4,15 @@ use std::*;
 
 fn main() {
     loop {
-        println(rand::random::<int>());
+        println("Guess the number:");
+        println("Please input your guess.");
+
+        var guess = io::read_line()!;
+
+        print("You guessed: ");
+        println(guess);
+
+        println(rand::random::<int>())
     }
 }
 

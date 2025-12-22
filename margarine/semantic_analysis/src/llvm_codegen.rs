@@ -374,8 +374,6 @@ pub fn run<'a>(
 impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn get_func(&mut self, ty: Type) -> Result<&Function<'ctx>, ErrorId> {
         assert!(ty.is_resolved(&mut self.syms));
-        //println!("getting func {}", ty.display(self.string_map, self.syms));
-        //println!("{:?}", self.syms.get_gens(ty.gens(self.syms)));
 
         let sym_id = ty.sym(self.syms).unwrap();
         let gens_id = ty.gens(&self.syms);
@@ -402,7 +400,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
-        //println!("returns {}", ret.display(self.string_map, self.syms));
         let is_never = ret.is_never(self.syms) || ret.is_err(self.syms);
 
         let llvm_ret = self.to_llvm_ty(ret);
@@ -511,7 +508,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 else { unreachable!() };
 
 
-                //println!("---------");
                 let result = self.block(&mut env, &mut builder, &*body);
                 
                 if let Some(e) = self.ty_info.decl(sym_func.decl().unwrap()) {
@@ -530,6 +526,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         },
                     }
                 }
+
 
                 return Ok(&self.funcs[&hash]);
             },
@@ -1461,7 +1458,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let sym = self.ty_info.idents.get(&expr).unwrap().unwrap();
                     let sym = Type::Ty(sym, GenListId::EMPTY);
                     let sym = sym.resolve(&[env.gens], self.syms);
-                    //println!("trait ident resolved as: {}", sym.display(self.string_map, self.syms));
 
                     let sym = sym.sym(self.syms).unwrap();
 
@@ -1491,12 +1487,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     // need to allocate anything
                     let null = builder.ptr_null();
                     let ptr = func.func_ptr;
+                    let func_ty = func.func_ty;
                     let ty = self.func_ref;
                     let func_ref = builder.struct_instance(
                         ty,
                         &[*ptr, *null],
                     );
-
 
                     return Ok((*func_ref, sym))
                 }
@@ -1931,9 +1927,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 //dbg!(func);
                 //dbg!(func_ty.display(self.string_map, self.syms));
                 let func_ty = func_ty.resolve(&[env.gens], self.syms);
-                //dbg!(env.gens);
+                //dbg!(func_ty.display(self.string_map, self.syms));
+                //dbg!(env.gens, func_ty);
                 let func_ty = self.to_llvm_ty(func_ty);
-                //dbg!(func_ty);
 
                 let func_ptr = builder.field_load(func.as_struct(), 0);
                 let capture_ptr = builder.field_load(func.as_struct(), 1);
@@ -2055,7 +2051,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
               parser::nodes::expr::Expr::WithinNamespace { action, .. }
             | parser::nodes::expr::Expr::WithinTypeNamespace { action, .. } => {
                 out_if_err!();
-                self.expr(env, builder, action)?
+                return self.expr_ex(env, builder, action)
             },
 
 

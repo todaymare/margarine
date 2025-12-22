@@ -280,6 +280,12 @@ unsafe extern "C" fn random_int() -> i64 {
 
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn random_float() -> f64 {
+    rand::random()
+}
+
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn list_push(list: *mut List, elem: Any, elem_size: u64) {
     let list = unsafe { &mut *list };
 

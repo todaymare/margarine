@@ -6,3 +6,4 @@ build.lock
 out.ll
 optimized.ll
 program.o
+program
