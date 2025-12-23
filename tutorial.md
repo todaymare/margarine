@@ -179,8 +179,9 @@ fn main() {
 
 ## 12. Attributes
 ```mar
-@startup fn main() {
-    print("Program started!");
+@test
+fn some_test() {
+    assert(3 == 3, "what?")
 }
 ```
 
