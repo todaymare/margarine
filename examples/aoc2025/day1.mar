@@ -1,4 +1,4 @@
-extern "https://github.com/todaymare/margarine-std" as std;
+extern "pkg:std" as std;
 use std::*;
 use std::io::read_file;
 

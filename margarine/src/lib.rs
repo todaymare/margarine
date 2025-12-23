@@ -182,21 +182,20 @@ impl<'me> Compiler<'me> {
                         let alias_str = self.string_map.get(alias);
                         let alias_str = format!("{local_path}<>{alias_str}");
 
-                        // Convert github/owner/repo format to URL
-                        let url = if url.starts_with("github/") {
-                            let parts: Vec<&str> = url.split('/').collect();
-                            if parts.len() == 3 {
-                                format!("https://github.com/{}/{}.git", parts[1], parts[2])
-                            } else {
-                                let err = pe.push(parser::errors::Error::FileDoesntExist { 
-                                    source, 
-                                    path: repo 
-                                });
-                                global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                                continue;
-                            }
-                        } else {
+                        let url =
+                        if !url.starts_with("pkg:") {
                             url.to_string()
+                        } else {
+                            let base =
+                            if !cfg!(feature="fuzzer") { std::env::var("MARGARINE_DEFAULT_URL").ok() }
+                            else { None };
+
+                            let base = base.as_ref().map(|x| x.as_str()).unwrap_or("https://pkg.daymare.net/margarine");
+                            let base = base.trim_end_matches('/');
+                            let url = url.trim_start_matches('/');
+                            let url = &url["pkg:".len()..];
+
+                            format!("{base}/{url}")
                         };
 
                         let artifacts_dir = "artifacts";
