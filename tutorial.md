@@ -20,7 +20,7 @@ fn main() {
 ## 2. Variables and Types
 ```mar
 var x = 42;
-var y: f64 = 3.14;
+var y: float = 3.14;
 var name = "Margarine";
 ```
 
@@ -28,7 +28,7 @@ var name = "Margarine";
 
 ## 3. Functions
 ```mar
-fn add(a: i64, b: i64) -> i64 {
+fn add(a: int, b: int) -> int {
     return a + b;
 }
 
@@ -88,7 +88,7 @@ fn main() {
 ## 6. Structs and Enums
 ### Structs
 ```mar
-struct Point { x: i64, y: i64 }
+struct Point { x: int, y: int }
 
 fn main() {
     var p = Point { x: 1, y: 2 };
@@ -205,7 +205,7 @@ fn main() {
 
 ## 15. Full Example
 ```mar
-struct Counter { value: i64 }
+struct Counter { value: int }
 
 impl Counter {
     fn inc(self) -> Counter {

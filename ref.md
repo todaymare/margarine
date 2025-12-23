@@ -50,7 +50,7 @@ Margarine is a statically-typed, compiled programming language designed for expr
 ---
 
 ## Types
-- Primitive: `i64`, `f64`, `bool`, `str`, `unit`, `never`
+- Primitive: `int`, `float`, `bool`, `str`, `unit`, `never`
 - Custom: `struct`, `enum`, user-defined
 - Tuples: `(T1, T2, ...)`
 - Lists: `[T]`
@@ -170,7 +170,7 @@ Margarine is a statically-typed, compiled programming language designed for expr
 ---
 
 ## Standard Library
-- Core types: `i64`, `f64`, `bool`, `str`, `unit`, `Option`, `Result`, `List`, etc.
+- Core types: `int`, `float`, `bool`, `str`, `unit`, `Option`, `Result`, `List`, etc.
 - Common functions: `print`, `len`, etc.
 
 ---
