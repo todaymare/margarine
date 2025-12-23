@@ -85,8 +85,7 @@ impl<'me> Scope<'me> {
             }
 
 
-            if !fence 
-            && let ScopeKind::ImplicitNamespace(ns) = scope.kind {
+            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
                 let ns = namespaces.get_ns(ns);
                 if let Some(ty) = ns.get_sym(name) {
                     return Some(ty)
