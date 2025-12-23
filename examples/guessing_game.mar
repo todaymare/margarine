@@ -1,9 +1,9 @@
-extern "https://github.com/todaymare/margarine-std" as std;
+extern "pkg:std" as std;
 use std::*;
 
 
 fn main() {
-    loop {
+    loop { // !!
         println("Guess the number:");
         println("Please input your guess.");
 
@@ -12,7 +12,14 @@ fn main() {
         print("You guessed: ");
         println(guess);
 
-        println(rand::random::<int>())
+        var guess : int = guess.parse()!;
+        var computer_guess = rand::random_range(0..10);
+        if computer_guess < guess {
+            println("You guessed too high!");
+        } else if computer_guess > guess {
+            println("You guessed too low!");
+        } else {
+            println("Correct!");
+        }
     }
 }
-

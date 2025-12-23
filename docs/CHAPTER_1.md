@@ -8,7 +8,7 @@ Let's make a guessing game shall we?
 
 ### Processing a guess
 ```rs
-extern "https://github.com/todaymare/margarine-std" as std;
+extern "pkg:std" as std;
 use std::io;
 
 fn main() {
@@ -23,6 +23,14 @@ fn main() {
 ```
 
 You should already be familiar with majority of this but there are a few pieces.
+
+Firstly,
+```rs
+extern "pkg:std" as std;
+```
+This line pulls the "std" package from the default package system. The string can be *any* git url but the `pkg:` prefix is a shortcut for the default package system.
+
+This package system is determined by the `MARGARINE_DEFAULT_URL` environment variable. If the variable is missing it'll default to `pkg.daymare.net/margarine`
 
 ```rs
 use std::io;
@@ -50,7 +58,7 @@ Okay yeah, you'd need to squint really hard to call what we made a game so let's
 We can first start by wrapping it all in a loop so the player can play again without restarting the whole program.
 
 ```rs
-extern "https://github.com/todaymare/margarine-std" as std;
+extern "pkg:std" as std;
 use std::*;
 
 
@@ -71,3 +79,37 @@ fn main() {
 The `loop` keyword just loops forever. Basically identical to `while true` in almost all languages.
 
 Next, we can add some randomization so the player has something to guess rather than just putting random stuff. The margarine standard library provides a `rand` module we can use.
+
+Before we can compare the guess with the randomly generated number, we'll need to parse it from a string to an integer.
+
+```rs
+extern "pkg:std" as std;
+use std::*;
+
+
+fn main() {
+    loop { // !!
+        println("Guess the number:");
+        println("Please input your guess.");
+
+        var guess = io::read_line()!;
+
+        print("You guessed: ");
+        println(guess);
+
+        var guess : int = guess.parse()!;
+
+        var computer_guess = rand::random_range(0..10);
+        if computer_guess < guess {
+            println("You guessed too high!");
+        } else if computer_guess > guess {
+            println("You guessed too low!");
+        } else {
+            println("Correct!");
+        }
+    }
+}
+
+```
+
+The .. operator creates a range between the left (min) and right (max). The lower bound is inclusive while the upper bound is exclusive. If you want the upper bound to be inclusive as well you can use the ..= operator.

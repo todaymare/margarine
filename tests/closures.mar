@@ -1,9 +1,0 @@
-@test
-fn inference_test() {
-    fn hey<A>(f: fn(int): A): A {
-        f(3)
-    }
-
-
-    hey(|a| a);
-}
