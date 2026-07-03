@@ -176,11 +176,7 @@ impl<'me> Compiler<'me> {
 
 
 
-                        let local_path = self.string_map.get(f)
-                            .replace("<>", "<_>")
-                            .replace("/", "<>");
                         let alias_str = self.string_map.get(alias);
-                        let alias_str = format!("{local_path}<>{alias_str}");
 
                         let url =
                         if !url.starts_with("pkg:") {
@@ -198,12 +194,16 @@ impl<'me> Compiler<'me> {
                             format!("{base}/{url}")
                         };
 
+                        let mut hasher = sti::hash::fxhash::FxHasher64::new();
+                        hasher.write_bytes(url.as_bytes());
+                        let dir_hash = format!("{:016x}", hasher.hash);
+
                         let artifacts_dir = "artifacts";
                         if !std::fs::exists(artifacts_dir).unwrap_or(false) {
                             std::fs::create_dir(artifacts_dir).unwrap();
                         }
 
-                        let local_path = format!("{}/{}", artifacts_dir, alias_str);
+                        let local_path = format!("{}/{}", artifacts_dir, dir_hash);
 
                         if !std::fs::exists(&local_path).unwrap_or(false) {
                             if !self.silent {
