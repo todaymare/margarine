@@ -109,37 +109,5 @@ fn main() {
             return;
         }
     }
-
-    /*
-    let src = DropTimer::with_timer("compilation", || {
-       let string_map_arena = Arena::new();
-       let mut string_map = StringMap::new(&string_map_arena);
-       let files = {
-           let mut files = Vec::new();
-           for i in std::env::args().skip(1) {
-               files.push(FileData::open(&i, &mut string_map).expect(&format!("{}", i)));
-           }
-
-           files
-       };
-
-       margarine::run(&mut string_map, files)
-    });
-
-
-
-
-    let mut hosts : HashMap<String, _>= HashMap::new();
-    stdlib(&mut hosts);
-    raylib(&mut hosts);
-
-    let mut vm = VM::new(hosts, &*src).unwrap();
-    {
-        let _t = DropTimer::new("runtime");
-        if let Some(e) = vm.run("flappy_bird::main").as_err() {
-            println!("{}", e.to_str().unwrap());
-        }
-    }*/
-
 }
 
