@@ -2251,7 +2251,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 payload
             },
-        }, match ty.unwrap() {
+        }, match ty.unwrap_or(crate::ExprInfo::Errored(ErrorId::Bypass)) {
             crate::ExprInfo::Result { ty } => ty,
             crate::ExprInfo::Errored(e) => return Err(e),
         }))

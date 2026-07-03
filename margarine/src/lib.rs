@@ -214,7 +214,7 @@ impl<'me> Compiler<'me> {
                             match Repository::clone(&url, &local_path) {
                                 Ok(v) => v,
                                 Err(_) => {
-                                    let err = pe.push(parser::errors::Error::FileDoesntExist { 
+                                    let err = pe.push(parser::errors::Error::RepoDoesntExist { 
                                         source, 
                                         path: repo 
                                     });

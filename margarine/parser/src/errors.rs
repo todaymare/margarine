@@ -44,6 +44,12 @@ pub enum Error {
         source: SourceRange,
         path: StringIndex,
     },
+
+
+    RepoDoesntExist {
+        source: SourceRange,
+        path: StringIndex,
+    },
 }
 
 
@@ -123,6 +129,13 @@ impl ErrorType<()> for Error {
 
             Error::FileDoesntExist { source, path } => {
                 let msg = format!("unable to find file '{}'", fmt.string(*path));
+                fmt.error(&msg)
+                    .highlight(*source);
+            }
+
+
+            Error::RepoDoesntExist { source, path } => {
+                let msg = format!("unable to find git repository '{}'", fmt.string(*path));
                 fmt.error(&msg)
                     .highlight(*source);
             }
