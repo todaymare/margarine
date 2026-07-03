@@ -603,6 +603,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Trait) => self.trait_declaration()?.into(),
             TokenKind::Keyword(Keyword::Mod) => self.mod_declaration()?.into(),
             TokenKind::Keyword(Keyword::Extern) => self.extern_declaration(settings)?.into(),
+            TokenKind::Keyword(Keyword::Import) => self.import_declaration()?.into(),
             TokenKind::Keyword(Keyword::Enum) => self.enum_declaration()?.into(),
             TokenKind::Keyword(Keyword::Use) => self.using_declaration()?.into(),
 
@@ -935,32 +936,46 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
+    fn import_declaration(&mut self) -> DeclResult<'ta> {
+        let start = self.current_range().start();
+        self.expect(TokenKind::Keyword(Keyword::Import))?;
+        self.advance();
+
+        let Some(repo) = self.is_literal_str() 
+        else {
+            return Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedLiteralString {
+                source: self.current_range(), 
+                token: self.current_kind()
+            }))))
+        };
+
+        self.advance();
+
+        self.expect(TokenKind::Keyword(Keyword::As))?;
+        self.advance();
+
+        let alias = self.expect_identifier()?;
+
+
+        let decl = self.ast.add_decl(
+            Decl::ImportRepo { 
+                alias,
+                repo
+            }, 
+            SourceRange::new(start, self.current_range().end())
+        );
+        
+        self.imports.push(decl);
+
+        return Ok(decl);
+    }
+
+
+
     fn extern_declaration(&mut self, settings: &ParserSettings) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
         self.advance();
-
-        if let TokenKind::Literal(Literal::String(repo)) = self.current_kind() {
-            self.advance();
-
-            self.expect(TokenKind::Keyword(Keyword::As))?;
-            self.advance();
-
-            let alias = self.expect_identifier()?;
-
-
-            let decl = self.ast.add_decl(
-                Decl::ImportRepo { 
-                    alias,
-                    repo
-                }, 
-                SourceRange::new(start, self.current_range().end())
-            );
-            
-            self.imports.push(decl);
-
-            return Ok(decl);
-        }
 
         self.expect(TokenKind::LeftBracket)?;
         self.advance();

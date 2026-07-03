@@ -399,14 +399,6 @@ impl<'me> CompilationResult<'me> {
             sema_errors.push(report);
         } 
 
-        /*
-        codegen::run(
-            &mut comp.string_map, &mut self.syms, 
-            &mut self.namespaces, &mut self.ast,
-            &mut self.ty_info, [lex_error_files, parse_error_files, vec![sema_errors]],
-            &self.startups
-        )*/
-
         llvm_codegen::run(
             &mut comp.string_map, &mut self.syms, 
             &mut self.namespaces, &mut self.ast,
@@ -415,7 +407,7 @@ impl<'me> CompilationResult<'me> {
             &self.startups
         );
 
-        todo!()
+        vec![]
     }
 }
 

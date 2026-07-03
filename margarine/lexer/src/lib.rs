@@ -213,6 +213,7 @@ pub enum Keyword {
     In,
     Trait,
     Static,
+    Import,
 }
 
 pub fn lex<'a, 'arena>(
@@ -434,6 +435,7 @@ impl Lexer<'_, '_> {
             "struct"    => TokenKind::Keyword(Keyword::Struct),
             "impl"      => TokenKind::Keyword(Keyword::Impl),
             "extern"    => TokenKind::Keyword(Keyword::Extern),
+            "import"    => TokenKind::Keyword(Keyword::Import),
             "use"       => TokenKind::Keyword(Keyword::Use),
             "mod"       => TokenKind::Keyword(Keyword::Mod),
             "type"      => TokenKind::Keyword(Keyword::Type),
