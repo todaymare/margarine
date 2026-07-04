@@ -306,19 +306,26 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
-    pub fn struct_instance(&self, ty: StructTy<'ctx>, fields: &[Value<'ctx>]) -> Struct<'ctx> {
+    pub fn struct_instance(
+        &self, 
+        ty: StructTy<'ctx>, 
+        fields: impl IntoIterator<Item=Value<'ctx>>
+    ) -> Struct<'ctx> {
+
         assert!(!ty.is_opaque(), "can't create a non-opaque type");
-        assert_eq!(ty.fields_count(), fields.len());
 
         let arena = &self.arena;
         let ptr = self.alloca(*ty);
-        for (i, (sf, ff)) in ty.fields(&*arena).iter().zip(fields.iter()).enumerate() {
+        let mut count = 0;
+        for (i, (sf, ff)) in ty.fields(&*arena).iter().zip(fields).enumerate() {
             assert_eq!(*sf, ff.ty());
 
             let ptr = self.field_ptr(ptr, ty, i);
-            self.store(ptr, *ff);
+            self.store(ptr, ff);
+            count += 1;
         }
 
+        assert_eq!(ty.fields_count(), count);
         self.load(ptr, *ty).as_struct()
     }
 

@@ -636,7 +636,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 builder.store(ptr, arg);
 
-                let strct = builder.struct_instance(self.any_ref, &[*ptr, *id]);
+                let strct = builder.struct_instance(self.any_ref, [*ptr, *id]);
                 builder.ret(*strct);
 
                 return Ok(&self.funcs[&hash]);
@@ -680,7 +680,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let cmp = builder.int_cast(cmp.as_integer(), *self.i32, false);
                 let payload = builder.field_load(curr, 0);
 
-                let buf = builder.struct_instance(self.enum_ref, &[payload, cmp]);
+                let buf = builder.struct_instance(self.enum_ref, [payload, cmp]);
                 builder.ret(*buf);
 
                 return Ok(&self.funcs[&hash]);
@@ -838,10 +838,24 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             SymbolKind::Container(cont) => {
                 match cont.kind() {
-                      ContainerKind::Tuple
-                    | ContainerKind::Struct => {
+                      ContainerKind::Tuple => {
+                        let mut fields = sti::vec::Vec::with_cap_in(&*self.ctx.arena, cont.fields().len());
+
+                        for i in cont.fields() {
+                            let ty = i.1.to_ty(gens, self.syms).unwrap();
+                            fields.push(self.to_llvm_ty(ty).repr);
+                        }
+
+                        let strct = self.ctx.literal_struct(fields.as_slice(), false);
+                        let mapping = TypeMapping { repr: *strct, strct: *strct };
+
+                        self.ty_mappings.insert(hash, mapping);
+                    },
+
+
+                    ContainerKind::Struct => {
                         let strct = self.ctx.structure(name);
-                        let mapping = TypeMapping { repr: *self.ctx.ptr(), strct: *strct };
+                        let mapping = TypeMapping { repr: *strct, strct: *strct };
 
                         self.ty_mappings.insert(hash, mapping);
 
@@ -1047,6 +1061,64 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
+    fn resolve_lvalue_ptr(
+        &mut self, env: &mut Env<'_, 'ctx>,
+        builder: &mut Builder<'ctx>,
+        expr: ExprId,
+    ) -> Ptr<'ctx> {
+        match self.ast.expr(expr) {
+            parser::nodes::expr::Expr::Identifier(name, _) => {
+                let local = env.find_var(name).unwrap();
+                builder.local_ptr(local)
+            }
+
+
+            parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
+                let parent_ptr = self.resolve_lvalue_ptr(env, builder, val);
+
+                let ty = self.ty_info.expr(val).unwrap();
+                if ty.is_err(self.syms) { unreachable!() }
+
+                let ty = ty.resolve(&[env.gens], self.syms);
+                let llvm_ty = self.to_llvm_ty(ty);
+
+                let sym = ty.sym(self.syms).unwrap();
+                let sym = self.syms.sym(sym);
+
+                let SymbolKind::Container(cont) = sym.kind()
+                else { unreachable!() };
+
+                let (i, _) = cont.fields().iter().enumerate().find(|(_, f)| {
+                    let name = f.0;
+                    field_name == name
+                }).unwrap();
+
+
+                builder.field_ptr(parent_ptr, llvm_ty.strct.as_struct(), i)
+            }
+
+
+            parser::nodes::expr::Expr::IndexList { list, index } => {
+                let list_val = self.expr(env, builder, list).unwrap().as_ptr();
+                let index_val = self.expr(env, builder, index).unwrap().as_integer();
+
+                let elem_ty = self.ty_info.expr(list).unwrap();
+                let elem_ty = elem_ty.gens(self.syms);
+                let elem_ty = self.syms.get_gens(elem_ty)[0].1;
+                let elem_ty = elem_ty.resolve(&[env.gens], self.syms);
+                let llvm_ty = self.to_llvm_ty(elem_ty);
+
+                let buf_ptr = builder.field_ptr(list_val, self.list_ty, 2);
+                let buf_ptr = builder.load(buf_ptr, *self.ctx.ptr()).as_ptr();
+                builder.gep(buf_ptr, llvm_ty.repr, index_val)
+            }
+
+
+            _ => unreachable!("invalid lvalue"),
+        }
+    }
+
+
     fn assign(
         &mut self, env: &mut Env<'_, 'ctx>,
         builder: &mut Builder<'ctx>, 
@@ -1061,44 +1133,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             }
 
 
-            parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
-                let strct = self.expr(env, builder, val).unwrap();
-
-                let ty = self.ty_info.expr(val).unwrap();
-                if ty.is_err(self.syms) { unreachable!() }
-
-                let sym = ty.sym(self.syms).unwrap();
-                let sym = self.syms.sym(sym);
-
-                let ty = ty.resolve(&[env.gens], self.syms);
-                let llvm_ty = self.to_llvm_ty(ty);
-
-                let SymbolKind::Container(cont) = sym.kind()
-                else { unreachable!() };
-
-                let (i, _) = cont.fields().iter().enumerate().find(|(_, f)| {
-                    let name = f.0;
-                    field_name == name
-                }).unwrap();
-
-
-                match cont.kind() {
-                      ContainerKind::Tuple
-                    | ContainerKind::Struct => {
-                        let field = builder.field_ptr(
-                            strct.as_ptr(), 
-                            llvm_ty.strct.as_struct(),
-                            i as _
-                        );
-
-                        builder.store(field, value);
-                    },
-
-
-                    ContainerKind::Enum => unreachable!(),
-                    ContainerKind::Generic => unreachable!(),
-                }
-
+            parser::nodes::expr::Expr::AccessField { .. } => {
+                let ptr = self.resolve_lvalue_ptr(env, builder, expr);
+                builder.store(ptr, value);
             }
 
 
@@ -1138,7 +1175,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let sym = ty.sym(self.syms).unwrap();
                         let sym = self.syms.sym(sym);
-                        let llvm_ty = self.to_llvm_ty(ty);
+                        let _llvm_ty = self.to_llvm_ty(ty);
 
                         let SymbolKind::Container(cont) = sym.kind()
                         else { unreachable!() };
@@ -1152,13 +1189,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         match cont.kind() {
                               ContainerKind::Tuple
                             | ContainerKind::Struct => {
-                                let strct = self.expr(env, builder, val).unwrap();
-
-                                let field = builder.field_ptr(
-                                    strct.as_ptr(), 
-                                    llvm_ty.strct.as_struct(),
-                                    i as _
-                                );
+                                let field = self.resolve_lvalue_ptr(env, builder, expr);
 
 
                                 let enum_ref = builder
@@ -1262,7 +1293,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let sym = ty.sym(self.syms).unwrap();
                         let sym = self.syms.sym(sym);
-                        let llvm_ty = self.to_llvm_ty(ty);
+                        let _llvm_ty = self.to_llvm_ty(ty);
 
                         let SymbolKind::Container(cont) = sym.kind()
                         else { unreachable!() };
@@ -1276,13 +1307,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         match cont.kind() {
                               ContainerKind::Tuple
                             | ContainerKind::Struct => {
-                                let strct = self.expr(env, builder, val).unwrap();
-
-                                let field = builder.field_ptr(
-                                    strct.as_ptr(), 
-                                    llvm_ty.strct.as_struct(),
-                                    i as _
-                                );
+                                let field = self.resolve_lvalue_ptr(env, builder, expr);
 
 
                                 let enum_ref = builder
@@ -1333,7 +1358,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 |builder, _| {
                                     let tag = builder.const_int(self.i32, 1, false);
                                     let payload = builder.ptr_null();
-                                    let strct = builder.struct_instance(self.enum_ref, &[*payload, *tag]);
+                                    let strct = builder.struct_instance(self.enum_ref, [*payload, *tag]);
                                     builder.ret(*strct);
                                 }, 
                                 );
@@ -1491,7 +1516,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let ty = self.func_ref;
                     let func_ref = builder.struct_instance(
                         ty,
-                        &[*ptr, *null],
+                        [*ptr, *null],
                     );
 
                     return Ok((*func_ref, sym))
@@ -1514,7 +1539,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     (StringMap::MAX, rhs),
                 ];
 
-                self.create_struct(builder, Type::RANGE, &fields)
+                *self.create_struct(builder, Type::RANGE, &fields)
             },
 
 
@@ -1800,7 +1825,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     values.push((*name, value));
                 }
 
-                self.create_struct(builder, ty, &*values)
+                *self.create_struct(builder, ty, &*values)
             },
 
 
@@ -1822,9 +1847,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     match cont.kind() {
                           ContainerKind::Tuple
                         | ContainerKind::Struct => {
-                            let llvm_ty = self.to_llvm_ty(val);
-                            let value = builder.load(value.as_ptr(), llvm_ty.strct).as_struct();
-                            return Ok((builder.field_load(value, i as _), slf))
+                            return Ok((builder.field_load(value.as_struct(), i as _), slf))
                         },
 
                         ContainerKind::Enum => {
@@ -1897,7 +1920,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let ty = self.func_ref;
                     let func_ref = builder.struct_instance(
                         ty,
-                        &[*ptr, *null],
+                        [*ptr, *null],
                     );
 
                     return Ok((*func_ref, sym))
@@ -1982,7 +2005,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let strct_ty = self.ctx.structure("captures");
                 strct_ty.set_fields(&tys, false);
 
-                let captures = builder.struct_instance(strct_ty, &vals);
+                let captures = builder.struct_instance(strct_ty, vals);
 
                 let size = strct_ty.size_of(self.module);
                 let size = builder.const_int(self.i64, size.unwrap() as _, false);
@@ -2043,7 +2066,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
 
-                let func_ref = builder.struct_instance(self.func_ref, &[*func.func_ptr, *buf]);
+                let func_ref = builder.struct_instance(self.func_ref, [*func.func_ptr, *buf]);
                 *func_ref
             },
 
@@ -2116,9 +2139,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let ty = self.ty_info.expr(expr).unwrap();
 
                 let ty = ty.resolve(&[env.gens], self.syms);
-
-
-                self.create_struct(builder, ty, &llvm_exprs)
+                *self.create_struct(builder, ty, &llvm_exprs)
             },
 
 
@@ -2181,7 +2202,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let size = self.list_ty.size_of(self.module).unwrap();
                 let size = builder.const_int(self.i64, size as i64, false);
 
-                let strct = builder.struct_instance(self.list_ty, &[*len, *len, *buf]);
+                let strct = builder.struct_instance(self.list_ty, [*len, *len, *buf]);
                 let buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]);
 
                 builder.store(buf.as_ptr(), *strct);
@@ -2274,7 +2295,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             PatternKind::Tuple(items) => {
-                let value = builder.load(value.as_ptr(), sym.strct);
                 let value = value.as_struct();
 
                 for (i, &item) in items.iter().enumerate() {
@@ -2294,7 +2314,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         builder: &mut Builder<'ctx>,
         ty: Type,
         values: &[(StringIndex, Value<'ctx>)]
-    ) -> Value<'ctx> {
+    ) -> Struct<'ctx> {
         let sym_id = ty.sym(self.syms).unwrap();
         let sym = self.syms.sym(sym_id);
         let SymbolKind::Container(cont) = sym.kind()
@@ -2304,26 +2324,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         assert!(matches!(cont.kind(), ContainerKind::Struct | ContainerKind::Tuple));
 
         let ty = self.to_llvm_ty(ty);
-        assert_eq!(ty.repr.kind(), TypeKind::Ptr);
 
-        let strct = ty.strct.as_struct();
-        let size = strct.size_of(self.module).unwrap();
-
-        // allocate the struct
-        let size = builder.const_int(self.i64, size as i64, false);
-        let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]);
-        let ptr = ptr.as_ptr();
-
-
-        // fill in fields
-        for (i, (field_name, _)) in cont.fields().iter().enumerate() {
-            let field_ptr = builder.field_ptr(ptr, strct, i);
-            let value = values.iter().find(|x| x.0 == *field_name).unwrap();
-            builder.store(field_ptr, value.1);
-
-        }
-
-        *ptr
+        builder.struct_instance(
+            ty.strct.as_struct(), 
+            cont.fields().iter().map(|(field_name, _)| {
+                let value = values.iter().find(|x| x.0 == *field_name).unwrap();
+                value.1
+            })
+        )
     }
 
 
@@ -2371,8 +2379,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         
         let repr = {
             builder.struct_instance(
-                self.enum_ref, 
-                &[ptr, tag]
+                self.enum_ref,
+                [ptr, tag]
             )
         };
 

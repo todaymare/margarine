@@ -144,6 +144,25 @@ impl<'me> ContextImpl<'me> {
     }
 
 
+    pub fn literal_struct(&self, fields: &[Type<'me>], packed: bool) -> StructTy<'me> {
+        let mut types = sti::vec::Vec::with_cap_in(self.arena, fields.len());
+        for f in fields {
+            types.push(unsafe { f.llvm_ty() }.as_ptr());
+        }
+
+        let ptr = unsafe {
+            LLVMStructTypeInContext(
+                self.ptr.as_ptr(),
+                types.as_mut_ptr(),
+                types.len() as u32,
+                packed as i32,
+            )
+        };
+
+        unsafe { StructTy::new(Type::new(NonNull::new(ptr).unwrap())) }
+    }
+
+
     pub fn union(&self, name: &str) -> UnionTy<'me> {
         assert!(!name.contains('\0'));
         let pool = self.arena;
