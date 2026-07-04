@@ -4,6 +4,7 @@ pub mod hashables;
 pub mod source;
 pub mod buffer;
 pub mod utf8;
+pub mod symbol_id;
 
 use std::{ops::Deref, time::Instant};
 

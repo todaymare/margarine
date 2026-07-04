@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["staticlib"]
 
 [dependencies]
-semantic_analysis = { path = "../margarine/semantic_analysis" }
+common = { path = "../margarine/common" }
 itoa = "*"
 ryu = "*"
 rand = "*"

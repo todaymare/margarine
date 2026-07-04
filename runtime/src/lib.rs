@@ -3,7 +3,7 @@ pub mod tys;
 use core::{alloc::Layout, ffi::CStr, ptr::null, fmt::Write};
 use std::marker::PhantomData;
 
-use semantic_analysis::syms::sym_map::SymbolId;
+use common::symbol_id::SymbolId;
 
 // Import from the binary
 #[repr(C)]

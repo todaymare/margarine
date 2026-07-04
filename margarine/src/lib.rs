@@ -17,7 +17,7 @@ pub use common::source::{FileData, Extension};
 pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
 use semantic_analysis::llvm_codegen;
-use semantic_analysis::syms::sym_map::SymbolId;
+use common::symbol_id::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 pub use sti::arena::Arena;

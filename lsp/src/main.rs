@@ -258,6 +258,30 @@ impl Lsp {
                         (format!("Syntax Error: number has too many dots"),
                         SourceRange::new(source_range.start(), source_range.end()))
                     },
+
+
+                    lexer::errors::Error::BasedFloatsArentSupported(source_range) => {
+                        (format!("Syntax Error: based floats are not supported"),
+                        SourceRange::new(source_range.start(), source_range.end()))
+                    },
+
+
+                    lexer::errors::Error::InvalidBaseForNumber(source_range) => {
+                        (format!("Syntax Error: invalid base for number"),
+                        SourceRange::new(source_range.start(), source_range.end()))
+                    },
+
+
+                    lexer::errors::Error::InvalidExponent(source_range) => {
+                        (format!("Syntax Error: invalid exponent"),
+                        SourceRange::new(source_range.start(), source_range.end()))
+                    },
+
+
+                    lexer::errors::Error::InvalidEscape { character, position } => {
+                        (format!("Syntax Error: invalid escape '\\{character}'"),
+                        SourceRange::new(position.start(), position.end()))
+                    },
                 };
 
 
@@ -331,6 +355,17 @@ impl Lsp {
                     parser::errors::Error::FileDoesntExist { source, path } => {
                         let path = self.compiler.string_map.get(*path);
                         (format!("file '{path}' doesn't exist"), source)
+                    },
+
+
+                    parser::errors::Error::RepoDoesntExist { source, path } => {
+                        let path = self.compiler.string_map.get(*path);
+                        (format!("repository '{path}' doesn't exist"), source)
+                    },
+
+
+                    parser::errors::Error::TooManyEnumVariants(source) => {
+                        (format!("too many enum variants"), source)
                     },
                 };
 
