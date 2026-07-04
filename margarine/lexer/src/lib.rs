@@ -125,8 +125,6 @@ pub enum TokenKind {
     QuestionMark,
     /// '&'
     Ampersand,
-    /// '~'
-    SquigglyDash,
 
     Literal(Literal),
     Keyword(Keyword),
@@ -209,7 +207,6 @@ pub enum Keyword {
     For,
     In,
     Trait,
-    Static,
     Import,
 }
 
@@ -296,7 +293,6 @@ impl Lexer<'_, '_> {
             b',' => TokenKind::Comma,
             b'@' => TokenKind::At,
             b'?' => TokenKind::QuestionMark,
-            b'~' => TokenKind::SquigglyDash,
             b'^' => TokenKind::BitwiseXor,
             b';' => TokenKind::SemiColon,
             b'$' => TokenKind::DollarSign,
@@ -450,7 +446,6 @@ impl Lexer<'_, '_> {
             "for"       => TokenKind::Keyword(Keyword::For),
             "in"        => TokenKind::Keyword(Keyword::In),
             "trait"      => TokenKind::Keyword(Keyword::Trait),
-            "static"    => TokenKind::Keyword(Keyword::Static),
 
 
             "true"      => TokenKind::Literal(Literal::Bool(true)),

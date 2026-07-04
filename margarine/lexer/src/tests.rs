@@ -346,19 +346,6 @@ fn unicode_escape() {
 
 
 #[test]
-fn static_keyword() {
-    let arena = Arena::new();
-    let mut symbol_table = StringMap::new(&arena);
-    let file = symbol_table.insert("test");
-    let data = "static";
-    let file_data = FileData::new(data.to_string(), file, Extension::None);
-
-    let tokens = lex(&file_data, &mut symbol_table, 0);
-    assert_eq!(tokens.0[0].kind(), TokenKind::Keyword(Keyword::Static));
-}
-
-
-#[test]
 fn exponent_not_based() {
     // Exponents are decimal only; 1e0x10 is not a single float literal.
     let arena = Arena::new();
