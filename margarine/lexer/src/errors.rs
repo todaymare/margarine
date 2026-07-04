@@ -19,6 +19,8 @@ pub enum Error {
     TooManyDots(SourceRange),
     BasedFloatsArentSupported(SourceRange),
     InvalidBaseForNumber(SourceRange),
+    InvalidExponent(SourceRange),
+    InvalidEscape { character: char, position: SourceRange },
 }
 
 
@@ -76,6 +78,16 @@ impl ErrorType<()> for Error {
             Error::InvalidBaseForNumber(pos) => {
                 fmt.error("invalid base for this number")
                     .highlight(*pos)
+            },
+
+            Error::InvalidExponent(pos) => {
+                fmt.error("invalid float exponent")
+                    .highlight_with_note(*pos, "exponents must be integers")
+            },
+
+            Error::InvalidEscape { character, position } => {
+                fmt.error("invalid escape sequence")
+                    .highlight_with_note(*position, &format!("'\\{}' is not a valid escape", character));
             },
         }
     }

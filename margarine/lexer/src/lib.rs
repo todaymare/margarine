@@ -105,7 +105,7 @@ pub enum TokenKind {
     Colon,
     /// '::'
     DoubleColon,
-    /// ':'
+    /// ';'
     SemiColon,
     /// ','
     Comma,
@@ -167,9 +167,6 @@ pub enum TokenKind {
 
     /// '=>'
     Arrow,
-
-    /// '|'
-    Pipe,
 
     /// '$'
     DollarSign,
@@ -453,6 +450,7 @@ impl Lexer<'_, '_> {
             "for"       => TokenKind::Keyword(Keyword::For),
             "in"        => TokenKind::Keyword(Keyword::In),
             "trait"      => TokenKind::Keyword(Keyword::Trait),
+            "static"    => TokenKind::Keyword(Keyword::Static),
 
 
             "true"      => TokenKind::Literal(Literal::Bool(true)),
@@ -466,66 +464,6 @@ impl Lexer<'_, '_> {
     }
 
 
-    /*
-    fn number(&mut self, begin: usize) -> TokenKind {
-        let mut dot_count = 0;
-        let value = {
-            let mut value = sti::string::String::from_str_in(self.string_map.arena(), str::from_utf8(&self.reader.original_slice()[begin..self.reader.offset()]).unwrap());
-            loop {
-                let Some(x) = self.reader.peek()
-                else { break };
-
-                if x == b'.' {
-                    let Some(next_next) = self.reader.peek_at(1)
-                    else { break };
-
-                    if !next_next.is_ascii_digit() {
-                        break
-                    }
-
-                    dot_count += 1;
-                    self.reader.consume(1);
-                    value.push_char(x as char);
-                    continue
-                }
-
-                if x == b'_' { self.reader.consume(1); continue };
-                if !x.is_ascii_digit() { break }
-
-                value.push_char(x as char);
-                self.reader.consume(1);
-            }
-
-            value.leak()
-        };
-       
-        let source = SourceRange::new(self.source_offset + begin as u32, self.source_offset + self.reader.offset() as u32 - 1);
-
-        let kind = match dot_count {
-            0 => {
-                match value.parse() {
-                    Ok(e) => Literal::Integer(e),
-                    Err(e) => {
-                        dbg!(e, value);
-                        return TokenKind::Error(
-                        self.errors.push(Error::NumberTooLarge(source)))
-                    },
-                }
-            },
-            1 => {
-                match value.parse() {
-                    Ok(e) => Literal::Float(NonNaNF64::new(e)),
-                    Err(_) => return TokenKind::Error(
-                        self.errors.push(Error::NumberTooLarge(source))),
-                }
-            },
-            _ =>  return TokenKind::Error(
-                self.errors.push(Error::TooManyDots(source)))
-        };
-
-
-        TokenKind::Literal(kind)
-    }*/
 
 
     fn string(&mut self, start: usize) -> TokenKind {
@@ -573,7 +511,16 @@ impl Lexer<'_, '_> {
                         },
                     },
 
-                    _ => string.push(value as char),
+                    _ => {
+                        let end = self.reader.offset() as u32 - 1;
+                        let start = end.saturating_sub(1);
+                        let source = SourceRange::new(self.source_offset + start, self.source_offset + end);
+                        self.reader = recover;
+                        return TokenKind::Error(self.errors.push(Error::InvalidEscape {
+                            character: value as char,
+                            position: source,
+                        }));
+                    }
                 }
 
                 is_in_escape = false;
@@ -609,11 +556,11 @@ impl Lexer<'_, '_> {
 
         if self.reader.peek() != Some(b'}') || unicode.is_empty() {
             return Err(Error::CorruptUnicodeEscape(SourceRange::new(
-                self.source_offset + start as u32, self.reader.offset() as u32
+                self.source_offset + start as u32, self.source_offset + self.reader.offset() as u32
             )));
         }
 
-        let source = SourceRange::new(self.source_offset + start as u32, self.reader.offset() as u32);
+        let source = SourceRange::new(self.source_offset + start as u32, self.source_offset + self.reader.offset() as u32);
         let _ = self.reader.next();
 
         
@@ -630,9 +577,9 @@ impl Lexer<'_, '_> {
 
 
 
-    fn number(&mut self, start: u32, supports_dot: bool) -> TokenKind {
+    fn number(&mut self, start: u32, is_top_level: bool) -> TokenKind {
         self.reader.set_offset(start as usize);
-        if true {
+        if is_top_level {
             if self.reader.starts_with(b"0b") { return self.based_integer(2) }
             if self.reader.starts_with(b"0o") { return self.based_integer(8) }
             if self.reader.starts_with(b"0x") { return self.based_integer(16) }
@@ -664,7 +611,7 @@ impl Lexer<'_, '_> {
 
 
         if (!has_dot && self.reader.peek() != Some(b'e'))
-        || !supports_dot {
+        || !is_top_level {
             let Ok(int) = i64::from_str_radix(str, 10)
             else {
                 let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
@@ -693,15 +640,30 @@ impl Lexer<'_, '_> {
 
         let is_neg = self.reader.next_if(|a| *a == b'-').is_some();
 
-        let TokenKind::Literal(Literal::Integer(exponent)) = self.number(self.reader.offset() as u32, false)
-        else { unreachable!() };
+        if self.reader.peek().map_or(true, |c| !c.is_ascii_digit()) {
+            let source = SourceRange::new(start as u32, self.reader.offset() as u32 - 1)
+                .offset(self.source_offset);
+            return TokenKind::Error(self.errors.push(Error::InvalidExponent(source)));
+        }
 
-        let exponent = exponent as i128;
-        let exponent = 
-            if is_neg { -exponent }
-            else { exponent };
+        let exp = match self.number(self.reader.offset() as u32, false) {
+            TokenKind::Literal(Literal::Integer(exp)) => exp,
+            TokenKind::Error(e) => return TokenKind::Error(e),
+            _ => {
+                let source = SourceRange::new(start as u32, self.reader.offset() as u32 - 1)
+                    .offset(self.source_offset);
+                return TokenKind::Error(self.errors.push(Error::InvalidExponent(source)));
+            }
+        };
 
-        let float = float * 10f64.powi(exponent as i32);
+        if exp < i32::MIN as i64 || exp > i32::MAX as i64 {
+            let source = SourceRange::new(start as u32, self.reader.offset() as u32 - 1)
+                .offset(self.source_offset);
+            return TokenKind::Error(self.errors.push(Error::NumberTooLarge(source)));
+        }
+
+        let exp = if is_neg { -exp } else { exp };
+        let float = float * 10f64.powi(exp as i32);
 
         TokenKind::Literal(Literal::Float(NonNaNF64::new(float)))
     }

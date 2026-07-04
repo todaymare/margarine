@@ -189,6 +189,6 @@ impl std::fmt::Display for ExprId {
 
 impl std::fmt::Display for DeclId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "expr_{}", self.usize())
+        write!(f, "decl_{}", self.usize())
     }
 }

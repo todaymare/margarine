@@ -50,6 +50,8 @@ pub enum Error {
         source: SourceRange,
         path: StringIndex,
     },
+
+    TooManyEnumVariants(SourceRange),
 }
 
 
@@ -101,11 +103,12 @@ impl ErrorType<()> for Error {
             Error::ExpectedXFoundYMulti { source, found, expected } => {
                 let message = {
                     let mut message = String::new();
+                    let mut first = true;
                     for i in expected.iter() {
-                        if message.is_empty() {
+                        if !first {
                             let _ = write!(message, ", ");
                         }
-
+                        first = false;
                         let _ = write!(message, "'{i:?}'");
                     }
 
@@ -138,6 +141,12 @@ impl ErrorType<()> for Error {
                 let msg = format!("unable to find git repository '{}'", fmt.string(*path));
                 fmt.error(&msg)
                     .highlight(*source);
+            }
+
+
+            Error::TooManyEnumVariants(source) => {
+                fmt.error("too many enum variants")
+                    .highlight_with_note(*source, "enums cannot have more than 65535 variants");
             }
         }
     }

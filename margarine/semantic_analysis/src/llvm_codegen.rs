@@ -141,7 +141,7 @@ pub fn run<'a>(
 
         let i32_ty = ctx.integer(32);
         let err_fn_ty = void.fn_ty(ctx.arena, &[*i32_ty, *i32_ty, *i32_ty], false);
-        let err_fn = module.function("margarineError", abort_fn_ty);
+        let err_fn = module.function("margarineError", err_fn_ty);
         err_fn.set_linkage(Linkage::External);
         err_fn.set_noreturn(ctx.as_ctx_ref());
 

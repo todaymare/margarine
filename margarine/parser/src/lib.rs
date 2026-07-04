@@ -288,7 +288,7 @@ impl<'out> Parser<'_, 'out, '_> {
                         }
 
                         
-                        if self.current_is(TokenKind::RightParenthesis) {
+                        if self.current_is(TokenKind::RightAngle) {
                             break
                         }
 
@@ -1010,7 +1010,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     && identifier == StringMap::SELF {
                     if settings.is_in_impl {
                         return Ok(FunctionArgument::new(
-                            name,
+                            identifier,
                             DataType::new(parser.current_range(), DataTypeKind::CustomType(StringMap::SELF_TY, &[])),
                             parser.current_range(),
                         ));
@@ -1116,9 +1116,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             let end = parser.current_range().end();
             
+            let index = match index.try_into() {
+                Ok(v) => v,
+                Err(_) => {
+                    let err = parser.errors.push(Error::TooManyEnumVariants(SourceRange::new(start, end)));
+                    return Err(ErrorId::Parser((parser.file, err)));
+                }
+            };
+
             let mapping = EnumMapping::new(
                 name, 
-                index.try_into().unwrap(), 
+                index, 
                 data_type, 
                 SourceRange::new(start, end), 
                 is_implicit_unit
@@ -2206,6 +2214,34 @@ impl<'ta> Parser<'_, 'ta, '_> {
         }
         
         Ok(lhs)
+    }
+
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sti::arena::Arena;
+    use common::{source::{FileData, Extension}, string_map::StringMap};
+    use lexer::lex;
+
+    #[test]
+    fn generic_type_argument() {
+        let arena = Arena::new();
+        let mut sm = StringMap::new(&arena);
+        let file_name = sm.insert("test");
+        let file = FileData::new("fn f(x: Foo<T>) {}".to_string(), file_name, Extension::None);
+        let (tokens, _) = lex(&file, &mut sm, 0);
+        let mut ast = AST::new(&arena);
+        let (_, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+    }
+
+    #[test]
+    fn binary_operator_display() {
+        assert_eq!(format!("{}", BinaryOperator::BitshiftLeft), "<<");
+        assert_eq!(format!("{}", BinaryOperator::BitshiftRight), ">>");
     }
 
 }

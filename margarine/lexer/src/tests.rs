@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use common::{string_map::{StringMap, StringIndex}, source::{SourceRange, FileData, Extension}, hashables::NonNaNF64};
 use sti::arena::Arena;
 
-use crate::{lex, Token, TokenKind, Literal, errors::Error};
+use crate::{lex, Token, TokenKind, Keyword, Literal, errors::Error};
 
 
 #[test]
@@ -79,7 +79,7 @@ fn tokens() {
             token(TokenKind::At, 69, 69),
             token(TokenKind::QuestionMark, 71, 71),
 
-            token(TokenKind::EndOfFile, 72, 72)
+            token(TokenKind::EndOfFile, 71, 71)
         ])
     }
 
@@ -88,7 +88,7 @@ fn tokens() {
         let arena = Arena::new();
         let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
-        let data = ";";
+        let data = "\\";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table, 0);
@@ -116,7 +116,7 @@ fn numbers() {
             },
             Token {
                 token_kind: TokenKind::EndOfFile,
-                source_range: SourceRange::new(9, 9),
+                source_range: SourceRange::new(8, 8),
             }
         ].as_slice());
     }
@@ -139,22 +139,22 @@ fn numbers() {
             },
             Token {
                 token_kind: TokenKind::EndOfFile,
-                source_range: SourceRange::new(6, 6),
+                source_range: SourceRange::new(5, 5),
             }
         ].as_slice());
     }
 
 
-    // too many dots
+    // based float (not supported)
     {
         let arena = Arena::new();
         let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
-        let data = "420.69.50";
+        let data = "0x1.0";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table, 0);
-        assert!(matches!(tokens.1.as_slice()[0], Error::TooManyDots(..)))
+        assert!(matches!(tokens.1.as_slice()[0], Error::BasedFloatsArentSupported(..)))
     }
 }
 
@@ -180,7 +180,7 @@ fn identifiers() {
         },
         Token {
             token_kind: TokenKind::EndOfFile,
-            source_range: SourceRange::new(12, 12),
+            source_range: SourceRange::new(11, 11),
         },
     ].as_slice())
 }
@@ -205,7 +205,7 @@ fn string() {
             },
             Token {
                 token_kind: TokenKind::EndOfFile,
-                source_range: SourceRange::new(13, 13),
+                source_range: SourceRange::new(12, 12),
             },
         ].as_slice())
     }
@@ -237,10 +237,141 @@ fn comments() {
     compare_individually(&*tokens.0, vec![
         Token {
             token_kind: TokenKind::EndOfFile, 
-            source_range: SourceRange::new(data.len() as u32, data.len() as u32),
+            source_range: SourceRange::new(data.len() as u32 - 1, data.len() as u32 - 1),
         }
     ].as_slice())
 }
+
+
+#[test]
+fn float_exponents() {
+    // valid positive exponent
+    {
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
+        let file = symbol_table.insert("test");
+        let data = "1e5";
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
+    
+        let tokens = lex(&file_data, &mut symbol_table, 0);
+        assert_eq!(tokens.0.len(), 2);
+        assert!(matches!(tokens.0[0].kind(), TokenKind::Literal(Literal::Float(_))));
+        assert!(tokens.1.is_empty());
+    }
+
+
+    // valid negative exponent
+    {
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
+        let file = symbol_table.insert("test");
+        let data = "1e-5";
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
+    
+        let tokens = lex(&file_data, &mut symbol_table, 0);
+        assert_eq!(tokens.0.len(), 2);
+        assert!(matches!(tokens.0[0].kind(), TokenKind::Literal(Literal::Float(_))));
+        assert!(tokens.1.is_empty());
+    }
+
+
+    // empty exponent
+    {
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
+        let file = symbol_table.insert("test");
+        let data = "1e";
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
+    
+        let tokens = lex(&file_data, &mut symbol_table, 0);
+        assert!(matches!(tokens.1.as_slice()[0], Error::InvalidExponent(..)));
+    }
+
+
+    // exponent too large
+    {
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
+        let file = symbol_table.insert("test");
+        let data = "1e9999999999999999999";
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
+    
+        let tokens = lex(&file_data, &mut symbol_table, 0);
+        assert!(matches!(tokens.1.as_slice()[0], Error::NumberTooLarge(..)));
+    }
+}
+
+
+#[test]
+fn invalid_string_escape() {
+    let arena = Arena::new();
+    let mut symbol_table = StringMap::new(&arena);
+    let file = symbol_table.insert("test");
+    let data = "\"hello \\z\"";
+    let file_data = FileData::new(data.to_string(), file, Extension::None);
+
+    let tokens = lex(&file_data, &mut symbol_table, 0);
+    assert!(matches!(tokens.1.as_slice()[0], Error::InvalidEscape { .. }));
+}
+
+
+#[test]
+fn unicode_escape() {
+    // valid
+    {
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
+        let file = symbol_table.insert("test");
+        let data = "\"\\u{1F600}\"";
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
+
+        let tokens = lex(&file_data, &mut symbol_table, 0);
+        assert!(tokens.1.is_empty());
+        assert!(matches!(tokens.0[0].kind(), TokenKind::Literal(Literal::String(_))));
+    }
+
+
+    // corrupt
+    {
+        let arena = Arena::new();
+        let mut symbol_table = StringMap::new(&arena);
+        let file = symbol_table.insert("test");
+        let data = "\"\\u{}\"";
+        let file_data = FileData::new(data.to_string(), file, Extension::None);
+
+        let tokens = lex(&file_data, &mut symbol_table, 0);
+        assert!(matches!(tokens.1.as_slice()[0], Error::CorruptUnicodeEscape(..)));
+    }
+}
+
+
+#[test]
+fn static_keyword() {
+    let arena = Arena::new();
+    let mut symbol_table = StringMap::new(&arena);
+    let file = symbol_table.insert("test");
+    let data = "static";
+    let file_data = FileData::new(data.to_string(), file, Extension::None);
+
+    let tokens = lex(&file_data, &mut symbol_table, 0);
+    assert_eq!(tokens.0[0].kind(), TokenKind::Keyword(Keyword::Static));
+}
+
+
+#[test]
+fn exponent_not_based() {
+    // Exponents are decimal only; 1e0x10 is not a single float literal.
+    let arena = Arena::new();
+    let mut symbol_table = StringMap::new(&arena);
+    let file = symbol_table.insert("test");
+    let data = "1e0x10";
+    let file_data = FileData::new(data.to_string(), file, Extension::None);
+
+    let tokens = lex(&file_data, &mut symbol_table, 0);
+    assert_eq!(tokens.0.len(), 3); // Float(1e0), Identifier(x10), EOF
+    assert!(tokens.1.is_empty());
+}
+
 
 fn compare_individually<T: PartialEq + Debug>(list1: &[T], list2: &[T]) {
     assert_eq!(list1.len(), list2.len(), "list1: {list1:#?},\nlist2: {list2:#?}");
