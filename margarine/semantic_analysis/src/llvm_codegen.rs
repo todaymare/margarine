@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash, os::unix::process::CommandExt, proce
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
-use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
+use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, union::UnionTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
 use parser::nodes::{decl::{DeclGeneric, Decl}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
 use sti::{hash::fxhash::{FxHasher32, FxHasher64}, static_assert};
 
@@ -37,10 +37,6 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     // ptr1 is a function ptr
     // ptr2 is the environment ptr
     func_ref: StructTy<'ctx>,
-
-    // tag is a u32
-    // ptr is a ptr
-    enum_ref: StructTy<'ctx>,
 
     // tag is a u64
     // ptr is a ptr
@@ -102,6 +98,7 @@ struct Env<'a, 'ctx> {
     loop_id: Option<Loop>,
     gens: &'a [(BoundedGeneric<'a>, Type)],
     info: HashMap<ExprId, Value<'ctx>>,
+    ret_llvm_ty: Option<TypeMapping<'ctx>>,
 }
 
 
@@ -154,9 +151,6 @@ pub fn run<'a>(
         let func_ref = ctx.structure("funcRef");
         func_ref.set_fields(&[*ctx.ptr(), *ctx.ptr()], false);
 
-        let enum_ref = ctx.structure("enumRef");
-        enum_ref.set_fields(&[*ctx.ptr(), *i32_ty], false);
-
 
         let any_ref = ctx.structure("anyType");
         any_ref.set_fields(&[*ctx.ptr(), *i32_ty], false);
@@ -183,7 +177,6 @@ pub fn run<'a>(
             i64: ctx.integer(64),
             ctx: ctx.as_ctx_ref(),
             func_ref,
-            enum_ref,
             module,
             list_ty,
             any_ref,
@@ -346,7 +339,6 @@ pub fn run<'a>(
 
     println!("{:?}",
         Command::new("clang")
-            .arg("-O3")
             .arg("program.o")
             .arg("libmargarine.a")
             .arg("-lzstd")
@@ -498,6 +490,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     loop_id: None,
                     gens: self.syms.get_gens(gens_id),
                     info: HashMap::new(),
+                    ret_llvm_ty: Some(llvm_ret),
                 };
 
                 for (i, arg) in sym_func.args().iter().enumerate() {
@@ -517,6 +510,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         Ok(v) => {
                             if !is_never {
                                 builder.ret(v);
+                            } else {
+                                builder.unreachable();
                             }
                         },
 
@@ -665,7 +660,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 assert!(self.funcs.insert(hash, func).is_none());
 
-                let builder = func_ptr.builder(self.ctx, func_ty);
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
                 
                 let target_sym = gens[0].1;
                 let target_id = target_sym.sym(self.syms).unwrap();
@@ -678,10 +673,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let cmp = builder.cmp_int(target_id, curr_id, IntCmp::Ne);
                 let cmp = builder.int_cast(cmp.as_integer(), *self.i32, false);
-                let payload = builder.field_load(curr, 0);
+                let payload_ptr = builder.field_load(curr, 0).as_ptr();
 
-                let buf = builder.struct_instance(self.enum_ref, [payload, cmp]);
-                builder.ret(*buf);
+                let ret_gens = ret.gens(self.syms);
+                let ret_gens = self.syms.get_gens(ret_gens);
+                let payload_ty = ret_gens[0].1;
+                let payload_llvm = self.to_llvm_ty(payload_ty);
+                let payload_data = builder.load(payload_ptr, payload_llvm.repr);
+
+                let buf = self.create_enum_from_llvm(&mut builder, cmp, payload_data, llvm_ret);
+                builder.ret(buf);
 
                 return Ok(&self.funcs[&hash]);
             },
@@ -735,8 +736,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let en = 
                 if is_unit {
                     let kind = builder.const_int(self.i32, index as _, false);
-                    let nul = builder.ptr_null();
-                    self.create_enum(&mut builder, ret, *kind, *nul)
+                    let unit = *builder.const_unit();
+                    self.create_enum(&mut builder, ret, *kind, unit)
                 } else {
                     let kind = builder.const_int(self.i32, index as _, false);
                     let value = builder.arg(0).unwrap();
@@ -744,7 +745,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     self.create_enum(&mut builder, ret, *kind, value)
                 };
 
-                builder.ret(*en);
+                builder.ret(en);
 
                 return Ok(&self.funcs[&hash]);
             },
@@ -875,9 +876,27 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                     ContainerKind::Enum => {
-                        let mapping = TypeMapping { repr: *self.enum_ref, strct: *self.enum_ref };
-
+                        let strct = self.ctx.structure(name);
+                        let mapping = TypeMapping { repr: *strct, strct: *strct };
                         self.ty_mappings.insert(hash, mapping);
+
+                        let mut payload_tys = sti::vec::Vec::with_cap_in(&*self.ctx.arena, cont.fields().len());
+                        for field in cont.fields() {
+                            let ft = field.1.to_ty(gens, self.syms).unwrap();
+                            let llvm = self.to_llvm_ty(ft);
+                            payload_tys.push(llvm.repr);
+                        }
+
+                        if payload_tys.is_empty() {
+                            strct.set_fields(&[*self.i32, *self.ctx.unit()], false);
+                        } else {
+                            let mut union_name = sti::string::String::with_cap_in(&*self.ctx.arena, name.len() + 7);
+                            union_name.push(name);
+                            union_name.push(".union");
+                            let union_ty = self.ctx.union(union_name.leak());
+                            union_ty.set_fields(self.ctx, self.module, payload_tys.as_slice());
+                            strct.set_fields(&[*self.i32, *union_ty], false);
+                        }
                     },
 
 
@@ -921,11 +940,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 NodeId::Expr(expr_id) => {
                     let result = self.expr(env, builder, expr_id)?;
-                    if self.ty_info.expr(expr_id).unwrap().is_never(self.syms) {
-                        env.vars.truncate(len);
-                        return Err(ErrorId::Bypass);
-                    }
-
                     has_ret = Some(result);
                 },
 
@@ -1034,7 +1048,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let lo = env.loop_id.swap(Some(l));
 
-                    let tag = builder.field_load(call_ret_value, 1).as_integer();
+                    let tag = builder.field_load(call_ret_value, 0).as_integer();
                     let none_case = builder.const_int(tag.as_integer().ty(), 1, false);
                     let cond = builder.cmp_int(tag, none_case, IntCmp::Eq);
 
@@ -1043,8 +1057,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         builder.loop_break(l);
                     }, |_, _| {});
 
-                    let value = builder.field_load(call_ret_value, 0).as_ptr();
-                    let value = builder.load(value, iter_fn_binding_value_ty_llvm.repr);
+                    let ret_alloca = builder.alloca_store(*call_ret_value);
+                    let data_ptr = builder.field_ptr(ret_alloca, call_ret_value.ty(), 1);
+                    let value = builder.load(data_ptr, iter_fn_binding_value_ty_llvm.repr);
 
                     Self::resolve_pattern(env, builder, iter_fn_binding_value_ty_llvm, value, binding);
 
@@ -1140,17 +1155,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::Unwrap(expr) => {
+                let ty = self.ty_info.expr(expr).unwrap();
+                if ty.is_err(self.syms) { unreachable!() }
+                let ty = ty.resolve(&[env.gens], self.syms);
+                let llvm_enum_ty = self.to_llvm_ty(ty);
+
                 match self.ast.expr(expr) {
                     parser::nodes::expr::Expr::Identifier(name, _) => {
                         let local = env.find_var(name).unwrap();
-                        let enum_ref = builder.local_get(local).as_struct();
-
-                        let ty = self.ty_info.expr(expr).unwrap();
-                        if ty.is_err(self.syms) { unreachable!() }
+                        let enum_struct = builder.local_get(local).as_struct();
 
                         // unwrap
                         let some = builder.const_int(self.i32, 0, false);
-                        let tag = builder.field_load(enum_ref, 1);
+                        let tag = builder.field_load(enum_struct, 0);
 
                         let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -1164,8 +1181,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         );
 
 
-                        let value = self.create_enum_from_llvm(builder, tag, value);
-                        builder.local_set(local, *value);
+                        let value = self.create_enum_from_llvm(builder, tag, value, llvm_enum_ty);
+                        builder.local_set(local, value);
                     },
 
 
@@ -1175,7 +1192,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let sym = ty.sym(self.syms).unwrap();
                         let sym = self.syms.sym(sym);
-                        let _llvm_ty = self.to_llvm_ty(ty);
 
                         let SymbolKind::Container(cont) = sym.kind()
                         else { unreachable!() };
@@ -1185,6 +1201,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             field_name == name
                         }).unwrap();
 
+                        let gens = ty.gens(self.syms);
+                        let gens = self.syms.get_gens(gens);
+                        let field_ty = cont.fields()[i].1.to_ty(gens, self.syms).unwrap();
+                        let field_ty = field_ty.resolve(&[env.gens], self.syms);
+                        let field_llvm_ty = self.to_llvm_ty(field_ty);
+
 
                         match cont.kind() {
                               ContainerKind::Tuple
@@ -1192,12 +1214,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 let field = self.resolve_lvalue_ptr(env, builder, expr);
 
 
-                                let enum_ref = builder
-                                    .load(field, *self.enum_ref).as_struct();
+                                let enum_struct = builder
+                                    .load(field, field_llvm_ty.repr).as_struct();
 
                                 // unwrap
                                 let some = builder.const_int(self.i32, 0, false);
-                                let tag = builder.field_load(enum_ref, 1);
+                                let tag = builder.field_load(enum_struct, 0);
 
                                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -1211,23 +1233,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 );
 
 
-                                let value = self.create_enum_from_llvm(builder, tag, value);
-                                builder.store(field, *value);
+                                let value = self.create_enum_from_llvm(builder, tag, value, field_llvm_ty);
+                                builder.store(field, value);
                             },
 
 
                             ContainerKind::Enum => {
-                                let strct = self.expr(env, builder, val).unwrap();
-
-                                let tag = builder.field_load(
-                                    strct.as_struct(),
-                                    1
-                                );
-
-                                let payload = builder.field_load(
-                                    strct.as_struct(),
-                                    0
-                                );
+                                let val_ty = ty.resolve(&[env.gens], self.syms);
+                                let val_llvm_ty = self.to_llvm_ty(val_ty);
+                                let enum_ptr = self.resolve_lvalue_ptr(env, builder, val);
+                                let strct = builder.load(enum_ptr, val_llvm_ty.repr).as_struct();
+                                let tag = builder.field_load(strct, 0);
 
                                 // unwrap
                                 let some = builder.const_int(self.i32, i as i64, false);
@@ -1243,7 +1259,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 );
 
 
-                                builder.store(payload.as_ptr(), value);
+                                let data_ptr = builder.field_ptr(enum_ptr, val_llvm_ty.strct.as_struct(), 1);
+                                builder.store(data_ptr, value);
                             },
 
 
@@ -1258,17 +1275,20 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::OrReturn(expr) => {
+                let ty = self.ty_info.expr(expr).unwrap();
+                if ty.is_err(self.syms) { unreachable!() }
+                let ty = ty.resolve(&[env.gens], self.syms);
+                let llvm_enum_ty = self.to_llvm_ty(ty);
+                let ret_llvm_ty = env.ret_llvm_ty;
+
                 match self.ast.expr(expr) {
                     parser::nodes::expr::Expr::Identifier(name, _) => {
                         let local = env.find_var(name).unwrap();
-                        let enum_ref = builder.local_get(local).as_struct();
-
-                        let ty = self.ty_info.expr(expr).unwrap();
-                        if ty.is_err(self.syms) { unreachable!() }
+                        let enum_struct = builder.local_get(local).as_struct();
 
                         // unwrap
                         let some = builder.const_int(self.i32, 0, false);
-                        let tag = builder.field_load(enum_ref, 1);
+                        let tag = builder.field_load(enum_struct, 0);
 
                         let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -1277,13 +1297,20 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                         |builder, _| {
-                            builder.ret(*enum_ref);
+                            if let Some(ret_ty) = ret_llvm_ty {
+                                let none_tag = builder.const_int(self.i32, 1, false);
+                                let none_value = *builder.const_unit();
+                                let ret_val = self.create_enum_from_llvm(builder, *none_tag, none_value, ret_ty);
+                                builder.ret(ret_val);
+                            } else {
+                                builder.ret(*enum_struct);
+                            }
                         }, 
                         );
 
 
-                        let value = self.create_enum_from_llvm(builder, tag, value);
-                        builder.local_set(local, *value);
+                        let value = self.create_enum_from_llvm(builder, tag, value, llvm_enum_ty);
+                        builder.local_set(local, value);
                     },
 
 
@@ -1293,7 +1320,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let sym = ty.sym(self.syms).unwrap();
                         let sym = self.syms.sym(sym);
-                        let _llvm_ty = self.to_llvm_ty(ty);
 
                         let SymbolKind::Container(cont) = sym.kind()
                         else { unreachable!() };
@@ -1303,6 +1329,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             field_name == name
                         }).unwrap();
 
+                        let gens = ty.gens(self.syms);
+                        let gens = self.syms.get_gens(gens);
+                        let field_ty = cont.fields()[i].1.to_ty(gens, self.syms).unwrap();
+                        let field_ty = field_ty.resolve(&[env.gens], self.syms);
+                        let field_llvm_ty = self.to_llvm_ty(field_ty);
+
 
                         match cont.kind() {
                               ContainerKind::Tuple
@@ -1310,12 +1342,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 let field = self.resolve_lvalue_ptr(env, builder, expr);
 
 
-                                let enum_ref = builder
-                                    .load(field, *self.enum_ref).as_struct();
+                                let enum_struct = builder
+                                    .load(field, field_llvm_ty.repr).as_struct();
 
                                 // unwrap
                                 let some = builder.const_int(self.i32, 0, false);
-                                let tag = builder.field_load(enum_ref, 1);
+                                let tag = builder.field_load(enum_struct, 0);
 
                                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -1324,28 +1356,29 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                                 |builder, _| {
-                                    builder.ret(*enum_ref);
+                                    if let Some(ret_ty) = ret_llvm_ty {
+                                        let none_tag = builder.const_int(self.i32, 1, false);
+                                        let none_value = *builder.const_unit();
+                                        let ret_val = self.create_enum_from_llvm(builder, *none_tag, none_value, ret_ty);
+                                        builder.ret(ret_val);
+                                    } else {
+                                        builder.ret(*enum_struct);
+                                    }
                                 }, 
                                 );
 
 
-                                let value = self.create_enum_from_llvm(builder, tag, value);
-                                builder.store(field, *value);
+                                let value = self.create_enum_from_llvm(builder, tag, value, field_llvm_ty);
+                                builder.store(field, value);
                             },
 
 
                             ContainerKind::Enum => {
-                                let strct = self.expr(env, builder, val).unwrap();
-
-                                let tag = builder.field_load(
-                                    strct.as_struct(),
-                                    1
-                                );
-
-                                let payload = builder.field_load(
-                                    strct.as_struct(),
-                                    0
-                                );
+                                let val_ty = ty.resolve(&[env.gens], self.syms);
+                                let val_llvm_ty = self.to_llvm_ty(val_ty);
+                                let enum_ptr = self.resolve_lvalue_ptr(env, builder, val);
+                                let strct = builder.load(enum_ptr, val_llvm_ty.repr).as_struct();
+                                let tag = builder.field_load(strct, 0);
 
                                 // unwrap
                                 let some = builder.const_int(self.i32, i as i64, false);
@@ -1356,15 +1389,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                                 |builder, _| {
-                                    let tag = builder.const_int(self.i32, 1, false);
-                                    let payload = builder.ptr_null();
-                                    let strct = builder.struct_instance(self.enum_ref, [*payload, *tag]);
-                                    builder.ret(*strct);
+                                    let none_tag = builder.const_int(self.i32, 1, false);
+                                    let none_value = *builder.const_unit();
+                                    let ret_ty = ret_llvm_ty.unwrap_or(val_llvm_ty);
+                                    let ret_enum = self.create_enum_from_llvm(builder, *none_tag, none_value, ret_ty);
+                                    builder.ret(ret_enum);
                                 }, 
                                 );
 
 
-                                builder.store(payload.as_ptr(), value);
+                                let data_ptr = builder.field_ptr(enum_ptr, val_llvm_ty.strct.as_struct(), 1);
+                                builder.store(data_ptr, value);
                             },
 
 
@@ -1463,7 +1498,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     lexer::Literal::Bool(v) => {
                         let kind = builder.const_bool(v);
                         let value = *builder.const_unit();
-                        *self.create_enum(builder, Type::BOOL, *kind, value)
+                        self.create_enum(builder, Type::BOOL, *kind, value)
                     },
                 }
             },
@@ -1628,7 +1663,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let value = *builder.const_unit();
 
-                    *self.create_enum(
+                    self.create_enum(
                         builder,
                         Type::BOOL,
                         result,
@@ -1646,7 +1681,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 match operator {
                     UnaryOperator::Not => {
                         let buf = builder.alloca_store(rhs);
-                        let tag_ptr = builder.field_ptr(buf, rhs.ty().as_struct(), 1);
+                        let tag_ptr = builder.field_ptr(buf, rhs.ty().as_struct(), 0);
 
                         let value = builder.load(tag_ptr, *self.i32).as_integer();
                         let value = builder.int_cast(value, *self.ctx.bool(), false);
@@ -1680,7 +1715,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     Some(builder.local(ty.repr))
                 };
 
-                let tag = builder.field_load(cond.as_struct(), 1).as_integer();
+                let tag = builder.field_load(cond.as_struct(), 0).as_integer();
                 let tag = builder.int_cast(tag, *self.ctx.bool(), false).as_bool();
 
                 builder.ite(&mut (self, env), tag,
@@ -1723,14 +1758,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let sym = sym.resolve(&[env.gens], self.syms);
 
                 let gens = sym.gens(self.syms);
-                let sym = sym.sym(self.syms).unwrap();
-                let sym = self.syms.sym(sym);
+                let sym_id = sym.sym(self.syms).unwrap();
+                let sym_data = self.syms.sym(sym_id);
 
-                let SymbolKind::Container(cont) = sym.kind()
+                let SymbolKind::Container(cont) = sym_data.kind()
                 else { unreachable!() };
 
                 let value_ty = val.as_struct();
-                let value_tag = builder.field_load(value_ty, 1).as_integer();
+                let value_tag = builder.field_load(value_ty, 0).as_integer();
+
+                let enum_llvm_ty = self.to_llvm_ty(sym);
+                let val_alloca = builder.alloca_store(val);
+                let val_data_ptr = builder.field_ptr(val_alloca, enum_llvm_ty.strct.as_struct(), 1);
 
                 let iter = cont.fields().iter().map(|sf| {
                     let name = sf.0;
@@ -1749,8 +1788,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let field_ty_llvm = self.to_llvm_ty(field_ty);
 
                     let local = builder.local(field_ty_llvm.repr);
-                    let value_ptr = builder.field_load(val.as_struct(), 0).as_ptr();
-                    let value = builder.load(value_ptr, field_ty_llvm.repr);
+                    let value = if field_ty.sym(self.syms).unwrap() == SymbolId::UNIT {
+                        *builder.const_unit()
+                    } else {
+                        builder.load(val_data_ptr, field_ty_llvm.repr)
+                    };
                     builder.local_set(local, value);
 
                     env.vars.push((mapping.binding(), local));
@@ -1851,32 +1893,46 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         },
 
                         ContainerKind::Enum => {
-                            let ptr = builder.alloca_store(value);
-                            let tag_ptr = builder.field_ptr(ptr, value.ty().as_struct(), 1);
+                            let val_ty = val.resolve(&[env.gens], self.syms);
+                            let val_llvm_ty = self.to_llvm_ty(val_ty);
+                            let result_ty = slf.resolve(&[env.gens], self.syms);
+                            let result_llvm_ty = self.to_llvm_ty(result_ty);
 
-                            let field = builder.load(tag_ptr, *self.i32).as_integer();
+                            let enum_strct = value.as_struct();
+                            let tag = builder.field_load(enum_strct, 0).as_integer();
                             let index = builder.const_int(self.i32, i as _, false);
-                            let cond = builder.cmp_int(field, index, IntCmp::Eq);
+                            let cond = builder.cmp_int(tag, index, IntCmp::Eq);
 
+                            let gens_list = self.syms.get_gens(val.gens(self.syms));
+                            let field_gen = cont.fields()[i].1;
+                            let field_ty = field_gen.to_ty(gens_list, self.syms).unwrap();
+                            let field_llvm = self.to_llvm_ty(field_ty);
 
-                            // variant 0 is Some(T)
-                            // variant 1 is None
-                            //
-                            // we don't need to change the payload
+                            let src_buf = builder.alloca_store(value);
+                            let src_data_ptr = builder.field_ptr(src_buf, val_llvm_ty.strct.as_struct(), 1);
+
+                            let result_buf = builder.alloca(result_llvm_ty.repr);
+                            let result_strct_ty = result_llvm_ty.strct.as_struct();
+
                             builder.ite(
                                 &mut (),
                                 cond,
                                 |builder, _| {
-                                    let num = builder.const_int(self.i32, 0, false);
-                                    builder.store(tag_ptr, *num);
+                                    let some_tag = builder.const_int(self.i32, 0, false);
+                                    let tag_ptr = builder.field_ptr(result_buf, result_strct_ty, 0);
+                                    builder.store(tag_ptr, *some_tag);
+                                    let payload = builder.load(src_data_ptr, field_llvm.repr);
+                                    let dst_data = builder.field_ptr(result_buf, result_strct_ty, 1);
+                                    builder.store(dst_data, payload);
                                 },
                                 |builder, _| {
-                                    let num = builder.const_int(self.i32, 1, false);
-                                    builder.store(tag_ptr, *num);
+                                    let none_tag = builder.const_int(self.i32, 1, false);
+                                    let tag_ptr = builder.field_ptr(result_buf, result_strct_ty, 0);
+                                    builder.store(tag_ptr, *none_tag);
                                 },
                             );
 
-                            return Ok((builder.load(ptr, value.ty()), slf))
+                            return Ok((builder.load(result_buf, result_llvm_ty.repr), slf))
                         },
 
 
@@ -2036,6 +2092,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         loop_id: None,
                         gens: env.gens,
                         info: HashMap::new(),
+                        ret_llvm_ty: None,
                     };
 
 
@@ -2158,7 +2215,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 } else if lsym.is_float() && ty.is_int(self.syms) {
                     builder.fp_to_si(lhs.as_fp(), dest.repr.as_integer())
                 } else if lsym == SymbolId::BOOL && ty.is_int(self.syms) {
-                    let tag = builder.field_load(lhs.as_struct(), 1);
+                    let tag = builder.field_load(lhs.as_struct(), 0);
                     builder.int_cast(tag.as_integer(), dest.repr, false)
                 } else if lsym == ty.sym(self.syms).unwrap() {
                     lhs
@@ -2210,14 +2267,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 buf
             },
 
-
             parser::nodes::expr::Expr::Unwrap(expr_id) => {
                 let value = self.expr(env, builder, expr_id)?;
                 out_if_err!();
 
 
                 let some = builder.const_int(self.i32, 0, false);
-                let tag = builder.field_load(value.as_struct(), 1);
+                let tag = builder.field_load(value.as_struct(), 0);
 
                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -2230,14 +2286,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }, 
                 );
 
-                let payload_ptr = builder.field_load(value.as_struct(), 0);
+
+                let buf = builder.alloca_store(value);
                 let field_ty = self.ty_info.expr(expr_id).unwrap();
                 let gens = field_ty.gens(self.syms);
                 let payload_ty = self.syms.get_gens(gens)[0].1;
                 let payload_ty = payload_ty.resolve(&[env.gens], self.syms);
-                let payload_ty = self.to_llvm_ty(payload_ty);
+                let payload_llvm = self.to_llvm_ty(payload_ty);
 
-                builder.load(payload_ptr.as_ptr(), payload_ty.repr)
+                let data_ptr = builder.field_ptr(buf, value.ty().as_struct(), 1);
+                builder.load(data_ptr, payload_llvm.repr)
             },
 
 
@@ -2247,8 +2305,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let some = builder.const_int(self.i32, 0, false);
 
-                let tag = builder.field_load(value.as_struct(), 1);
-                let payload = builder.field_load(value.as_struct(), 0).as_ptr();
+                let tag = builder.field_load(value.as_struct(), 0);
 
                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
@@ -2266,9 +2323,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let gens = self.syms.get_gens(gens);
 
                 let value_ty = gens[0].1;
-                let value_ty = self.to_llvm_ty(value_ty);
+                let value_llvm = self.to_llvm_ty(value_ty);
 
-                let payload = builder.load(payload, value_ty.repr);
+                let buf = builder.alloca_store(value);
+                let data_ptr = builder.field_ptr(buf, value.ty().as_struct(), 1);
+                let payload = builder.load(data_ptr, value_llvm.repr);
 
                 payload
             },
@@ -2341,20 +2400,27 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         ty: Type,
         kind: Value<'ctx>,
         value: Value<'ctx>,
-    ) -> Struct<'ctx> {
+    ) -> Value<'ctx> {
         assert_eq!(kind.ty().kind(), TypeKind::Integer);
 
-        let sym_id = ty.sym(self.syms).unwrap();
-        let sym = self.syms.sym(sym_id);
-        let SymbolKind::Container(cont) = sym.kind()
-        else { unreachable!("type is not a container") };
+        let tag_val = builder.int_cast(kind.as_integer(), *self.i32, false);
+        let llvm_ty = self.to_llvm_ty(ty);
 
-        assert!(matches!(cont.kind(), ContainerKind::Enum));
+        let buf = builder.alloca(llvm_ty.repr);
+        let strct_ty = llvm_ty.strct.as_struct();
 
-        let ty = self.to_llvm_ty(ty);
-        assert_eq!(ty.repr.kind(), TypeKind::Struct);
+        let tag_ptr = builder.field_ptr(buf, strct_ty, 0);
+        if value.ty().size_of(self.module).unwrap_or(1) == 0 {
+            let zero = builder.const_zero(llvm_ty.repr);
+            builder.store(buf, zero);
+            builder.store(tag_ptr, tag_val);
+        } else {
+            builder.store(tag_ptr, tag_val);
+            let data_ptr = builder.field_ptr(buf, strct_ty, 1);
+            builder.store(data_ptr, value);
+        }
 
-        self.create_enum_from_llvm(builder, kind, value)
+        builder.load(buf, llvm_ty.repr)
     }
 
 
@@ -2363,28 +2429,25 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         builder: &mut Builder<'ctx>,
         tag: Value<'ctx>,
         value: Value<'ctx>,
-    ) -> Struct<'ctx> {
-        let tag = builder.int_cast(tag.as_integer(), *self.i32, false);
+        llvm_ty: TypeMapping<'ctx>,
+    ) -> Value<'ctx> {
+        let tag_val = builder.int_cast(tag.as_integer(), *self.i32, false);
 
-        let size = value.ty().size_of(self.module).unwrap();
-        let ptr = 
-        if size > 0 {
-            let size = builder.const_int(self.i64, size as i64, false);
-            let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]);
-            builder.store(ptr.as_ptr(), value);
-            ptr
+        let strct_ty = llvm_ty.strct.as_struct();
+        let buf = builder.alloca(llvm_ty.repr);
+
+        let tag_ptr = builder.field_ptr(buf, strct_ty, 0);
+        if value.ty().size_of(self.module).unwrap_or(1) == 0 {
+            let zero = builder.const_zero(llvm_ty.repr);
+            builder.store(buf, zero);
+            builder.store(tag_ptr, tag_val);
         } else {
-            *builder.ptr_null()
-        };
-        
-        let repr = {
-            builder.struct_instance(
-                self.enum_ref,
-                [ptr, tag]
-            )
-        };
+            builder.store(tag_ptr, tag_val);
+            let data_ptr = builder.field_ptr(buf, strct_ty, 1);
+            builder.store(data_ptr, value);
+        }
 
-        repr
+        builder.load(buf, llvm_ty.repr)
     }
 
 
@@ -2453,7 +2516,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let null = builder.ptr_null();
                 let b = builder.call(func.func_ptr, func.func_ty, &[lhs, rhs, *null]).as_struct();
-                let b = builder.field_load(b, 1).as_integer();
+                let b = builder.field_load(b, 0).as_integer();
                 let b = builder.int_cast(b, *self.ctx.bool(), false).as_bool();
 
                 let a = builder.local_get(accum).as_bool();

@@ -1,6 +1,6 @@
 pub mod tys;
 
-use core::{alloc::Layout, ffi::CStr, ptr::null, fmt::Write};
+use core::{alloc::Layout, ffi::CStr, ptr::{null, null_mut}, fmt::Write};
 use std::marker::PhantomData;
 
 use common::symbol_id::SymbolId;
@@ -50,7 +50,7 @@ unsafe extern "C" fn print_raw(value: Any) {
     match SymbolId(value.ty as u32) {
         SymbolId::I64 => print!("{}", unsafe { *value.ptr.cast::<i64>() }),
         SymbolId::F64 => print!("{}", unsafe { *value.ptr.cast::<f64>() }),
-        SymbolId::BOOL => print!("{}", unsafe { *value.ptr.cast::<Enum>() }.tag != 0),
+        SymbolId::BOOL => print!("{}", unsafe { *value.ptr.cast::<Enum<()>>() }.tag != 0),
         SymbolId::STR => {
             let s = unsafe { *value.ptr.cast::<Str>() };
             print!("{}", s.read());
@@ -79,26 +79,26 @@ unsafe extern "C" fn float_to_str(value: f64) -> Str {
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn io_read_file(path: Str) -> Enum {
+unsafe extern "C" fn io_read_file(path: Str) -> Enum<Str> {
     let str = std::fs::read_to_string(path.read());
 
     match str {
-        Ok(v) => Enum::result_ok(Str::new(&v)),
-        Err(e) => Enum::result_err(Str::new(&e.to_string())),
+        Ok(v) => Enum { tag: 0, data: Str::new(&v) },
+        Err(e) => Enum { tag: 1, data: Str::new(&e.to_string()) },
     }
 }
 
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn io_read_line() -> Enum {
+unsafe extern "C" fn io_read_line() -> Enum<Str> {
     let mut str = String::new();
     let result = std::io::stdin().read_line(&mut str);
 
     if let Err(e) = result {
-        Enum::result_err(Str::new(&e.to_string()))
+        Enum { tag: 1, data: Str::new(&e.to_string()) }
     } else {
-        Enum::result_ok(Str::new(&str))
+        Enum { tag: 0, data: Str::new(&str) }
     }
 }
 
@@ -148,10 +148,10 @@ unsafe extern "C" fn str_lines_iter(s: Str) -> *mut Lines {
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn str_lines_iter_next(s: *mut Lines) -> Enum {
+unsafe extern "C" fn str_lines_iter_next(s: *mut Lines) -> Enum<Str> {
     let lines = unsafe { &mut *s };
     if lines.offset >= lines.str.len() as usize {
-        return Enum::option_none()
+        return Enum { tag: 1, data: Str { data: null() } }
     }
 
     let str = lines.str.read();
@@ -160,9 +160,9 @@ unsafe extern "C" fn str_lines_iter_next(s: *mut Lines) -> Enum {
     lines.offset += str.unwrap_or("").len() + 1;
 
     if let Some(line) = str {
-        Enum::option_some(Str::new(line))
+        Enum { tag: 0, data: Str::new(line) }
     } else {
-        Enum::option_none()
+        Enum { tag: 1, data: Str { data: null() } }
     }
 }
 
@@ -208,41 +208,41 @@ unsafe extern "C" fn str_hash(s: Str, hasher: *const ()) {
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn str_parse(s: Str, ty: i64) -> Enum {
+unsafe extern "C" fn str_parse(s: Str, ty: i64) -> Enum<Any> {
     let s = s.read().trim();
     match SymbolId(ty as u32) {
        SymbolId::I64 => {
             let Ok(data) = s.parse::<i64>()
-            else { return Enum::option_none() };
+            else { return Enum { tag: 1, data: Any { ptr: null_mut(), ty: 0 } } };
 
-            Enum::option_some(Any::new(data, SymbolId::I64.0))
+            Enum { tag: 0, data: Any::new(data, SymbolId::I64.0) }
         }
 
         SymbolId::F64 => {
             let Ok(data) = s.parse::<f64>()
-            else { return Enum::option_none() };
+            else { return Enum { tag: 1, data: Any { ptr: null_mut(), ty: 0 } } };
 
-            Enum::option_some(Any::new(data, SymbolId::F64.0))
+            Enum { tag: 0, data: Any::new(data, SymbolId::F64.0) }
         }
 
         _ => {
-            Enum::option_none()
+            Enum { tag: 1, data: Any { ptr: null_mut(), ty: 0 } }
         },
     }
 }
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn str_split_once(s: Str, delimeter: Str) -> Enum {
+unsafe extern "C" fn str_split_once(s: Str, delimeter: Str) -> Enum<Tuple2<Str, Str>> {
     let res = s.read().split_once(delimeter.read());
 
     match res {
         Some((a, b)) => {
-            Enum::option_some(Tuple2::new(Str::new(a), Str::new(b)))
+            Enum { tag: 0, data: Tuple2::new(Str::new(a), Str::new(b)) }
         },
 
 
-        None => Enum::option_none(),
+        None => Enum { tag: 1, data: Tuple2::new(Str { data: null() }, Str { data: null() }) },
     }
 }
 
@@ -261,14 +261,14 @@ unsafe extern "C" fn str_slice(s: Str, min: i64, max: i64) -> Str {
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn str_cmp(a: Str, b: Str) -> Enum {
+unsafe extern "C" fn str_cmp(a: Str, b: Str) -> Enum<()> {
     let result = 
         a.len() == b.len()
         && a.read() == b.read();
 
     Enum {
         tag: result as u32,
-        data: null(),
+        data: (),
     }
 }
 
@@ -285,92 +285,73 @@ unsafe extern "C" fn random_float() -> f64 {
 }
 
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn list_push(list: *mut List, elem: Any, elem_size: u64) {
-    let list = unsafe { &mut *list };
-
-
-    if list.len == list.cap {
-        let ptr = margarineAlloc(
-            (list.cap as usize * 2 * elem_size as usize) as u64);
-
-        unsafe {
-        core::ptr::copy(list.data, ptr, list.len as usize * elem_size as usize);
-        }
-
-        list.cap *= 2;
-        list.cap = list.cap.max(1);
-
-        list.data = ptr;
-    }
-
-    /*
-    println!(
-        "PUSH: 
-        list.buf_ptr: {:?}, 
-        list.len: {:?}, 
-        list.cap: {:?}, 
-        elem.ptr={:?}, 
-        first8={:016x}, 
-        elem_size: {:x}",
-        list.data,
-        list.len,
-        list.cap,
-        elem.ptr,
-        unsafe { *(elem.ptr as *const u64) },
-        elem_size,
-    );
-    */
-
-
-    let ptr = elem.ptr.cast::<u8>();
-    let buf = unsafe { list.data.add((list.len as u64 * elem_size) as usize) };
-
-    for i in 0..elem_size as usize {
-        unsafe { *buf.add(i) = *ptr.add(i) };
-    }
-
-    list.len += 1;
-}
-
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn list_pop(list: *mut List, elem_size: u64) -> Enum {
-    let list = unsafe { &mut *list };
-
-    if list.len == 0 {
-        return Enum::option_none();
-    }
-
-    list.len -= 1;
-
-    let ptr = unsafe { list.data.add((list.len as u64 * elem_size) as usize) };
-    let buf = margarineAlloc(elem_size);
-
-    for i in 0..elem_size as usize {
-        unsafe { *buf.add(i) = *ptr.add(i) };
-    }
-
-    Enum {
-        data: buf,
-        tag: 0,
-    }
-}
-
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn list_clear(list: *mut List) {
-    let list = unsafe { &mut *list };
-    list.len = 0;
-}
-
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn list_len(list: *const List) -> i64 {
-    unsafe { *list }.len as i64
-}
-
-
+// #[unsafe(no_mangle)]
+// unsafe extern "C" fn list_push(list: *mut List, elem: Any, elem_size: u64) {
+//     let list = unsafe { &mut *list };
+// 
+// 
+//     if list.len == list.cap {
+//         let ptr = margarineAlloc(
+//             (list.cap as usize * 2 * elem_size as usize) as u64);
+// 
+//         unsafe {
+//         core::ptr::copy(list.data, ptr, list.len as usize * elem_size as usize);
+//         }
+// 
+//         list.cap *= 2;
+//         list.cap = list.cap.max(1);
+// 
+//         list.data = ptr;
+//     }
+// 
+//     let ptr = elem.ptr.cast::<u8>();
+//     let buf = unsafe { list.data.add((list.len as u64 * elem_size) as usize) };
+// 
+//     for i in 0..elem_size as usize {
+//         unsafe { *buf.add(i) = *ptr.add(i) };
+//     }
+// 
+//     list.len += 1;
+// }
+// 
+// 
+// #[unsafe(no_mangle)]
+// unsafe extern "C" fn list_pop(list: *mut List, elem_size: u64) -> Enum {
+//     let list = unsafe { &mut *list };
+// 
+//     if list.len == 0 {
+//         return Enum::option_none();
+//     }
+// 
+//     list.len -= 1;
+// 
+//     let ptr = unsafe { list.data.add((list.len as u64 * elem_size) as usize) };
+//     let buf = margarineAlloc(elem_size);
+// 
+//     for i in 0..elem_size as usize {
+//         unsafe { *buf.add(i) = *ptr.add(i) };
+//     }
+// 
+//     Enum {
+//         data: buf,
+//         tag: 0,
+//     }
+// }
+// 
+// 
+// #[unsafe(no_mangle)]
+// unsafe extern "C" fn list_clear(list: *mut List) {
+//     let list = unsafe { &mut *list };
+//     list.len = 0;
+// }
+// 
+// 
+// #[unsafe(no_mangle)]
+// unsafe extern "C" fn list_len(list: *const List) -> i64 {
+//     unsafe { *list }.len as i64
+// }
+// 
+// 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn test(list: FuncRef) {
     unsafe {
@@ -442,9 +423,9 @@ struct Any {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct Enum {
-    data: *const u8,
+struct Enum<T> {
     tag: u32,
+    data: T,
 }
 
 
@@ -455,15 +436,15 @@ struct Str {
 }
 
 
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct List {
-    len: u32,
-    cap: u32,
-    data: *mut u8,
-}
-
-
+// #[derive(Clone, Copy)]
+// #[repr(C)]
+// struct List {
+//     len: u32,
+//     cap: u32,
+//     data: *mut u8,
+// }
+// 
+// 
 macro_rules! test {
     ($($e: expr),* ; $($f: expr),*) => {
         $(
@@ -508,45 +489,6 @@ impl Str {
         }
     }
 }
-
-
-impl Enum {
-    pub fn option_some<T>(value: T) -> Enum {
-        let ptr = alloc(value);
-        Enum {
-            tag: 0,
-            data: ptr.cast(),
-        }
-    }
-
-
-    pub fn option_none() -> Enum {
-        Enum {
-            tag: 1,
-            data: null(),
-        }
-    }
-
-
-    pub fn result_ok<T>(value: T) -> Enum {
-        let ptr = alloc(value);
-        Enum {
-            tag: 0,
-            data: ptr.cast(),
-        }
-    }
-
-
-    pub fn result_err<T>(value: T) -> Enum {
-        let ptr = alloc(value);
-        Enum {
-            tag: 1,
-            data: ptr.cast(),
-        }
-    }
-
-}
-
 
 
 impl Any {

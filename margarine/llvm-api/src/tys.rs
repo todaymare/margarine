@@ -12,7 +12,7 @@ pub mod string;
 
 use std::{marker::PhantomData, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMFunctionType, LLVMGetTypeKind, LLVMPrintTypeToString, LLVMTypeIsSized}, target::{LLVMABISizeOfType, LLVMGetModuleDataLayout}, LLVMType};
+use llvm_sys::{core::{LLVMFunctionType, LLVMGetTypeKind, LLVMPrintTypeToString, LLVMTypeIsSized}, target::{LLVMABIAlignmentOfType, LLVMABISizeOfType, LLVMGetModuleDataLayout}, LLVMType};
 use sti::{arena::Arena, ext::FromIn};
 
 use crate::{info::Message, module::Module};
@@ -86,6 +86,16 @@ impl<'ctx> Type<'ctx> {
 
         if !self.is_sized() { return None };
         Some(unsafe { LLVMABISizeOfType(dl, self.ptr.as_ptr()) as usize })
+    }
+
+
+    /// returns the ABI alignment of the type in bytes
+    pub fn align_of(self, module: Module<'ctx>) -> Option<usize> {
+        let dl = unsafe { LLVMGetModuleDataLayout(module.ptr.as_ptr()) };
+        if dl.is_null() { panic!("data layout is not set"); }
+
+        if !self.is_sized() { return None };
+        Some(unsafe { LLVMABIAlignmentOfType(dl, self.ptr.as_ptr()) as usize })
     }
 
 
