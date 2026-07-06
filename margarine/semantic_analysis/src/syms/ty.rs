@@ -342,6 +342,7 @@ impl Type {
     }
 
 
+
     pub fn sym(self, map: &SymbolMap) -> Result<SymbolId, Error> {
         match self.instantiate_shallow(map) {
             Type::Ty(sym, _) => Ok(sym),

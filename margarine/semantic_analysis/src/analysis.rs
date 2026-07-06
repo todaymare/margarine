@@ -278,7 +278,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         }
     }
 
-
     pub fn collect_uses(&mut self, scope_id: ScopeId, ns_id: NamespaceId, nodes: &[NodeId]) {
         let scope = self.scopes.get(scope_id);
         for n in nodes {

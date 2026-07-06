@@ -94,7 +94,7 @@ enum FunctionKind {
 
 
 struct Env<'a, 'ctx> {
-    vars: Vec<(StringIndex, Local)>,
+    vars: Vec<(StringIndex, Local, Type, bool)>,
     loop_id: Option<Loop>,
     gens: &'a [(BoundedGeneric<'a>, Type)],
     info: HashMap<ExprId, Value<'ctx>>,
@@ -494,7 +494,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
                 for (i, arg) in sym_func.args().iter().enumerate() {
-                    env.alloc_var(arg.name(), builder.arg(i).unwrap());
+                    let arg_ty = arg.symbol().to_ty(gens, self.syms).unwrap();
+                    let arg_ty = arg_ty.resolve(&[], self.syms);
+                    env.alloc_var(arg.name(), builder.arg(i).unwrap(), arg_ty, true);
                 }
 
                 let Decl::Function { body, .. } = self.ast.decl(sym_func.decl().unwrap())
@@ -509,6 +511,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     match result {
                         Ok(v) => {
                             if !is_never {
+                                self.drop_all_locals(&env, &mut builder);
                                 builder.ret(v);
                             } else {
                                 builder.unreachable();
@@ -951,6 +954,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             }
         }
 
+        self.drop_locals(env, builder, len);
         env.vars.truncate(len);
         match has_ret {
             Some(v) => Ok(v),
@@ -985,12 +989,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let value = self.expr(env, builder, rhs)?;
                 out_if_err!();
 
-                let ty = self.ty_info.expr(rhs).unwrap();
-                let ty = ty.resolve(&[env.gens], self.syms);
+                let margarine_ty = self.ty_info.expr(rhs).unwrap();
+                let margarine_ty = margarine_ty.resolve(&[env.gens], self.syms);
 
-                let ty = self.to_llvm_ty(ty);
+                let ty = self.to_llvm_ty(margarine_ty);
 
-                Self::resolve_pattern(env, builder, ty, value, pat);
+                Self::resolve_pattern(self, env, builder, margarine_ty, ty, value, pat);
 
                 Ok(())
             },
@@ -1061,11 +1065,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let data_ptr = builder.field_ptr(ret_alloca, call_ret_value.ty(), 1);
                     let value = builder.load(data_ptr, iter_fn_binding_value_ty_llvm.repr);
 
-                    Self::resolve_pattern(env, builder, iter_fn_binding_value_ty_llvm, value, binding);
+                    Self::resolve_pattern(self, env, builder, iter_fn_binding_value_ty_sym, iter_fn_binding_value_ty_llvm, value, binding);
 
                     let _ = self.block(env, builder, &*body);
 
                     env.loop_id = lo;
+                    if let Some((_, local, ty, _)) = env.vars.last().copied() {
+                        let value = builder.local_get(local);
+                        self.emit_drop(builder, value, ty);
+                    }
                     env.vars.pop();
                 });
 
@@ -1144,6 +1152,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         match self.ast.expr(expr) {
             parser::nodes::expr::Expr::Identifier(name, _) => {
                 let local = env.find_var(name).unwrap();
+                if let Some(old_ty) = env.find_var_ty(name) {
+                    let old_value = builder.local_get(local);
+                    self.emit_drop(builder, old_value, old_ty);
+                }
                 builder.local_set(local, value)
             }
 
@@ -1297,6 +1309,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                         |builder, _| {
+                            self.drop_all_locals(env, builder);
                             if let Some(ret_ty) = ret_llvm_ty {
                                 let none_tag = builder.const_int(self.i32, 1, false);
                                 let none_value = *builder.const_unit();
@@ -1356,6 +1369,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                                 |builder, _| {
+                                    self.drop_all_locals(env, builder);
                                     if let Some(ret_ty) = ret_llvm_ty {
                                         let none_tag = builder.const_int(self.i32, 1, false);
                                         let none_value = *builder.const_unit();
@@ -1389,6 +1403,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                                 |builder, _| {
+                                    self.drop_all_locals(env, builder);
                                     let none_tag = builder.const_int(self.i32, 1, false);
                                     let none_value = *builder.const_unit();
                                     let ret_ty = ret_llvm_ty.unwrap_or(val_llvm_ty);
@@ -1558,7 +1573,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
 
-                builder.local_get(env.find_var(name).unwrap())
+                let value = builder.local_get(env.find_var(name).unwrap());
+                if env.is_var_param(name) {
+                    value
+                } else {
+                    self.emit_copy(builder, value, ty)
+                }
             },
 
 
@@ -1795,11 +1815,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     };
                     builder.local_set(local, value);
 
-                    env.vars.push((mapping.binding(), local));
+                    env.vars.push((mapping.binding(), local, field_ty, false));
 
                     // run the body
                     let ret_val = self.expr(env, builder, mapping.expr());
-                    debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local));
+                    debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local, field_ty, false));
 
                     let Ok(ret_val) = ret_val
                     else { return };
@@ -2048,12 +2068,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 });
 
 
-                let closure = self.syms.closure(closure);
-                let mut tys = Vec::with_capacity(closure.captured_variables.len());
-                let mut vals = Vec::with_capacity(closure.captured_variables.len());
-                for name in &closure.captured_variables {
+                let mut tys = Vec::with_capacity(captured.len());
+                let mut vals = Vec::with_capacity(captured.len());
+                for name in &captured {
                     let index = env.find_var(name.0).unwrap();
                     let value = builder.local_get(index);
+                    let capture_ty = name.1.resolve(&[env.gens], self.syms);
+                    let value = self.emit_copy(builder, value, capture_ty);
                     tys.push(value.ty());
                     vals.push(value);
                 }
@@ -2102,20 +2123,27 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     for (i, capture) in captured.iter().enumerate() {
                         let value = builder.field_load(captured_strct, i);
+                        let capture_ty = capture.1.resolve(&[env.gens], self.syms);
+                        let value = self.emit_copy(&mut builder, value, capture_ty);
                         let local = builder.local(value.ty());
                         builder.local_set(local, value);
-                        env.alloc_var(capture.0, local);
+                        env.alloc_var(capture.0, local, capture_ty, false);
                     }
 
 
                     for (i, arg) in func_ty.args().iter().enumerate() {
-                        env.alloc_var(arg.name(), builder.arg(i).unwrap());
+                        let arg_ty = arg.symbol().to_ty(env.gens, self.syms).unwrap();
+                        let arg_ty = arg_ty.resolve(&[], self.syms);
+                        env.alloc_var(arg.name(), builder.arg(i).unwrap(), arg_ty, true);
                     }
 
                     let result = self.expr(&mut env, &mut builder, body);
 
                     match result {
-                        Ok(v) => builder.ret(v),
+                        Ok(v) => {
+                            self.drop_all_locals(&env, &mut builder);
+                            builder.ret(v);
+                        },
                         Err(e) => self.error(&mut builder, e),
                     };
  
@@ -2161,6 +2189,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let val = self.expr(env, builder, expr_id)?;
                 out_if_err!();
 
+                self.drop_all_locals(env, builder);
                 builder.ret(val);
                 *builder.const_unit()
             },
@@ -2314,6 +2343,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 |builder, _| {
+                    self.drop_all_locals(env, builder);
                     builder.ret(value);
                 }, 
                 );
@@ -2338,16 +2368,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-
     /// expects the top of the stack to be the value
     fn resolve_pattern(
+        &mut self,
         env: &mut Env, builder: &mut Builder<'ctx>,
-        sym: TypeMapping<'ctx>, value: Value<'ctx>, pattern: Pattern,
+        ty: Type, _sym: TypeMapping<'ctx>, value: Value<'ctx>, pattern: Pattern,
     ) {
         match pattern.kind() {
             PatternKind::Variable(name) => {
                 let local = builder.local(value.ty());
-                env.alloc_var(name, local);
+
+                env.alloc_var(name, local, ty, false);
 
                 builder.local_set(local, value);
             },
@@ -2356,11 +2387,20 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             PatternKind::Tuple(items) => {
                 let value = value.as_struct();
 
+                let sym_id = ty.sym(self.syms).unwrap();
+                let sym_data = self.syms.sym(sym_id);
+                let SymbolKind::Container(cont) = sym_data.kind()
+                else { unreachable!() };
+                let gens = self.syms.get_gens(ty.gens(self.syms));
+
                 for (i, &item) in items.iter().enumerate() {
                     let field = builder.field_load(value, i);
                     let local = builder.local(field.ty());
 
-                    env.alloc_var(item, local);
+                    let field_ty = cont.fields()[i].1.to_ty(gens, self.syms).unwrap();
+                    let field_ty = field_ty.resolve(&[], self.syms);
+
+                    env.alloc_var(item, local, field_ty, false);
                     builder.local_set(local, field);
                 }
             },
@@ -2451,6 +2491,55 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
+    fn emit_copy(&mut self, _builder: &mut Builder<'ctx>, value: Value<'ctx>, _ty: Type) -> Value<'ctx> {
+        value
+    }
+
+
+    fn emit_drop(&mut self, _builder: &mut Builder<'ctx>, _value: Value<'ctx>, _ty: Type) {
+    }
+
+    fn call_trait_method(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        ty: Type,
+        trait_id: SymbolId,
+        func_name: StringIndex,
+        args: &[Value<'ctx>],
+    ) -> Option<Value<'ctx>> {
+        let sym = ty.sym(self.syms).ok()?;
+        let ns = {
+            let traits = self.syms.traits(sym);
+            let (ns, _, _) = traits.get(&trait_id)?;
+            *ns
+        };
+
+        let func_sym = self.ns.get_ns(ns).get_sym(func_name).unwrap().ok()?;
+        let func = self.get_func(Type::Ty(func_sym, ty.gens(self.syms))).ok()?;
+
+        let null = builder.ptr_null();
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        call_args.extend_from_slice(args);
+        call_args.push(*null);
+
+        Some(builder.call(func.func_ptr, func.func_ty, &call_args))
+    }
+
+
+    fn drop_locals(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>, start: usize) {
+        for i in (start..env.vars.len()).rev() {
+            let (_, local, ty, _) = env.vars[i];
+            let value = builder.local_get(local);
+            self.emit_drop(builder, value, ty);
+        }
+    }
+
+
+    fn drop_all_locals(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>) {
+        self.drop_locals(env, builder, 0);
+    }
+
+
     fn eq(
         &mut self,
         builder: &mut Builder<'ctx>,
@@ -2507,15 +2596,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             _ => {
-                let traits = self.syms.traits(sym);
-                let (ns, _, _) = traits[&SymbolId::EQ_TRAIT];
+                let b = self.call_trait_method(
+                    builder, ty, SymbolId::EQ_TRAIT, StringMap::EQ_FUNC, &[lhs, rhs],
+                ).unwrap();
 
-                let func = self.ns.get_ns(ns).get_sym(StringMap::EQ_FUNC).unwrap().unwrap();
-
-                let func = self.get_func(Type::Ty(func, ty.gens(self.syms))).unwrap();
-
-                let null = builder.ptr_null();
-                let b = builder.call(func.func_ptr, func.func_ty, &[lhs, rhs, *null]).as_struct();
+                let b = b.as_struct();
                 let b = builder.field_load(b, 0).as_integer();
                 let b = builder.int_cast(b, *self.ctx.bool(), false).as_bool();
 
@@ -2537,12 +2622,22 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
 impl Env<'_, '_> {
-    pub fn alloc_var(&mut self, name: StringIndex, local: Local) {
-        self.vars.push((name, local));
+    pub fn alloc_var(&mut self, name: StringIndex, local: Local, ty: Type, is_param: bool) {
+        self.vars.push((name, local, ty, is_param));
     }
 
 
     pub fn find_var(&self, name: StringIndex) -> Option<Local> {
         self.vars.iter().rev().find(|x| x.0 == name).map(|x| x.1)
+    }
+
+
+    pub fn find_var_ty(&self, name: StringIndex) -> Option<Type> {
+        self.vars.iter().rev().find(|x| x.0 == name).map(|x| x.2)
+    }
+
+
+    pub fn is_var_param(&self, name: StringIndex) -> bool {
+        self.vars.iter().rev().find(|x| x.0 == name).map(|x| x.3).unwrap_or(false)
     }
 }

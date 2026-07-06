@@ -240,6 +240,9 @@ impl<'me> SymbolMap<'me> {
     pub fn closure(&self, id: ClosureId) -> &Closure {
         &self.closures[id]
     }
+
+
+
 }
 
 

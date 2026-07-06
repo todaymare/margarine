@@ -21,7 +21,6 @@ impl SymbolId {
     pub const BUILTIN_DOWNCAST_ANY : Self = Self(21);
     pub const BUILTIN_SIZE_OF : Self = Self(22);
     pub const EQ_TRAIT : Self = Self(23);
-    pub const EQ_FUNC : Self = Self(24);
 
 
     pub fn supports_arith(self) -> bool {
