@@ -2544,7 +2544,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let syms::func::FunctionKind::Closure(closure) = func_ty.kind()
                 else { unreachable!() };
 
-                let ty = ty.resolve(&[env.gens], self.syms);
+                let outer_gens = env.gens;
+                let ty = ty.resolve(&[outer_gens], self.syms);
+                let closure_gens = self.syms.get_gens(ty.gens(&self.syms));
                 let llvm_ty = self.to_llvm_ty(ty);
 
                 let captured = self.syms.closure(closure).captured_variables.clone();
@@ -2654,7 +2656,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let mut env = Env {
                         vars: Vec::new(),
                         loop_id: None,
-                        gens: env.gens,
+                        gens: closure_gens,
                         info: HashMap::new(),
                         ret_llvm_ty: None,
                     };
@@ -2664,10 +2666,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let captured_ptr = builder.local_get(captured_ptr).as_ptr();
                     let captured_strct = builder.load(captured_ptr, *strct_ty).as_struct();
 
-                    for (i, capture) in captured.iter().enumerate() {
-                        let value = builder.field_load(captured_strct, i + 2);
-                        let capture_ty = capture.1.resolve(&[env.gens], self.syms);
-                        let value = self.emit_copy(&mut builder, value, capture_ty);
+                for (i, capture) in captured.iter().enumerate() {
+                    let value = builder.field_load(captured_strct, i + 2);
+                    let capture_ty = capture.1.resolve(&[outer_gens], self.syms);
+                    let value = self.emit_copy(&mut builder, value, capture_ty);
                         let local = builder.local(value.ty());
                         builder.local_set(local, value);
                         env.alloc_var(capture.0, local, capture_ty, false);
