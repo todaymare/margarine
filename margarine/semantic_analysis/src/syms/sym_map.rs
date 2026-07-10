@@ -588,6 +588,7 @@ impl<'me> SymbolMap<'me> {
         }
 
 
+
         // Rc
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
@@ -915,6 +916,45 @@ impl<'me> SymbolMap<'me> {
                         FunctionKind::PtrCast,
                         None,
                 )));
+
+            slf.add_sym(pending, sym);
+        }
+
+
+        // Destroy
+        {
+            let pending = slf.pending(ns_map, StringMap::DESTROY_TRAIT, 0);
+            assert_eq!(pending, SymbolId::DESTROY_TRAIT);
+
+            let sym = Symbol::new(
+                StringMap::DESTROY_TRAIT,
+                &[],
+                SymbolKind::Trait(Trait {
+                    funcs: arena.alloc_new([
+                       (StringMap::DESTROY_FUNC, FunctionTy::new(
+                            arena.alloc_new([
+                                FunctionArgument::new(
+                                    StringMap::SELF,
+                                    Generic::new(
+                                        SourceRange::ZERO,
+                                        GenericKind::Generic(BoundedGeneric::new(StringMap::SELF_TY, &[])),
+                                        None
+                                    )
+                                )
+                            ]),
+
+                            Generic::new(
+                                SourceRange::ZERO,
+                                GenericKind::Sym(SymbolId::UNIT, &[]),
+                                None,
+                            ),
+
+                            FunctionKind::Trait,
+                            None,
+                        )
+                    )]),
+                })
+            );
 
             slf.add_sym(pending, sym);
         }

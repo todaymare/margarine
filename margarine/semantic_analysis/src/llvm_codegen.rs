@@ -3146,7 +3146,35 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             let elem_size = llvm_elem.repr.size_of(self.module).unwrap();
             let total_size = 8 + elem_size;
             let size_val = builder.const_int(self.i64, total_size as i64, false);
-            builder.call(self.rc_drop_fn.0, self.rc_drop_fn.1, &[value, *size_val]);
+
+            let ptr = value.as_ptr();
+
+            let rc_ptr = builder.gep(ptr, *self.i64, builder.const_int(self.i64, 0, false));
+            let rc = builder.load(rc_ptr, *self.i64).as_integer();
+            let one = builder.const_int(self.i64, 1, false);
+            let new_rc = builder.sub_int(rc, one);
+            builder.store(rc_ptr, *new_rc);
+
+            let zero = builder.const_int(self.i64, 0, false);
+            let is_zero = builder.cmp_int(new_rc, zero, IntCmp::Eq);
+
+            builder.ite(&mut () as &mut (), is_zero,
+            |builder, _| {
+                let offset = builder.const_int(self.i64, 1, false);
+                let data_ptr = builder.gep(ptr, *self.i64, offset);
+                let data = builder.load(data_ptr, llvm_elem.repr);
+
+                let _ = self.call_trait_method(
+                    builder, elem_ty,
+                    SymbolId::DESTROY_TRAIT, StringMap::DESTROY_FUNC,
+                    &[data],
+                );
+
+                self.emit_drop(builder, data, elem_ty);
+                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*ptr, *size_val]);
+            },
+            |_, _| {});
+
             return;
         }
 

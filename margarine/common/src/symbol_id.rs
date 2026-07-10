@@ -32,6 +32,7 @@ impl SymbolId {
     pub const PTR_NULL   : Self = Self(32);
     pub const PTR_OFFSET : Self = Self(33);
     pub const PTR_CAST   : Self = Self(34);
+    pub const DESTROY_TRAIT : Self = Self(35);
 
 
     pub fn supports_arith(self) -> bool {

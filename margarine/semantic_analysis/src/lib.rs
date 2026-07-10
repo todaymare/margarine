@@ -132,6 +132,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let _ = add_sym!(BUILTIN_SIZE_OF);
             let _ = add_sym!(ANY);
             let _ = add_sym!(EQ_TRAIT);
+            let _ = add_sym!(DESTROY_TRAIT);
             let _ = add_sym!(RC);
             let _ = add_sym!(BUILTIN_RC);
             let _ = add_sym!(RC_GET);

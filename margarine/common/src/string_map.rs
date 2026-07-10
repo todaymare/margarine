@@ -66,6 +66,8 @@ impl<'str> StringMap<'str> {
     pub const PTR_NULL   : StringIndex = StringIndex(50);
     pub const PTR_OFFSET : StringIndex = StringIndex(51);
     pub const PTR_CAST   : StringIndex = StringIndex(52);
+    pub const DESTROY_TRAIT : StringIndex = StringIndex(53);
+    pub const DESTROY_FUNC  : StringIndex = StringIndex(54);
 
  
     #[inline(always)]
@@ -138,6 +140,8 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("$ptr_null"), Self::PTR_NULL);
         assert_eq!(s.insert("$ptr_offset"), Self::PTR_OFFSET);
         assert_eq!(s.insert("$ptr_cast"), Self::PTR_CAST);
+        assert_eq!(s.insert("Destroy"), Self::DESTROY_TRAIT);
+        assert_eq!(s.insert("destroy"), Self::DESTROY_FUNC);
         s
     }
 
