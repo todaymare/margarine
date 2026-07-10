@@ -21,6 +21,17 @@ impl SymbolId {
     pub const BUILTIN_DOWNCAST_ANY : Self = Self(21);
     pub const BUILTIN_SIZE_OF : Self = Self(22);
     pub const EQ_TRAIT : Self = Self(23);
+    pub const RC : Self = Self(24);
+    pub const BUILTIN_RC : Self = Self(25);
+    pub const RC_GET : Self = Self(26);
+    pub const RC_SET : Self = Self(27);
+    pub const PTR_ALLOC  : Self = Self(28);
+    pub const PTR_FREE   : Self = Self(29);
+    pub const PTR_READ   : Self = Self(30);
+    pub const PTR_WRITE  : Self = Self(31);
+    pub const PTR_NULL   : Self = Self(32);
+    pub const PTR_OFFSET : Self = Self(33);
+    pub const PTR_CAST   : Self = Self(34);
 
 
     pub fn supports_arith(self) -> bool {

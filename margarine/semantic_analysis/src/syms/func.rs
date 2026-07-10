@@ -39,6 +39,18 @@ pub enum FunctionKind {
 
     Trait,
 
+    Rc,
+    RcGet,
+    RcSet,
+
+    PtrAlloc,
+    PtrFree,
+    PtrRead,
+    PtrWrite,
+    PtrNull,
+    PtrOffset,
+    PtrCast,
+
     Enum {
         sym: SymbolId,
         index: usize,

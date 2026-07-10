@@ -55,6 +55,17 @@ impl<'str> StringMap<'str> {
     pub const HASH : StringIndex = StringIndex(39);
     pub const EQ_TRAIT : StringIndex = StringIndex(40);
     pub const EQ_FUNC : StringIndex = StringIndex(41);
+    pub const RC : StringIndex = StringIndex(42);
+    pub const BUILTIN_RC : StringIndex = StringIndex(43);
+    pub const RC_GET : StringIndex = StringIndex(44);
+    pub const RC_SET : StringIndex = StringIndex(45);
+    pub const PTR_ALLOC  : StringIndex = StringIndex(46);
+    pub const PTR_FREE   : StringIndex = StringIndex(47);
+    pub const PTR_READ   : StringIndex = StringIndex(48);
+    pub const PTR_WRITE  : StringIndex = StringIndex(49);
+    pub const PTR_NULL   : StringIndex = StringIndex(50);
+    pub const PTR_OFFSET : StringIndex = StringIndex(51);
+    pub const PTR_CAST   : StringIndex = StringIndex(52);
 
  
     #[inline(always)]
@@ -116,6 +127,17 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("hash"), Self::HASH);
         assert_eq!(s.insert("Eq"), Self::EQ_TRAIT);
         assert_eq!(s.insert("eq"), Self::EQ_FUNC);
+        assert_eq!(s.insert("Rc"), Self::RC);
+        assert_eq!(s.insert("$rc"), Self::BUILTIN_RC);
+        assert_eq!(s.insert("$rc_get"), Self::RC_GET);
+        assert_eq!(s.insert("$rc_set"), Self::RC_SET);
+        assert_eq!(s.insert("$ptr_alloc"), Self::PTR_ALLOC);
+        assert_eq!(s.insert("$ptr_free"), Self::PTR_FREE);
+        assert_eq!(s.insert("$ptr_read"), Self::PTR_READ);
+        assert_eq!(s.insert("$ptr_write"), Self::PTR_WRITE);
+        assert_eq!(s.insert("$ptr_null"), Self::PTR_NULL);
+        assert_eq!(s.insert("$ptr_offset"), Self::PTR_OFFSET);
+        assert_eq!(s.insert("$ptr_cast"), Self::PTR_CAST);
         s
     }
 

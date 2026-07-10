@@ -32,6 +32,16 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     err_fn  : (FunctionPtr<'ctx>, FunctionType<'ctx>),
     /// fn(size: i32): ptr
     alloc_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
+    /// fn(ptr, size: i64): void
+    dealloc_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
+    /// fn(total_size: i64): ptr
+    rc_alloc_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
+    /// fn(ptr): ptr
+    rc_clone_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
+    /// fn(ptr, total_size: i64): void
+    rc_drop_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
+    /// fn(ptr): void
+    assert_not_null_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
 
 
     // ptr1 is a function ptr
@@ -148,6 +158,26 @@ pub fn run<'a>(
         let alloc_fn = module.function("margarineAlloc", alloc_fn_ty);
         alloc_fn.set_linkage(Linkage::External);
 
+        let dealloc_fn_ty = void.fn_ty(ctx.arena, &[*ctx.ptr(), *ctx.integer(64)], false);
+        let dealloc_fn = module.function("margarineDealloc", dealloc_fn_ty);
+        dealloc_fn.set_linkage(Linkage::External);
+
+        let rc_alloc_fn_ty = ptr.fn_ty(ctx.arena, &[*ctx.integer(64)], false);
+        let rc_alloc_fn = module.function("margarineRcAlloc", rc_alloc_fn_ty);
+        rc_alloc_fn.set_linkage(Linkage::External);
+
+        let rc_clone_fn_ty = ptr.fn_ty(ctx.arena, &[*ctx.ptr()], false);
+        let rc_clone_fn = module.function("margarineRcClone", rc_clone_fn_ty);
+        rc_clone_fn.set_linkage(Linkage::External);
+
+        let rc_drop_fn_ty = void.fn_ty(ctx.arena, &[*ctx.ptr(), *ctx.integer(64)], false);
+        let rc_drop_fn = module.function("margarineRcDrop", rc_drop_fn_ty);
+        rc_drop_fn.set_linkage(Linkage::External);
+
+        let assert_not_null_fn_ty = void.fn_ty(ctx.arena, &[*ctx.ptr()], false);
+        let assert_not_null_fn = module.function("margarineAssertNotNull", assert_not_null_fn_ty);
+        assert_not_null_fn.set_linkage(Linkage::External);
+
         let func_ref = ctx.structure("funcRef");
         func_ref.set_fields(&[*ctx.ptr(), *ctx.ptr()], false);
 
@@ -157,7 +187,7 @@ pub fn run<'a>(
 
 
         let list_ty = ctx.structure("listType");
-        list_ty.set_fields(&[*i32_ty, *i32_ty, *ctx.ptr()], false);
+        list_ty.set_fields(&[*ctx.integer(64), *i32_ty, *i32_ty, *ctx.ptr()], false);
 
         let mut conv = Conversion {
             string_map,
@@ -173,6 +203,11 @@ pub fn run<'a>(
             abort_fn: (abort_fn, abort_fn_ty),
             err_fn: (err_fn, err_fn_ty),
             alloc_fn: (alloc_fn, alloc_fn_ty),
+            dealloc_fn: (dealloc_fn, dealloc_fn_ty),
+            rc_alloc_fn: (rc_alloc_fn, rc_alloc_fn_ty),
+            rc_clone_fn: (rc_clone_fn, rc_clone_fn_ty),
+            rc_drop_fn: (rc_drop_fn, rc_drop_fn_ty),
+            assert_not_null_fn: (assert_not_null_fn, assert_not_null_fn_ty),
             i32: i32_ty,
             i64: ctx.integer(64),
             ctx: ctx.as_ctx_ref(),
@@ -590,6 +625,370 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let num = builder.const_int(self.i64, size as i64, false);
                 builder.ret(*num);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::Rc => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+                let elem_size = llvm_elem.repr.size_of(self.module).unwrap();
+                let total_size = 8 + elem_size;
+
+                let size_val = builder.const_int(self.i64, total_size as i64, false);
+                let ptr = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*size_val]).as_ptr();
+
+                let arg = builder.arg(0).unwrap();
+                let arg = builder.local_get(arg);
+
+                let offset = builder.const_int(self.i64, 1, false);
+                let data_ptr = builder.gep(ptr, *self.i64, offset);
+                builder.store(data_ptr, arg);
+
+                builder.ret(*ptr);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::RcGet => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+
+                let arg = builder.arg(0).unwrap();
+                let arg = builder.local_get(arg);
+
+                let offset = builder.const_int(self.i64, 1, false);
+                let data_ptr = builder.gep(arg.as_ptr(), *self.i64, offset);
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+                let result = builder.load(data_ptr, llvm_elem.repr);
+
+                builder.ret(result);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::RcSet => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+
+                let rc_arg = builder.arg(0).unwrap();
+                let rc_arg = builder.local_get(rc_arg);
+
+                let val_arg = builder.arg(1).unwrap();
+                let val_arg = builder.local_get(val_arg);
+
+                let offset = builder.const_int(self.i64, 1, false);
+                let data_ptr = builder.gep(rc_arg.as_ptr(), *self.i64, offset);
+                builder.store(data_ptr, val_arg);
+
+                builder.ret(*builder.const_unit());
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::PtrAlloc => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+                let elem_size = llvm_elem.repr.size_of(self.module).unwrap() as i64;
+                let elem_size_val = builder.const_int(self.i64, elem_size, false);
+
+                let count = builder.local_get(builder.arg(0).unwrap()).as_integer();
+                let total_size = builder.mul_int(count, elem_size_val);
+
+                let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*total_size]);
+                builder.ret(ptr);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::PtrFree => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+                let elem_size = llvm_elem.repr.size_of(self.module).unwrap() as i64;
+                let elem_size_val = builder.const_int(self.i64, elem_size, false);
+
+                let ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                let count = builder.local_get(builder.arg(1).unwrap()).as_integer();
+                let total_size = builder.mul_int(count, elem_size_val);
+
+                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*ptr, *total_size]);
+                builder.ret(*builder.const_unit());
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::PtrRead => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+
+                let ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                builder.call(self.assert_not_null_fn.0, self.assert_not_null_fn.1, &[*ptr]);
+                let val = builder.load(ptr, llvm_elem.repr);
+                let result = self.emit_copy(&mut builder, val, elem_ty);
+
+                builder.ret(result);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::PtrWrite => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+
+                let ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                builder.call(self.assert_not_null_fn.0, self.assert_not_null_fn.1, &[*ptr]);
+                let val = builder.local_get(builder.arg(1).unwrap());
+
+                let old = builder.load(ptr, llvm_elem.repr);
+                self.emit_drop(&mut builder, old, elem_ty);
+                builder.store(ptr, val);
+                builder.ret(*builder.const_unit());
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::PtrNull => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &[],
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+                let null = builder.ptr_null();
+                builder.ret(*null);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::PtrOffset => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+
+                let ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                let off = builder.local_get(builder.arg(1).unwrap()).as_integer();
+
+                let gep = builder.gep(ptr, llvm_elem.repr, off);
+                builder.ret(*gep);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::PtrCast => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+
+                let to_ty = gens[1].1;
+                let llvm_to = self.to_llvm_ty(to_ty);
+
+                let ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                let cast = builder.ptr_bitcast(ptr, llvm_to.repr);
+                builder.ret(*cast);
 
                 return Ok(&self.funcs[&hash]);
             },
@@ -1122,7 +1521,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::IndexList { list, index } => {
-                let list_val = self.expr(env, builder, list).unwrap().as_ptr();
+                let list_val = match self.ast.expr(list) {
+                    parser::nodes::expr::Expr::Identifier(name, _) => {
+                        let local = env.find_var(name).unwrap();
+                        builder.local_get(local).as_ptr()
+                    },
+                    _ => self.expr(env, builder, list).unwrap().as_ptr(),
+                };
                 let index_val = self.expr(env, builder, index).unwrap().as_integer();
 
                 let elem_ty = self.ty_info.expr(list).unwrap();
@@ -1131,7 +1536,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let elem_ty = elem_ty.resolve(&[env.gens], self.syms);
                 let llvm_ty = self.to_llvm_ty(elem_ty);
 
-                let buf_ptr = builder.field_ptr(list_val, self.list_ty, 2);
+                let buf_ptr = builder.field_ptr(list_val, self.list_ty, 3);
                 let buf_ptr = builder.load(buf_ptr, *self.ctx.ptr()).as_ptr();
                 builder.gep(buf_ptr, llvm_ty.repr, index_val)
             }
@@ -1429,21 +1834,104 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             Expr::IndexList { list, index } => {
-                let list_val = self.expr(env, builder, list).unwrap().as_ptr();
+                let list_val = match self.ast.expr(list) {
+                    parser::nodes::expr::Expr::Identifier(name, _) => {
+                        let local = env.find_var(name).unwrap();
+                        builder.local_get(local).as_ptr()
+                    },
+                    _ => self.expr(env, builder, list).unwrap().as_ptr(),
+                };
                 let index_val = self.expr(env, builder, index).unwrap().as_integer();
 
-                let size = self.ty_info.expr(list).unwrap();
-                let size = size.gens(self.syms);
-                let size = self.syms.get_gens(size)[0].1;
-                let size = size.resolve(&[env.gens], self.syms);
+                let elem_ty = self.ty_info.expr(list).unwrap();
+                let elem_ty = elem_ty.gens(self.syms);
+                let elem_ty = self.syms.get_gens(elem_ty)[0].1;
+                let elem_ty = elem_ty.resolve(&[env.gens], self.syms);
 
-                let llvm_ty = self.to_llvm_ty(size);
+                let llvm_ty = self.to_llvm_ty(elem_ty);
 
-                let buf_ptr = builder.field_ptr(list_val, self.list_ty, 2);
+                let list_ptr_slot = builder.alloca(*self.ctx.ptr());
+                builder.store(list_ptr_slot, *list_val);
+
+                let header = builder.load(list_val, *self.list_ty).as_struct();
+                let refcount = builder.field_load(header, 0).as_integer();
+                let one_i64 = builder.const_int(self.i64, 1, false);
+                let needs_cow = builder.cmp_int(refcount, one_i64, IntCmp::SignedGt);
+
+                builder.ite(&mut (), needs_cow,
+                |builder, _| {
+                    let new_rc = builder.sub_int(refcount, one_i64);
+                    let rc_ptr = builder.field_ptr(list_val, self.list_ty, 0);
+                    builder.store(rc_ptr, *new_rc);
+
+                    let len = builder.field_load(header, 1).as_integer();
+                    let cap = builder.field_load(header, 2).as_integer();
+                    let old_data = builder.field_load(header, 3).as_ptr();
+
+                    let elem_size = llvm_ty.repr.size_of(self.module).unwrap() as i64;
+                    let elem_size_val = builder.const_int(self.i64, elem_size, false);
+                    let cap_i64 = builder.int_cast(cap, *self.i64, false).as_integer();
+                    let buf_size = builder.mul_int(cap_i64, elem_size_val);
+                    let new_buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*buf_size]).as_ptr();
+
+                    let zero_i64 = builder.const_int(self.i64, 0, false);
+                    let counter = builder.alloca(*self.i64);
+                    builder.store(counter, *zero_i64);
+
+                    let len_i64 = builder.int_cast(len, *self.i64, false).as_integer();
+
+                    builder.loop_indefinitely(|builder, l| {
+                        let i = builder.load(counter, *self.i64).as_integer();
+
+                        let done = builder.cmp_int(i, len_i64, IntCmp::SignedGe);
+                        builder.ite(&mut () as &mut (), done,
+                            |builder, _| { builder.loop_break(l); },
+                            |builder, _| {
+                                let i_i32 = builder.int_cast(i, *self.i32, false).as_integer();
+                                let old_ptr = builder.gep(old_data, llvm_ty.repr, i_i32);
+                                let old_elem = builder.load(old_ptr, llvm_ty.repr);
+                                let new_elem = self.emit_copy(builder, old_elem, elem_ty);
+
+                                let new_ptr = builder.gep(new_buf, llvm_ty.repr, i_i32);
+                                builder.store(new_ptr, new_elem);
+
+                                let next_i = builder.add_int(i, one_i64);
+                                builder.store(counter, *next_i);
+                            },
+                        );
+                    });
+
+                    let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
+                    let header_size_val = builder.const_int(self.i64, header_size, false);
+                    let new_header_ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*header_size_val]).as_ptr();
+
+                    let new_header_strct = builder.struct_instance(self.list_ty, [*one_i64, *len, *cap, *new_buf]);
+                    builder.store(new_header_ptr, *new_header_strct);
+
+                    match self.ast.expr(list) {
+                        parser::nodes::expr::Expr::Identifier(name, _) => {
+                            let local = env.find_var(name).unwrap();
+                            builder.local_set(local, *new_header_ptr);
+                        },
+                        parser::nodes::expr::Expr::AccessField { .. } => {
+                            let ptr = self.resolve_lvalue_ptr(env, builder, list);
+                            builder.store(ptr, *new_header_ptr);
+                        },
+                        _ => {},
+                    }
+
+                    builder.store(list_ptr_slot, *new_header_ptr);
+                }, |_, _| {});
+
+                let current_list = builder.load(list_ptr_slot, *self.ctx.ptr()).as_ptr();
+
+                let buf_ptr = builder.field_ptr(current_list, self.list_ty, 3);
                 let buf_ptr = builder.load(buf_ptr, *self.ctx.ptr()).as_ptr();
 
-                let ptr = builder.gep(buf_ptr, llvm_ty.repr, index_val);
-                builder.store(ptr, value);
+                let elem_ptr = builder.gep(buf_ptr, llvm_ty.repr, index_val);
+                let old_elem = builder.load(elem_ptr, llvm_ty.repr);
+                self.emit_drop(builder, old_elem, elem_ty);
+                builder.store(elem_ptr, value);
             }
 
 
@@ -1833,7 +2321,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::IndexList { list, index } => {
-                let list_value = self.expr(env, builder, list)?;
+                let list_value = match self.ast.expr(list) {
+                    parser::nodes::expr::Expr::Identifier(name, _) => {
+                        let local = env.find_var(name).unwrap();
+                        builder.local_get(local)
+                    },
+                    _ => self.expr(env, builder, list)?,
+                };
                 let index = self.expr(env, builder, index)?.as_integer();
                 out_if_err!();
 
@@ -1846,10 +2340,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
                 let strct = builder.load(list_value.as_ptr(), *self.list_ty).as_struct();
-                let len = builder.field_load(strct, 0).as_integer();
+                let len = builder.field_load(strct, 1).as_integer();
                 let len = builder.int_cast(len, *self.i64, true).as_integer();
 
-                let buf = builder.field_load(strct, 2).as_ptr();
+                let buf = builder.field_load(strct, 3).as_ptr();
 
                 let is_lt_len = builder.cmp_int(index, len, IntCmp::SignedLt);
                 let zero = builder.const_int(self.i64, 0, false);
@@ -2068,8 +2562,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 });
 
 
-                let mut tys = Vec::with_capacity(captured.len());
-                let mut vals = Vec::with_capacity(captured.len());
+                let mut tys: Vec<LLVMType<'ctx>> = Vec::with_capacity(captured.len());
+                let mut vals: Vec<Value<'ctx>> = Vec::with_capacity(captured.len());
+                let mut drop_tys: Vec<Type> = Vec::with_capacity(captured.len());
                 for name in &captured {
                     let index = env.find_var(name.0).unwrap();
                     let value = builder.local_get(index);
@@ -2077,12 +2572,60 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let value = self.emit_copy(builder, value, capture_ty);
                     tys.push(value.ty());
                     vals.push(value);
+                    drop_tys.push(capture_ty);
                 }
                 
+                let mut strct_fields: Vec<LLVMType<'ctx>> = Vec::with_capacity(captured.len() + 2);
+                strct_fields.push(*self.i64);
+                strct_fields.push(*self.ctx.ptr());
+                strct_fields.extend_from_slice(&tys);
                 let strct_ty = self.ctx.structure("captures");
-                strct_ty.set_fields(&tys, false);
+                strct_ty.set_fields(&strct_fields, false);
 
-                let captures = builder.struct_instance(strct_ty, vals);
+                let one = builder.const_int(self.i64, 1, false);
+                let zero = builder.const_int(self.i64, 0, false);
+
+                let void = self.ctx.void();
+                let drop_fn_ty = void.fn_ty(self.ctx.arena, &[*self.ctx.ptr()], false);
+                let drop_fn = self.module.function("__closure_drop", drop_fn_ty);
+
+                {
+                    let mut drop_builder = drop_fn.builder(self.ctx, drop_fn_ty);
+                    let arg = drop_builder.arg(0).unwrap();
+                    let drop_ptr = drop_builder.local_get(arg).as_ptr();
+
+                    let drop_header = drop_builder.load(drop_ptr, *strct_ty).as_struct();
+                    let rc = drop_builder.field_load(drop_header, 0).as_integer();
+                    let new_rc = drop_builder.sub_int(rc, one);
+
+                    let rc_ptr = drop_builder.field_ptr(drop_ptr, strct_ty, 0);
+                    drop_builder.store(rc_ptr, *new_rc);
+
+                    let is_zero = drop_builder.cmp_int(new_rc, zero, IntCmp::Eq);
+
+                    drop_builder.ite(&mut (), is_zero,
+                    |builder, _| {
+                        for i in (0..drop_tys.len()).rev() {
+                            let capture_ty = drop_tys[i];
+                            let value = builder.field_load(drop_header, i + 2);
+                            self.emit_drop(builder, value, capture_ty);
+                        }
+                        let size = strct_ty.size_of(self.module).unwrap() as i64;
+                        let size_val = builder.const_int(self.i64, size, false);
+                        builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*drop_ptr, *size_val]);
+                    },
+                    |_, _| {},
+                    );
+
+                    drop_builder.ret_void();
+                }
+
+                let mut all_vals: Vec<Value<'ctx>> = Vec::with_capacity(captured.len() + 2);
+                all_vals.push(*one);
+                all_vals.push(*drop_fn);
+                all_vals.extend_from_slice(&vals);
+
+                let captures = builder.struct_instance(strct_ty, all_vals);
 
                 let size = strct_ty.size_of(self.module);
                 let size = builder.const_int(self.i64, size.unwrap() as _, false);
@@ -2122,7 +2665,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let captured_strct = builder.load(captured_ptr, *strct_ty).as_struct();
 
                     for (i, capture) in captured.iter().enumerate() {
-                        let value = builder.field_load(captured_strct, i);
+                        let value = builder.field_load(captured_strct, i + 2);
                         let capture_ty = capture.1.resolve(&[env.gens], self.syms);
                         let value = self.emit_copy(&mut builder, value, capture_ty);
                         let local = builder.local(value.ty());
@@ -2288,7 +2831,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let size = self.list_ty.size_of(self.module).unwrap();
                 let size = builder.const_int(self.i64, size as i64, false);
 
-                let strct = builder.struct_instance(self.list_ty, [*len, *len, *buf]);
+                let one = builder.const_int(self.i64, 1, false);
+                let strct = builder.struct_instance(self.list_ty, [*one, *len, *len, *buf]);
                 let buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]);
 
                 builder.store(buf.as_ptr(), *strct);
@@ -2491,12 +3035,260 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    fn emit_copy(&mut self, _builder: &mut Builder<'ctx>, value: Value<'ctx>, _ty: Type) -> Value<'ctx> {
-        value
+    fn emit_copy(&mut self, builder: &mut Builder<'ctx>, value: Value<'ctx>, ty: Type) -> Value<'ctx> {
+        let Ok(sym_id) = ty.sym(&self.syms) else {
+            return value;
+        };
+
+        if sym_id == SymbolId::RC {
+            return builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[value]);
+        }
+
+        if sym_id == SymbolId::LIST {
+            return builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[value]);
+        }
+
+        if sym_id == SymbolId::UNIT {
+            return value;
+        }
+
+        let sym_data = self.syms.sym(sym_id);
+        let SymbolKind::Container(cont) = sym_data.kind()
+        else {
+            if matches!(sym_data.kind(), SymbolKind::Function(_)) {
+                let func_ref = value.as_struct();
+                let capture_ptr = builder.field_load(func_ref, 1).as_ptr();
+                let capture_int = builder.bitcast(*capture_ptr, *self.i64).as_integer();
+                let null_int = builder.const_int(self.i64, 0, false);
+                let is_closure = builder.cmp_int(capture_int, null_int, IntCmp::Ne);
+                builder.ite(&mut (), is_closure,
+                    |builder, _| {
+                        builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*capture_ptr]);
+                    },
+                    |_, _| {},
+                );
+                return value;
+            }
+            return value;
+        };
+
+        if cont.fields().is_empty() {
+            return value;
+        }
+
+        let cont_gens = self.syms.get_gens(ty.gens(&self.syms));
+        let llvm_ty = self.to_llvm_ty(ty);
+
+        match cont.kind() {
+            ContainerKind::Struct | ContainerKind::Tuple => {
+                let struct_val = value.as_struct();
+                let mut fields = Vec::with_capacity(cont.fields().len());
+                for (i, (_, field_gen)) in cont.fields().iter().enumerate() {
+                    let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
+                    let field_ty = field_ty.resolve(&[], self.syms);
+                    let field_val = builder.field_load(struct_val, i);
+                    let copied = self.emit_copy(builder, field_val, field_ty);
+                    fields.push(copied);
+                }
+                *builder.struct_instance(llvm_ty.strct.as_struct(), fields)
+            },
+
+            ContainerKind::Enum => {
+                let tag = builder.field_load(value.as_struct(), 0);
+                let buf = builder.alloca(llvm_ty.repr);
+                let src_buf = builder.alloca_store(value);
+                let src_data_ptr = builder.field_ptr(src_buf, llvm_ty.strct.as_struct(), 1);
+                let dst_data_ptr = builder.field_ptr(buf, llvm_ty.strct.as_struct(), 1);
+
+                for (i, (_, field_gen)) in cont.fields().iter().enumerate() {
+                    let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
+                    let field_ty = field_ty.resolve(&[], self.syms);
+                    if field_ty.sym(&self.syms) == Ok(SymbolId::UNIT) {
+                        continue;
+                    }
+                    let field_llvm = self.to_llvm_ty(field_ty);
+
+                    let index = builder.const_int(self.i32, i as _, false);
+                    let cond = builder.cmp_int(tag.as_integer(), index, IntCmp::Eq);
+
+                    builder.ite(
+                        &mut (),
+                        cond,
+                        |builder, _| {
+                            let payload = builder.load(src_data_ptr, field_llvm.repr);
+                            let copied = self.emit_copy(builder, payload, field_ty);
+                            builder.store(dst_data_ptr, copied);
+                        },
+                        |_, _| {},
+                    );
+                }
+
+                let tag_ptr = builder.field_ptr(buf, llvm_ty.strct.as_struct(), 0);
+                builder.store(tag_ptr, tag);
+                builder.load(buf, llvm_ty.repr)
+            },
+
+            ContainerKind::Generic => unreachable!(),
+        }
     }
 
 
-    fn emit_drop(&mut self, _builder: &mut Builder<'ctx>, _value: Value<'ctx>, _ty: Type) {
+    fn emit_drop(&mut self, builder: &mut Builder<'ctx>, value: Value<'ctx>, ty: Type) {
+        let Ok(sym_id) = ty.sym(&self.syms) else {
+            return;
+        };
+
+        if sym_id == SymbolId::RC {
+            let gens_id = ty.gens(&self.syms);
+            let gens = self.syms.get_gens(gens_id);
+            let elem_ty = gens[0].1;
+            let llvm_elem = self.to_llvm_ty(elem_ty);
+            let elem_size = llvm_elem.repr.size_of(self.module).unwrap();
+            let total_size = 8 + elem_size;
+            let size_val = builder.const_int(self.i64, total_size as i64, false);
+            builder.call(self.rc_drop_fn.0, self.rc_drop_fn.1, &[value, *size_val]);
+            return;
+        }
+
+        if sym_id == SymbolId::LIST {
+            let gens_id = ty.gens(&self.syms);
+            let gens = self.syms.get_gens(gens_id);
+            let elem_ty = gens[0].1;
+            let llvm_elem = self.to_llvm_ty(elem_ty);
+
+            let header = builder.load(value.as_ptr(), *self.list_ty).as_struct();
+
+            let refcount = builder.field_load(header, 0).as_integer();
+            let one = builder.const_int(self.i64, 1, false);
+            let new_rc = builder.sub_int(refcount, one);
+
+            let rc_ptr = builder.field_ptr(value.as_ptr(), self.list_ty, 0);
+            builder.store(rc_ptr, *new_rc);
+
+            let zero = builder.const_int(self.i64, 0, false);
+            let is_zero = builder.cmp_int(new_rc, zero, IntCmp::Eq);
+
+            builder.ite(&mut (), is_zero, 
+            |builder, _| {
+                let len = builder.field_load(header, 1).as_integer();
+                let cap = builder.field_load(header, 2).as_integer();
+                let data = builder.field_load(header, 3).as_ptr();
+
+                let counter = builder.alloca(*self.i64);
+                builder.store(counter, *len);
+
+                let one = builder.const_int(self.i64, 1, false);
+                let zero_val = builder.const_int(self.i64, 0, false);
+
+                builder.loop_indefinitely(|builder, l| {
+                    let i = builder.load(counter, *self.i64).as_integer();
+                    let i = builder.sub_int(i, one);
+                    builder.store(counter, *i);
+
+                    let done = builder.cmp_int(i, zero_val, IntCmp::SignedLt);
+                    builder.ite(&mut () as &mut (), done,
+                        |builder, _| { builder.loop_break(l); },
+                        |builder, _| {
+                            let i_casted = builder.int_cast(i, *self.i32, false).as_integer();
+                            let ptr = builder.gep(data, llvm_elem.repr, i_casted);
+                            let elem = builder.load(ptr, llvm_elem.repr);
+                            self.emit_drop(builder, elem, elem_ty);
+                        },
+                    );
+                });
+
+                let elem_size = llvm_elem.repr.size_of(self.module).unwrap() as i64;
+                let elem_size_val = builder.const_int(self.i64, elem_size, false);
+                let cap_i64 = builder.int_cast(cap, *self.i64, false).as_integer();
+                let buf_size = builder.mul_int(cap_i64, elem_size_val);
+                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*data, *buf_size]);
+
+                let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
+                let header_size_val = builder.const_int(self.i64, header_size, false);
+                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*value.as_ptr(), *header_size_val]);
+            }, |_, _| {});
+
+            return;
+        }
+
+        if sym_id == SymbolId::UNIT {
+            return;
+        }
+
+        let sym_data = self.syms.sym(sym_id);
+        let SymbolKind::Container(cont) = sym_data.kind()
+        else {
+            if matches!(sym_data.kind(), SymbolKind::Function(_)) {
+                let func_ref = value.as_struct();
+                let capture_ptr = builder.field_load(func_ref, 1).as_ptr();
+                let capture_int = builder.bitcast(*capture_ptr, *self.i64).as_integer();
+                let null_int = builder.const_int(self.i64, 0, false);
+                let is_closure = builder.cmp_int(capture_int, null_int, IntCmp::Ne);
+                builder.ite(&mut (), is_closure,
+                    |builder, _| {
+                        let gep = builder.gep(capture_ptr, *self.i64, builder.const_int(self.i64, 1, false));
+                        let drop_fn_val = builder.load(gep, *self.ctx.ptr());
+                        let drop_fn_ptr = drop_fn_val.as_func();
+                        let void = self.ctx.void();
+                        let drop_fn_ty = void.fn_ty(self.ctx.arena, &[*self.ctx.ptr()], false);
+                        builder.call(drop_fn_ptr, drop_fn_ty, &[*capture_ptr]);
+                    },
+                    |_, _| {},
+                );
+                return;
+            }
+            return;
+        };
+
+        if cont.fields().is_empty() {
+            return;
+        }
+
+        let cont_gens = self.syms.get_gens(ty.gens(&self.syms));
+        let llvm_ty = self.to_llvm_ty(ty);
+
+        match cont.kind() {
+            ContainerKind::Struct | ContainerKind::Tuple => {
+                let struct_val = value.as_struct();
+                for i in (0..cont.fields().len()).rev() {
+                    let (_, field_gen) = cont.fields()[i];
+                    let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
+                    let field_ty = field_ty.resolve(&[], self.syms);
+                    let field_val = builder.field_load(struct_val, i);
+                    self.emit_drop(builder, field_val, field_ty);
+                }
+            },
+
+            ContainerKind::Enum => {
+                let tag = builder.field_load(value.as_struct(), 0);
+                let src_buf = builder.alloca_store(value);
+                let src_data_ptr = builder.field_ptr(src_buf, llvm_ty.strct.as_struct(), 1);
+
+                for (i, (_, field_gen)) in cont.fields().iter().enumerate() {
+                    let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
+                    let field_ty = field_ty.resolve(&[], self.syms);
+                    if field_ty.sym(&self.syms) == Ok(SymbolId::UNIT) {
+                        continue;
+                    }
+                    let field_llvm = self.to_llvm_ty(field_ty);
+
+                    let index = builder.const_int(self.i32, i as _, false);
+                    let cond = builder.cmp_int(tag.as_integer(), index, IntCmp::Eq);
+
+                    builder.ite(
+                        &mut (),
+                        cond,
+                        |builder, _| {
+                            let payload = builder.load(src_data_ptr, field_llvm.repr);
+                            self.emit_drop(builder, payload, field_ty);
+                        },
+                        |_, _| {},
+                    );
+                }
+            },
+
+            ContainerKind::Generic => unreachable!(),
+        }
     }
 
     fn call_trait_method(

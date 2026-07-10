@@ -33,15 +33,59 @@ pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
 
 
 #[unsafe(no_mangle)]
+pub extern "C" fn margarineDealloc(ptr: *mut u8, size: u64) {
+    unsafe { std::alloc::dealloc(ptr, Layout::from_size_align(size as _, 8).unwrap()) }
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn margarineRcAlloc(total_size: u64) -> *mut u8 {
+    let ptr = margarineAlloc(total_size);
+    unsafe { *(ptr as *mut u64) = 1; }
+    ptr
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn margarineRcClone(ptr: *mut u8) -> *mut u8 {
+    unsafe {
+        let rc = &mut *(ptr as *mut u64);
+        *rc += 1;
+    }
+    ptr
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn margarineRcDrop(ptr: *mut u8, total_size: u64) {
+    unsafe {
+        let rc = &mut *(ptr as *mut u64);
+        *rc -= 1;
+        if *rc == 0 {
+            margarineDealloc(ptr, total_size);
+        }
+    }
+}
+
+
+#[unsafe(no_mangle)]
 pub extern "C" fn print_int(size: i32) {
     println!("{size}");
 }
 
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineAbort() -> ! {
+    pub extern "C" fn margarineAbort() -> ! {
     println!("margarine abort");
     std::process::abort();
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn margarineAssertNotNull(ptr: *mut u8) {
+    if ptr.is_null() {
+        margarineAbort();
+    }
 }
 
 
