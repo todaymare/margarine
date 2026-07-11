@@ -1617,11 +1617,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
                 let mut gen_list = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
                 let t = BoundedGeneric::T;
-                gens.push((t, ret.ty));
+                let ret_ty = ret.ty.instantiate(&mut self.syms, 0);
+                let ret_ty = if matches!(ret_ty, Type::Var(_)) { Type::ERROR } else { ret_ty };
+                gens.push((t, ret_ty));
                 gen_list.push(t);
 
                 for (i, arg) in sargs.iter().enumerate() {
-                    let sym = arg.1;
+                    let sym = arg.1.instantiate(&mut self.syms, 0);
+                    let sym = if matches!(sym, Type::Var(_)) { Type::ERROR } else { sym };
                     let g = self.string_map.num(i);
                     let g = BoundedGeneric::new(g, &[]);
                     gens.push((g, sym));
@@ -1986,7 +1989,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 };
 
                 // if its a normal field
-                let e = match field_check {
+                let e = 
+                match field_check {
                     Ok((field, cont)) => {
                         let gens = expr.ty.gens(&self.syms);
                         let gens = self.syms.get_gens(gens);

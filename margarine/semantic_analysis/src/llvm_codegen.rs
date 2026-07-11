@@ -1182,7 +1182,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn to_llvm_ty(&mut self, ty: Type) -> TypeMapping<'ctx> {
-        //dbg!(ty.display(self.string_map, self.syms));
         assert!(ty.is_resolved(self.syms));
 
         let hash = ty.hash(self.syms);
@@ -2516,12 +2515,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
 
-                //dbg!(self.ast.expr(lhs));
-                //dbg!(func);
-                //dbg!(func_ty.display(self.string_map, self.syms));
                 let func_ty = func_ty.resolve(&[env.gens], self.syms);
-                //dbg!(func_ty.display(self.string_map, self.syms));
-                //dbg!(env.gens, func_ty);
+                assert!(func_ty.is_resolved(self.syms));
+
                 let func_ty = self.to_llvm_ty(func_ty);
 
                 let func_ptr = builder.field_load(func.as_struct(), 0);
@@ -2549,11 +2545,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let closure_gens = self.syms.get_gens(ty.gens(&self.syms));
                 let llvm_ty = self.to_llvm_ty(ty);
 
+                let mut combined_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), closure_gens.len() + outer_gens.len());
+                combined_gens.extend_from_slice(closure_gens);
+                combined_gens.extend_from_slice(outer_gens);
+                let combined_gens: &[_] = combined_gens.leak();
+
                 let captured = self.syms.closure(closure).captured_variables.clone();
 
                 let mut hash = FxHasher64::new();
                 for capture in &captured {
-                    let ty = capture.1.resolve(&[env.gens], self.syms);
+                    let ty = capture.1.resolve(&[combined_gens], self.syms);
                     ty.hash(self.syms).hash(&mut hash);
                 }
 
@@ -2656,7 +2657,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let mut env = Env {
                         vars: Vec::new(),
                         loop_id: None,
-                        gens: closure_gens,
+                        gens: combined_gens,
                         info: HashMap::new(),
                         ret_llvm_ty: None,
                     };
@@ -2666,10 +2667,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let captured_ptr = builder.local_get(captured_ptr).as_ptr();
                     let captured_strct = builder.load(captured_ptr, *strct_ty).as_struct();
 
-                for (i, capture) in captured.iter().enumerate() {
-                    let value = builder.field_load(captured_strct, i + 2);
-                    let capture_ty = capture.1.resolve(&[outer_gens], self.syms);
-                    let value = self.emit_copy(&mut builder, value, capture_ty);
+                    for (i, capture) in captured.iter().enumerate() {
+                        let value = builder.field_load(captured_strct, i + 2);
+                        let capture_ty = capture.1.resolve(&[combined_gens], self.syms);
+                        let value = self.emit_copy(&mut builder, value, capture_ty);
                         let local = builder.local(value.ty());
                         builder.local_set(local, value);
                         env.alloc_var(capture.0, local, capture_ty, false);
