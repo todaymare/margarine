@@ -167,7 +167,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         analyzer.block(empty, scope, block);
 
         for v in analyzer.syms.vars().iter() {
-            if !matches!(v.sub(), syms::sym_map::VarSub::Concrete(_)) {
+            if !v.is_concrete(&analyzer.syms) {
                 let error = Error::UnableToInfer(analyzer.ast.range(v.node()));
                 Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.node(), error);
             }

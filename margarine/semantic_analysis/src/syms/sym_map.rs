@@ -984,6 +984,14 @@ impl VarId {
 
 
 impl Var {
+    pub fn is_concrete(&self, map: &SymbolMap) -> bool {
+        let VarSub::Concrete(ty) = self.sub
+        else { return false };
+
+        matches!(ty.instantiate_shallow(map), Type::Ty(..))
+    }
+
+
     pub fn set_sub(&mut self, sub: VarSub) { 
         self.sub = sub;
     }

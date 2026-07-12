@@ -2350,7 +2350,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             parser::nodes::expr::Expr::CreateStruct { fields, .. } => {
                 let mut values = sti::vec::Vec::with_cap_in(self.ctx.arena, fields.len());
 
-                let ty = out_if_err!().resolve(&[env.gens], self.syms);
+                let ty = out_if_err!();
+                println!("CreateStruct: {:?}", ty.display(self.string_map, self.syms));
+                let ty = ty.resolve(&[env.gens], self.syms);
 
                 for (name, _, e) in fields {
                     let value = self.expr(env, builder, *e)?;

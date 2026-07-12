@@ -2248,7 +2248,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 // check arg len
                 if func.args().len() != args_anals.len() {
                     return Err(Error::FunctionArgsMismatch {
-                        source: range, sig_len: func.args().len() - if is_accessor { 1 } else { 0 }, call_len: args.len() });
+                        source: range, sig_len: func.args().len(), call_len: args.len() + if is_accessor { 1 } else { 0 } });
                 }
 
                 // find out the args
