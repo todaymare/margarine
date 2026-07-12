@@ -7,7 +7,7 @@ use dt::{DataType, DataTypeKind};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{decl::{Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
+use nodes::{decl::{Attribute, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{alloc::Alloc, arena::Arena, vec::{KVec, Vec}};
 
 use crate::nodes::{decl::DeclGeneric, expr::{BinaryOperator, ExprId}, Pattern};
@@ -385,7 +385,30 @@ impl<'out> Parser<'_, 'out, '_> {
             expected: Vec::from_slice(terminator).leak()
         }))))
     }
-    
+
+
+    fn parse_attr(&mut self, start: u32) -> Result<Attribute<'out>, ErrorId> {
+        let name = self.expect_identifier()?;
+
+        let params: &[Attribute<'out>] = 
+        if self.peek_is(TokenKind::LeftParenthesis) {
+            self.advance();
+            self.advance();
+            let params = 
+            self.list(
+                TokenKind::RightParenthesis, 
+                Some(TokenKind::Comma), 
+                |s, _| s.parse_attr(s.current_range().start()),
+            )?;
+
+            params
+        } else {
+            &[]
+        };
+
+        Ok(Attribute { name, range: SourceRange::new(start, self.current_range().end()), params })
+    }
+
 
     fn parse_till(
         &mut self, 
@@ -637,8 +660,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::At => {
                 let start = self.current_range().start();
                 self.advance();
-                let ident = self.expect_identifier()?;
-                let attr_range = SourceRange::new(start, self.current_range().end());
+
+                let attr = self.parse_attr(start)?;
                 self.advance();
 
                 let stmt = self.statement(settings)?;
@@ -646,8 +669,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 let NodeId::Decl(decl) = stmt
                 else { return Ok(stmt.into()) };
 
-
-                self.ast.add_decl(Decl::Attribute { attr: ident, decl, attr_range },
+                self.ast.add_decl(Decl::Attribute { attr, decl },
                                 SourceRange::new(start, self.current_range().end())).into()
             },
 

@@ -25,6 +25,11 @@ pub enum Error {
 
     UnknownAttr(SourceRange, StringIndex),
 
+    UnknownAttrParam {
+        param: (SourceRange, StringIndex),
+        attr: StringIndex,
+    },
+
     NameIsAlreadyDefined {
         source: SourceRange,
         name: StringIndex,
@@ -650,6 +655,12 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::UnknownAttr(source, _) => {
                 fmt.error("unknown attribute")
                     .highlight(*source);
+            },
+
+            Error::UnknownAttrParam { attr, param } => {
+                let msg = format!("is not a valid parameter for attribute '{}'", fmt.string(*attr));
+                fmt.error("unknown attribute parameter")
+                    .highlight_with_note(param.0, &msg);
             },
 
             Error::InvalidValueForAttr { attr, value, expected } => {

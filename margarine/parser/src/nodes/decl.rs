@@ -7,6 +7,13 @@ use crate::{nodes::NodeId, Block, DataType};
 define_key!(pub DeclId(u32));
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+pub struct Attribute<'a> {
+    pub name: StringIndex,
+    pub range: SourceRange,
+    pub params: &'a [Attribute<'a>],
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Decl<'a> {
     Struct {
         name: StringIndex,
@@ -79,8 +86,7 @@ pub enum Decl<'a> {
     },
 
     Attribute {
-        attr: StringIndex,
-        attr_range: SourceRange,
+        attr: Attribute<'a>,
         decl: DeclId,
     },
 
@@ -240,8 +246,3 @@ pub enum UseItemKind<'a> {
     All,
 }
 
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Attribute {
-    Startup,
-}

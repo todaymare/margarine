@@ -131,7 +131,7 @@ enum BlockTerminator<'a> {
 
 pub fn run<'a>(
     string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
-    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], file_count: u32, startups: &[SymbolId],
+    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], file_count: u32, startups: &[SymbolId], tests: &[SymbolId], is_test: bool,
 ) {
     //println!("running llvm");
 
@@ -239,6 +239,10 @@ pub fn run<'a>(
 
         // create IR
         for sym in startups.iter() {
+            let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
+        }
+
+        for sym in tests.iter() {
             let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
         }
 
@@ -364,34 +368,59 @@ pub fn run<'a>(
 
     std::fs::write("out.ll", dump.as_str().as_bytes()).unwrap();
 
-    println!("{:?}",
-        Command::new("llc")
-            .arg("-filetype=obj")
-            .arg("out.ll")
-            .arg("-o=program.o")
-            .output()
-    );
+    if is_test {
+        println!("{:?}",
+            Command::new("llc")
+                .arg("-filetype=obj")
+                .arg("-relocation-model=pic")
+                .arg("out.ll")
+                .arg("-o=program.o")
+                .output()
+        );
 
-    println!("{:?}",
-        Command::new("clang")
-            .arg("program.o")
-            .arg("libmargarine.a")
-            .arg("-lzstd")
-            .arg("-lz")
-            .arg("-lc++")
-            .arg("-lc++abi")
-            .arg("-o")
-            .arg("program")
-            .output()
-    );
+        println!("{:?}",
+            Command::new("clang")
+                .arg("-shared")
+                .arg("program.o")
+                .arg("libmargarine.a")
+                .arg("-lzstd")
+                .arg("-lz")
+                .arg("-lc++")
+                .arg("-lc++abi")
+                .arg("-o")
+                .arg("program.dylib")
+                .output()
+        );
+    } else {
+        println!("{:?}",
+            Command::new("llc")
+                .arg("-filetype=obj")
+                .arg("out.ll")
+                .arg("-o=program.o")
+                .output()
+        );
 
-    println!("{}",
-        std::str::from_utf8(&Command::new("./program")
-            .output()
-            .unwrap()
-            .stdout
-        ).unwrap()
-    );
+        println!("{:?}",
+            Command::new("clang")
+                .arg("program.o")
+                .arg("libmargarine.a")
+                .arg("-lzstd")
+                .arg("-lz")
+                .arg("-lc++")
+                .arg("-lc++abi")
+                .arg("-o")
+                .arg("program")
+                .output()
+        );
+
+        println!("{}",
+            std::str::from_utf8(&Command::new("./program")
+                .output()
+                .unwrap()
+                .stdout
+            ).unwrap()
+        );
+    }
 
 
 }
@@ -555,6 +584,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                         Err(e) => {
+                            println!("error in function {}: {:?}", self.string_map.get(name_idx), e);
                             self.error(&mut builder, e);
                         },
                     }
@@ -1465,7 +1495,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     Self::resolve_pattern(self, env, builder, iter_fn_binding_value_ty_sym, iter_fn_binding_value_ty_llvm, value, binding);
 
-                    let _ = self.block(env, builder, &*body);
+                    let result = self.block(env, builder, &*body);
+                    if let Err(e) = result {
+                        self.error(builder, e);
+                    };
 
                     env.loop_id = lo;
                     if let Some((_, local, ty, _)) = env.vars.last().copied() {
@@ -1953,11 +1986,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     ) -> Result<(Value<'ctx>, Type), ErrorId> {
         macro_rules! out_if_err {
             () => {{
-
-                println!("expr: {:?}", self.ast.expr(expr));
                 match self.ty_info.expr(expr) {
                     Ok(e) => e,
                     Err(e) => {
+                        println!("Error in expr {:?}: {:?}", self.ast.expr(expr), e);
                         return Err(e);
                     },
                }
@@ -2811,7 +2843,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     vec
                 };
 
-                let list_ty = self.ty_info.expr(expr)?;
+                println!("list");
+                let list_ty = out_if_err!();
+                println!("list_ty: {:?}", list_ty);
                 let list_ty = list_ty.resolve(&[env.gens], self.syms);
                 let list_ty = self.to_llvm_ty(list_ty);
 

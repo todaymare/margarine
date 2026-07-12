@@ -23,3 +23,5 @@ rand = "*"
 git2 = "0.20.2"
 
 tracing = "*"
+
+libc = "0.2"

@@ -1070,10 +1070,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             Decl::Using { .. } => (),
             Decl::Extern { .. } => (),
 
-            Decl::Attribute { decl: decl_id, attr, attr_range } => {
+            Decl::Attribute { decl: decl_id, attr } => {
                 self.decl(scope, ns, decl_id);
 
-                match self.string_map.get(attr) {
+                match self.string_map.get(attr.name) {
                     "test" => {
                         let decl = self.ast.decl(decl_id);
                         let Decl::Function { 
@@ -1089,18 +1089,37 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         else {
                             let range = self.ast.range(decl_id);
                             self.error(n, Error::InvalidValueForAttr {
-                                attr: (attr_range, attr), value: range, expected: "'fn()'" });
+                                attr: (attr.range, attr.name), value: range, expected: "'fn()'" });
                             return;
                         };
 
                         let Ok(func) = self.namespaces.get_ns(ns).get_sym(name).unwrap()
                         else { return };
 
-                        self.tests.push(func);
+                        let mut should_panic = false;
+                        for p in attr.params {
+                            match self.string_map.get(p.name) {
+                                "should_panic" => should_panic = true,
+
+                                _ => {
+                                    self.error(n, Error::UnknownAttrParam {
+                                        param: (p.range, p.name), attr: attr.name,
+                                    });
+                                },
+                            }
+                        }
+
+                        self.tests.push((func, should_panic));
                     },
 
 
                     "cached" => {
+                        for p in attr.params {
+                            self.error(n, Error::UnknownAttrParam {
+                                param: (p.range, p.name), attr: attr.name,
+                            });
+                        }
+
                         let decl = self.ast.decl(decl_id);
                         let Decl::Function { 
                             sig: FunctionSignature {
@@ -1112,7 +1131,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         else {
                             let range = self.ast.range(decl_id);
                             self.error(n, Error::InvalidValueForAttr {
-                                attr: (attr_range, attr), value: range, expected: "'a function'" });
+                                attr: (attr.range, attr.name), value: range, expected: "'a function'" });
                             return;
                         };
 
@@ -1123,7 +1142,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     }
 
                     _ => {
-                        self.error(n, Error::UnknownAttr(attr_range, attr));
+                        self.error(n, Error::UnknownAttr(attr.range, attr.name));
                     }
                 }
             },

@@ -30,7 +30,7 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub syms    : SymbolMap<'out>,
     pub type_info   : TyInfo<'out>,
     pub startups: Vec<SymbolId>,
-    pub tests   : Vec<SymbolId>,
+    pub tests   : Vec<(SymbolId, bool)>,
 
     pub errors     : KVec<SemaError, Error>,
     base_scope  : ScopeId,
