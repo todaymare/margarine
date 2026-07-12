@@ -1,4 +1,4 @@
-use std::{ffi::CString, fmt::Write, io::{self, Write as _}, time::Instant};
+use std::{ffi::CString, fmt::Write, io::{self, Write as _}, process::Command, time::Instant};
 
 use colourful::ColourBrush;
 use common::{source::FileData, string_map::StringMap};
@@ -19,9 +19,36 @@ fn main() {
             let arena = Arena::new();
             let mut sm = StringMap::new(&arena);
             let files = FileData::open(path, &mut sm).unwrap();
-            let (_, _) = margarine::run(sm, files);
+            let (_, _) = margarine::run(sm, files, false);
 
-            println!("running");
+            println!("{:?}",
+                Command::new("llc")
+                    .arg("-filetype=obj")
+                    .arg("out.ll")
+                    .arg("-o=program.o")
+                    .output()
+            );
+
+            println!("{:?}",
+                Command::new("clang")
+                    .arg("program.o")
+                    .arg("libmargarine.a")
+                    .arg("-lzstd")
+                    .arg("-lz")
+                    .arg("-lc++")
+                    .arg("-lc++abi")
+                    .arg("-o")
+                    .arg("program")
+                    .output()
+            );
+
+            println!("{}",
+                std::str::from_utf8(&Command::new("./program")
+                    .output()
+                    .unwrap()
+                    .stdout
+                ).unwrap()
+            );
             return;
         },
 
@@ -31,7 +58,30 @@ fn main() {
             let arena = Arena::new();
             let mut sm = StringMap::new(&arena);
             let files = FileData::open(path, &mut sm).unwrap();
-            let (_, tests) = margarine::test(sm, files);
+            let (_, tests) = margarine::run(sm, files, true);
+
+            println!("{:?}",
+                Command::new("llc")
+                    .arg("-filetype=obj")
+                    .arg("-relocation-model=pic")
+                    .arg("out.ll")
+                    .arg("-o=program.o")
+                    .output()
+            );
+
+            println!("{:?}",
+                Command::new("clang")
+                    .arg("-shared")
+                    .arg("program.o")
+                    .arg("libmargarine.a")
+                    .arg("-lzstd")
+                    .arg("-lz")
+                    .arg("-lc++")
+                    .arg("-lc++abi")
+                    .arg("-o")
+                    .arg("program.dylib")
+                    .output()
+            );
 
             run_tests(&tests);
             return;

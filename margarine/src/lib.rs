@@ -355,17 +355,25 @@ impl<'me> Compiler<'me> {
 
 
 impl<'me> CompilationResult<'me> {
-    pub fn codegen(&mut self, comp: &mut Compiler) -> Vec<u8> {
-        let tests: Vec<SymbolId> = self.tests.iter().map(|(s, _)| *s).collect();
-        self.codegen_ex(comp, &tests, false)
+    pub fn codegen(&mut self, comp: &mut Compiler, tests: bool) -> Vec<u8> {
+        let tests = 
+        if tests { self.tests.iter().map(|s| s.0).collect() } 
+        else { vec![] };
+
+        let errors = self.build_errors(comp);
+        llvm_codegen::run(
+            &mut comp.string_map, &mut self.syms,
+            &mut self.namespaces, &mut self.ast,
+            &mut self.ty_info, errors,
+            self.file_offsets.len() as u32,
+            &self.startups,
+            &tests,
+        );
+
+        vec![]
     }
 
-    pub fn codegen_test(&mut self, comp: &mut Compiler) -> Vec<u8> {
-        let tests: Vec<SymbolId> = self.tests.iter().map(|(s, _)| *s).collect();
-        self.codegen_ex(comp, &tests, true)
-    }
-
-    fn codegen_ex(&mut self, comp: &mut Compiler, tests: &[SymbolId], is_test: bool) -> Vec<u8> {
+    fn build_errors(&mut self, comp: &mut Compiler) -> [Vec<Vec<String>>; 3] {
         let mut lex_error_files = Vec::with_capacity(self.errors.lexer_errors.len());
         for l in &self.errors.lexer_errors {
             let mut file = Vec::with_capacity(l.len());
@@ -375,7 +383,6 @@ impl<'me> CompilationResult<'me> {
                 println!("{report}");
                 file.push(report);
             }
-
             lex_error_files.push(file);
         }
 
@@ -388,31 +395,18 @@ impl<'me> CompilationResult<'me> {
                 println!("{report}");
                 file.push(report);
             }
-
             parse_error_files.push(file);
         }
 
         let mut sema_errors = Vec::with_capacity(self.errors.sema_errors.len());
         for s in &self.errors.sema_errors {
             let report = display(s.1, &comp.string_map, &comp.files.files, &mut self.syms);
-
             #[cfg(not(feature = "fuzzer"))]
             println!("{report}");
-
             sema_errors.push(report);
         }
 
-        llvm_codegen::run(
-            &mut comp.string_map, &mut self.syms,
-            &mut self.namespaces, &mut self.ast,
-            &mut self.ty_info, [lex_error_files, parse_error_files, vec![sema_errors]],
-            self.file_offsets.len() as u32,
-            &self.startups,
-            tests,
-            is_test,
-        );
-
-        vec![]
+        [lex_error_files, parse_error_files, vec![sema_errors]]
     }
 }
 
@@ -449,7 +443,7 @@ impl Files {
 
 
 
-pub fn run<'str>(string_map: StringMap, files: FileData) -> (Vec<u8>, Vec<(String, bool)>) {
+pub fn run<'str>(string_map: StringMap, files: FileData, tests: bool) -> (Vec<u8>, Vec<(String, bool)>) {
     let name = files.name();
     let arena = string_map.arena();
     let mut comp = Compiler::new(&arena);
@@ -458,27 +452,7 @@ pub fn run<'str>(string_map: StringMap, files: FileData) -> (Vec<u8>, Vec<(Strin
     comp.files.register(files);
 
     let mut result = comp.run(&arena, name);
-    let src = result.codegen(&mut comp);
-
-    let mut tests = vec![];
-    for (sym, should_panic) in &result.tests {
-        tests.push((comp.string_map.get(result.syms.sym(*sym).name()).to_string(), *should_panic));
-    }
-
-    (src, tests)
-}
-
-
-pub fn test<'str>(string_map: StringMap, files: FileData) -> (Vec<u8>, Vec<(String, bool)>) {
-    let name = files.name();
-    let arena = string_map.arena();
-    let mut comp = Compiler::new(&arena);
-    comp.string_map = string_map;
-    comp.silent = false;
-    comp.files.register(files);
-
-    let mut result = comp.run(&arena, name);
-    let src = result.codegen_test(&mut comp);
+    let src = result.codegen(&mut comp, tests);
 
     let mut tests = vec![];
     for (sym, should_panic) in &result.tests {

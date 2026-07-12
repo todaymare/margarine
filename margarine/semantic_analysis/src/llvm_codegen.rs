@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, os::unix::process::CommandExt, process::Command};
+use std::{collections::HashMap, hash::Hash};
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
@@ -131,7 +131,7 @@ enum BlockTerminator<'a> {
 
 pub fn run<'a>(
     string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
-    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], file_count: u32, startups: &[SymbolId], tests: &[SymbolId], is_test: bool,
+    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], file_count: u32, startups: &[SymbolId], tests: &[SymbolId],
 ) {
     //println!("running llvm");
 
@@ -367,62 +367,6 @@ pub fn run<'a>(
     let dump = module.dump_to_str();
 
     std::fs::write("out.ll", dump.as_str().as_bytes()).unwrap();
-
-    if is_test {
-        println!("{:?}",
-            Command::new("llc")
-                .arg("-filetype=obj")
-                .arg("-relocation-model=pic")
-                .arg("out.ll")
-                .arg("-o=program.o")
-                .output()
-        );
-
-        println!("{:?}",
-            Command::new("clang")
-                .arg("-shared")
-                .arg("program.o")
-                .arg("libmargarine.a")
-                .arg("-lzstd")
-                .arg("-lz")
-                .arg("-lc++")
-                .arg("-lc++abi")
-                .arg("-o")
-                .arg("program.dylib")
-                .output()
-        );
-    } else {
-        println!("{:?}",
-            Command::new("llc")
-                .arg("-filetype=obj")
-                .arg("out.ll")
-                .arg("-o=program.o")
-                .output()
-        );
-
-        println!("{:?}",
-            Command::new("clang")
-                .arg("program.o")
-                .arg("libmargarine.a")
-                .arg("-lzstd")
-                .arg("-lz")
-                .arg("-lc++")
-                .arg("-lc++abi")
-                .arg("-o")
-                .arg("program")
-                .output()
-        );
-
-        println!("{}",
-            std::str::from_utf8(&Command::new("./program")
-                .output()
-                .unwrap()
-                .stdout
-            ).unwrap()
-        );
-    }
-
-
 }
 
 
