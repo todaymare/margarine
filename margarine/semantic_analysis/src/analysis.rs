@@ -389,6 +389,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let (ns, import_ns) = self.namespaces.get_double(ns_id, import_ns);
 
                 for s in import_ns.syms() {
+                    if *s.0 == StringMap::ROOT { continue }
+
                     match s.1 {
                         Ok(v) => {
                             if let Err(e) = ns.add_sym(item.range(), *s.0, *v) {

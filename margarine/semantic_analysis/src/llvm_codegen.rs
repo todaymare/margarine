@@ -246,6 +246,23 @@ pub fn run<'a>(
             let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
         }
 
+        // build main
+        let i32_ty = ctx.integer(32);
+        let main_fn_ty = i32_ty.fn_ty(ctx.arena, &[], false);
+        let main_fn = module.function("main", main_fn_ty);
+
+        let builder = main_fn.builder(ctx.as_ctx_ref(), main_fn_ty);
+
+        for sym_id in startups {
+            let hash = Type::Ty(*sym_id, GenListId::EMPTY).hash(&*conv.syms);
+            if let Some(func) = conv.funcs.get(&hash) {
+                let args: Vec<_> = func.func_ty.args().into_iter().map(|ty| builder.const_zero(ty)).collect();
+                builder.call(func.func_ptr, func.func_ty, &args);
+            }
+        }
+
+        builder.ret(*ctx.const_int(i32_ty, 0, false));
+
         module = conv.module;
     }
 
