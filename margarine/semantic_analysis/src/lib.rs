@@ -166,11 +166,16 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         let empty = analyzer.string_map.insert("");
         analyzer.block(empty, scope, block);
 
-        dbg!(analyzer.syms.vars());
         for v in analyzer.syms.vars().iter() {
-            if !v.is_concrete(&analyzer.syms) {
-                let error = Error::UnableToInfer(v.range());
-                Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.node(), error);
+            if !v.is_concrete(&analyzer.syms)
+            && v.is_root(&analyzer.syms) {
+                let error = Error::UnableToInfer(v.range(), v.name());
+                Self::error_ex(
+                    &mut analyzer.errors, 
+                    &mut analyzer.type_info, 
+                    v.node(), 
+                    error
+                );
             }
         }
 
@@ -473,7 +478,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         match dt.kind() {
             DataTypeKind::Unit => Ok(Type::UNIT),
             DataTypeKind::Never => Ok(Type::NEVER),
-            DataTypeKind::Hole => Ok(self.syms.new_var(id, dt.range())),
+            DataTypeKind::Hole => Ok(self.syms.new_var(id, StringMap::HOLE, dt.range())),
 
 
             DataTypeKind::Within(ns_name, ty) => {
@@ -527,8 +532,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let pool = self.output;
                 let mut generics = Buffer::new(&*pool, base_sym.generics().len());
                 if generics_list.is_empty() {
-                    for _ in base_sym.generics() {
-                        generics.push(self.syms.new_var(id, dt.range()));
+                    for g in base_sym.generics() {
+                        generics.push(self.syms.new_var(id, g.name(), dt.range()));
                     }
 
                 } else {
@@ -661,8 +666,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
     fn tuple_gens(&mut self, count: usize, source: SourceRange, id: NodeId) -> GenListId {
         let gens = Vec::from_in(self.output, 
             (0..count).map(|i| {
-                let s = self.syms.new_var(id, source);
-                (BoundedGeneric::new(self.string_map.num(i), &[]), s)
+                let name = self.string_map.num(i);
+                let s = self.syms.new_var(id, name, source);
+                (BoundedGeneric::new(name, &[]), s)
             })
         );
 

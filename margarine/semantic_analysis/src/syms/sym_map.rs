@@ -31,6 +31,7 @@ pub struct Closure {
 
 #[derive(Debug, Clone, Copy, ImmutableData)]
 pub struct Var {
+    name: Option<StringIndex>,
     sub: VarSub,
     node: NodeId,
     range: SourceRange,
@@ -182,13 +183,13 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn new_var(&mut self, node: impl Into<NodeId>, range: SourceRange) -> Type {
-        self.new_var_ex(node, range, VarSub::None)
+    pub fn new_var(&mut self, node: impl Into<NodeId>, name: impl Into<Option<StringIndex>>, range: SourceRange) -> Type {
+        self.new_var_ex(node, name, range, VarSub::None)
     }
 
 
-    pub fn new_var_ex(&mut self, node: impl Into<NodeId>, range: SourceRange, sub: VarSub) -> Type {
-        Type::Var(self.vars.push(Var { sub, node: node.into(), range }))
+    pub fn new_var_ex(&mut self, node: impl Into<NodeId>, name: impl Into<Option<StringIndex>>, range: SourceRange, sub: VarSub) -> Type {
+        Type::Var(self.vars.push(Var { sub, node: node.into(), name: name.into(), range }))
     }
 
 
@@ -989,6 +990,15 @@ impl Var {
         else { return false };
 
         matches!(ty.instantiate_shallow(map), Type::Ty(..))
+    }
+
+
+    pub fn is_root(&self, map: &SymbolMap) -> bool {
+        let VarSub::Concrete(ty) = self.sub
+        else { return true };
+
+        assert!(matches!(ty.instantiate_shallow(map), Type::Var(_)));
+        return false
     }
 
 

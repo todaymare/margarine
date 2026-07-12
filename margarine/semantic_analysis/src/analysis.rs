@@ -1476,7 +1476,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.iter().len());
 
                     for g in generics.iter() {
-                        let var = self.syms.new_var(id, range);
+                        let var = self.syms.new_var(id, g.name, range);
                         vgens.push((*g, var));
                     }
 
@@ -1551,12 +1551,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                                 } else {
                                     for g in sym.generics().iter() {
-                                        let var = self.syms.new_var(id, range);
+                                        let var = self.syms.new_var(id, g.name, range);
                                         vgens.push((*g, var));
                                     }
                                 }
 
-                                //dbg!(sym, &vgens);
                                 let gens = self.syms.add_gens(vgens.leak());
 
                                 let mut anal = match func.kind() {
@@ -1587,7 +1586,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             Expr::Closure { args, body } => {
                 let closure = self.syms.new_closure();
-                let ret_var = self.syms.new_var(id, range);
+                let ret_var = self.syms.new_var(id, StringMap::RESULT, range);
 
                 let closure_scope = self.scopes.push(Scope::new(Some(scope), ScopeKind::Function(FunctionScope { ret: ret_var, ret_source: range })));
                 let closure_scope = self.scopes.push(Scope::new(Some(closure_scope), ScopeKind::Closure(closure)));
@@ -1599,7 +1598,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 for arg in args {
                     let ty = 
                     if let Some(ty) = arg.1 { self.dt_to_ty(scope, id, ty)? } 
-                    else { self.syms.new_var(id, arg.2) };
+                    else { self.syms.new_var(id, arg.0, arg.2) };
 
                     active_scope = 
                     self.scopes.push(Scope::new(
@@ -1867,7 +1866,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                 // ty chck
-                let ret_ty = self.syms.new_var(id, range);
+                let ret_ty = self.syms.new_var(id, StringMap::RESULT, range);
                 for (m, f) in mappings.iter().zip(cont.fields().iter()) {
                     let gens = anal.ty.gens(&self.syms);
                     let gens = self.syms.get_gens(gens);
@@ -1944,7 +1943,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let gens = self.syms.get_gens(gens);
 
                     for f in cont.fields() {
-                        //dbg!(f);
                         vec.push((f.0, f.1.to_ty(gens, &mut self.syms)?))
                     }
 
@@ -2040,10 +2038,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let mut vgens = sti::vec::Vec::with_cap_in(self.output, sym.generics().iter().len());
 
                     for g in sym.generics().iter() {
-                        let var = self.syms.new_var(id, range);
+                        let var = self.syms.new_var(id, g.name, range);
                         vgens.push((*g, var));
                     }
-
+                    
                     let sym_gens = self.syms.get_gens(expr.ty.gens(&self.syms));
 
                     //assert!(sym_gens.iter().zip(&vgens).all(|(a, b)| a.0 == b.1.0));
@@ -2053,6 +2051,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             (*g0).eq(&mut self.syms, *g1);
                         }
                     }
+
+
 
                     if let Some(gens) = expr_gens {
                         for (g, (_, s)) in gens.iter().zip(vgens.iter().skip(sym_gens.len())) {
@@ -2139,7 +2139,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.iter().len());
 
                 for g in generics.iter() {
-                    let var = self.syms.new_var(id, range);
+                    let var = self.syms.new_var(id, g.name, range);
                     vgens.push((*g, var));
                 }
 
@@ -2422,7 +2422,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
             Expr::CreateList { exprs } => {
-                let ty = self.syms.new_var(id, range);
+                let ty = self.syms.new_var(id, None, range);
 
                 let mut errored = None;
                 for e in exprs {
@@ -2521,7 +2521,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 if sym == SymbolId::OPTION {
                     let func_sym = func.ret;
                     let opt_sym = {
-                        let val = self.syms.new_var(id, range);
+                        let val = self.syms.new_var(id, StringMap::T, range);
                         let gens = self.output.alloc_new([(BoundedGeneric::T, val)]);
                         let gens = self.syms.add_gens(gens);
 
@@ -2541,8 +2541,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 
                 if sym == SymbolId::RESULT {
                     let res_sym = {
-                        let val = self.syms.new_var(id, range);
-                        let gens = self.output.alloc_new([(BoundedGeneric::T, val), (BoundedGeneric::A, val)]);
+                        let ok = self.syms.new_var(id, StringMap::T, range);
+                        let err = self.syms.new_var(id, StringMap::A, range);
+                        let gens = self.output.alloc_new([(BoundedGeneric::T, ok), (BoundedGeneric::A, err)]);
                         let gens = self.syms.add_gens(gens);
 
                         Type::Ty(SymbolId::RESULT, gens)

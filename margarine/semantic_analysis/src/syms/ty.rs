@@ -209,12 +209,10 @@ impl Type {
 
                 let gena = instantiate_gens(map, gena);
                 let gena = map.gens()[gena];
-                //dbg!(gena, symida, map.sym(symida));
                 assert_eq!(map.sym(symida).generics().len(), gena.len());
 
                 let genb = instantiate_gens(map, genb);
                 let genb = map.gens()[genb];
-                //dbg!(genb, symidb, map.sym(symidb));
                 assert_eq!(map.sym(symidb).generics().len(), genb.len());
 
 
@@ -279,43 +277,28 @@ impl Type {
                 return true
             },
 
-            (Type::Var(ida), Type::Var(idb)) if ida == idb => {
-                return true 
+            (Type::Var(ida), Type::Var(idb)) => {
+                if ida == idb { return true }
+
+                let mut arr = [ida, idb];
+                arr.sort();
+                let [ida, idb] = arr;
+
+                // the newest points to the oldest
+                map.vars_mut()[idb].set_sub(VarSub::Concrete(Type::Var(ida)));
+
+                true
+
             }
 
-            (Type::Var(ida), _) => {
-                if ida.occurs_in(map, b) { return false }
+              (Type::Var(id), sub)
+            | (sub, Type::Var(id)) => {
+                if id.occurs_in(map, sub) { return false }
 
-                let var = map.vars()[ida].sub();
- 
-                match var {
-                    VarSub::Concrete(ta) 
-                        if !matches!(ta, Type::Ty(SymbolId::ERR | SymbolId::NEVER, _))
-                        => b.eq(map, ta),
-
-                    _ => {
-                        map.vars_mut()[ida].set_sub(VarSub::Concrete(b));
-                        true
-                    },
-                }
+                map.vars_mut()[id].set_sub(VarSub::Concrete(sub));
+                true
             },
 
-
-            (_, Type::Var(idb)) => {
-                if idb.occurs_in(map, a) { return false }
-
-                let var = map.vars()[idb].sub();
-                match var {
-                    VarSub::Concrete(tb)
-                        if !matches!(tb, Type::Ty(SymbolId::ERR | SymbolId::NEVER, _)) 
-                        => a.eq(map, tb),
-
-                    _ => {
-                        map.vars_mut()[idb].set_sub(VarSub::Concrete(a));
-                        true
-                    },
-                }
-            },
         }
     }
 
@@ -343,7 +326,7 @@ impl Type {
             Type::Ty(sym, _) => Ok(sym),
             Type::Var(id) => {
                 let var = &map.vars()[id];
-                Err(Error::UnableToInfer(var.range()))
+                Err(Error::UnableToInfer(var.range(), var.name()))
             },
         }
     }
@@ -358,7 +341,9 @@ impl Type {
 
 
     pub fn instantiate(self, map: &mut SymbolMap, depth: usize) -> Type {
-        if depth == 100 { panic!() }
+        if depth == 100 { 
+            panic!() 
+        }
 
         match self {
             Type::Ty(sym, gens) => {

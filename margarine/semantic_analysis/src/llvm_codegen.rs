@@ -528,7 +528,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                         Err(e) => {
-                            println!("error in function {}: {:?}", self.string_map.get(name_idx), e);
                             self.error(&mut builder, e);
                         },
                     }
@@ -1933,7 +1932,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 match self.ty_info.expr(expr) {
                     Ok(e) => e,
                     Err(e) => {
-                        println!("Error in expr {:?}: {:?}", self.ast.expr(expr), e);
                         return Err(e);
                     },
                }
@@ -2351,7 +2349,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let mut values = sti::vec::Vec::with_cap_in(self.ctx.arena, fields.len());
 
                 let ty = out_if_err!();
-                println!("CreateStruct: {:?}", ty.display(self.string_map, self.syms));
                 let ty = ty.resolve(&[env.gens], self.syms);
 
                 for (name, _, e) in fields {
@@ -2789,9 +2786,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     vec
                 };
 
-                println!("list");
                 let list_ty = out_if_err!();
-                println!("list_ty: {:?}", list_ty);
                 let list_ty = list_ty.resolve(&[env.gens], self.syms);
                 let list_ty = self.to_llvm_ty(list_ty);
 

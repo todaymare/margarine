@@ -213,7 +213,7 @@ pub enum Error {
         source: SourceRange,
     },
 
-    UnableToInfer(SourceRange),
+    UnableToInfer(SourceRange, Option<StringIndex>),
 
     InvalidRange {
         source: SourceRange,
@@ -695,9 +695,15 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight(*source);
             },
 
-            Error::UnableToInfer(v) => {
-                fmt.error("unable to infer type")
-                    .highlight_with_note(*v, "try specifying it's generics");
+            Error::UnableToInfer(v, name) => {
+                if let Some(name) = name {
+                    let s = format!("try specifying '{}'", fmt.string_map().get(*name));
+                    fmt.error("unable to infer type")
+                        .highlight_with_note(*v, &s);
+                } else {
+                    fmt.error("unable to infer type")
+                        .highlight_with_note(*v, "try specifying it's generics");
+                }
             },
 
             Error::InvalidRange { source, ty } => {
