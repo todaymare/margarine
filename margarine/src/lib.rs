@@ -141,22 +141,21 @@ impl<'me> Compiler<'me> {
                 match global.decl(i) {
                     Decl::ImportFile { name, .. } => {
                         let path = format_in!(&arena, "{}/{}.mar", file_path, self.string_map.get(name));
-                        let path = std::fs::canonicalize(&*path).unwrap();
-                        let path_idx = self.string_map.insert(&*path.with_extension("").to_string_lossy());
+
+                        let path_idx = self.string_map.insert(
+                            &std::path::Path::new(&*path).with_extension("").to_string_lossy()
+                        );
 
                         if self.files.get(path_idx).is_none() {
                             let Ok(file) = FileData::open(&*path, &mut self.string_map)
                             else {
+                                let path_str = format_in!(&arena, "{}/{}", file_path, self.string_map.get(name));
+                                let path_idx = self.string_map.insert(&path_str);
                                 let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: path_idx });
                                 global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
                                 
                                 continue;
                             };
-
-                            assert_eq!(file.name(), path_idx, "{}(@{}) vs {}(@{})",
-                                self.string_map.get(file.name()), file.name().0,
-                                self.string_map.get(path_idx), path_idx.0,
-                            );
 
                             self.files.register(file);
                         }

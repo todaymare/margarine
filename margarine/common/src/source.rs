@@ -23,11 +23,11 @@ impl FileData {
 
 
     pub fn open<P: AsRef<Path>>(path: P, string_map: &mut StringMap) -> Result<Self, std::io::Error> {
-        let path = std::fs::canonicalize(path)?;
-        let new_path = path.with_extension("");
-        let name = new_path.to_string_lossy();
+        let canonical_path = std::fs::canonicalize(&path)?;
+        let new_path = path.as_ref().with_extension("");
+        let name = new_path.to_string_lossy().to_string();
 
-        Self::open_ex(path, string_map.insert(&name), string_map)
+        Self::open_ex(canonical_path, string_map.insert(&name), string_map)
     }
 
 

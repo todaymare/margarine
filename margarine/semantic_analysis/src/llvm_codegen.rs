@@ -2810,7 +2810,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     vec
                 };
 
-                let list_ty = self.ty_info.expr(expr).unwrap();
+                let list_ty = self.ty_info.expr(expr)?;
                 let list_ty = list_ty.resolve(&[env.gens], self.syms);
                 let list_ty = self.to_llvm_ty(list_ty);
 
