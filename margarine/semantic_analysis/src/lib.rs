@@ -166,9 +166,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         let empty = analyzer.string_map.insert("");
         analyzer.block(empty, scope, block);
 
+        dbg!(analyzer.syms.vars());
         for v in analyzer.syms.vars().iter() {
             if !v.is_concrete(&analyzer.syms) {
-                let error = Error::UnableToInfer(analyzer.ast.range(v.node()));
+                let error = Error::UnableToInfer(v.range());
                 Self::error_ex(&mut analyzer.errors, &mut analyzer.type_info, v.node(), error);
             }
         }
