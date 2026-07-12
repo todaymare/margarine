@@ -56,7 +56,7 @@ pub enum Decl<'a> {
         name: StringIndex,
         header: SourceRange,
         body: Block<'a>,
-        user_defined: bool,
+        is_root: bool,
     },
 
     ImportFile {
@@ -242,7 +242,7 @@ pub enum UseItemKind<'a> {
     List {
         list: &'a [UseItem<'a>],
     },
-    BringName,
+    BringName(StringIndex),
     All,
 }
 

@@ -69,6 +69,8 @@ impl<'str> StringMap<'str> {
     pub const DESTROY_TRAIT : StringIndex = StringIndex(53);
     pub const DESTROY_FUNC  : StringIndex = StringIndex(54);
 
+    pub const ROOT : StringIndex = StringIndex(55);
+
  
     #[inline(always)]
     pub fn new(arena: &'str Arena) -> Self {
@@ -142,6 +144,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("$ptr_cast"), Self::PTR_CAST);
         assert_eq!(s.insert("Destroy"), Self::DESTROY_TRAIT);
         assert_eq!(s.insert("destroy"), Self::DESTROY_FUNC);
+        assert_eq!(s.insert("root"), Self::ROOT);
         s
     }
 

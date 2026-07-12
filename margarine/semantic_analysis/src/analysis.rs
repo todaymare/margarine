@@ -130,7 +130,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 },
 
 
-                Decl::Module { name, header, body, .. } => {
+                Decl::Module { name, header, body, is_root, .. } => {
                     let path = self.string_map.concat(path, name);
 
                     let sym = self.syms.pending(&mut self.namespaces, path, 0);
@@ -138,11 +138,19 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     let module_ns = self.syms.as_ns(sym);
 
+                    {
+                        let module_ns = self.namespaces.get_ns_mut(module_ns);
+
+                        if is_root {
+                            module_ns.add_sym(header, StringMap::ROOT, sym).unwrap();
+                        }
+                    }
+                    
+
                     if let Err(e) = self.namespaces.get_ns_mut(ns_id).add_sym(header, name, sym) {
                         self.error(*n, e);
                         continue;
                     }
-
 
                     self.collect_names(path, module_ns, &*body, gen_count);
                 },
@@ -163,7 +171,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             let decl = self.ast.decl(id);
             match decl {
-                Decl::Module { name, body, user_defined, .. } => {
+                Decl::Module { name, body, .. } => {
                     let module_ns = self.namespaces.get_ns(ns_id);
                     let Some(Ok(module_ns)) = module_ns.get_sym(name)
                     else { continue; };
@@ -171,9 +179,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let module_ns = self.syms.as_ns(module_ns);
 
                     let scope = Scope::new(
-                        if !user_defined { self.base_scope }
-                        else { scope }, 
-
+                        scope,
                         ScopeKind::ImplicitNamespace(module_ns),
                     );
 
@@ -346,13 +352,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             },
 
 
-            UseItemKind::BringName => {
+            UseItemKind::BringName(alias) => {
                 if let Some(import_sym) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces) {
                     let ns = self.namespaces.get_ns_mut(ns_id);
 
                     match import_sym {
                         Ok(v) => {
-                            if let Err(e) = ns.add_sym(item.range(), item.name(), v) {
+                            if let Err(e) = ns.add_sym(item.range(), alias, v) {
                                 self.error(node, e);
                             }
                         },
@@ -741,7 +747,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
 
-                Decl::Module { name, body, user_defined, .. } => {
+                Decl::Module { name, body, .. } => {
 
                     let ns = self.namespaces.get_ns(ns);
                     let Some(Ok(module_ns)) = ns.get_sym(name)
@@ -750,7 +756,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let module_ns = self.syms.as_ns(module_ns);
 
                     let scope = self.scopes.push(self.scopes.get(scope));
-                    let scope = Scope::new(if !user_defined { self.base_scope } else { scope }, ScopeKind::ImplicitNamespace(module_ns));
+                    let scope = Scope::new(scope, ScopeKind::ImplicitNamespace(module_ns));
                     let scope = self.scopes.push(scope);
 
                     let path = self.namespaces.get_ns(module_ns).path;
@@ -1048,7 +1054,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
 
-            Decl::Module { name, body, user_defined, .. } => {
+            Decl::Module { name, body, .. } => {
                 let ns = self.namespaces.get_ns(ns);
 
                 let Some(Ok(module_ns)) = ns.get_sym(name)
@@ -1057,7 +1063,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let module_ns = self.syms.as_ns(module_ns);
 
 
-                let scope = Scope::new(if !user_defined { self.base_scope } else { *scope }, ScopeKind::ImplicitNamespace(module_ns));
+                let scope = Scope::new(*scope, ScopeKind::ImplicitNamespace(module_ns));
                 let mut scope = self.scopes.push(scope);
 
                 let path = self.namespaces.get_ns(module_ns).path;

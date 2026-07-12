@@ -941,7 +941,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let end = self.current_range().end();
 
             return Ok(self.ast.add_decl(
-                Decl::Module { name, body, header: SourceRange::new(start, header_end), user_defined: true },
+                Decl::Module { name, body, header: SourceRange::new(start, header_end), is_root: true },
                 SourceRange::new(start, end)
             ))
         }
@@ -1210,7 +1210,18 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 return Ok(UseItemKind::List { 
                         list: self.arena.alloc_new([inner]) })
             }
-            Ok(UseItemKind::BringName)
+
+            let name =
+            if self.peek_is(TokenKind::Keyword(Keyword::As)) {
+                self.advance();
+                self.advance();
+
+                self.expect_identifier()?
+            } else {
+                ident
+            };
+
+            Ok(UseItemKind::BringName(name))
 
         };
 

@@ -1,8 +1,10 @@
 #![feature(if_let_guard)]
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 
 use colourful::ColourBrush;
+use common::string_map;
 use common::string_map::StringIndex;
 use errors::LexerError;
 use errors::ParserError;
@@ -10,6 +12,10 @@ use errors::SemaError;
 use git2::Repository;
 pub use lexer::lex;
 use parser::nodes::decl::Decl;
+use parser::nodes::decl::UseItem;
+use parser::nodes::decl::UseItemKind;
+use parser::nodes::expr::Block;
+use parser::nodes::NodeId;
 use parser::nodes::AST;
 pub use parser::parse;
 pub use parser::nodes;
@@ -20,6 +26,7 @@ use semantic_analysis::llvm_codegen;
 use common::symbol_id::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
+use sha2::Digest;
 pub use sti::arena::Arena;
 use sti::format_in;
 use sti::vec::KVec;
@@ -83,16 +90,26 @@ impl<'me> Compiler<'me> {
         let mut build_lock = BuildLock::load();
 
 
-        let mut stack = vec![(None, entry, 0)];
+        let root = 
+        global.add_decl(Decl::Module { 
+            name: entry, 
+            header: SourceRange::ZERO, 
+            body: Block::new(&[], SourceRange::ZERO), 
+            is_root: true 
+        }, SourceRange::ZERO);
+
+
+        let mut stack = vec![(root, entry, entry, true, 0)];
         let mut source_offset = 0;
         let mut counter = 0;
 
-        let mut root = None;
+        let mut top_level : Vec<NodeId> = vec![root.into()];
+        let mut top_modules = HashSet::new();
 
         let mut file_offsets = vec![];
 
-        while let Some((decl, f, depth)) = stack.pop() {
-            let file_path = self.string_map.get(f);
+        while let Some((decl, name, path, is_root, depth)) = stack.pop() {
+            let file_path = self.string_map.get(path);
 
             if !self.silent {
                 if depth != 0 {
@@ -120,7 +137,7 @@ impl<'me> Compiler<'me> {
             }
 
 
-            let file = self.files.get(f).unwrap();
+            let file = self.files.get(path).unwrap();
 
             let (tokens, le) = DropTimer::with_timer("tokenisation", || {
                 let tokens = lex(&file, &mut self.string_map, source_offset);
@@ -132,7 +149,7 @@ impl<'me> Compiler<'me> {
             });
 
 
-            file_offsets.push((f, source_offset));
+            file_offsets.push((path, source_offset));
             source_offset += file.read().len() as u32;
 
 
@@ -160,7 +177,7 @@ impl<'me> Compiler<'me> {
                             self.files.register(file);
                         }
 
-                        stack.push((Some((i, name)), path_idx, depth+1));
+                        stack.push((i, name, path_idx, false, depth+1));
                     }
 
 
@@ -193,9 +210,25 @@ impl<'me> Compiler<'me> {
                             format!("{base}/{url}")
                         };
 
-                        let mut hasher = sti::hash::fxhash::FxHasher64::new();
-                        hasher.write_bytes(url.as_bytes());
-                        let dir_hash = format!("{:016x}", hasher.hash);
+
+                        let dir_hash = sha2::Sha256::digest(url.as_bytes());
+                        let dir_hash = u64::from_be_bytes(dir_hash[..8].try_into().unwrap());
+                        let dir_hash = format!("{:016x}", dir_hash);
+
+                        let hash = self.string_map.insert(&dir_hash);
+
+                        {
+                            let item = UseItem::new(
+                                hash, 
+                                UseItemKind::BringName(alias), 
+                                source
+                            );
+
+                            global.set_decl(
+                                i, 
+                                Decl::Using { item }
+                            );
+                        }
 
                         let artifacts_dir = "artifacts";
                         if !std::fs::exists(artifacts_dir).unwrap_or(false) {
@@ -204,6 +237,7 @@ impl<'me> Compiler<'me> {
 
                         let local_path = format!("{}/{}", artifacts_dir, dir_hash);
 
+                        // If the repo doesn't exist locally, clone it
                         if !std::fs::exists(&local_path).unwrap_or(false) {
                             if !self.silent {
                                 println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
@@ -221,6 +255,15 @@ impl<'me> Compiler<'me> {
                                     continue;
                                 },
                             };
+
+                            if let Some(commit) = commit {
+                                // If repo exists but user specified a commit, checkout it
+                                if let Ok(obj) = repo.revparse_single(commit) {
+                                    let _ = repo.checkout_tree(&obj, None);
+                                }
+                                build_lock.set(alias_str.to_string(), commit.to_string());
+                            }
+
 
 
                             let target_commit =
@@ -249,14 +292,11 @@ impl<'me> Compiler<'me> {
                             // Update lock file
                             build_lock.set(alias_str.to_string(), target_commit);
 
-                        } else if let Some(commit) = commit {
-                            // If repo exists but user specified a commit, checkout it
-                            if let Ok(repo) = Repository::open(&local_path) {
-                                if let Ok(obj) = repo.revparse_single(commit) {
-                                    let _ = repo.checkout_tree(&obj, None);
-                                }
-                                build_lock.set(alias_str.to_string(), commit.to_string());
-                            }
+                        }
+
+                        // if the module is already in the top level, skip it
+                        if top_modules.contains(&hash) {
+                            continue;
                         }
 
                         // Load lib.mar from the cloned repo
@@ -273,7 +313,19 @@ impl<'me> Compiler<'me> {
                         let name = file.name();
                         self.files.register(file);
 
-                        stack.push((Some((i, alias)), name, depth+1));
+                        let module = Decl::Module { 
+                            name: hash,
+                            header: source, 
+                            body: Block::new(&[], SourceRange::ZERO), 
+                            is_root: true,
+                        };
+
+                        let module = global.add_decl(module, SourceRange::ZERO);
+                        top_level.push(module.into());
+                        top_modules.insert(hash);
+
+                        stack.insert(0, (module, hash, name, true, 0));
+
                     }
 
 
@@ -281,12 +333,18 @@ impl<'me> Compiler<'me> {
                 }
             }
 
-            if let Some((decl, name)) = decl {
-                let offset = global.range(decl);
-                global.set_decl(decl, Decl::Module { name, header: offset, body, user_defined: true });
-            } else {
-                root = Some(body);
-            }
+
+            let offset = global.range(decl);
+
+            global.set_decl(
+                decl, 
+                Decl::Module { 
+                    name, 
+                    header: offset, 
+                    body, 
+                    is_root
+                }
+            );
             
 
             lex_errors.push(le);
@@ -324,7 +382,7 @@ impl<'me> Compiler<'me> {
         let temp = Arena::new();
         let sema = {
             let _1 = DropTimer::new("semantic analysis");
-            TyChecker::run(&arena, &temp, &mut global, &root.unwrap(), &mut self.string_map)
+            TyChecker::run(&arena, &temp, &mut global, &top_level, &mut self.string_map)
         };
 
 
