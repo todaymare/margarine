@@ -1954,6 +1954,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         macro_rules! out_if_err {
             () => {{
 
+                println!("expr: {:?}", self.ast.expr(expr));
                 match self.ty_info.expr(expr) {
                     Ok(e) => e,
                     Err(e) => {

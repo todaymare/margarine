@@ -1567,39 +1567,23 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let closure_scope = self.scopes.push(Scope::new(Some(scope), ScopeKind::Function(FunctionScope { ret: ret_var, ret_source: range })));
                 let closure_scope = self.scopes.push(Scope::new(Some(closure_scope), ScopeKind::Closure(closure)));
                 let mut active_scope = closure_scope;
+
+
+                // create generics for inference
                 let mut sargs = sti::vec::Vec::new_in(self.syms.arena());
                 for arg in args {
-                    let ty = if let Some(ty) = arg.1 {
-                        self.dt_to_ty(scope, id, ty)?
-                    } else {
-                        self.syms.new_var(id, arg.2)
-                    };
+                    let ty = 
+                    if let Some(ty) = arg.1 { self.dt_to_ty(scope, id, ty)? } 
+                    else { self.syms.new_var(id, arg.2) };
 
-                    active_scope = self.scopes.push(Scope::new(
+                    active_scope = 
+                    self.scopes.push(Scope::new(
                         Some(active_scope), 
                         ScopeKind::VariableScope(VariableScope::new(arg.0, ty))
                     ));
 
                     sargs.push((arg.0, ty, arg.2));
 
-                }
-
-                if let Some(sym) = expected
-                && let Ok(sym_id) = sym.sym(&mut self.syms)
-                && let SymbolKind::Function(func) = self.syms.sym(sym_id).kind() {
-                    let gens = sym.gens(&self.syms);
-                    let gens = self.syms.get_gens(gens);
-
-                    for (sym_arg, arg) in func.args().iter().zip(sargs.iter()) {
-                        let Ok(sym_arg) = sym_arg.symbol().to_ty(gens, &mut self.syms)
-                        else { continue };
-
-                        sym_arg.eq(&mut self.syms, arg.1);
-                    }
-
-                    if let Ok(sym_ret) = func.ret().to_ty(gens, &mut self.syms) {
-                        sym_ret.eq(&mut self.syms, ret_var);
-                    }
                 }
 
 
@@ -1617,17 +1601,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
                 let mut gen_list = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
                 let t = BoundedGeneric::T;
-                let ret_ty = ret.ty.instantiate(&mut self.syms, 0);
-                let ret_ty = if matches!(ret_ty, Type::Var(_)) { Type::ERROR } else { ret_ty };
+                let ret_ty = ret.ty;
                 gens.push((t, ret_ty));
                 gen_list.push(t);
 
                 for (i, arg) in sargs.iter().enumerate() {
-                    let sym = arg.1.instantiate(&mut self.syms, 0);
-                    let sym = if matches!(sym, Type::Var(_)) { Type::ERROR } else { sym };
                     let g = self.string_map.num(i);
                     let g = BoundedGeneric::new(g, &[]);
-                    gens.push((g, sym));
+                    gens.push((g, arg.1));
                     gen_list.push(g);
                     fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Generic(g), None)));
                 }
@@ -2188,18 +2169,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             Expr::CallFunction { lhs: lhs_expr, args } => {
                 let lhs = self.expr(path, scope, lhs_expr);
-                
-                if lhs.ty.is_err(&mut self.syms) {
-                    return Ok(AnalysisResult::error())
-                }
-
                 let lhs_range = self.ast.range(lhs_expr);
-                let sym_id = lhs.ty.sym(&mut self.syms)?;
-
+                
                 let pool = self.ast.arena;
                 let mut is_accessor = false;
                 let args_anals = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, args.len());
+                    let mut err = Ok(());
 
                     if let Expr::AccessField { val, field_name, .. } = self.ast.expr(lhs_expr) {
                         let range = self.ast.range(val);
@@ -2212,19 +2188,30 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         if let SymbolKind::Container(cont) = sym.kind()
                         && cont.fields().iter().find(|x| x.0 == field_name).is_some() {
-                            return Err(Error::CallOnField { source: lhs_range, field_name })
+                            err = Err(Error::CallOnField { source: lhs_range, field_name })
                         } else {
                             is_accessor = true;
-                            vec.push((range, Some(anal), val));
+                            vec.push((range, anal, val));
                         }
                     }
 
                     for a in args {
-                        vec.push((self.ast.range(*a), None, *a));
+                        let anal = self.expr(path, scope, *a);
+                        vec.push((self.ast.range(*a), anal, *a));
                     }
+
+                    let _ = err?;
 
                     vec.leak()
                 };
+
+
+                if lhs.ty.is_err(&mut self.syms) {
+                    return Ok(AnalysisResult::error())
+                }
+
+                let sym_id = lhs.ty.sym(&mut self.syms)?;
+
 
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Function(func) = sym.kind()
@@ -2252,13 +2239,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let ret = func.ret().to_ty(gens, &mut self.syms)?;
 
                 // ty check args
-                for (a, &fa) in args_anals.iter().zip(func_args.iter()) {
-                    let anal = self.expr_ex(path, scope, a.2, Some(fa));
-
-                    if !anal.ty.eq(&mut self.syms, fa) {
-                        self.error(a.2, Error::InvalidType {
-                            source: a.0, found: anal.ty, expected: fa });
+                for ((source, anal, expr), fa) in args_anals.iter().copied().zip(func_args.iter().copied()) {
+                    if anal.ty.eq(&mut self.syms, fa) {
+                        continue;
                     }
+
+                    self.error(expr, Error::InvalidType {
+                        source, found: anal.ty, expected: fa });
                 }
 
                 for (sym_g, (func_g, value)) in sym.generics().iter().zip(gens.iter()) {
