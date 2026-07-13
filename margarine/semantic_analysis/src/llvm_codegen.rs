@@ -187,7 +187,7 @@ pub fn run<'a>(
 
 
         let list_ty = ctx.structure("listType");
-        list_ty.set_fields(&[*ctx.integer(64), *i32_ty, *i32_ty, *ctx.ptr()], false);
+        list_ty.set_fields(&[*ctx.integer(64), *ctx.integer(64), *ctx.integer(64), *ctx.ptr()], false);
 
         let mut conv = Conversion {
             string_map,
@@ -1862,20 +1862,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let elem_size = llvm_ty.repr.size_of(self.module).unwrap() as i64;
                     let elem_size_val = builder.const_int(self.i64, elem_size, false);
-                    let cap_i64 = builder.int_cast(cap, *self.i64, false).as_integer();
-                    let buf_size = builder.mul_int(cap_i64, elem_size_val);
+                    let buf_size = builder.mul_int(cap, elem_size_val);
                     let new_buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*buf_size]).as_ptr();
 
                     let zero_i64 = builder.const_int(self.i64, 0, false);
                     let counter = builder.alloca(*self.i64);
                     builder.store(counter, *zero_i64);
 
-                    let len_i64 = builder.int_cast(len, *self.i64, false).as_integer();
-
                     builder.loop_indefinitely(|builder, l| {
                         let i = builder.load(counter, *self.i64).as_integer();
 
-                        let done = builder.cmp_int(i, len_i64, IntCmp::SignedGe);
+                        let done = builder.cmp_int(i, len, IntCmp::SignedGe);
                         builder.ite(&mut () as &mut (), done,
                             |builder, _| { builder.loop_break(l); },
                             |builder, _| {
@@ -2822,7 +2819,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
 
-                let len = builder.const_int(self.i32, exprs.len() as i64, false);
+                let len = builder.const_int(self.i64, exprs.len() as i64, false);
 
                 let size = self.list_ty.size_of(self.module).unwrap();
                 let size = builder.const_int(self.i64, size as i64, false);

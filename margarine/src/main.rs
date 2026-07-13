@@ -62,6 +62,7 @@ fn main() {
 
             println!("{:?}",
                 Command::new("llc")
+                    .arg("-O2")
                     .arg("-filetype=obj")
                     .arg("-relocation-model=pic")
                     .arg("out.ll")
@@ -72,8 +73,8 @@ fn main() {
             println!("{:?}",
                 Command::new("clang")
                     .arg("-shared")
-                    .arg("program.o")
                     .arg("libmargarine.a")
+                    .arg("program.o")
                     .arg("-lzstd")
                     .arg("-lz")
                     .arg("-lc++")
@@ -125,6 +126,11 @@ fn run_tests(tests: &[(String, bool)]) {
 
     let start = Instant::now();
 
+    let timeout_ms: u64 = std::env::var("MARGARINE_TEST_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3000);
+
     unsafe {
         let lib_path = CString::new("program.dylib").unwrap();
         let lib = libc::dlopen(lib_path.as_ptr(), libc::RTLD_NOW);
@@ -172,21 +178,44 @@ fn run_tests(tests: &[(String, bool)]) {
             libc::close(pipe_fds[1]);
 
             let mut status: i32 = 0;
-            libc::waitpid(pid, &mut status, 0);
+            let mut timed_out = false;
+            let poll_start = Instant::now();
+
+            loop {
+                let ret = libc::waitpid(pid, &mut status, libc::WNOHANG);
+                if ret != 0 { break }
+
+                if poll_start.elapsed().as_millis() as u64 >= timeout_ms {
+                    libc::kill(pid, libc::SIGKILL);
+                    libc::waitpid(pid, &mut status, 0);
+                    timed_out = true;
+                    break;
+                }
+
+                libc::usleep(10);
+            }
 
             let output = read_pipe(pipe_fds[0]);
             libc::close(pipe_fds[0]);
 
             let exited_ok = wifexited(status) && wexitstatus(status) == 0;
 
-            if *should_panic {
+            if timed_out {
+                println!("{}", "FAILED".red());
+                failed += 1;
+                writeln!(&mut fails, "failed '{}' (timed out after {}ms):\n{}",
+                    name,
+                    timeout_ms,
+                    output.trim(),
+                ).unwrap();
+            } else if *should_panic {
                 if !exited_ok {
                     println!("{}", "ok".green());
                     passed += 1;
                 } else {
                     println!("{}", "FAILED".red());
                     failed += 1;
-                    writeln!(&mut fails, "failed '{}': test did not panic as expected", name).unwrap();
+                    writeln!(&mut fails, "failed '{}' (exit code 0): test did not panic as expected", name).unwrap();
                 }
             } else {
                 if exited_ok {
@@ -195,8 +224,16 @@ fn run_tests(tests: &[(String, bool)]) {
                 } else {
                     println!("{}", "FAILED".red());
                     failed += 1;
-                    writeln!(&mut fails, "failed '{}':\n{}",
+                    let reason = if wifsignaled(status) {
+                        format!(" (signal {})", wtermsig(status))
+                    } else if wifexited(status) {
+                        format!(" (exit code {})", wexitstatus(status))
+                    } else {
+                        String::new()
+                    };
+                    writeln!(&mut fails, "failed '{}'{}:\n{}",
                         name,
+                        reason,
                         output.trim(),
                     ).unwrap();
                 }
@@ -265,4 +302,9 @@ fn wexitstatus(status: i32) -> i32 {
 
 fn wifsignaled(status: i32) -> bool {
     ((status & 0x7f) + 1) >> 1 > 0
+}
+
+
+fn wtermsig(status: i32) -> i32 {
+    status & 0x7f
 }

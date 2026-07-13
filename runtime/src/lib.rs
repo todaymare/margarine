@@ -1,7 +1,7 @@
 pub mod tys;
 
 use core::{alloc::Layout, ffi::CStr, ptr::{null, null_mut}, fmt::Write};
-use std::marker::PhantomData;
+use std::{io::Write as _, marker::PhantomData};
 
 use common::symbol_id::SymbolId;
 
@@ -27,7 +27,6 @@ unsafe extern "C" {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
-    //println!("malloc {size}");
     unsafe { std::alloc::alloc(Layout::from_size_align(size as _, 8).unwrap()) }
 }
 
@@ -75,8 +74,10 @@ pub extern "C" fn print_int(size: i32) {
 
 
 #[unsafe(no_mangle)]
-    pub extern "C" fn margarineAbort() -> ! {
+pub extern "C" fn margarineAbort() -> ! {
     println!("margarine abort");
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
     std::process::abort();
 }
 
@@ -103,6 +104,7 @@ unsafe extern "C" fn print_raw(value: Any) {
 
         _ => todo!(),
     }
+    let _ = std::io::stdout().flush();
 }
 
 
