@@ -1,0 +1,182 @@
+import "pkg:std" as std;
+use std::*;
+
+struct StructCounter { id: int }
+
+@test
+fn struct_basic() {
+    var c = StructCounter { id: 42 };
+    println(c.id);
+}
+
+
+struct EqFoo {
+    bar: int,
+}
+
+
+impl Eq for EqFoo {
+    fn eq(self, other: EqFoo): bool {
+        self.bar == other.bar
+    }
+}
+
+
+@test
+fn struct_eq() {
+    var a = EqFoo { bar: 1 };
+    var b = EqFoo { bar: 1 };
+    assert(a == b, "struct equality failed");
+}
+
+
+struct FuncFoo {
+    bar: int,
+}
+
+fn make_foo(): FuncFoo {
+    FuncFoo { bar: 7 }
+}
+
+fn double(f: FuncFoo): FuncFoo {
+    FuncFoo { bar: f.bar * 2 }
+}
+
+@test
+fn struct_funcs() {
+    var x = make_foo();
+    assert(x.bar == 7, "returned struct wrong");
+
+    x = double(x);
+    assert(x.bar == 14, "passed/returned struct wrong");
+
+    var y = FuncFoo { bar: 3 };
+    y = double(y);
+    assert(y.bar == 6, "second struct wrong");
+}
+
+
+struct ListFoo {
+    bar: int,
+}
+
+@test
+fn list_of_structs() {
+    var list = [ListFoo { bar: 1 }, ListFoo { bar: 2 }];
+    assert(list[0].bar == 1, "list struct index 0 failed");
+    assert(list[1].bar == 2, "list struct index 1 failed");
+}
+
+
+struct ListFieldFoo {
+    bar: int,
+}
+
+@test
+fn list_struct_field_write() {
+    var list = [ListFieldFoo { bar: 1 }];
+    list[0].bar = 99;
+    assert(list[0].bar == 99, "field write in list failed");
+}
+
+
+struct NestInner {
+    value: int,
+}
+
+struct NestOuter {
+    inner: NestInner,
+}
+
+@test
+fn nested_struct() {
+    var x = NestOuter { inner: NestInner { value: 1 } };
+    x.inner.value = 42;
+    assert(x.inner.value == 42, "nested field assignment failed");
+}
+
+
+struct FieldFoo {
+    bar: int,
+}
+
+@test
+fn struct_field_assignment() {
+    var x = FieldFoo { bar: 10 };
+    x.bar = 20;
+    assert(x.bar == 20, "field assignment failed");
+}
+
+
+struct Big {
+    a: int,
+    b: int,
+    c: int,
+    d: int,
+    e: int,
+    f: int,
+    g: int,
+    h: int,
+    i: int,
+    j: int,
+}
+
+fn make_big(): Big {
+    Big { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10 }
+}
+
+fn sum(b: Big): int {
+    b.a + b.b + b.c + b.d + b.e + b.f + b.g + b.h + b.i + b.j
+}
+
+@test
+fn big_struct() {
+    var x = make_big();
+    assert(sum(x) == 55, "big struct failed");
+}
+
+
+struct ReturnFoo {
+    bar: int,
+}
+
+fn maybe_make(should: bool): ReturnFoo {
+    if !should {
+        return ReturnFoo { bar: 0 };
+    }
+    ReturnFoo { bar: 42 }
+}
+
+@test
+fn return_struct() {
+    var a = maybe_make(false);
+    assert(a.bar == 0, "early return struct failed");
+
+    var b = maybe_make(true);
+    assert(b.bar == 42, "tail return struct failed");
+}
+
+
+struct GenWrapper<T> {
+    value: T,
+}
+
+@test
+fn generic_struct() {
+    var b: GenWrapper<int> = GenWrapper { value: 5 };
+    assert(b.value == 5, "generic struct failed");
+}
+
+
+struct GenInfWrapper<T> {
+    value: T,
+}
+
+@test
+fn generic_struct_infer() {
+    var b = GenInfWrapper { value: 5 };
+    assert(b.value == 5, "generic struct inference failed");
+}
+
+
+

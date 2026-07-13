@@ -1,0 +1,58 @@
+import "pkg:std" as std;
+use std::*;
+
+@test
+fn closure_basic() {
+    var x = 5;
+    var f = || { x + 10 };
+    assert(f() == 15, "closure capture failed");
+}
+
+
+struct ClosureFoo {
+    bar: int,
+}
+
+@test
+fn closure_struct() {
+    var s = ClosureFoo { bar: 3 };
+    var f = || { s.bar * 4 };
+    assert(f() == 12, "closure struct capture failed");
+}
+
+
+struct IterFoo<T> {}
+
+impl<T> IterFoo<T> {
+    fn bar<A>(self, f: fn(T): A) {}
+}
+
+@test
+fn closure_generic_method() {
+    var foo = IterFoo {};
+    var n = 42;
+    foo.bar(|x| { n + x });
+}
+
+
+struct Container<T> {
+    value: T,
+}
+
+impl<T> Container<T> {
+    fn map<A>(self, f: fn(T): A): Container<A> {
+        Container { value: f(self.value) }
+    }
+}
+
+@test
+fn nested_closure_in_generic() {
+    var c = Container { value: 42 };
+    var c2 = c.map(|n| {
+        var inner = || n + 1;
+        inner()
+    });
+}
+
+
+

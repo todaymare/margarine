@@ -861,7 +861,7 @@ impl Lsp {
                     },
 
 
-                    semantic_analysis::errors::Error::UnableToInfer(source_range) => {
+                    semantic_analysis::errors::Error::UnableToInfer(source_range, _) => {
                         (
                             format!(
                                 "unable to infer type",

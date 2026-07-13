@@ -2,6 +2,6 @@ import "pkg:std" as std;
 use std::*;
 
 fn main() {
-    print("hello, margarine!");
+    println("hello, margarine!");
 }
 

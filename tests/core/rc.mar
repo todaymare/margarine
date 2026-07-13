@@ -1,0 +1,80 @@
+import "pkg:std" as std;
+use std::*;
+
+struct RcInner {
+    rc: Rc<int>,
+}
+
+@test
+fn rc_basic() {
+    var tup = ($rc(1), $rc(2));
+    var tup2 = tup;
+
+    var cont = RcInner { rc: $rc(42) };
+    var cont2 = cont;
+}
+
+
+struct RcDestroyCounter {
+    id: int,
+}
+
+impl Destroy for RcDestroyCounter {
+    fn destroy(self) {
+    }
+}
+
+@test
+fn rc_destroy() {
+    var a = $rc(RcDestroyCounter { id: 1 });
+    var a2 = a;
+}
+
+
+struct RcFieldInner {
+    id: int,
+}
+
+impl Destroy for RcFieldInner {
+    fn destroy(self) {
+    }
+}
+
+@test
+fn rc_destroy_field() {
+    var inner_rc = $rc(RcFieldInner { id: 1 });
+}
+
+
+struct RcNestCounter {
+    id: int,
+}
+
+struct RcHolder {
+    counter: RcNestCounter,
+}
+
+impl Destroy for RcHolder {
+    fn destroy(self) {
+    }
+}
+
+@test
+fn rc_destroy_nested() {
+    var h = $rc(RcHolder { counter: RcNestCounter { id: 1 } });
+}
+
+
+@test
+fn rc_set_shared() {
+    var a = [$rc(5), $rc(10)];
+    var b = a;
+    println("hey");
+
+    $rc_set(b[0], 30);
+
+    assert($rc_get(a[0]) == 30, "$rc_set through copy affects original");
+    assert($rc_get(b[0]) == 30, "$rc_set on copy takes effect");
+    assert($rc_get(a[1]) == 10, "other Rc unchanged in original");
+    assert($rc_get(b[1]) == 10, "other Rc unchanged in copy");
+}

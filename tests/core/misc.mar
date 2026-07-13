@@ -1,0 +1,48 @@
+import "pkg:std" as std;
+use std::*;
+
+
+fn make_pair(): (int, int) {
+    (1, 2)
+}
+
+fn swap(p: (int, int)): (int, int) {
+    (p.1, p.0)
+}
+
+@test
+fn tuple_funcs() {
+    var t = make_pair();
+    assert(t.0 == 1, "tuple field 0 wrong");
+    assert(t.1 == 2, "tuple field 1 wrong");
+
+    var s = swap(t);
+    assert(s.0 == 2, "swapped tuple field 0 wrong");
+    assert(s.1 == 1, "swapped tuple field 1 wrong");
+}
+
+
+struct UnwrapFoo {
+    opt: Option<int>,
+}
+
+fn set_unwrap(f: UnwrapFoo): UnwrapFoo {
+    f.opt! = 99;
+    f
+}
+
+fn set_or_return(f: UnwrapFoo): Option<UnwrapFoo> {
+    f.opt? = 99;
+    some(f)
+}
+
+@test
+fn unwrap_or_return_struct() {
+    var a = UnwrapFoo { opt: some(1) };
+    a = set_unwrap(a);
+    assert(a.opt! == 99, "unwrap assign failed");
+
+    var b = UnwrapFoo { opt: some(2) };
+    var res = set_or_return(b);
+    assert(res!.opt! == 99, "or_return payload wrong");
+}

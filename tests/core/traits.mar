@@ -1,0 +1,54 @@
+import "pkg:std" as std;
+use std::*;
+
+struct BothCounter { id: int }
+
+impl Copy for BothCounter {
+    fn copy(self): Self {
+        println("copy");
+        BothCounter { id: self.id }
+    }
+}
+
+impl Drop for BothCounter {
+    fn drop(self) {
+        println("drop");
+    }
+}
+
+@test
+fn copy_and_drop() {
+    println("start");
+    var c = BothCounter { id: 42 };
+    println(c.id);
+    println("end");
+}
+
+
+struct CopyCounter { id: int }
+
+impl Copy for CopyCounter {
+    fn copy(self): Self {
+        CopyCounter { id: self.id }
+    }
+}
+
+@test
+fn copy_only() {
+    var c = CopyCounter { id: 42 };
+    println(c.id);
+}
+
+
+struct DropCounter { id: int }
+
+impl Drop for DropCounter {
+    fn drop(self) {
+    }
+}
+
+@test
+fn drop_only() {
+    var c = DropCounter { id: 42 };
+    println(c.id);
+}

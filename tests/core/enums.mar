@@ -1,0 +1,164 @@
+import "pkg:std" as std;
+use std::*;
+
+
+@test
+fn option_basic() {
+    var a = some(42);
+    print("checking some...\n");
+    match a {
+        some: val => assert(val == 42, "opt some"),
+        none      => panic("should be some"),
+    }
+    var b: Option<int> = none();
+    if b.is_some() { panic("b is_some but should be none") }
+    match b {
+        some: val => panic("should be none"),
+        none      => (),
+    }
+}
+
+
+struct PayloadFoo {
+    bar: int,
+}
+
+enum Wrap {
+    some: PayloadFoo,
+    none,
+}
+
+@test
+fn enum_struct_payload() {
+    var w = some(PayloadFoo { bar: 42 });
+    assert(w!.bar == 42, "enum struct payload failed");
+}
+
+
+@test
+fn bool_enum() {
+    assert(true, "bool true");
+    assert(!false, "not false");
+    match true {
+        true  => (),
+        false => panic("should be true"),
+    }
+    match false {
+        true  => panic("should be false"),
+        false => (),
+    }
+}
+
+
+@test
+fn option_unwrap() {
+    var a = some(42);
+    assert(a! == 42, "unwrap some");
+    assert(some(-5)! + 5 == 0, "unwrap expr");
+}
+
+
+@test
+fn nested_option() {
+    var a = some(some(7));
+    match a {
+        some: inner => {
+            match inner {
+                some: val => assert(val == 7, "nested match"),
+                none      => panic("inner none"),
+            }
+        },
+        none => panic("outer none"),
+    }
+
+    var b = some(some(99));
+    assert(b!! == 99, "nested unwrap");
+}
+
+
+@test
+fn result_basic() {
+    var a: Result<int, str> = ok(100);
+    var b: Result<int, str> = err("fail");
+    match a {
+        ok:  val => assert(val == 100, "result ok"),
+        err: msg => panic("should be ok"),
+    }
+    match b {
+        ok:  val => panic("should be err"),
+        err: msg => assert(msg == "fail", "result err"),
+    }
+}
+
+
+fn or_return_option(): Option<int> {
+    var a = some(99);
+    var v = a?;
+    some(v)
+}
+
+fn or_return_nested(): Option<int> {
+    var a = some(50);
+    var v = a?;
+    var b = some(v * 2);
+    var w = b?;
+    some(w)
+}
+
+
+struct BigS { a: int, b: int, c: int, d: int, e: int }
+
+@test
+fn big_enum_payload() {
+    var b = some(BigS { a: 1, b: 2, c: 3, d: 4, e: 5 });
+    match b {
+        some: val => {
+            assert(val.a == 1, "big a");
+            assert(val.b == 2, "big b");
+            assert(val.c == 3, "big c");
+            assert(val.d == 4, "big d");
+            assert(val.e == 5, "big e");
+        },
+        none => panic("should be some"),
+    }
+}
+
+
+struct Env {
+    opt: Option<int>,
+    nested: Option<Option<int> >,
+}
+
+@test
+fn struct_enum_fields() {
+    var s = Env {
+        opt: some(5),
+        nested: some(some(10)),
+    };
+    assert(s.opt! == 5, "struct opt unwrap");
+    assert(s.nested!! == 10, "struct nested unwrap");
+}
+
+@test
+fn enum_assign_unwrap() {
+    var s = Env { opt: some(1), nested: none() };
+    s.opt! = 99;
+    assert(s.opt! == 99, "assign unwrap opt");
+}
+
+fn enum_assign_or_return(): Option<Env> {
+    var s = Env { opt: some(1), nested: none() };
+    s.opt? = 88;
+    some(s)
+}
+
+
+@test
+fn closure_option() {
+    var x = 5;
+    var f = || {
+        var opt = some(x + 10);
+        opt!
+    };
+    assert(f() == 15, "closure option unwrap");
+}

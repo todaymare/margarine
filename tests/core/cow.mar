@@ -1,0 +1,37 @@
+import "pkg:std" as std;
+use std::*;
+
+struct CowPoint {
+    x: int,
+    y: int,
+}
+
+@test
+fn cow_int_list() {
+    var a = [1, 2, 3];
+    var b = a;
+    b[0] = 99;
+    assert(a[0] == 1, "COW: int list original unchanged");
+    assert(b[0] == 99, "COW: int list copy mutated");
+
+    var c = [CowPoint { x: 1, y: 2 }, CowPoint { x: 3, y: 4 }];
+    var d = c;
+    d[0] = CowPoint { x: 5, y: 6 };
+    assert(c[0].x == 1, "COW: struct field check");
+    assert(d[0].x == 5, "COW: struct copy mutated");
+}
+
+@test
+fn cow_rc_list() {
+    var a = [$rc(5), $rc(10), $rc(15)];
+    var b = a;
+
+    assert($rc_get(b[0]) == 5, "copy shares same rc elements");
+
+    b[0] = $rc(99);
+
+    assert($rc_get(a[0]) == 5, "COW: original list rc element unchanged");
+    assert($rc_get(b[0]) == 99, "COW: copy list rc element mutated");
+    assert($rc_get(a[1]) == 10, "COW: original other elements unchanged");
+    assert($rc_get(b[1]) == 10, "COW: copy other elements preserved");
+}
