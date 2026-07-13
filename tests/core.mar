@@ -3,3 +3,5 @@ mod rc;
 mod closure;
 mod cow;
 mod enums;
+mod misc;
+mod panic;

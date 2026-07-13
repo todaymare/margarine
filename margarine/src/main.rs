@@ -55,6 +55,7 @@ fn main() {
 
         "test" => {
             let path = args.next().unwrap_or_else(|| ".".to_string());
+            let filter = args.next();
             let arena = Arena::new();
             let mut sm = StringMap::new(&arena);
             let files = FileData::open(path, &mut sm).unwrap();
@@ -84,7 +85,7 @@ fn main() {
                     .output()
             );
 
-            run_tests(&tests);
+            run_tests(&tests, filter);
             return;
         },
 
@@ -115,12 +116,12 @@ fn main() {
 }
 
 
-fn run_tests(tests: &[(String, bool)]) {
+fn run_tests(tests: &[(String, bool)], filter: Option<String>) {
     if tests.is_empty() {
         println!();
         println!("running 0 tests");
         println!();
-        println!("test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s");
+        println!("test result: ok. 0 passed; 0 failed; 0 ignored; finished in 0.00s");
         return;
     }
 
@@ -130,6 +131,8 @@ fn run_tests(tests: &[(String, bool)]) {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(3000);
+
+    let filter = filter.or_else(|| std::env::var("MARGARINE_TEST_FILTER").ok());
 
     unsafe {
         let lib_path = CString::new("artifacts/program.dylib").unwrap();
@@ -145,9 +148,17 @@ fn run_tests(tests: &[(String, bool)]) {
 
         let mut passed = 0u32;
         let mut failed = 0u32;
+        let mut ignored = 0u32;
         let mut fails = String::new();
 
         for (name, should_panic) in tests {
+            if let Some(ref filter) = filter {
+                if !name.contains(filter.as_str()) {
+                    ignored += 1;
+                    continue;
+                }
+            }
+
             let label = if *should_panic { " - should panic" } else { "" };
             print!("test '{}'{} ... ", name, label);
             io::stdout().flush().unwrap();
@@ -253,8 +264,8 @@ fn run_tests(tests: &[(String, bool)]) {
         let elapsed = start.elapsed();
         let result = if failed == 0 { "ok".green() } else { "FAILED".red() };
         println!(
-            "test result: {}. {} passed; {} failed; 0 ignored; 0 measured; 0 filtered out; finished in {:.2}s",
-            result, passed, failed, elapsed.as_secs_f64()
+            "test result: {}. {} passed; {} failed; {} ignored; finished in {:.2}s",
+            result, passed, failed, ignored, elapsed.as_secs_f64()
         );
         println!();
     }

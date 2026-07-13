@@ -1,0 +1,12 @@
+import "pkg:std" as std;
+use std::*;
+
+@test(should_panic)
+fn panic_caught() {
+    panic("this should be caught");
+}
+
+@test(should_panic)
+fn assert_false_panics() {
+    assert(false, "this assert should fail");
+}
