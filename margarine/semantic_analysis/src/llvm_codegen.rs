@@ -383,7 +383,8 @@ pub fn run<'a>(
 
     let dump = module.dump_to_str();
 
-    std::fs::write("out.ll", dump.as_str().as_bytes()).unwrap();
+    let _ = std::fs::create_dir("artifacts");
+std::fs::write("artifacts/out.ll", dump.as_str().as_bytes()).unwrap();
 }
 
 

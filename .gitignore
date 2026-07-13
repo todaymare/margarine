@@ -3,8 +3,4 @@
 
 build.lock
 /artifacts
-out.ll
-optimized.ll
-program.o
-program
 libmargarine.a

@@ -24,26 +24,26 @@ fn main() {
             println!("{:?}",
                 Command::new("llc")
                     .arg("-filetype=obj")
-                    .arg("out.ll")
-                    .arg("-o=program.o")
+                    .arg("artifacts/out.ll")
+                    .arg("-o=artifacts/program.o")
                     .output()
             );
 
             println!("{:?}",
                 Command::new("clang")
-                    .arg("program.o")
+                    .arg("artifacts/program.o")
                     .arg("libmargarine.a")
                     .arg("-lzstd")
                     .arg("-lz")
                     .arg("-lc++")
                     .arg("-lc++abi")
                     .arg("-o")
-                    .arg("program")
+                    .arg("artifacts/program")
                     .output()
             );
 
             println!("{}",
-                std::str::from_utf8(&Command::new("./program")
+                std::str::from_utf8(&Command::new("./artifacts/program")
                     .output()
                     .unwrap()
                     .stdout
@@ -65,8 +65,8 @@ fn main() {
                     .arg("-O2")
                     .arg("-filetype=obj")
                     .arg("-relocation-model=pic")
-                    .arg("out.ll")
-                    .arg("-o=program.o")
+                    .arg("artifacts/out.ll")
+                    .arg("-o=artifacts/program.o")
                     .output()
             );
 
@@ -74,13 +74,13 @@ fn main() {
                 Command::new("clang")
                     .arg("-shared")
                     .arg("libmargarine.a")
-                    .arg("program.o")
+                    .arg("artifacts/program.o")
                     .arg("-lzstd")
                     .arg("-lz")
                     .arg("-lc++")
                     .arg("-lc++abi")
                     .arg("-o")
-                    .arg("program.dylib")
+                    .arg("artifacts/program.dylib")
                     .output()
             );
 
@@ -132,10 +132,10 @@ fn run_tests(tests: &[(String, bool)]) {
         .unwrap_or(3000);
 
     unsafe {
-        let lib_path = CString::new("program.dylib").unwrap();
+        let lib_path = CString::new("artifacts/program.dylib").unwrap();
         let lib = libc::dlopen(lib_path.as_ptr(), libc::RTLD_NOW);
         if lib.is_null() {
-            println!("failed to load program.dylib");
+            println!("failed to load artifacts/program.dylib");
             return;
         }
 
