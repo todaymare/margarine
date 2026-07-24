@@ -2801,12 +2801,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     vec
                 };
 
-                let list_ty = out_if_err!();
-                let list_ty = list_ty.resolve(&[env.gens], self.syms);
-                let list_ty = self.to_llvm_ty(list_ty);
+                let list_type = out_if_err!();
+                let list_type = list_type.resolve(&[env.gens], self.syms);
+
+                let elem_type = self.syms.get_gens(list_type.gens(self.syms))[0].1;
+                let elem_repr = self.to_llvm_ty(elem_type).repr;
 
                 let buf = {
-                    let buf_size = list_ty.repr.size_of(self.module).unwrap() * exprs.len();
+                    let buf_size = elem_repr.size_of(self.module).unwrap() * exprs.len();
                     let buf_size = builder.const_int(self.i64, buf_size as i64, false);
                     let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*buf_size]);
                     ptr.as_ptr()
@@ -2815,7 +2817,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 for (i, &value) in llvm_exprs.iter().enumerate() {
                     let index = builder.const_int(self.i32, i as i64, false);
-                    let ptr = builder.gep(buf, list_ty.repr, index);
+                    let ptr = builder.gep(buf, elem_repr, index);
                     builder.store(ptr, value);
                 }
 

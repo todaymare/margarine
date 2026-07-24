@@ -1,0 +1,56 @@
+import "pkg:std" as std;
+use std::*;
+
+trait Printable {
+    fn print(self)
+}
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+impl Printable for Point {
+    fn print(self) {
+        println("a point");
+    }
+}
+
+@test
+fn trait_basic() {
+    var p = Point { x: 1, y: 2 };
+    p.print();
+}
+
+trait Setter {
+    fn set(self, val: int)
+}
+
+struct Wrapper {
+    val: int,
+}
+
+impl Setter for Wrapper {
+    fn set(self, val: int) {
+    }
+}
+
+@test
+fn trait_with_args() {
+    var w = Wrapper { val: 0 };
+    w.set(42);
+}
+
+trait Method {
+    fn method(self)
+}
+
+impl Method for int {
+    fn method(self) {
+    }
+}
+
+@test
+fn trait_call_on_int() {
+    1.method();
+}
