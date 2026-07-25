@@ -3128,6 +3128,33 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
     }
 
+    fn emit_rc_decrement(&mut self, builder: &mut Builder<'ctx>, ptr: Ptr<'ctx>) -> Bool<'ctx> {
+        let rc_ptr = builder.gep(ptr, *self.i64, builder.const_int(self.i64, 0, false));
+        let rc = builder.load(rc_ptr, *self.i64).as_integer();
+        let one = builder.const_int(self.i64, 1, false);
+        let new_rc = builder.sub_int(rc, one);
+        builder.store(rc_ptr, *new_rc);
+        let zero = builder.const_int(self.i64, 0, false);
+        builder.cmp_int(new_rc, zero, IntCmp::Eq)
+    }
+
+    fn emit_rc_drop(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        ptr: Ptr<'ctx>,
+        size_val: Integer<'ctx>,
+        on_zero: impl FnOnce(&mut Self, &mut Builder<'ctx>),
+    ) {
+        let is_zero = self.emit_rc_decrement(builder, ptr);
+        let dealloc_fn = self.dealloc_fn;
+        builder.ite(&mut (), is_zero,
+            |builder, _| {
+                on_zero(self, builder);
+                builder.call(dealloc_fn.0, dealloc_fn.1, &[*ptr, *size_val]);
+            },
+            |_, _| {},
+        );
+    }
 
     fn emit_drop(&mut self, builder: &mut Builder<'ctx>, value: Value<'ctx>, ty: Type) {
         let Ok(sym_id) = ty.sym(&self.syms) else {
@@ -3145,31 +3172,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             let ptr = value.as_ptr();
 
-            let rc_ptr = builder.gep(ptr, *self.i64, builder.const_int(self.i64, 0, false));
-            let rc = builder.load(rc_ptr, *self.i64).as_integer();
-            let one = builder.const_int(self.i64, 1, false);
-            let new_rc = builder.sub_int(rc, one);
-            builder.store(rc_ptr, *new_rc);
-
-            let zero = builder.const_int(self.i64, 0, false);
-            let is_zero = builder.cmp_int(new_rc, zero, IntCmp::Eq);
-
-            builder.ite(&mut () as &mut (), is_zero,
-            |builder, _| {
-                let offset = builder.const_int(self.i64, 1, false);
-                let data_ptr = builder.gep(ptr, *self.i64, offset);
+            self.emit_rc_drop(builder, ptr, size_val, |slf, builder| {
+                let offset = builder.const_int(slf.i64, 1, false);
+                let data_ptr = builder.gep(ptr, *slf.i64, offset);
                 let data = builder.load(data_ptr, llvm_elem.repr);
 
-                let _ = self.call_trait_method(
+                let _ = slf.call_trait_method(
                     builder, elem_ty,
                     SymbolId::DESTROY_TRAIT, StringMap::DESTROY_FUNC,
                     &[data],
                 );
 
-                self.emit_drop(builder, data, elem_ty);
-                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*ptr, *size_val]);
-            },
-            |_, _| {});
+                slf.emit_drop(builder, data, elem_ty);
+            });
 
             return;
         }
@@ -3182,30 +3197,22 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             let header = builder.load(value.as_ptr(), *self.list_ty).as_struct();
 
-            let refcount = builder.field_load(header, 0).as_integer();
-            let one = builder.const_int(self.i64, 1, false);
-            let new_rc = builder.sub_int(refcount, one);
+            let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
+            let header_size_val = builder.const_int(self.i64, header_size, false);
 
-            let rc_ptr = builder.field_ptr(value.as_ptr(), self.list_ty, 0);
-            builder.store(rc_ptr, *new_rc);
-
-            let zero = builder.const_int(self.i64, 0, false);
-            let is_zero = builder.cmp_int(new_rc, zero, IntCmp::Eq);
-
-            builder.ite(&mut (), is_zero, 
-            |builder, _| {
+            self.emit_rc_drop(builder, value.as_ptr(), header_size_val, |slf, builder| {
                 let len = builder.field_load(header, 1).as_integer();
                 let cap = builder.field_load(header, 2).as_integer();
                 let data = builder.field_load(header, 3).as_ptr();
 
-                let counter = builder.alloca(*self.i64);
+                let counter = builder.alloca(*slf.i64);
                 builder.store(counter, *len);
 
-                let one = builder.const_int(self.i64, 1, false);
-                let zero_val = builder.const_int(self.i64, 0, false);
+                let one = builder.const_int(slf.i64, 1, false);
+                let zero_val = builder.const_int(slf.i64, 0, false);
 
                 builder.loop_indefinitely(|builder, l| {
-                    let i = builder.load(counter, *self.i64).as_integer();
+                    let i = builder.load(counter, *slf.i64).as_integer();
                     let i = builder.sub_int(i, one);
                     builder.store(counter, *i);
 
@@ -3213,24 +3220,20 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     builder.ite(&mut () as &mut (), done,
                         |builder, _| { builder.loop_break(l); },
                         |builder, _| {
-                            let i_casted = builder.int_cast(i, *self.i32, false).as_integer();
+                            let i_casted = builder.int_cast(i, *slf.i32, false).as_integer();
                             let ptr = builder.gep(data, llvm_elem.repr, i_casted);
                             let elem = builder.load(ptr, llvm_elem.repr);
-                            self.emit_drop(builder, elem, elem_ty);
+                            slf.emit_drop(builder, elem, elem_ty);
                         },
                     );
                 });
 
-                let elem_size = llvm_elem.repr.size_of(self.module).unwrap() as i64;
-                let elem_size_val = builder.const_int(self.i64, elem_size, false);
-                let cap_i64 = builder.int_cast(cap, *self.i64, false).as_integer();
+                let elem_size = llvm_elem.repr.size_of(slf.module).unwrap() as i64;
+                let elem_size_val = builder.const_int(slf.i64, elem_size, false);
+                let cap_i64 = builder.int_cast(cap, *slf.i64, false).as_integer();
                 let buf_size = builder.mul_int(cap_i64, elem_size_val);
-                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*data, *buf_size]);
-
-                let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
-                let header_size_val = builder.const_int(self.i64, header_size, false);
-                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*value.as_ptr(), *header_size_val]);
-            }, |_, _| {});
+                builder.call(slf.dealloc_fn.0, slf.dealloc_fn.1, &[*data, *buf_size]);
+            });
 
             return;
         }
