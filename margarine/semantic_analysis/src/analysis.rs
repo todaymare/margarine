@@ -1306,17 +1306,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     self.error(id, Error::ValueUpdateTypeMismatch { lhs: lhs_anal.ty, rhs: rhs_anal.ty, source });
                 }
 
-                match self.ast.expr(lhs) {
-                      Expr::Identifier(_, _)
-                    | Expr::IndexList { .. }
-                    | Expr::AccessField { .. }
-                    | Expr::Unwrap(_)
-                    | Expr::OrReturn(_) if lhs_anal.is_mut => (),
-
-                    _ => {
-                        let range = self.ast.range(lhs);
-                        self.error(id, Error::AssignIsNotLHSValue { source: range });
-                    }
+                if !lhs_anal.is_mut || !self.is_assignable_place(lhs) {
+                    let range = self.ast.range(lhs);
+                    self.error(id, Error::AssignIsNotLHSValue { source: range });
                 }
             },
 
@@ -1400,6 +1392,21 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let _ = self.block(path, scope, &body);
 
             },
+        }
+    }
+
+
+    fn is_assignable_place(&self, expr: ExprId) -> bool {
+        match self.ast.expr(expr) {
+            Expr::Identifier(_, _) => true,
+
+            Expr::AccessField { val, .. }
+            | Expr::IndexList { list: val, .. } => self.is_assignable_place(val),
+
+            Expr::Unwrap(val)
+            | Expr::OrReturn(val) => self.is_assignable_place(val),
+
+            _ => false,
         }
     }
 
@@ -2594,4 +2601,3 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         }
     }
 }
-

@@ -35,3 +35,43 @@ fn cow_rc_list() {
     assert($rc_get(a[1]) == 10, "COW: original other elements unchanged");
     assert($rc_get(b[1]) == 10, "COW: copy other elements preserved");
 }
+
+@test
+fn cow_list_field_assign() {
+    var a = [CowPoint { x: 1, y: 2 }, CowPoint { x: 3, y: 4 }];
+    var b = a;
+    b[0].x = 99;
+    assert(a[0].x == 1, "COW: field assign - original unchanged");
+    assert(b[0].x == 99, "COW: field assign - copy mutated");
+}
+
+struct CowBoo {
+    far: int,
+}
+
+struct CowX {
+    boo: [CowBoo],
+}
+
+struct CowNested {
+    x: CowX,
+}
+
+@test
+fn cow_nested_list_field_assign() {
+    var a = [CowNested {
+        x: CowX {
+            boo: [CowBoo { far: 1 }, CowBoo { far: 2 }],
+        },
+    }];
+    var b = a;
+    b[0].x.boo[1].far = 50;
+    assert(a[0].x.boo[1].far == 2, "COW: nested path - original unchanged");
+    assert(b[0].x.boo[1].far == 50, "COW: nested path - copy mutated");
+}
+
+@test(should_panic)
+fn cow_list_write_out_of_bounds_panics() {
+    var list = [1];
+    list[1] = 99;
+}

@@ -1,29 +1,9 @@
 pub mod tys;
 
-use core::{alloc::Layout, ffi::CStr, ptr::{null, null_mut}, fmt::Write};
+use core::{alloc::Layout, ptr::{null, null_mut}, fmt::Write};
 use std::{io::Write as _, marker::PhantomData};
 
 use common::symbol_id::SymbolId;
-
-// Import from the binary
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-struct MultiFileError {
-    errs_count: u32,
-    errs: *const *const i8,
-}
-
-
-unsafe extern "C" {
-    static fileCount : u32;
-
-    static lexerErrors  : MultiFileError;
-    static parserErrors : MultiFileError;
-
-    static semaErrors : *const i8;
-    static semaErrorsLen : u32;
-}
-
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
@@ -75,7 +55,18 @@ pub extern "C" fn print_int(size: i32) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAbort() -> ! {
-    println!("margarine abort");
+    panic_message("margarine abort")
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn margarinePanic(message: Str) -> ! {
+    panic_message(message.read())
+}
+
+
+fn panic_message(message: &str) -> ! {
+    println!("panic: {message}");
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     std::process::abort();
@@ -85,7 +76,7 @@ pub extern "C" fn margarineAbort() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAssertNotNull(ptr: *mut u8) {
     if ptr.is_null() {
-        margarineAbort();
+        panic_message("null pointer dereference");
     }
 }
 
@@ -477,7 +468,7 @@ struct Enum<T> {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct Str {
+pub struct Str {
     data: *const u8,
 }
 
@@ -546,47 +537,6 @@ impl Any {
     }
 }
 
-
-
-#[unsafe(no_mangle)]
-pub extern "C" fn margarineError(error_type: u32, error_file: u32, error_id: u32) -> ! {
-    println!("aborting processes: encountered a compiler error");
-
-    match error_type {
-        0 => {
-            assert!(error_file < unsafe { fileCount });
-
-            let file = unsafe { *(((&lexerErrors) as *const MultiFileError).add(error_file as usize)) };
-            assert!(error_id < file.errs_count);
-
-            let err = unsafe { *file.errs.add(error_id as usize) };
-            let cstr = unsafe { CStr::from_ptr(err) };
-            println!("{}", cstr.to_str().unwrap());
-        }
-
-        1 => {
-            assert!(error_file < unsafe { fileCount });
-
-            let file = unsafe { *(((&parserErrors) as *const MultiFileError).add(error_file as usize)) };
-            assert!(error_id < file.errs_count);
-
-            let err = unsafe { *file.errs.add(error_id as usize) };
-            let cstr = unsafe { CStr::from_ptr(err) };
-            println!("{}", cstr.to_str().unwrap());
-        },
-
-        2 => {
-            assert!(error_id < unsafe { semaErrorsLen });
-
-            let err = unsafe { *((&semaErrors) as *const *const i8).add(error_id as usize) };
-            let cstr = unsafe { CStr::from_ptr(err) };
-            println!("{}", cstr.to_str().unwrap());
-        }
-        _ => println!("invalid error type id"),
-    }
-
-    std::process::abort();
-}
 
 
 

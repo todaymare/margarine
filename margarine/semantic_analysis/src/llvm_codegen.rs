@@ -16,6 +16,7 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
     ty_info: &'me TyInfo<'out>,
     ty_mappings: HashMap<TypeHash, TypeMapping<'ctx>>,
+    errors: [Vec<Vec<String>>; 3],
 
     externs: HashMap<StringIndex, (FunctionType<'ctx>, FunctionPtr<'ctx>)>,
     funcs: HashMap<TypeHash, Function<'ctx>>,
@@ -26,10 +27,8 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     i32: IntegerTy<'ctx>,
     i64: IntegerTy<'ctx>,
 
-    /// fn(): !
-    abort_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
-    /// fn(err_kind: i32, err_file: i32, err_index: i32): !
-    err_fn  : (FunctionPtr<'ctx>, FunctionType<'ctx>),
+    /// fn(message: str): !
+    panic_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
     /// fn(size: i32): ptr
     alloc_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
     /// fn(ptr, size: i64): void
@@ -131,7 +130,7 @@ enum BlockTerminator<'a> {
 
 pub fn run<'a>(
     string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
-    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], file_count: u32, startups: &[SymbolId], tests: &[SymbolId],
+    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], _file_count: u32, startups: &[SymbolId], tests: &[SymbolId],
 ) {
     //println!("running llvm");
 
@@ -141,18 +140,12 @@ pub fn run<'a>(
     {
         let void = ctx.void();
 
-        let abort_fn_ty = void.fn_ty(ctx.arena, &[], false);
-        let abort_fn = module.function("margarineAbort", abort_fn_ty);
-        abort_fn.set_linkage(Linkage::External);
-        abort_fn.set_noreturn(ctx.as_ctx_ref());
-
-        let i32_ty = ctx.integer(32);
-        let err_fn_ty = void.fn_ty(ctx.arena, &[*i32_ty, *i32_ty, *i32_ty], false);
-        let err_fn = module.function("margarineError", err_fn_ty);
-        err_fn.set_linkage(Linkage::External);
-        err_fn.set_noreturn(ctx.as_ctx_ref());
-
         let ptr = ctx.ptr();
+        let panic_fn_ty = void.fn_ty(ctx.arena, &[*ptr], false);
+        let panic_fn = module.function("margarinePanic", panic_fn_ty);
+        panic_fn.set_linkage(Linkage::External);
+        panic_fn.set_noreturn(ctx.as_ctx_ref());
+
         let i32_ty = ctx.integer(32);
         let alloc_fn_ty = ptr.fn_ty(ctx.arena, &[*ctx.integer(64)], false);
         let alloc_fn = module.function("margarineAlloc", alloc_fn_ty);
@@ -195,13 +188,13 @@ pub fn run<'a>(
             ns: nss,
             ast,
             ty_info,
+            errors,
             funcs: HashMap::new(),
             externs: HashMap::new(),
             ty_mappings: HashMap::new(),
             const_strs: Vec::new(),
             func_counter: 0,
-            abort_fn: (abort_fn, abort_fn_ty),
-            err_fn: (err_fn, err_fn_ty),
+            panic_fn: (panic_fn, panic_fn_ty),
             alloc_fn: (alloc_fn, alloc_fn_ty),
             dealloc_fn: (dealloc_fn, dealloc_fn_ty),
             rc_alloc_fn: (rc_alloc_fn, rc_alloc_fn_ty),
@@ -218,7 +211,7 @@ pub fn run<'a>(
         };
 
         conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn));
-        conv.externs.insert(conv.string_map.insert("margarineAbort"), (abort_fn_ty, abort_fn));
+        conv.externs.insert(conv.string_map.insert("margarinePanic"), (panic_fn_ty, panic_fn));
 
 
         // register primitives
@@ -264,120 +257,6 @@ pub fn run<'a>(
         builder.ret(*ctx.const_int(i32_ty, 0, false));
 
         module = conv.module;
-    }
-
-
-    // transfer errors into the binary
-    {
-        let u32_ty = ctx.integer(32);
-        let ptr_ty = ctx.ptr();
-        
-        let lex_error_files = &errors[0];
-        let parse_error_files = &errors[1];
-        let sema_errors = &errors[2][0];
-
-        // file count
-        {
-            let file_count_global = module.add_global(*u32_ty, "fileCount");
-            let file_count_value = ctx.const_int(u32_ty, file_count as i64, false);
-            file_count_global.set_initialiser(*file_count_value);
-        }
-
-
-        // lexer errors
-        {
-            let strct = ctx.structure("lexer_err_ty");
-            strct.set_fields(&[*u32_ty, *ptr_ty], false);
-
-            let errs_ty = ctx.array(*strct, parse_error_files.len());
-            let mut err_arr_values = Vec::with_capacity(parse_error_files.len());
-
-            for file in lex_error_files {
-                let file_err_array_ty = ctx.array(*ptr_ty, file.len());
-                let mut file_arr_values = Vec::with_capacity(file.len());
-
-                for s in file {
-                    let global = ctx.const_str(&*s);
-                    let ptr = module.add_global(*global.ty(), "");
-                    ptr.set_initialiser(*global);
-                    file_arr_values.push(*ptr);
-                }
-
-                // value arr
-                let ptr = module.add_global(*file_err_array_ty, "");
-                let arr = ctx.const_array(*ptr_ty, &file_arr_values);
-                ptr.set_initialiser(*arr);
-
-                let len = ctx.const_int(u32_ty, file.len() as i64, false);
-
-                let strct = ctx.const_struct(strct, &[*len, *ptr]);
-                err_arr_values.push(*strct);
-            }
-
-            // value arr
-            let ptr = module.add_global(*errs_ty, "lexerErrors");
-            let arr = ctx.const_array(*strct, &err_arr_values);
-            ptr.set_initialiser(*arr);
-        }
-
-
-        // parser errors
-        {
-            let strct = ctx.structure("parser_err_ty");
-            strct.set_fields(&[*u32_ty, *ptr_ty], false);
-
-            let errs_ty = ctx.array(*strct, parse_error_files.len());
-            let mut err_arr_values = Vec::with_capacity(parse_error_files.len());
-
-            for file in parse_error_files {
-                let file_err_array_ty = ctx.array(*ptr_ty, file.len());
-                let mut file_arr_values = Vec::with_capacity(file.len());
-
-                for s in file {
-                    let global = ctx.const_str(&*s);
-                    let ptr = module.add_global(*global.ty(), "");
-                    ptr.set_initialiser(*global);
-                    file_arr_values.push(*ptr);
-                }
-
-                // value arr
-                let ptr = module.add_global(*file_err_array_ty, "");
-                let arr = ctx.const_array(*ptr_ty, &file_arr_values);
-                ptr.set_initialiser(*arr);
-
-                let len = ctx.const_int(u32_ty, file.len() as i64, false);
-
-                let strct = ctx.const_struct(strct, &[*len, *ptr]);
-                err_arr_values.push(*strct);
-            }
-
-            // value arr
-            let ptr = module.add_global(*errs_ty, "parserErrors");
-            let arr = ctx.const_array(*strct, &err_arr_values);
-            ptr.set_initialiser(*arr);
-        }
-
-
-        // sema errors
-        let sema_err_array_ty = ctx.array(*ptr_ty, sema_errors.len());
-        let mut arr_values = Vec::with_capacity(sema_errors.len());
-
-        for e in sema_errors {
-            let global = ctx.const_str(&*e);
-            let ptr = module.add_global(*global.ty(), "");
-            ptr.set_initialiser(*global);
-            arr_values.push(*ptr);
-        }
-
-        let ptr = module.add_global(*sema_err_array_ty, "semaErrors");
-        let array = ctx.const_array(*ptr.ty(), &arr_values);
-        ptr.set_initialiser(*array);
-
-
-        let ptr = module.add_global(*u32_ty, "semaErrorsLen");
-        let num = ctx.const_int(u32_ty, sema_errors.len().try_into().unwrap(), false);
-        ptr.set_initialiser(*num);
-
     }
 
 
@@ -1150,24 +1029,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    fn error(&self, builder: &mut Builder<'_>, e: errors::ErrorId) {
-        let (err_ty, err_file, err_index) = match e {
-            ErrorId::Lexer(v) => (0, v.0, v.1.0),
-            ErrorId::Parser(v) => (1, v.0, v.1.0),
-            ErrorId::Sema(v) => (2, 0, v.0),
+    fn error(&mut self, builder: &mut Builder<'ctx>, e: errors::ErrorId) {
+        let message = match e {
+            ErrorId::Lexer((file, error)) => self.errors[0][file as usize][error.0 as usize].clone(),
+            ErrorId::Parser((file, error)) => self.errors[1][file as usize][error.0 as usize].clone(),
+            ErrorId::Sema(error) => self.errors[2][0][error.0 as usize].clone(),
             ErrorId::Bypass => {
                 builder.unreachable();
                 return;
             },
         };
 
-        let i32_ty = self.i32;
-
-        let err_ty    = builder.const_int(i32_ty, err_ty, false);
-        let err_file  = builder.const_int(i32_ty, err_file as i64, false);
-        let err_index = builder.const_int(i32_ty, err_index as i64, false);
-
-        builder.call(self.err_fn.0, self.err_fn.1, &[*err_ty, *err_file, *err_index]);
+        self.emit_panic(builder, &message);
         builder.unreachable();
     }
 
@@ -1476,7 +1349,110 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    fn resolve_lvalue_ptr(
+    fn ensure_unique_list_at(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        list_slot: Ptr<'ctx>,
+        elem_ty: Type,
+        llvm_ty: TypeMapping<'ctx>,
+    ) -> Ptr<'ctx> {
+        let list_val = builder.load(list_slot, *self.ctx.ptr()).as_ptr();
+        let header = builder.load(list_val, *self.list_ty).as_struct();
+        let refcount = builder.field_load(header, 0).as_integer();
+        let one_i64 = builder.const_int(self.i64, 1, false);
+        let needs_cow = builder.cmp_int(refcount, one_i64, IntCmp::SignedGt);
+
+        builder.ite(&mut (), needs_cow,
+        |builder, _| {
+            let new_rc = builder.sub_int(refcount, one_i64);
+            let rc_ptr = builder.field_ptr(list_val, self.list_ty, 0);
+            builder.store(rc_ptr, *new_rc);
+
+            let len = builder.field_load(header, 1).as_integer();
+            let cap = builder.field_load(header, 2).as_integer();
+            let old_data = builder.field_load(header, 3).as_ptr();
+
+            let elem_size = llvm_ty.repr.size_of(self.module).unwrap() as i64;
+            let elem_size_val = builder.const_int(self.i64, elem_size, false);
+            let buf_size = builder.mul_int(cap, elem_size_val);
+            let new_buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*buf_size]).as_ptr();
+
+            let zero_i64 = builder.const_int(self.i64, 0, false);
+            let counter = builder.alloca(*self.i64);
+            builder.store(counter, *zero_i64);
+
+            builder.loop_indefinitely(|builder, l| {
+                let i = builder.load(counter, *self.i64).as_integer();
+
+                let done = builder.cmp_int(i, len, IntCmp::SignedGe);
+                builder.ite(&mut () as &mut (), done,
+                    |builder, _| { builder.loop_break(l); },
+                    |builder, _| {
+                        let old_ptr = builder.gep(old_data, llvm_ty.repr, i);
+                        let old_elem = builder.load(old_ptr, llvm_ty.repr);
+                        let new_elem = self.emit_copy(builder, old_elem, elem_ty);
+
+                        let new_ptr = builder.gep(new_buf, llvm_ty.repr, i);
+                        builder.store(new_ptr, new_elem);
+
+                        let next_i = builder.add_int(i, one_i64);
+                        builder.store(counter, *next_i);
+                    },
+                );
+            });
+
+            let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
+            let header_size_val = builder.const_int(self.i64, header_size, false);
+            let new_header_ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*header_size_val]).as_ptr();
+
+            let new_header_strct = builder.struct_instance(self.list_ty, [*one_i64, *len, *cap, *new_buf]);
+            builder.store(new_header_ptr, *new_header_strct);
+
+            builder.store(list_slot, *new_header_ptr);
+        }, |_, _| {});
+
+        builder.load(list_slot, *self.ctx.ptr()).as_ptr()
+    }
+
+
+    fn emit_panic(&mut self, builder: &mut Builder<'ctx>, message: &str) {
+        let array_ty = self.ctx.array(*self.ctx.integer(8), message.len());
+        let strct_ty = self.ctx.structure("str");
+        strct_ty.set_fields(&[*self.i32, *array_ty], true);
+
+        let len = self.ctx.const_int(self.i32, message.len() as _, false);
+        let bytes = *self.ctx.const_str(message);
+        let value = self.ctx.const_struct(strct_ty, &[*len, bytes]);
+        let string = self.module.add_global(*strct_ty, "str");
+        string.set_initialiser(*value);
+
+        builder.call(self.panic_fn.0, self.panic_fn.1, &[*string]);
+    }
+
+
+    fn check_list_index(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        list_val: Ptr<'ctx>,
+        index: Integer<'ctx>,
+    ) {
+        let header = builder.load(list_val, *self.list_ty).as_struct();
+        let len = builder.field_load(header, 1).as_integer();
+        let is_lt_len = builder.cmp_int(index, len, IntCmp::SignedLt);
+        let zero = builder.const_int(self.i64, 0, false);
+        let is_ge_zero = builder.cmp_int(index, zero, IntCmp::SignedGe);
+        let is_in_bounds = builder.bool_and(is_lt_len, is_ge_zero);
+
+        builder.ite(&mut (), is_in_bounds,
+            |_, _| {},
+            |builder, _| {
+                self.emit_panic(builder, "list index out of bounds");
+            },
+        );
+    }
+
+
+    fn resolve_mut_lvalue_ptr(
         &mut self, env: &mut Env<'_, 'ctx>,
         builder: &mut Builder<'ctx>,
         expr: ExprId,
@@ -1489,7 +1465,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
-                let parent_ptr = self.resolve_lvalue_ptr(env, builder, val);
+                let parent_ptr = self.resolve_mut_lvalue_ptr(env, builder, val);
 
                 let ty = self.ty_info.expr(val).unwrap();
                 if ty.is_err(self.syms) { unreachable!() }
@@ -1514,13 +1490,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::IndexList { list, index } => {
-                let list_val = match self.ast.expr(list) {
-                    parser::nodes::expr::Expr::Identifier(name, _) => {
-                        let local = env.find_var(name).unwrap();
-                        builder.local_get(local).as_ptr()
-                    },
-                    _ => self.expr(env, builder, list).unwrap().as_ptr(),
-                };
+                let list_slot = self.resolve_mut_lvalue_ptr(env, builder, list);
                 let index_val = self.expr(env, builder, index).unwrap().as_integer();
 
                 let elem_ty = self.ty_info.expr(list).unwrap();
@@ -1528,6 +1498,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let elem_ty = self.syms.get_gens(elem_ty)[0].1;
                 let elem_ty = elem_ty.resolve(&[env.gens], self.syms);
                 let llvm_ty = self.to_llvm_ty(elem_ty);
+
+                let list_val = builder.load(list_slot, *self.ctx.ptr()).as_ptr();
+                self.check_list_index(builder, list_val, index_val);
+                let list_val = self.ensure_unique_list_at(builder, list_slot, elem_ty, llvm_ty);
 
                 let buf_ptr = builder.field_ptr(list_val, self.list_ty, 3);
                 let buf_ptr = builder.load(buf_ptr, *self.ctx.ptr()).as_ptr();
@@ -1559,7 +1533,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::AccessField { .. } => {
-                let ptr = self.resolve_lvalue_ptr(env, builder, expr);
+                let ty = self.ty_info.expr(expr).unwrap().resolve(&[env.gens], self.syms);
+                let llvm_ty = self.to_llvm_ty(ty);
+                let ptr = self.resolve_mut_lvalue_ptr(env, builder, expr);
+                let old_value = builder.load(ptr, llvm_ty.repr);
+                self.emit_drop(builder, old_value, ty);
                 builder.store(ptr, value);
             }
 
@@ -1586,7 +1564,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                         |builder, _| {
-                            builder.call(self.abort_fn.0, self.abort_fn.1, &[]);
+                            self.emit_panic(builder, "attempted to unwrap a none value");
                         }, 
                         );
 
@@ -1621,7 +1599,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         match cont.kind() {
                               ContainerKind::Tuple
                             | ContainerKind::Struct => {
-                                let field = self.resolve_lvalue_ptr(env, builder, expr);
+                                let field = self.resolve_mut_lvalue_ptr(env, builder, expr);
 
 
                                 let enum_struct = builder
@@ -1638,7 +1616,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                                 |builder, _| {
-                                    builder.call(self.abort_fn.0, self.abort_fn.1, &[]);
+                                    self.emit_panic(builder, "attempted to unwrap a none value");
                                 }, 
                                 );
 
@@ -1651,7 +1629,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             ContainerKind::Enum => {
                                 let val_ty = ty.resolve(&[env.gens], self.syms);
                                 let val_llvm_ty = self.to_llvm_ty(val_ty);
-                                let enum_ptr = self.resolve_lvalue_ptr(env, builder, val);
+                                let enum_ptr = self.resolve_mut_lvalue_ptr(env, builder, val);
                                 let strct = builder.load(enum_ptr, val_llvm_ty.repr).as_struct();
                                 let tag = builder.field_load(strct, 0);
 
@@ -1664,7 +1642,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                                 |builder, _| {
-                                    builder.call(self.abort_fn.0, self.abort_fn.1, &[]);
+                                    self.emit_panic(builder, "attempted to unwrap an invalid enum variant");
                                 }, 
                                 );
 
@@ -1750,7 +1728,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         match cont.kind() {
                               ContainerKind::Tuple
                             | ContainerKind::Struct => {
-                                let field = self.resolve_lvalue_ptr(env, builder, expr);
+                                let field = self.resolve_mut_lvalue_ptr(env, builder, expr);
 
 
                                 let enum_struct = builder
@@ -1788,7 +1766,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             ContainerKind::Enum => {
                                 let val_ty = ty.resolve(&[env.gens], self.syms);
                                 let val_llvm_ty = self.to_llvm_ty(val_ty);
-                                let enum_ptr = self.resolve_lvalue_ptr(env, builder, val);
+                                let enum_ptr = self.resolve_mut_lvalue_ptr(env, builder, val);
                                 let strct = builder.load(enum_ptr, val_llvm_ty.repr).as_struct();
                                 let tag = builder.field_load(strct, 0);
 
@@ -1826,99 +1804,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             }
 
 
-            Expr::IndexList { list, index } => {
-                let list_val = match self.ast.expr(list) {
-                    parser::nodes::expr::Expr::Identifier(name, _) => {
-                        let local = env.find_var(name).unwrap();
-                        builder.local_get(local).as_ptr()
-                    },
-                    _ => self.expr(env, builder, list).unwrap().as_ptr(),
-                };
-                let index_val = self.expr(env, builder, index).unwrap().as_integer();
-
-                let elem_ty = self.ty_info.expr(list).unwrap();
-                let elem_ty = elem_ty.gens(self.syms);
-                let elem_ty = self.syms.get_gens(elem_ty)[0].1;
-                let elem_ty = elem_ty.resolve(&[env.gens], self.syms);
-
+            Expr::IndexList { .. } => {
+                let elem_ty = self.ty_info.expr(expr).unwrap().resolve(&[env.gens], self.syms);
                 let llvm_ty = self.to_llvm_ty(elem_ty);
-
-                let list_ptr_slot = builder.alloca(*self.ctx.ptr());
-                builder.store(list_ptr_slot, *list_val);
-
-                let header = builder.load(list_val, *self.list_ty).as_struct();
-                let refcount = builder.field_load(header, 0).as_integer();
-                let one_i64 = builder.const_int(self.i64, 1, false);
-                let needs_cow = builder.cmp_int(refcount, one_i64, IntCmp::SignedGt);
-
-                builder.ite(&mut (), needs_cow,
-                |builder, _| {
-                    let new_rc = builder.sub_int(refcount, one_i64);
-                    let rc_ptr = builder.field_ptr(list_val, self.list_ty, 0);
-                    builder.store(rc_ptr, *new_rc);
-
-                    let len = builder.field_load(header, 1).as_integer();
-                    let cap = builder.field_load(header, 2).as_integer();
-                    let old_data = builder.field_load(header, 3).as_ptr();
-
-                    let elem_size = llvm_ty.repr.size_of(self.module).unwrap() as i64;
-                    let elem_size_val = builder.const_int(self.i64, elem_size, false);
-                    let buf_size = builder.mul_int(cap, elem_size_val);
-                    let new_buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*buf_size]).as_ptr();
-
-                    let zero_i64 = builder.const_int(self.i64, 0, false);
-                    let counter = builder.alloca(*self.i64);
-                    builder.store(counter, *zero_i64);
-
-                    builder.loop_indefinitely(|builder, l| {
-                        let i = builder.load(counter, *self.i64).as_integer();
-
-                        let done = builder.cmp_int(i, len, IntCmp::SignedGe);
-                        builder.ite(&mut () as &mut (), done,
-                            |builder, _| { builder.loop_break(l); },
-                            |builder, _| {
-                                let i_i32 = builder.int_cast(i, *self.i32, false).as_integer();
-                                let old_ptr = builder.gep(old_data, llvm_ty.repr, i_i32);
-                                let old_elem = builder.load(old_ptr, llvm_ty.repr);
-                                let new_elem = self.emit_copy(builder, old_elem, elem_ty);
-
-                                let new_ptr = builder.gep(new_buf, llvm_ty.repr, i_i32);
-                                builder.store(new_ptr, new_elem);
-
-                                let next_i = builder.add_int(i, one_i64);
-                                builder.store(counter, *next_i);
-                            },
-                        );
-                    });
-
-                    let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
-                    let header_size_val = builder.const_int(self.i64, header_size, false);
-                    let new_header_ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*header_size_val]).as_ptr();
-
-                    let new_header_strct = builder.struct_instance(self.list_ty, [*one_i64, *len, *cap, *new_buf]);
-                    builder.store(new_header_ptr, *new_header_strct);
-
-                    match self.ast.expr(list) {
-                        parser::nodes::expr::Expr::Identifier(name, _) => {
-                            let local = env.find_var(name).unwrap();
-                            builder.local_set(local, *new_header_ptr);
-                        },
-                        parser::nodes::expr::Expr::AccessField { .. } => {
-                            let ptr = self.resolve_lvalue_ptr(env, builder, list);
-                            builder.store(ptr, *new_header_ptr);
-                        },
-                        _ => {},
-                    }
-
-                    builder.store(list_ptr_slot, *new_header_ptr);
-                }, |_, _| {});
-
-                let current_list = builder.load(list_ptr_slot, *self.ctx.ptr()).as_ptr();
-
-                let buf_ptr = builder.field_ptr(current_list, self.list_ty, 3);
-                let buf_ptr = builder.load(buf_ptr, *self.ctx.ptr()).as_ptr();
-
-                let elem_ptr = builder.gep(buf_ptr, llvm_ty.repr, index_val);
+                let elem_ptr = self.resolve_mut_lvalue_ptr(env, builder, expr);
                 let old_elem = builder.load(elem_ptr, llvm_ty.repr);
                 self.emit_drop(builder, old_elem, elem_ty);
                 builder.store(elem_ptr, value);
@@ -2328,27 +2217,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     self.to_llvm_ty(ty)
                 };
 
+                self.check_list_index(builder, list_value.as_ptr(), index);
                 let strct = builder.load(list_value.as_ptr(), *self.list_ty).as_struct();
-                let len = builder.field_load(strct, 1).as_integer();
-                let len = builder.int_cast(len, *self.i64, true).as_integer();
-
                 let buf = builder.field_load(strct, 3).as_ptr();
-
-                let is_lt_len = builder.cmp_int(index, len, IntCmp::SignedLt);
-                let zero = builder.const_int(self.i64, 0, false);
-                let is_ge_zero = builder.cmp_int(index, zero, IntCmp::SignedGe);
-
-                let is_in_bounds = builder.bool_and(is_lt_len, is_ge_zero);
-
-                builder.ite(
-                &mut (),
-                is_in_bounds,
-                |_, _| {},
-
-                |builder, _| {
-                    // @todo: put a proper err msg
-                    builder.call(self.abort_fn.0, self.abort_fn.1, &[]);
-                });
 
                 let ptr = builder.gep(buf, elem_ty.repr, index);
                 builder.load(ptr, elem_ty.repr)
@@ -2851,7 +2722,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 |builder, _| {
-                    builder.call(self.abort_fn.0, self.abort_fn.1, &[]);
+                    self.emit_panic(builder, "attempted to unwrap a none value");
                 }, 
                 );
 
