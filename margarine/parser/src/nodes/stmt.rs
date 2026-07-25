@@ -1,7 +1,7 @@
 use common::{source::SourceRange, string_map::StringIndex};
 use sti::define_key;
 
-use crate::{nodes::Pattern, Block, DataType};
+use crate::{nodes::{decl::Attribute, NodeId, Pattern}, Block, DataType};
 
 use super::expr::ExprId;
 
@@ -27,5 +27,10 @@ pub enum Stmt<'a> {
         binding: Pattern<'a>,
         expr: ExprId,
         body: Block<'a>,
-    }
+    },
+
+    Attribute {
+        attr: Attribute<'a>,
+        node: NodeId,
+    },
 }

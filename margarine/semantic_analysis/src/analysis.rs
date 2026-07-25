@@ -156,7 +156,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 },
 
 
-                Decl::Attribute { decl, .. } => self.collect_names(path, ns_id, &[decl.into()], gen_count),
+                Decl::Attribute { attr, decl } => {
+                    if self.string_map.get(attr.name) == "silent" {
+                        self.silent_ranges.push(self.ast.range(decl));
+                    }
+                    self.collect_names(path, ns_id, &[decl.into()], gen_count);
+                },
 
                 _ => (),
             }
@@ -394,7 +399,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     match s.1 {
                         Ok(v) => {
                             if let Err(e) = ns.add_sym(item.range(), *s.0, *v) {
-                                Self::error_ex(&mut self.errors, &mut self.type_info, node, e);
+                                Self::error_ex(&mut self.errors, &mut self.error_nodes, &mut self.type_info, node, e);
                             }
                         },
                         Err(e) => ns.set_err_sym(*s.0, e.clone()),
@@ -1082,10 +1087,24 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             Decl::Extern { .. } => (),
 
             Decl::Attribute { decl: decl_id, attr } => {
+                if self.string_map.get(attr.name) == "silent" {
+                    for param in attr.params {
+                        self.error(n, Error::UnknownAttrParam {
+                            param: (param.range, param.name), attr: attr.name,
+                        });
+                    }
+                    self.decl(scope, ns, decl_id);
+                    return;
+                }
+
                 self.decl(scope, ns, decl_id);
 
                 match self.string_map.get(attr.name) {
                     "test" => {
+                        let mut decl_id = decl_id;
+                        while let Decl::Attribute { decl, .. } = self.ast.decl(decl_id) {
+                            decl_id = decl;
+                        }
                         let decl = self.ast.decl(decl_id);
                         let Decl::Function { 
                             sig: FunctionSignature {
@@ -1394,6 +1413,27 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let _ = self.block(path, scope, &body);
 
+            },
+
+
+            Stmt::Attribute { attr, node } => {
+                if self.string_map.get(attr.name) != "silent" {
+                    self.error(id, Error::UnknownAttr(attr.range, attr.name));
+                } else {
+                    for param in attr.params {
+                        self.error(id, Error::UnknownAttrParam {
+                            param: (param.range, param.name), attr: attr.name,
+                        });
+                    }
+                    self.silent_ranges.push(self.ast.range(id));
+                }
+
+                match node {
+                    NodeId::Stmt(stmt) => self.stmt(path, scope, stmt),
+                    NodeId::Expr(expr) => { self.expr(path, *scope, expr); },
+                    NodeId::Err(_) => (),
+                    NodeId::Decl(_) => unreachable!(),
+                }
             },
         }
     }

@@ -21,26 +21,26 @@ fn main() {
             let files = FileData::open(path, &mut sm).unwrap();
             let (_, _) = margarine::run(sm, files, false);
 
-            println!("{:?}",
-                Command::new("llc")
-                    .arg("-filetype=obj")
-                    .arg("artifacts/out.ll")
-                    .arg("-o=artifacts/program.o")
-                    .output()
-            );
+            let mut llc = Command::new("llc");
+            llc.arg("-filetype=obj")
+                .arg("artifacts/out.ll")
+                .arg("-o=artifacts/program.o");
+            if !run_step("emitting object...", &mut llc) {
+                return;
+            }
 
-            println!("{:?}",
-                Command::new("clang")
-                    .arg("artifacts/program.o")
-                    .arg("libmargarine.a")
-                    .arg("-lzstd")
-                    .arg("-lz")
-                    .arg("-lc++")
-                    .arg("-lc++abi")
-                    .arg("-o")
-                    .arg("artifacts/program")
-                    .output()
-            );
+            let mut clang = Command::new("clang");
+            clang.arg("artifacts/program.o")
+                .arg("libmargarine.a")
+                .arg("-lzstd")
+                .arg("-lz")
+                .arg("-lc++")
+                .arg("-lc++abi")
+                .arg("-o")
+                .arg("artifacts/program");
+            if !run_step("linking...", &mut clang) {
+                return;
+            }
 
             println!("{}",
                 std::str::from_utf8(&Command::new("./artifacts/program")
@@ -61,29 +61,29 @@ fn main() {
             let files = FileData::open(path, &mut sm).unwrap();
             let (_, tests) = margarine::run(sm, files, true);
 
-            println!("{:?}",
-                Command::new("llc")
-                    .arg("-O2")
-                    .arg("-filetype=obj")
-                    .arg("-relocation-model=pic")
-                    .arg("artifacts/out.ll")
-                    .arg("-o=artifacts/program.o")
-                    .output()
-            );
+            let mut llc = Command::new("llc");
+            llc.arg("-O2")
+                .arg("-filetype=obj")
+                .arg("-relocation-model=pic")
+                .arg("artifacts/out.ll")
+                .arg("-o=artifacts/program.o");
+            if !run_step("emitting object...", &mut llc) {
+                return;
+            }
 
-            println!("{:?}",
-                Command::new("clang")
-                    .arg("-shared")
-                    .arg("libmargarine.a")
-                    .arg("artifacts/program.o")
-                    .arg("-lzstd")
-                    .arg("-lz")
-                    .arg("-lc++")
-                    .arg("-lc++abi")
-                    .arg("-o")
-                    .arg("artifacts/program.dylib")
-                    .output()
-            );
+            let mut clang = Command::new("clang");
+            clang.arg("-shared")
+                .arg("libmargarine.a")
+                .arg("artifacts/program.o")
+                .arg("-lzstd")
+                .arg("-lz")
+                .arg("-lc++")
+                .arg("-lc++abi")
+                .arg("-o")
+                .arg("artifacts/program.dylib");
+            if !run_step("linking...", &mut clang) {
+                return;
+            }
 
             run_tests(&tests, filter);
             return;
@@ -111,6 +111,30 @@ fn main() {
         _ => {
             println!("invalid command");
             return;
+        }
+    }
+}
+
+
+fn run_step(label: &str, cmd: &mut Command) -> bool {
+    println!("{}", label.green().bold());
+    match cmd.output() {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            eprintln!("{} failed with {}", label, output.status);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stdout.trim().is_empty() {
+                eprintln!("{stdout}");
+            }
+            if !stderr.trim().is_empty() {
+                eprintln!("{stderr}");
+            }
+            false
+        }
+        Err(err) => {
+            eprintln!("{} failed to start: {err}", label);
+            false
         }
     }
 }

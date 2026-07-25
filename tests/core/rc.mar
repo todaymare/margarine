@@ -39,7 +39,14 @@ struct NotImplicitStruct {}
 fn accepts_not_implicit<T: NotImplicit>(value: T) {}
 
 @test(should_panic)
-fn custom_trait_is_not_implicit() {
+@silent
+fn custom_trait_is_not_implicit_for_function() {
+    accepts_not_implicit(NotImplicitStruct {});
+}
+
+@test(should_panic)
+fn custom_trait_is_not_implicit_for_statement() {
+    @silent
     accepts_not_implicit(NotImplicitStruct {});
 }
 

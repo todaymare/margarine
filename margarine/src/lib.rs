@@ -52,6 +52,7 @@ pub struct Files {
 pub struct CompilationResult<'a> {
     file_offsets: Vec<(StringIndex, u32)>,
     pub errors: CompilationErrors,
+    silent_ranges: Vec<SourceRange>,
     tests: Vec<(SymbolId, bool)>,
     ast: AST<'a>,
     startups: KVec<u32, SymbolId>,
@@ -67,6 +68,7 @@ pub struct CompilationErrors {
     pub lexer_errors : Vec<KVec<LexerError , lexer::errors::Error>>,
     pub parser_errors: Vec<KVec<ParserError, parser::errors::Error>>,
     pub sema_errors  : KVec<SemaError  , semantic_analysis::errors::Error>,
+    pub sema_error_nodes: KVec<SemaError, NodeId>,
 }
 
 
@@ -107,33 +109,29 @@ impl<'me> Compiler<'me> {
         let mut top_modules = HashSet::new();
 
         let mut file_offsets = vec![];
+        let mut package_urls: HashMap<String, String> = HashMap::new();
 
         while let Some((decl, name, path, is_root, depth)) = stack.pop() {
             let file_path = self.string_map.get(path);
 
             if !self.silent {
+                let display = display_compile_path(file_path, &package_urls);
                 if depth != 0 {
-                    let name =
-                    if file_path.starts_with("artifacts/") {
-                        &file_path["artifacts/".len()..]
-                    } else { &file_path };
-
                     println!(
-                        "{}{}{} {} {}.mar", 
-                        "|".dark_grey(), 
-                        "-".repeat(depth).dark_grey(), 
-                        ">".dark_grey(), 
+                        "{}{}{} {} {}",
+                        "|".dark_grey(),
+                        "-".repeat(depth).dark_grey(),
+                        ">".dark_grey(),
                         "compiling:".green().bold(),
-                        name.replace("<>", "::")
+                        display,
                     );
                 } else {
                     println!(
-                        "{} {}.mar",
+                        "{} {}",
                         "compiling:".green().bold(),
-                        file_path,
+                        display,
                     );
                 }
-
             }
 
 
@@ -214,6 +212,8 @@ impl<'me> Compiler<'me> {
                         let dir_hash = sha2::Sha256::digest(url.as_bytes());
                         let dir_hash = u64::from_be_bytes(dir_hash[..8].try_into().unwrap());
                         let dir_hash = format!("{:016x}", dir_hash);
+
+                        package_urls.insert(dir_hash.clone(), url.clone());
 
                         let hash = self.string_map.insert(&dir_hash);
 
@@ -387,6 +387,20 @@ impl<'me> Compiler<'me> {
 
 
         let tests: Vec<(SymbolId, bool)> = sema.tests.iter().copied().collect();
+        let mut silent_ranges = sema.silent_ranges;
+        silent_ranges.sort_unstable_by_key(|range| range.range());
+        let mut merged_silent_ranges: Vec<SourceRange> = Vec::with_capacity(silent_ranges.len());
+        for range in silent_ranges {
+            let (start, end) = range.range();
+            if let Some(last) = merged_silent_ranges.last_mut() {
+                let (last_start, last_end) = last.range();
+                if start <= last_end {
+                    *last = SourceRange::new(last_start, last_end.max(end));
+                    continue;
+                }
+            }
+            merged_silent_ranges.push(range);
+        }
 
 
         CompilationResult {
@@ -396,7 +410,10 @@ impl<'me> Compiler<'me> {
                 lexer_errors: lex_errors,
                 parser_errors: parse_errors,
                 sema_errors: sema.errors,
+                sema_error_nodes: sema.error_nodes,
             },
+
+            silent_ranges: merged_silent_ranges,
 
             tests,
             startups: sema.startups,
@@ -457,14 +474,22 @@ impl<'me> CompilationResult<'me> {
         }
 
         let mut sema_errors = Vec::with_capacity(self.errors.sema_errors.len());
-        for s in &self.errors.sema_errors {
-            let report = display(s.1, &comp.string_map, &comp.files.files, &mut self.syms);
+        for (id, error) in &self.errors.sema_errors {
+            let report = display(error, &comp.string_map, &comp.files.files, &mut self.syms);
             #[cfg(not(feature = "fuzzer"))]
-            println!("{report}");
+            if !self.is_silent_error(self.errors.sema_error_nodes[id]) {
+                println!("{report}");
+            }
             sema_errors.push(report);
         }
 
         [lex_error_files, parse_error_files, vec![sema_errors]]
+    }
+
+    fn is_silent_error(&self, node: NodeId) -> bool {
+        let (start, end) = self.ast.range(node).range();
+        let index = self.silent_ranges.partition_point(|range| range.range().0 <= start);
+        index != 0 && end <= self.silent_ranges[index - 1].range().1
     }
 }
 
@@ -521,9 +546,29 @@ pub fn run<'str>(string_map: StringMap, files: FileData, tests: bool) -> (Vec<u8
 }
 
 
+fn display_compile_path(file_path: &str, package_urls: &HashMap<String, String>) -> String {
+    let path = file_path.strip_prefix("artifacts/").unwrap_or(file_path);
+    let mut parts = path.split('/');
+    let Some(first) = parts.next() else {
+        return format!("{}.mar", file_path.replace("<>", "::"));
+    };
+
+    if let Some(url) = package_urls.get(first) {
+        let rest: Vec<&str> = parts.collect();
+        if rest.is_empty() || rest == ["lib"] {
+            return url.clone();
+        }
+        return format!("/{}.mar", rest.join("/"));
+    }
+
+    format!("{}.mar", path.replace("<>", "::"))
+}
+
+
 struct BuildLock {
     packages: HashMap<String, String>, // alias -> commit hash
 }
+
 
 impl BuildLock {
     fn load() -> Self {
@@ -560,4 +605,3 @@ impl BuildLock {
         self.packages.insert(alias, commit);
     }
 }
-

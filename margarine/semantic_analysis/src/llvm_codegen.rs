@@ -1312,6 +1312,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 Ok(())
             },
+
+
+            parser::nodes::stmt::Stmt::Attribute { node, .. } => {
+                match node {
+                    NodeId::Stmt(stmt) => self.stmt(env, builder, stmt),
+                    NodeId::Expr(expr) => self.expr(env, builder, expr).map(|_| ()),
+                    NodeId::Err(error) => Err(error),
+                    NodeId::Decl(_) => unreachable!(),
+                }
+            },
         }
 
     }

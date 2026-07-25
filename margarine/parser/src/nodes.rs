@@ -158,6 +158,10 @@ impl AST<'_> {
                 Stmt::ForLoop { binding, expr, body } => {
                     sti::write!(&mut s, "{id} -> {expr};");
                 },
+
+                Stmt::Attribute { node, .. } => {
+                    sti::write!(&mut s, "{id} -> {node:?};");
+                },
             }
         }
 

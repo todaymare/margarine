@@ -33,6 +33,8 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub tests   : Vec<(SymbolId, bool)>,
 
     pub errors     : KVec<SemaError, Error>,
+    pub error_nodes: KVec<SemaError, NodeId>,
+    pub silent_ranges: std::vec::Vec<SourceRange>,
     base_scope  : ScopeId,
 }
 
@@ -87,6 +89,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             string_map,
             namespaces: ns,
             errors: KVec::new(),
+            error_nodes: KVec::new(),
+            silent_ranges: std::vec::Vec::new(),
             type_info: TyInfo {
                 exprs: KVec::new(),
                 stmts: KVec::new(),
@@ -170,10 +174,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             && v.is_root(&analyzer.syms) {
                 let error = Error::UnableToInfer(v.range(), v.name());
                 Self::error_ex(
-                    &mut analyzer.errors, 
-                    &mut analyzer.type_info, 
-                    v.node(), 
-                    error
+                    &mut analyzer.errors,
+                    &mut analyzer.error_nodes,
+                    &mut analyzer.type_info,
+                    v.node(),
+                    error,
                 );
             }
         }
@@ -183,14 +188,22 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
     fn error(&mut self, node: impl Into<NodeId>, error: Error) -> ErrorId {
-        Self::error_ex(&mut self.errors, &mut self.type_info, node, error)
+        Self::error_ex(&mut self.errors, &mut self.error_nodes, &mut self.type_info, node, error)
     }
 
 
-    fn error_ex(errors: &mut KVec<SemaError, Error>, ty_info: &mut TyInfo, node: impl Into<NodeId>, error: Error) -> ErrorId {
+    fn error_ex(
+        errors: &mut KVec<SemaError, Error>,
+        error_nodes: &mut KVec<SemaError, NodeId>,
+        ty_info: &mut TyInfo,
+        node: impl Into<NodeId>,
+        error: Error,
+    ) -> ErrorId {
+        let node = node.into();
         let error = errors.push(error);
+        error_nodes.push(node);
         let error = ErrorId::Sema(error);
-        match node.into() {
+        match node {
             NodeId::Expr(id) => {
                 let val = &mut ty_info.exprs[id];
                 match val {

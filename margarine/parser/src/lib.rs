@@ -666,11 +666,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
                 let stmt = self.statement(settings)?;
 
-                let NodeId::Decl(decl) = stmt
-                else { return Ok(stmt.into()) };
+                match stmt {
+                    NodeId::Decl(decl) => self.ast.add_decl(
+                        Decl::Attribute { attr, decl },
+                        SourceRange::new(start, self.current_range().end()),
+                    ).into(),
 
-                self.ast.add_decl(Decl::Attribute { attr, decl },
-                                SourceRange::new(start, self.current_range().end())).into()
+                    node => self.ast.add_stmt(
+                        Stmt::Attribute { attr, node },
+                        SourceRange::new(start, self.current_range().end()),
+                    ).into(),
+                }
             },
 
             _ => self.assignment(&settings)?.into(),
