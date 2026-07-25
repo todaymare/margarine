@@ -102,7 +102,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             errors: KVec::new(),
             error_nodes: KVec::new(),
             silent_ranges: std::vec::Vec::new(),
-            cfg_env: std::env::vars().collect(),
+            cfg_env: {
+                let mut env = std::env::vars().collect::<HashMap<_, _>>();
+                env.insert("COMPILATION_TARGET".to_string(), llvm_api::ctx::default_target_triple());
+                env
+            },
             cfg_decls: HashMap::new(),
             cfg_stmts: HashMap::new(),
             type_info: TyInfo {

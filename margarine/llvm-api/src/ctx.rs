@@ -7,6 +7,13 @@ use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, intege
 
 pub struct Context<'ctx>(ContextRef<'ctx>);
 
+pub fn default_target_triple() -> String {
+    let triple = unsafe { LLVMGetDefaultTargetTriple() };
+    let value = unsafe { CStr::from_ptr(triple) }.to_string_lossy().into_owned();
+    unsafe { llvm_sys::core::LLVMDisposeMessage(triple) };
+    value
+}
+
 #[derive(Clone, Copy)]
 pub struct ContextRef<'ctx>(ContextImpl<'ctx>);
 

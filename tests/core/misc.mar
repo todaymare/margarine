@@ -36,6 +36,12 @@ fn cfg_disabled_declaration() {
 }
 
 @test
+@cfg(env("COMPILATION_TARGET"))
+fn cfg_compilation_target_is_injected() {
+    assert(true, "the compiler did not provide COMPILATION_TARGET");
+}
+
+@test
 @cfg(env("PATH", "__margarine_cfg_disabled__"))
 fn cfg_disabled_test() {
     this_name_does_not_exist;
