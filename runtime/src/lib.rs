@@ -68,6 +68,17 @@ pub extern "C" fn margarineRcDrop(ptr: *mut u8, total_size: u64) {
 
 
 #[unsafe(no_mangle)]
+pub extern "C" fn margarineStringFromUtf8(bytes: *const u8, len: u64) -> *mut u8 {
+    let buf = margarineRcAlloc(16 + len);
+    unsafe {
+        *(buf.add(8) as *mut u64) = len;
+        core::ptr::copy_nonoverlapping(bytes, buf.add(16), len as usize);
+    }
+    buf
+}
+
+
+#[unsafe(no_mangle)]
 pub extern "C" fn print_int(size: i32) {
     println!("{size}");
 }
@@ -92,12 +103,13 @@ pub extern "C" fn margarineAssertNotNull(ptr: *mut u8) {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn print_raw(value: Any) {
+    let buf_ptr = unsafe { *(value.inner.add(24) as *const *mut u8) };
     match SymbolId(value.ty as u32) {
-        SymbolId::I64 => print!("{}", unsafe { *value.ptr.cast::<i64>() }),
-        SymbolId::F64 => print!("{}", unsafe { *value.ptr.cast::<f64>() }),
-        SymbolId::BOOL => print!("{}", unsafe { *value.ptr.cast::<Enum<()>>() }.tag != 0),
+        SymbolId::I64 => print!("{}", unsafe { *buf_ptr.cast::<i64>() }),
+        SymbolId::F64 => print!("{}", unsafe { *buf_ptr.cast::<f64>() }),
+        SymbolId::BOOL => print!("{}", unsafe { *buf_ptr.cast::<Enum<()>>() }.tag != 0),
         SymbolId::STR => {
-            let s = unsafe { *value.ptr.cast::<Str>() };
+            let s = unsafe { *buf_ptr.cast::<Str>() };
             print!("{}", s.read());
         }
 
@@ -187,7 +199,7 @@ unsafe extern "C" fn str_nth(s: Str, n: i64) -> Str {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_lines_iter(s: Str) -> *mut Lines {
     alloc(Lines {
-        str: s,
+        str: s.clone(),
         offset: 0,
     })
 }
@@ -216,7 +228,7 @@ unsafe extern "C" fn str_lines_iter_next(s: *mut Lines) -> Enum<Str> {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_split_at(s: Str, idx: i64) -> Tuple2<Str, Str>{
     let idx = idx as u64;
-    if idx as u32 >= s.len() as u32 {
+    if idx >= s.len() {
         panic!("index '{idx}' is out of bounds");
     }
 
@@ -252,30 +264,6 @@ unsafe extern "C" fn str_hash(s: Str, hasher: *const ()) {
 
 }
 
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn str_parse(s: Str, ty: i64) -> Enum<Any> {
-    let s = s.read().trim();
-    match SymbolId(ty as u32) {
-       SymbolId::I64 => {
-            let Ok(data) = s.parse::<i64>()
-            else { return Enum { tag: 1, data: Any { ptr: null_mut(), ty: 0 } } };
-
-            Enum { tag: 0, data: Any::new(data, SymbolId::I64.0) }
-        }
-
-        SymbolId::F64 => {
-            let Ok(data) = s.parse::<f64>()
-            else { return Enum { tag: 1, data: Any { ptr: null_mut(), ty: 0 } } };
-
-            Enum { tag: 0, data: Any::new(data, SymbolId::F64.0) }
-        }
-
-        _ => {
-            Enum { tag: 1, data: Any { ptr: null_mut(), ty: 0 } }
-        },
-    }
-}
 
 
 #[unsafe(no_mangle)]
@@ -459,10 +447,9 @@ fn alloc<T>(value: T) -> *mut T {
 }
 
 
-#[derive(Clone, Copy)]
 #[repr(C)]
 struct Any {
-    ptr: *mut (),
+    inner: *mut u8,
     ty: u32,
 }
 
@@ -505,10 +492,10 @@ macro_rules! test {
 
 impl Str {
     pub fn new(s: &str) -> Str {
-        let buf = margarineAlloc((4 + s.len()) as u64);
+        let buf = margarineRcAlloc(16 + s.len() as u64);
         unsafe {
-            *buf.cast::<u32>() = s.len() as u32;
-            let data = buf.cast::<u32>().add(1).cast::<u8>();
+            *(buf.add(8) as *mut u64) = s.len() as u64;
+            let data = buf.add(16);
             let slice = core::slice::from_raw_parts_mut(data, s.len());
 
             slice.copy_from_slice(s.as_bytes());
@@ -518,31 +505,26 @@ impl Str {
     }
 
 
-    pub fn len(&self) -> u32 {
-        unsafe { *self.data.cast::<u32>() }
+    pub fn len(&self) -> u64 {
+        unsafe { *(self.data.add(8) as *const u64) }
     }
 
 
     pub fn read(&self) -> &str {
-        let len = self.len();
+        let len = self.len() as usize;
         unsafe {
-        let data = self.data.cast::<u32>().add(1).cast::<u8>();
-        let slice = core::slice::from_raw_parts(data, len as usize);
+        let data = self.data.add(16);
+        let slice = core::slice::from_raw_parts(data, len);
 
         let result = core::str::from_utf8(slice).unwrap();
         result
 
         }
     }
-}
 
 
-impl Any {
-    pub fn new<T>(data: T, ty: u32) -> Any {
-        Any {
-            ptr: alloc(data).cast(),
-            ty,
-        }
+    pub fn clone(self) -> Str {
+        unsafe { Str { data: margarineRcClone(self.data as *mut u8) } }
     }
 }
 

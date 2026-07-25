@@ -417,16 +417,6 @@ impl<'me> SymbolMap<'me> {
         }
 
 
-        // any
-        {
-            let pending = slf.pending(ns_map, StringMap::ANY, 0);
-            assert_eq!(pending, SymbolId::ANY);
-
-            let sym = Symbol::new(StringMap::ANY, &[], SymbolKind::Opaque);
-            slf.add_sym(pending, sym);
-        }
-
-
         // list
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
@@ -457,70 +447,6 @@ impl<'me> SymbolMap<'me> {
             slf.add_sym(pending, sym);
         }
 
-
-        // $any
-        {
-            let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::BUILTIN_ANY, 1);
-            assert_eq!(pending, SymbolId::BUILTIN_ANY);
-
-            let args = [
-                FunctionArgument::new(
-                    StringMap::VALUE, 
-                    Generic::new(
-                        SourceRange::ZERO, 
-                        GenericKind::Generic(t),
-                        None
-                    )
-                )
-            ];
-
-            let sym = Symbol::new(
-                StringMap::BUILTIN_ANY,
-                arena.alloc_new([t]),
-                SymbolKind::Function(FunctionTy::new(
-                        arena.alloc_new(args),
-                        Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::ANY, &[]), None),
-                        FunctionKind::Any,
-                        None,
-                )));
-
-            slf.add_sym(pending, sym);
-        }
-
-
-        // $downcast_any
-        {
-            let t = BoundedGeneric::new(StringMap::T, &[]);
-
-            let pending = slf.pending(ns_map, StringMap::BUILTIN_DOWNCAST_ANY, 1);
-            assert_eq!(pending, SymbolId::BUILTIN_DOWNCAST_ANY);
-
-            let args = [
-                FunctionArgument::new(
-                    StringMap::VALUE, 
-                    Generic::new(
-                        SourceRange::ZERO, 
-                        GenericKind::Sym(SymbolId::ANY, &[]),
-                        None
-                    )
-                )
-            ];
-
-            let opt_gens = [Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)];
-
-            let sym = Symbol::new(
-                StringMap::BUILTIN_DOWNCAST_ANY,
-                arena.alloc_new([t]),
-                SymbolKind::Function(FunctionTy::new(
-                    arena.alloc_new(args),
-                    Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::OPTION, arena.alloc_new(opt_gens)), None),
-                    FunctionKind::DowncastAny,
-                    None,
-                )));
-
-            slf.add_sym(pending, sym);
-        }
 
         // $size_of
         {
@@ -824,6 +750,40 @@ impl<'me> SymbolMap<'me> {
         }
 
 
+        // $ptr_write_uninit<T>(p: ptr<T>, value: T)
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let pending = slf.pending(ns_map, StringMap::PTR_WRITE_UNINIT, 1);
+            assert_eq!(pending, SymbolId::PTR_WRITE_UNINIT);
+
+            let ptr_ty = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::PTR, arena.alloc_new([Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)])),
+                None
+            );
+
+            let args = [
+                FunctionArgument::new(StringMap::VALUE, ptr_ty),
+                FunctionArgument::new(
+                    StringMap::VALUE,
+                    Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)
+                )
+            ];
+
+            let sym = Symbol::new(
+                StringMap::PTR_WRITE_UNINIT,
+                arena.alloc_new([t]),
+                SymbolKind::Function(FunctionTy::new(
+                        arena.alloc_new(args),
+                        Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None),
+                        FunctionKind::PtrWriteUninit,
+                        None,
+                )));
+
+            slf.add_sym(pending, sym);
+        }
+
+
         // $ptr_null<T>(): ptr<T>
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
@@ -921,7 +881,6 @@ impl<'me> SymbolMap<'me> {
             slf.add_sym(pending, sym);
         }
 
-
         // Destroy
         {
             let pending = slf.pending(ns_map, StringMap::DESTROY_TRAIT, 0);
@@ -956,6 +915,36 @@ impl<'me> SymbolMap<'me> {
                     )]),
                 })
             );
+
+            slf.add_sym(pending, sym);
+        }
+
+
+        // $ptr_drop<T>(p: ptr<T>)
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let pending = slf.pending(ns_map, StringMap::PTR_DROP, 1);
+            assert_eq!(pending, SymbolId::PTR_DROP);
+
+            let ptr_ty = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::PTR, arena.alloc_new([Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)])),
+                None
+            );
+
+            let args = [
+                FunctionArgument::new(StringMap::VALUE, ptr_ty),
+            ];
+
+            let sym = Symbol::new(
+                StringMap::PTR_DROP,
+                arena.alloc_new([t]),
+                SymbolKind::Function(FunctionTy::new(
+                        arena.alloc_new(args),
+                        Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None),
+                        FunctionKind::PtrDrop,
+                        None,
+                )));
 
             slf.add_sym(pending, sym);
         }

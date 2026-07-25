@@ -34,9 +34,6 @@ pub enum FunctionKind {
 
     TypeId,
     SizeOf,
-    Any,
-    DowncastAny,
-
     Trait,
 
     Rc,
@@ -47,6 +44,8 @@ pub enum FunctionKind {
     PtrFree,
     PtrRead,
     PtrWrite,
+    PtrWriteUninit,
+    PtrDrop,
     PtrNull,
     PtrOffset,
     PtrCast,

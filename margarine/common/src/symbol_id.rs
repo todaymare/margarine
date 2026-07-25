@@ -14,25 +14,24 @@ impl SymbolId {
     pub const OPTION : Self = Self(10);
     pub const RESULT : Self = Self(13);
     pub const STR    : Self = Self(16);
-    pub const ANY    : Self = Self(17);
-    pub const LIST   : Self = Self(18);
-    pub const BUILTIN_TYPE_ID: Self = Self(19);
-    pub const BUILTIN_ANY    : Self = Self(20);
-    pub const BUILTIN_DOWNCAST_ANY : Self = Self(21);
-    pub const BUILTIN_SIZE_OF : Self = Self(22);
-    pub const EQ_TRAIT : Self = Self(23);
-    pub const RC : Self = Self(24);
-    pub const BUILTIN_RC : Self = Self(25);
-    pub const RC_GET : Self = Self(26);
-    pub const RC_SET : Self = Self(27);
-    pub const PTR_ALLOC  : Self = Self(28);
-    pub const PTR_FREE   : Self = Self(29);
-    pub const PTR_READ   : Self = Self(30);
-    pub const PTR_WRITE  : Self = Self(31);
-    pub const PTR_NULL   : Self = Self(32);
-    pub const PTR_OFFSET : Self = Self(33);
-    pub const PTR_CAST   : Self = Self(34);
-    pub const DESTROY_TRAIT : Self = Self(35);
+    pub const LIST   : Self = Self(17);
+    pub const BUILTIN_TYPE_ID: Self = Self(18);
+    pub const BUILTIN_SIZE_OF : Self = Self(19);
+    pub const EQ_TRAIT : Self = Self(20);
+    pub const RC : Self = Self(21);
+    pub const BUILTIN_RC : Self = Self(22);
+    pub const RC_GET : Self = Self(23);
+    pub const RC_SET : Self = Self(24);
+    pub const PTR_ALLOC  : Self = Self(25);
+    pub const PTR_FREE   : Self = Self(26);
+    pub const PTR_READ   : Self = Self(27);
+    pub const PTR_WRITE  : Self = Self(28);
+    pub const PTR_WRITE_UNINIT : Self = Self(29);
+    pub const PTR_NULL   : Self = Self(30);
+    pub const PTR_OFFSET : Self = Self(31);
+    pub const PTR_CAST   : Self = Self(32);
+    pub const DESTROY_TRAIT : Self = Self(33);
+    pub const PTR_DROP       : Self = Self(34);
 
 
     pub fn supports_arith(self) -> bool {
