@@ -68,8 +68,10 @@ impl<'str> StringMap<'str> {
     pub const PTR_CAST   : StringIndex = StringIndex(52);
     pub const DESTROY_TRAIT : StringIndex = StringIndex(53);
     pub const DESTROY_FUNC  : StringIndex = StringIndex(54);
+    pub const PTR_DROP      : StringIndex = StringIndex(55);
+    pub const PTR_WRITE_UNINIT : StringIndex = StringIndex(56);
 
-    pub const ROOT : StringIndex = StringIndex(55);
+    pub const ROOT : StringIndex = StringIndex(57);
 
  
     #[inline(always)]
@@ -144,6 +146,8 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("$ptr_cast"), Self::PTR_CAST);
         assert_eq!(s.insert("Destroy"), Self::DESTROY_TRAIT);
         assert_eq!(s.insert("destroy"), Self::DESTROY_FUNC);
+        assert_eq!(s.insert("$ptr_drop"), Self::PTR_DROP);
+        assert_eq!(s.insert("$ptr_write_uninit"), Self::PTR_WRITE_UNINIT);
         assert_eq!(s.insert("root"), Self::ROOT);
         s
     }

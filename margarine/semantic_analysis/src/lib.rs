@@ -127,10 +127,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let _ = add_sym!(STR);
             let _ = add_sym!(RANGE);
             let _ = add_sym!(BUILTIN_TYPE_ID);
-            let _ = add_sym!(BUILTIN_ANY);
-            let _ = add_sym!(BUILTIN_DOWNCAST_ANY);
             let _ = add_sym!(BUILTIN_SIZE_OF);
-            let _ = add_sym!(ANY);
             let _ = add_sym!(EQ_TRAIT);
             let _ = add_sym!(DESTROY_TRAIT);
             let _ = add_sym!(RC);
@@ -144,6 +141,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let _ = add_sym!(PTR_NULL);
             let _ = add_sym!(PTR_OFFSET);
             let _ = add_sym!(PTR_CAST);
+            let _ = add_sym!(PTR_DROP);
+            let _ = add_sym!(PTR_WRITE_UNINIT);
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
