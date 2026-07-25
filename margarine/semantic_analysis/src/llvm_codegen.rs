@@ -6,7 +6,7 @@ use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, Co
 use parser::nodes::{decl::{DeclGeneric, Decl}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
 use sti::{hash::fxhash::{FxHasher32, FxHasher64}, static_assert};
 
-use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind}, AnalysisResult, TyChecker, TyInfo};
+use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind, TraitImplementation}, AnalysisResult, TyChecker, TyInfo};
 
 pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     string_map: &'me mut StringMap<'str>,
@@ -3179,10 +3179,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         args: &[Value<'ctx>],
     ) -> Option<Value<'ctx>> {
         let sym = ty.sym(self.syms).ok()?;
-        let ns = {
-            let traits = self.syms.traits(sym);
-            let (ns, _, _) = traits.get(&trait_id)?;
-            *ns
+        let ns = match self.syms.trait_implementation(sym, trait_id)? {
+            TraitImplementation::Explicit(ns, _, _) => ns,
+            TraitImplementation::Synthesized(_) => return None,
         };
 
         let func_sym = self.ns.get_ns(ns).get_sym(func_name).unwrap().ok()?;

@@ -5,7 +5,7 @@ use errors::ErrorId;
 use parser::nodes::{decl::{DeclId}, NodeId};
 use sti::{arena::Arena, define_key, ext::FromIn, key::Key, vec::KVec};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind, Trait}};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind, Trait, TraitImplementation, TraitSynthesis}};
 
 use super::{ty::Type, Symbol};
 
@@ -94,6 +94,27 @@ impl<'me> SymbolMap<'me> {
 
     pub fn traits(&mut self, sym: SymbolId) -> &mut HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [BoundedGeneric<'me>])> {
         &mut self.syms[sym].2
+    }
+
+
+    pub fn trait_implementation(&self, sym: SymbolId, trait_id: SymbolId) -> Option<TraitImplementation<'me>> {
+        if let Some(&(ns, ty, gens)) = self.syms[sym].2.get(&trait_id) {
+            return Some(TraitImplementation::Explicit(ns, ty, gens));
+        }
+
+        let SymbolKind::Trait(trait_sym) = self.sym(trait_id).kind() else {
+            return None;
+        };
+
+        match trait_sym.synthesis {
+            TraitSynthesis::None => None,
+            synthesis => Some(TraitImplementation::Synthesized(synthesis)),
+        }
+    }
+
+
+    pub fn implements_trait(&self, sym: SymbolId, trait_id: SymbolId) -> bool {
+        self.trait_implementation(sym, trait_id).is_some()
     }
 
 
@@ -508,6 +529,7 @@ impl<'me> SymbolMap<'me> {
                             None,
                         )
                     )]),
+                    synthesis: TraitSynthesis::None,
                 })
             );
 
@@ -913,6 +935,7 @@ impl<'me> SymbolMap<'me> {
                             None,
                         )
                     )]),
+                    synthesis: TraitSynthesis::UniversalNoop,
                 })
             );
 

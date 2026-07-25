@@ -19,6 +19,30 @@ struct RcDestroyCounter {
     id: int,
 }
 
+struct ImplicitDestroy {}
+
+fn accepts_destroy<T: Destroy>(value: T) {}
+
+@test
+fn implicit_destroy_trait() {
+    accepts_destroy(ImplicitDestroy {});
+    accepts_destroy(42);
+    var item = $rc(ImplicitDestroy {});
+}
+
+trait NotImplicit {
+    fn not_implicit(self)
+}
+
+struct NotImplicitStruct {}
+
+fn accepts_not_implicit<T: NotImplicit>(value: T) {}
+
+@test(should_panic)
+fn custom_trait_is_not_implicit() {
+    accepts_not_implicit(NotImplicitStruct {});
+}
+
 impl Destroy for RcDestroyCounter {
     fn destroy(self) {
     }

@@ -745,7 +745,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         funcs.push((f.name, FunctionTy::new(args.leak(), ret, FunctionKind::Trait, None)));
                     }
 
-                    self.syms.add_sym(sym, Symbol::new(name, &[], SymbolKind::Trait(Trait { funcs: funcs.leak() })));
+                    self.syms.add_sym(sym, Symbol::new(name, &[], SymbolKind::Trait(Trait {
+                        funcs: funcs.leak(),
+                        synthesis: crate::syms::TraitSynthesis::None,
+                    })));
                 }
 
 
@@ -2288,10 +2291,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     if sym_g.bounds.is_empty() { continue }
 
                     let sym = value.sym(&self.syms)?;
-                    let traits = self.syms.traits(sym);
-
                     for bound in sym_g.bounds {
-                        if traits.contains_key(bound) { continue }
+                        if self.syms.implements_trait(sym, *bound) { continue }
 
                         self.error(
                             lhs_expr,

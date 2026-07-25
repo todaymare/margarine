@@ -32,6 +32,21 @@ pub enum SymbolKind<'me> {
 #[derive(Debug, Clone, Copy)]
 pub struct Trait<'me> {
     pub funcs: &'me [(StringIndex, FunctionTy<'me>)],
+    pub synthesis: TraitSynthesis,
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraitSynthesis {
+    None,
+    UniversalNoop,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum TraitImplementation<'me> {
+    Explicit(NamespaceId, sym_map::Generic<'me>, &'me [sym_map::BoundedGeneric<'me>]),
+    Synthesized(TraitSynthesis),
 }
 
 
@@ -44,4 +59,3 @@ impl<'me> Symbol<'me> {
         Self::new(name, &[], SymbolKind::Namespace)
     }
 }
-
