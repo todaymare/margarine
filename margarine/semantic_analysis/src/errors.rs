@@ -23,16 +23,22 @@ pub enum Error {
         expected: &'static str,
     },
 
-    UnknownAttr(SourceRange, StringIndex),
+    UnknownAttr(SourceRange),
 
     UnknownAttrParam {
-        param: (SourceRange, StringIndex),
-        attr: StringIndex,
+        param: SourceRange,
+        attr: SourceRange,
     },
 
-    InOutValueWithoutInOutBinding { source: SourceRange },
-    InOutBindingWithoutInOutValue { source: SourceRange },
-    InOutValueIsNotAssignable { source: SourceRange },
+    InvalidCfg {
+        source: SourceRange,
+        expected: &'static str,
+    },
+
+    MissingCfgEnvironment {
+        source: SourceRange,
+        name: StringIndex,
+    },
 
     NameIsAlreadyDefined {
         source: SourceRange,
@@ -214,6 +220,18 @@ pub enum Error {
     },
 
     AssignIsNotLHSValue {
+        source: SourceRange,
+    },
+
+    InOutValueWithoutInOutBinding {
+        source: SourceRange,
+    },
+
+    InOutBindingWithoutInOutValue {
+        source: SourceRange,
+    },
+
+    InOutValueIsNotAssignable {
         source: SourceRange,
     },
 
@@ -671,15 +689,26 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             },
 
             
-            Error::UnknownAttr(source, _) => {
+            Error::UnknownAttr(source) => {
                 fmt.error("unknown attribute")
                     .highlight(*source);
             },
 
             Error::UnknownAttrParam { attr, param } => {
-                let msg = format!("is not a valid parameter for attribute '{}'", fmt.string(*attr));
-                fmt.error("unknown attribute parameter")
-                    .highlight_with_note(param.0, &msg);
+                let mut error = fmt.error("unknown attribute parameter");
+                error.highlight_with_note(*param, "is not valid for this attribute");
+                error.highlight_with_note(*attr, "attribute declared here");
+            },
+
+            Error::InvalidCfg { source, expected } => {
+                fmt.error("invalid cfg predicate")
+                    .highlight_with_note(*source, expected);
+            },
+
+            Error::MissingCfgEnvironment { source, name } => {
+                let msg = format!("environment variable '{}' is not defined", fmt.string(*name));
+                fmt.error("missing cfg environment variable")
+                    .highlight_with_note(*source, &msg);
             },
 
             Error::InvalidValueForAttr { attr, value, expected } => {

@@ -1,5 +1,6 @@
 use common::{source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use errors::ErrorId;
+use lexer::Literal;
 use sti::define_key;
 
 use crate::{nodes::NodeId, Block, DataType};
@@ -7,10 +8,25 @@ use crate::{nodes::NodeId, Block, DataType};
 define_key!(pub DeclId(u32));
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+pub enum AttributeValue {
+    Identifier(StringIndex),
+    Literal(Literal),
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Attribute<'a> {
-    pub name: StringIndex,
+    pub value: AttributeValue,
     pub range: SourceRange,
     pub params: &'a [Attribute<'a>],
+}
+
+impl Attribute<'_> {
+    pub fn identifier(&self) -> Option<StringIndex> {
+        match self.value {
+            AttributeValue::Identifier(value) => Some(value),
+            AttributeValue::Literal(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]

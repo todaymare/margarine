@@ -14,15 +14,49 @@ fn swap(p: (int, int)): (int, int) {
     (p.1, p.0)
 }
 
-fn increment(&value: int) { value = value + 1; }
-fn swap_inout(&lhs: int, &rhs: int) { var temp = lhs; lhs = rhs; rhs = temp; }
-fn replace<T>(&value: T, replacement: T) { value = replacement; }
+fn increment(&value: int) {
+    value = value + 1;
+}
+
+fn swap_inout(&lhs: int, &rhs: int) {
+    var temp = lhs;
+    lhs = rhs;
+    rhs = temp;
+}
+
+fn replace<T>(&value: T, replacement: T) {
+    value = replacement;
+}
+
 fn accepts_value(value: int) {}
 
-@test
-fn bitwise_and_is_not_inout() { assert((6 & 3) == 2, "bitwise and changed while adding in-out values"); }
+@cfg(env("PATH", "__margarine_cfg_disabled__"))
+fn cfg_disabled_declaration() {
+    this_name_does_not_exist;
+}
 
-struct InOutValue { value: int, }
+@test
+@cfg(env("PATH", "__margarine_cfg_disabled__"))
+fn cfg_disabled_test() {
+    this_name_does_not_exist;
+}
+
+@test
+@cfg(all(env("PATH"), not(env("PATH", "__margarine_cfg_disabled__"))))
+fn cfg_env_and_logical_predicates() {
+    @cfg(env("PATH", "__margarine_cfg_disabled__"))
+    this_name_does_not_exist;
+    assert(true, "enabled cfg test did not run");
+}
+
+@test
+fn bitwise_and_is_not_inout() {
+    assert((6 & 3) == 2, "bitwise and changed while adding in-out values");
+}
+
+struct InOutValue {
+    value: int,
+}
 
 @test
 fn inout_values() {
@@ -64,15 +98,24 @@ fn inout_generic_rc() {
 
 @test(should_panic)
 @silent
-fn inout_requires_marker() { var value = 1; increment(value); }
+fn inout_requires_marker() {
+    var value = 1;
+    increment(value);
+}
 
 @test(should_panic)
 @silent
-fn inout_rejects_unexpected_marker() { var value = 1; accepts_value(&value); }
+fn inout_rejects_unexpected_marker() {
+    var value = 1;
+    accepts_value(&value);
+}
 
 @test(should_panic)
 @silent
-fn inout_rejects_non_place() { var value = 1; increment(&(value + 1)); }
+fn inout_rejects_non_place() {
+    var value = 1;
+    increment(&(value + 1));
+}
 
 @test
 fn tuple_funcs() {

@@ -1,5 +1,5 @@
 #![feature(slice_partition_dedup)]
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}};
 use errors::Error;
@@ -35,7 +35,17 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub errors     : KVec<SemaError, Error>,
     pub error_nodes: KVec<SemaError, NodeId>,
     pub silent_ranges: std::vec::Vec<SourceRange>,
+    cfg_env: HashMap<String, String>,
+    cfg_decls: HashMap<DeclId, CfgState>,
+    cfg_stmts: HashMap<StmtId, CfgState>,
     base_scope  : ScopeId,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CfgState {
+    Enabled,
+    Disabled,
+    Errored(ErrorId),
 }
 
 
@@ -48,6 +58,7 @@ pub struct TyInfo<'out> {
     idents: HashMap<ExprId, Option<SymbolId>>,
     trait_funcs: HashMap<ExprId, SymbolId>,
     impls: HashMap<DeclId, (Generic<'out>, Generic<'out>, &'out [BoundedGeneric<'out>])>,
+    pub disabled_cfg_stmts: HashSet<StmtId>,
 }
 
 
@@ -91,6 +102,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             errors: KVec::new(),
             error_nodes: KVec::new(),
             silent_ranges: std::vec::Vec::new(),
+            cfg_env: std::env::vars().collect(),
+            cfg_decls: HashMap::new(),
+            cfg_stmts: HashMap::new(),
             type_info: TyInfo {
                 exprs: KVec::new(),
                 stmts: KVec::new(),
@@ -99,6 +113,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 idents: HashMap::new(),
                 trait_funcs: HashMap::new(),
                 impls: HashMap::new(),
+                disabled_cfg_stmts: HashSet::new(),
             },
             ast,
             startups: Vec::new(),

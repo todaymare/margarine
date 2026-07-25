@@ -7,7 +7,7 @@ use dt::{DataType, DataTypeKind};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{decl::{Attribute, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, CallArgument, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
+use nodes::{decl::{Attribute, AttributeValue, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, CallArgument, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{alloc::Alloc, arena::Arena, vec::{KVec, Vec}};
 
 use crate::nodes::{decl::DeclGeneric, expr::{BinaryOperator, ExprId}, Pattern};
@@ -388,7 +388,13 @@ impl<'out> Parser<'_, 'out, '_> {
 
 
     fn parse_attr(&mut self, start: u32) -> Result<Attribute<'out>, ErrorId> {
-        let name = self.expect_identifier()?;
+        let value = match self.current_kind() {
+            TokenKind::Identifier(value) => AttributeValue::Identifier(value),
+            TokenKind::Literal(value) => AttributeValue::Literal(value),
+            token => return Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedIdentifier {
+                source: self.current_range(), token,
+            })))),
+        };
 
         let params: &[Attribute<'out>] = 
         if self.peek_is(TokenKind::LeftParenthesis) {
@@ -406,7 +412,7 @@ impl<'out> Parser<'_, 'out, '_> {
             &[]
         };
 
-        Ok(Attribute { name, range: SourceRange::new(start, self.current_range().end()), params })
+        Ok(Attribute { value, range: SourceRange::new(start, self.current_range().end()), params })
     }
 
 

@@ -425,7 +425,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 let result = self.block(&mut env, &mut builder, &*body);
-                
+
                 if let Some(e) = self.ty_info.decl(sym_func.decl().unwrap()) {
                     self.error(&mut builder, e);
                 } else {
@@ -1217,6 +1217,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         &mut self, env: &mut Env<'_, 'ctx>,
         builder: &mut Builder<'ctx>, stmt: StmtId
     ) -> Result<(), ErrorId> {
+        if self.ty_info.disabled_cfg_stmts.contains(&stmt) {
+            return Ok(());
+        }
+
         macro_rules! out_if_err {
             () => {{
                 match self.ty_info.stmt(stmt) {
@@ -2559,9 +2563,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let mut builder = func_ptr.builder(self.ctx, llvm_func_ty);
 
-                let mut env = Env {
-                    vars: Vec::new(),
-                    inouts: Vec::new(),
+                    let mut env = Env {
+                        vars: Vec::new(),
+                        inouts: Vec::new(),
                         loop_id: None,
                         gens: combined_gens,
                         info: HashMap::new(),
@@ -3284,12 +3288,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
     }
 
+    fn drop_all_locals(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>) {
+        self.drop_locals(env, builder, 0);
+    }
+
+
     fn update_inouts(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>) {
         for (param, local) in &env.inouts {
             let value = builder.local_get(*local);
             builder.store(builder.local_get(*param).as_ptr(), value);
         }
     }
+
 
     fn is_inout_place(&self, expr: ExprId) -> bool {
         match self.ast.expr(expr) {
@@ -3300,11 +3310,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             | Expr::OrReturn(val) => self.is_inout_place(val),
             _ => false,
         }
-    }
-
-
-    fn drop_all_locals(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>) {
-        self.drop_locals(env, builder, 0);
     }
 
 

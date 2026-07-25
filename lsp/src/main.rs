@@ -420,12 +420,9 @@ impl Lsp {
                     },
 
 
-                    semantic_analysis::errors::Error::UnknownAttr(source_range, string_index) => {
+                    semantic_analysis::errors::Error::UnknownAttr(source_range) => {
                         (
-                            format!(
-                                "'{}' is not a valid attribute",
-                                sm.get(*string_index),
-                            ),
+                            "unknown attribute".to_string(),
                             source_range,
                         )
                     },
