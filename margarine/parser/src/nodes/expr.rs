@@ -4,7 +4,7 @@ use common::{source::SourceRange, string_map::StringIndex, ImmutableData};
 use lexer::Literal;
 use sti::define_key;
 
-use crate::{nodes::decl::FunctionArgument, DataType};
+use crate::DataType;
 
 use super::NodeId;
 
@@ -69,7 +69,7 @@ pub enum Expr<'a> {
 
     CallFunction {
         lhs: ExprId,
-        args: &'a [ExprId],
+        args: &'a [CallArgument],
     },
 
     Closure {
@@ -112,6 +112,11 @@ pub enum Expr<'a> {
     OrReturn(ExprId),
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct CallArgument {
+    pub expr: ExprId,
+    pub is_inout: bool,
+}
 
 #[derive(Debug, PartialEq, Clone, Copy, ImmutableData)]
 pub struct MatchMapping {
@@ -347,5 +352,4 @@ impl Display for UnaryOperator {
         })
     }
 }
-
 

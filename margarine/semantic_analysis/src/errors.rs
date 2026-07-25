@@ -30,6 +30,10 @@ pub enum Error {
         attr: StringIndex,
     },
 
+    InOutValueWithoutInOutBinding { source: SourceRange },
+    InOutBindingWithoutInOutValue { source: SourceRange },
+    InOutValueIsNotAssignable { source: SourceRange },
+
     NameIsAlreadyDefined {
         source: SourceRange,
         name: StringIndex,
@@ -649,6 +653,21 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::VariableValueNotTuple(s) => {
                 fmt.error("variable value is not a tuple")
                     .highlight(*s);
+            },
+
+            Error::InOutValueWithoutInOutBinding { source } => {
+                fmt.error("unexpected in-out value")
+                    .highlight_with_note(*source, "this function parameter is not marked with '&'");
+            },
+
+            Error::InOutBindingWithoutInOutValue { source } => {
+                fmt.error("missing in-out value")
+                    .highlight_with_note(*source, "this function parameter requires an argument marked with '&'");
+            },
+
+            Error::InOutValueIsNotAssignable { source } => {
+                fmt.error("in-out value is not assignable")
+                    .highlight_with_note(*source, "in-out arguments must be mutable assignable values");
             },
 
             

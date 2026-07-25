@@ -7,7 +7,7 @@ use dt::{DataType, DataTypeKind};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{decl::{Attribute, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
+use nodes::{decl::{Attribute, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, CallArgument, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{alloc::Alloc, arena::Arena, vec::{KVec, Vec}};
 
 use crate::nodes::{decl::DeclGeneric, expr::{BinaryOperator, ExprId}, Pattern};
@@ -750,6 +750,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         let arguments = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma), |parser, index| {
             let start = parser.current_range().start();
+            let is_inout = parser.current_is(TokenKind::Ampersand);
+            if is_inout { parser.advance(); }
             let name = parser.expect_identifier()?;
 
             if index == 0
@@ -758,6 +760,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     return Ok(FunctionArgument::new(
                         name,
                         DataType::new(parser.current_range(), DataTypeKind::CustomType(StringMap::SELF_TY, &[])),
+                        is_inout,
                         parser.current_range(),
                     ));
                 }
@@ -775,6 +778,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let argument = FunctionArgument::new(
                 name,
                 data_type,
+                is_inout,
                 SourceRange::new(start, end)
             );
 
@@ -1031,6 +1035,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let arguments = parser.list(TokenKind::RightParenthesis, Some(TokenKind::Comma),
             |parser, index| {
                 let start = parser.current_range().start();
+                let is_inout = parser.current_is(TokenKind::Ampersand);
+                if is_inout { parser.advance(); }
 
                 let identifier = parser.expect_identifier()?;
 
@@ -1040,6 +1046,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         return Ok(FunctionArgument::new(
                             identifier,
                             DataType::new(parser.current_range(), DataTypeKind::CustomType(StringMap::SELF_TY, &[])),
+                            is_inout,
                             parser.current_range(),
                         ));
                     }
@@ -1056,6 +1063,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 Ok(FunctionArgument::new(
                     identifier, 
                     data_type, 
+                    is_inout,
                     SourceRange::new(start, end)
                 ))
             });
@@ -2111,12 +2119,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn parse_function_call_args(
         &mut self, 
         associated: Option<ExprId>
-    ) -> Result<&'ta mut [ExprId], ErrorId> {
+    ) -> Result<&'ta mut [CallArgument], ErrorId> {
 
         let mut args = Vec::new_in(&*self.arena);
 
         if let Some(node) = associated {
-            args.push(node);
+            args.push(CallArgument { expr: node, is_inout: false });
         }
         
         loop {
@@ -2143,10 +2151,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
 
 
+            let is_inout = self.current_is(TokenKind::Ampersand);
+            if is_inout { self.advance(); }
             let expr = self.expression(&ParserSettings::default())?;
             self.advance();
             
-            args.push(expr);
+            args.push(CallArgument { expr, is_inout });
         }
         self.expect(TokenKind::RightParenthesis)?;
 

@@ -102,6 +102,7 @@ enum FunctionKind {
 
 struct Env<'a, 'ctx> {
     vars: Vec<(StringIndex, Local, Type, bool)>,
+    inouts: Vec<(Local, Local)>,
     loop_id: Option<Loop>,
     gens: &'a [(BoundedGeneric<'a>, Type)],
     info: HashMap<ExprId, Value<'ctx>>,
@@ -311,9 +312,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let llvm_args = {
             let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, sym_func.args().len());
-            for i in &args {
-                let ty = self.to_llvm_ty(*i);
-                vec.push(ty.repr);
+            for (arg, ty) in sym_func.args().iter().zip(&args) {
+                if arg.is_inout() {
+                    vec.push(*self.ctx.ptr());
+                } else {
+                    vec.push(self.to_llvm_ty(*ty).repr);
+                }
             }
 
             vec.push(*self.ctx.ptr());
@@ -393,6 +397,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let mut env = Env {
                     vars: Vec::new(),
+                    inouts: Vec::new(),
                     loop_id: None,
                     gens: self.syms.get_gens(gens_id),
                     info: HashMap::new(),
@@ -402,7 +407,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 for (i, arg) in sym_func.args().iter().enumerate() {
                     let arg_ty = arg.symbol().to_ty(gens, self.syms).unwrap();
                     let arg_ty = arg_ty.resolve(&[], self.syms);
-                    env.alloc_var(arg.name(), builder.arg(i).unwrap(), arg_ty, true);
+                    let param = builder.arg(i).unwrap();
+                    if arg.is_inout() {
+                        let llvm_ty = self.to_llvm_ty(arg_ty);
+                        let local = builder.local(llvm_ty.repr);
+                        let value = builder.load(builder.local_get(param).as_ptr(), llvm_ty.repr);
+                        builder.local_set(local, value);
+                        env.alloc_var(arg.name(), local, arg_ty, true);
+                        env.inouts.push((param, local));
+                    } else {
+                        env.alloc_var(arg.name(), param, arg_ty, true);
+                    }
                 }
 
                 let Decl::Function { body, .. } = self.ast.decl(sym_func.decl().unwrap())
@@ -417,6 +432,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     match result {
                         Ok(v) => {
                             if !is_never {
+                                self.update_inouts(&env, &mut builder);
                                 self.drop_all_locals(&env, &mut builder);
                                 builder.ret(v);
                             } else {
@@ -1054,8 +1070,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, function_ty.args().len());
                     for i in function_ty.args().iter() {
                         let arg = i.symbol().to_ty(gens, self.syms).unwrap();
-                        let ty = self.to_llvm_ty(arg);
-                        vec.push(ty.repr);
+                        if i.is_inout() {
+                            vec.push(*self.ctx.ptr());
+                        } else {
+                            vec.push(self.to_llvm_ty(arg).repr);
+                        }
                     }
 
                     vec.push(*self.ctx.ptr());
@@ -1232,9 +1251,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             parser::nodes::stmt::Stmt::UpdateValue { lhs, rhs } => {
                 if let Err(e) = self.ty_info.expr(lhs) { return Err(e) }
-                let rhs = self.expr(env, builder, rhs)?;
+                let rhs_expr = rhs;
+                let rhs_is_param = match self.ast.expr(rhs) {
+                    Expr::Identifier(name, _) => env.is_var_param(name),
+                    _ => false,
+                };
+                let mut rhs = self.expr(env, builder, rhs)?;
 
                 out_if_err!();
+
+                if rhs_is_param {
+                    let ty = self.ty_info.expr(rhs_expr).unwrap().resolve(&[env.gens], self.syms);
+                    rhs = self.emit_copy(builder, rhs, ty);
+                }
 
                 self.assign(env, builder, lhs, rhs);
                 Ok(())
@@ -2339,17 +2368,48 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::CallFunction { lhs, args } => {
-                let mut llvm_args = sti::vec::Vec::with_cap_in(self.ctx.arena, args.len());
-                for arg in args {
-                    let arg = self.expr(env, builder, *arg)?;
-                    llvm_args.push(arg);
-                }
-
                 out_if_err!();
                 let (func, func_ty) = self.expr_ex(env, builder, lhs)?;
 
-                if let Expr::AccessField { .. } = self.ast.expr(lhs) {
-                    llvm_args.insert(0, env.info[&lhs]);
+                let func_sym = func_ty.resolve(&[env.gens], self.syms);
+                let func_sym = func_sym.sym(self.syms).unwrap();
+                let SymbolKind::Function(function) = self.syms.sym(func_sym).kind()
+                else { unreachable!() };
+
+                let mut inouts = Vec::new();
+                let mut llvm_args = sti::vec::Vec::with_cap_in(self.ctx.arena, args.len() + 1);
+
+                let mut formal_index = 0;
+                if let Expr::AccessField { val, .. } = self.ast.expr(lhs) {
+                    let value = env.info[&lhs];
+                    let ty = self.ty_info.expr(val).unwrap().resolve(&[env.gens], self.syms);
+                    if function.args().first().is_some_and(|arg| arg.is_inout()) {
+                        let value = self.emit_copy(builder, value, ty);
+                        let ptr = builder.alloca_store(value);
+                        if self.is_inout_place(val) {
+                            inouts.push((ptr, val, ty));
+                        }
+                        llvm_args.push(*ptr);
+                    } else {
+                        llvm_args.push(value);
+                    }
+                    formal_index = 1;
+                }
+
+                for arg in args {
+                    let value = self.expr(env, builder, arg.expr)?;
+                    if function.args().get(formal_index).is_some_and(|arg| arg.is_inout()) {
+                        let ty = self.ty_info.expr(arg.expr).unwrap().resolve(&[env.gens], self.syms);
+                        let value = self.emit_copy(builder, value, ty);
+                        let ptr = builder.alloca_store(value);
+                        if arg.is_inout && self.is_inout_place(arg.expr) {
+                            inouts.push((ptr, arg.expr, ty));
+                        }
+                        llvm_args.push(*ptr);
+                    } else {
+                        llvm_args.push(value);
+                    }
+                    formal_index += 1;
                 }
 
 
@@ -2363,7 +2423,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 llvm_args.push(capture_ptr);
                 //dbg!(&llvm_args);
-                builder.call(func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args)
+                let result = builder.call(func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args);
+
+                for (ptr, expr, ty) in inouts {
+                    let value = builder.load(ptr, self.to_llvm_ty(ty).repr);
+                    self.assign(env, builder, expr, value);
+                }
+
+                result
             },
 
 
@@ -2492,8 +2559,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let mut builder = func_ptr.builder(self.ctx, llvm_func_ty);
 
-                    let mut env = Env {
-                        vars: Vec::new(),
+                let mut env = Env {
+                    vars: Vec::new(),
+                    inouts: Vec::new(),
                         loop_id: None,
                         gens: combined_gens,
                         info: HashMap::new(),
@@ -2573,6 +2641,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let val = self.expr(env, builder, expr_id)?;
                 out_if_err!();
 
+                self.update_inouts(env, builder);
                 self.drop_all_locals(env, builder);
                 builder.ret(val);
                 *builder.const_unit()
@@ -3209,8 +3278,27 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn drop_locals(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>, start: usize) {
         for i in (start..env.vars.len()).rev() {
             let (_, local, ty, _) = env.vars[i];
+            if env.inouts.iter().any(|(_, inout)| *inout == local) { continue }
             let value = builder.local_get(local);
             self.emit_drop(builder, value, ty);
+        }
+    }
+
+    fn update_inouts(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>) {
+        for (param, local) in &env.inouts {
+            let value = builder.local_get(*local);
+            builder.store(builder.local_get(*param).as_ptr(), value);
+        }
+    }
+
+    fn is_inout_place(&self, expr: ExprId) -> bool {
+        match self.ast.expr(expr) {
+            Expr::Identifier(_, _) => true,
+            Expr::AccessField { val, .. }
+            | Expr::IndexList { list: val, .. }
+            | Expr::Unwrap(val)
+            | Expr::OrReturn(val) => self.is_inout_place(val),
+            _ => false,
         }
     }
 

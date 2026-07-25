@@ -1,4 +1,5 @@
 mod structs;
+mod traits;
 mod rc;
 mod closure;
 mod cow;

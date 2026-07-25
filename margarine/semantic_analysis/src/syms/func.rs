@@ -21,6 +21,7 @@ pub struct FunctionTy<'me> {
 pub struct FunctionArgument<'me> {
     name  : StringIndex,
     symbol: Generic<'me>,
+    is_inout: bool,
 }
 
 
@@ -63,5 +64,6 @@ impl<'me> FunctionTy<'me> {
 
 
 impl<'me> FunctionArgument<'me> {
-    pub fn new(name: StringIndex, symbol: Generic<'me>) -> Self { Self { name, symbol } }
+    pub fn new(name: StringIndex, symbol: Generic<'me>) -> Self { Self { name, symbol, is_inout: false } }
+    pub fn new_inout(name: StringIndex, symbol: Generic<'me>, is_inout: bool) -> Self { Self { name, symbol, is_inout } }
 }

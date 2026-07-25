@@ -1,6 +1,10 @@
 import "pkg:std" as std;
 use std::*;
 
+extern {
+    fn inout_extern(&value: int)
+}
+
 
 fn make_pair(): (int, int) {
     (1, 2)
@@ -9,6 +13,66 @@ fn make_pair(): (int, int) {
 fn swap(p: (int, int)): (int, int) {
     (p.1, p.0)
 }
+
+fn increment(&value: int) { value = value + 1; }
+fn swap_inout(&lhs: int, &rhs: int) { var temp = lhs; lhs = rhs; rhs = temp; }
+fn replace<T>(&value: T, replacement: T) { value = replacement; }
+fn accepts_value(value: int) {}
+
+@test
+fn bitwise_and_is_not_inout() { assert((6 & 3) == 2, "bitwise and changed while adding in-out values"); }
+
+struct InOutValue { value: int, }
+
+@test
+fn inout_values() {
+    var value = 1;
+    increment(&value);
+    assert(value == 2, "in-out variable was not updated");
+    var field = InOutValue { value: 4 };
+    increment(&field.value);
+    assert(field.value == 5, "in-out field was not updated");
+    var values = [3, 4];
+    increment(&values[1]);
+    assert(values[1] == 5, "in-out indexed value was not updated");
+}
+
+@test
+fn inout_multiple_values() {
+    var lhs = 10;
+    var rhs = 20;
+    swap_inout(&lhs, &rhs);
+    assert(lhs == 20, "first in-out argument was not swapped");
+    assert(rhs == 10, "second in-out argument was not swapped");
+}
+
+@test
+fn inout_generic_list() {
+    var list = [1, 2];
+    var list_copy = list;
+    replace(&list_copy, [7, 8]);
+    assert(list[0] == 1, "in-out list update changed its shared source");
+    assert(list_copy[0] == 7, "generic in-out list update failed");
+}
+
+@test
+fn inout_generic_rc() {
+    var rc = $rc(1);
+    replace(&rc, $rc(2));
+    assert($rc_get(rc) == 2, "generic in-out Rc update failed");
+}
+
+@test(should_panic)
+@silent
+fn inout_requires_marker() { var value = 1; increment(value); }
+
+@test(should_panic)
+@silent
+fn inout_rejects_unexpected_marker() { var value = 1; accepts_value(&value); }
+
+@test(should_panic)
+@silent
+fn inout_rejects_non_place() { var value = 1; increment(&(value + 1)); }
 
 @test
 fn tuple_funcs() {

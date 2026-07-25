@@ -168,13 +168,14 @@ impl<'a> ExternFunction<'a> {
 pub struct FunctionArgument<'a> {
     name: StringIndex,
     data_type: DataType<'a>,
+    is_inout: bool,
     source_range: SourceRange,
 }
 
 
 impl<'arena> FunctionArgument<'arena> {
-    pub fn new(name: StringIndex, data_type: DataType<'arena>, source_range: SourceRange) -> Self { 
-        Self { name, data_type, source_range } 
+    pub fn new(name: StringIndex, data_type: DataType<'arena>, is_inout: bool, source_range: SourceRange) -> Self {
+        Self { name, data_type, is_inout, source_range }
     }
 
 
@@ -182,6 +183,8 @@ impl<'arena> FunctionArgument<'arena> {
     pub fn data_type(&self) -> DataType<'arena> { self.data_type }
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
+    #[inline(always)]
+    pub fn is_inout(&self) -> bool { self.is_inout }
     #[inline(always)]
     pub fn range(&self) -> SourceRange { self.source_range }
 }
@@ -245,4 +248,3 @@ pub enum UseItemKind<'a> {
     BringName(StringIndex),
     All,
 }
-

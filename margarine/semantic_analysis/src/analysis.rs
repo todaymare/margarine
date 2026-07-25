@@ -592,7 +592,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             },
                         };
 
-                        let arg = FunctionArgument::new(a.name(), sym);
+                        let arg = FunctionArgument::new_inout(a.name(), sym, a.is_inout());
                         args.push(arg);
                     }
 
@@ -666,7 +666,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                                 },
                             };
 
-                            let arg = FunctionArgument::new(a.name(), sym);
+                            let arg = FunctionArgument::new_inout(a.name(), sym, a.is_inout());
                             args.push(arg);
                         }
 
@@ -732,7 +732,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                                 },
                             };
 
-                            let arg = FunctionArgument::new(a.name(), sym);
+                            let arg = FunctionArgument::new_inout(a.name(), sym, a.is_inout());
                             args.push(arg);
                         }
 
@@ -1544,7 +1544,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     for arg in func.args() {
                         let gn = arg.symbol()
                             .rec_replace(self.output, StringMap::SELF_TY, g);
-                        func_args.push(FunctionArgument::new(arg.name(), gn));
+                        func_args.push(FunctionArgument::new_inout(arg.name(), gn, arg.is_inout()));
                     }
 
                     let ret = func.ret()
@@ -2231,7 +2231,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 for arg in func.args() {
                     let gn = arg.symbol()
                         .rec_replace(self.output, StringMap::SELF_TY, g);
-                    func_args.push(FunctionArgument::new(arg.name(), gn));
+                    func_args.push(FunctionArgument::new_inout(arg.name(), gn, arg.is_inout()));
                 }
 
                 let ret = func.ret()
@@ -2268,13 +2268,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             err = Err(Error::CallOnField { source: lhs_range, field_name })
                         } else {
                             is_accessor = true;
-                            vec.push((range, anal, val));
+                            vec.push((range, anal, val, false));
                         }
                     }
 
                     for a in args {
-                        let anal = self.expr(path, scope, *a);
-                        vec.push((self.ast.range(*a), anal, *a));
+                        let anal = self.expr(path, scope, a.expr);
+                        vec.push((self.ast.range(a.expr), anal, a.expr, a.is_inout));
                     }
 
                     let _ = err?;
@@ -2307,7 +2307,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let func_args = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.args().len());
                     for g in func.args() {
-                        vec.push(g.symbol().to_ty(gens, &mut self.syms)?);
+                        vec.push((g.symbol().to_ty(gens, &mut self.syms)?, g.is_inout()));
                     }
 
                     vec
@@ -2316,13 +2316,20 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let ret = func.ret().to_ty(gens, &mut self.syms)?;
 
                 // ty check args
-                for ((source, anal, expr), fa) in args_anals.iter().copied().zip(func_args.iter().copied()) {
-                    if anal.ty.eq(&mut self.syms, fa) {
-                        continue;
+                for (i, ((source, anal, expr, explicit_inout), (fa, formal_inout))) in args_anals.iter().copied().zip(func_args.iter().copied()).enumerate() {
+                    if !anal.ty.eq(&mut self.syms, fa) {
+                        self.error(expr, Error::InvalidType {
+                            source, found: anal.ty, expected: fa });
                     }
 
-                    self.error(expr, Error::InvalidType {
-                        source, found: anal.ty, expected: fa });
+                    let is_inout = explicit_inout || (formal_inout && is_accessor && i == 0);
+                    if is_inout && !formal_inout {
+                        self.error(expr, Error::InOutValueWithoutInOutBinding { source });
+                    } else if formal_inout && !is_inout {
+                        self.error(expr, Error::InOutBindingWithoutInOutValue { source });
+                    } else if is_inout && (!anal.is_mut || !self.is_assignable_place(expr)) {
+                        self.error(expr, Error::InOutValueIsNotAssignable { source });
+                    }
                 }
 
                 for (sym_g, (func_g, value)) in sym.generics().iter().zip(gens.iter()) {

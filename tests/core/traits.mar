@@ -45,6 +45,14 @@ trait Method {
     fn method(self)
 }
 
+trait InOutMethod { fn increment(&self) }
+
+struct InOutCounter { value: int, }
+
+impl InOutMethod for InOutCounter {
+    fn increment(&self) { self.value = self.value + 1; }
+}
+
 impl Method for int {
     fn method(self) {
     }
@@ -53,4 +61,11 @@ impl Method for int {
 @test
 fn trait_call_on_int() {
     1.method();
+}
+
+@test
+fn trait_inout_self() {
+    var counter = InOutCounter { value: 0 };
+    counter.increment();
+    assert(counter.value == 1, "in-out self was not updated");
 }
