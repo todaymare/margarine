@@ -45,6 +45,13 @@ pub enum Error {
         path: StringIndex,
     },
 
+    HashMismatch {
+        source_hash: SourceRange,
+        source_extern: SourceRange,
+        expected: StringIndex,
+        actual: StringIndex,
+    },
+
 
     RepoDoesntExist {
         source: SourceRange,
@@ -161,7 +168,7 @@ impl ErrorType<()> for Error {
 
 
             Error::InvalidCfg { source, expected } => {
-                fmt.error("invalid cfg predicate")
+                fmt.error("invalid attribute usage")
                     .highlight_with_note(*source, expected);
             }
 
@@ -170,6 +177,19 @@ impl ErrorType<()> for Error {
                 let msg = format!("cfg environment variable '{}' is not defined", fmt.string(*name));
                 fmt.error("missing cfg environment variable")
                     .highlight_with_note(*source, &msg);
+            }
+
+            Error::HashMismatch { source_hash, source_extern, expected, actual } => {
+                let note = format!(
+                    "but downloaded resource has '{}'",
+                    fmt.string(*actual),
+                );
+
+                let mut err = fmt.error("resource hash mismatch");
+                err
+                    .highlight_with_note(*source_hash, "expected this SHA-256 digest");
+                err
+                    .highlight_with_note(*source_extern, &note);
             }
         }
     }

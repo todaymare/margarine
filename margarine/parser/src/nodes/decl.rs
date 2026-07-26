@@ -90,7 +90,8 @@ pub enum Decl<'a> {
     },
 
     LinkFile {
-        path: StringIndex,
+        url: StringIndex,
+        hash: Option<(StringIndex, SourceRange)>,
     },
 
     Trait {

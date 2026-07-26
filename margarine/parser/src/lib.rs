@@ -34,6 +34,7 @@ pub fn parse<'a>(
         cfg_env,
         imports: KVec::new(),
         link_files: KVec::new(),
+        hash_attr: None,
     };
 
 
@@ -86,6 +87,8 @@ struct Parser<'me, 'ast, 'str> {
 
     errors: KVec<ParserError, Error>,
     is_in_panic: bool,
+
+    hash_attr: Option<(StringIndex, SourceRange)>,
 }
 
 type StmtResult<'ta> = Result<StmtId, ErrorId>;
@@ -419,6 +422,32 @@ impl<'out> Parser<'_, 'out, '_> {
         };
 
         Ok(Attribute { value, range: SourceRange::new(start, self.current_range().end()), params })
+    }
+
+
+    fn validate_hash_attr(&self, attr: Attribute) -> Result<StringIndex, Error> {
+        let err = 
+        Error::InvalidCfg {
+            source: attr.range,
+            expected: "hash expects a 64-character SHA-256 digest as a string literal",
+        };
+
+        if attr.params.len() != 1 {
+            return Err(err);
+        }
+
+        let param = attr.params[0];
+        let AttributeValue::Literal(Literal::String(s)) = param.value
+        else {
+            return Err(err);
+        };
+
+        let str = self.string_map.get(s);
+        if str.len() < 8 || str.len() > 64 {
+            return Err(err);
+        }
+
+        Ok(s)
     }
 
 
@@ -862,7 +891,38 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     }
                 }
 
-                let Some(stmt) = self.statement(settings)? else {
+
+                if matches!(attr.identifier(), Some(name) if self.string_map.get(name) == "hash") {
+                    let prev_hash = self.hash_attr.take();
+                    match self.validate_hash_attr(attr) {
+                        Ok(hash) => {
+                            self.hash_attr = Some((hash, attr.range));
+                        },
+                        Err(e) => {
+                            self.hash_attr = Some((StringMap::UNIT, attr.range));
+                            let e = self.errors.push(e);
+                            return Err(ErrorId::Parser((self.file, e)));
+                        },
+                    };
+
+                    let value = self.statement(settings)?;
+                    let curr = self.hash_attr;
+                    self.hash_attr = prev_hash;
+
+                    if curr.is_some() {
+                        let err = self.errors.push(Error::InvalidCfg {
+                            source: attr.range,
+                            expected: "hash attribute can't be used here",
+                        });
+
+                        return Err(ErrorId::Parser((self.file, err)));
+                    }
+
+                    return Ok(value)
+                }
+
+                let Some(stmt) = self.statement(settings)? 
+                else {
                     return Ok(None);
                 };
 
@@ -1213,7 +1273,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             self.advance();
             self.expect(TokenKind::SemiColon)?;
             let decl = self.ast.add_decl(
-                Decl::LinkFile { path },
+                Decl::LinkFile { url: path, hash: self.hash_attr.take() },
                 SourceRange::new(start, self.current_range().end()),
             );
             self.link_files.push(decl);

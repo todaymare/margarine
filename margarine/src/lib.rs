@@ -2,6 +2,9 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
+use std::fs::File;
+use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -12,6 +15,7 @@ use errors::ParserError;
 use errors::SemaError;
 use git2::Repository;
 pub use lexer::lex;
+use parser::errors::Error;
 use parser::nodes::decl::Decl;
 use parser::nodes::decl::UseItem;
 use parser::nodes::decl::UseItemKind;
@@ -28,12 +32,15 @@ use common::symbol_id::SymbolId;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 use sha2::Digest;
+use sha2::Sha256;
 pub use sti::arena::Arena;
 use sti::format_in;
 use sti::vec::KVec;
 
 
 pub use semantic_analysis;
+use tempfile::tempfile;
+use tempfile::tempfile_in;
 
 
 pub struct Compiler<'me> {
@@ -111,7 +118,7 @@ impl<'me> Compiler<'me> {
 
         let mut file_offsets = vec![];
         let mut package_urls: HashMap<String, String> = HashMap::new();
-        let mut link_file_paths: HashMap<parser::nodes::decl::DeclId, String> = HashMap::new();
+        let mut link_file_paths = HashMap::new();
         let mut cfg_env = std::env::vars()
             .map(|(k, v)| (self.string_map.insert(&k), self.string_map.insert(&v)))
             .collect::<HashMap<_, _>>();
@@ -157,22 +164,43 @@ impl<'me> Compiler<'me> {
             });
 
             for (_, link_file) in link_files {
-                let Decl::LinkFile { path } = global.decl(link_file) 
+                let Decl::LinkFile { url, hash } = global.decl(link_file) 
                 else { unreachable!() };
-                let path = Path::new(file_path)
-                    .parent()
-                    .unwrap_or_else(|| Path::new(""))
-                    .join(self.string_map.get(path));
-                if !fs::exists(&path).unwrap_or(false) {
-                    let path = self.string_map.insert(&path.to_string_lossy());
-                    let err = pe.push(parser::errors::Error::FileDoesntExist {
-                        source: global.range(link_file),
-                        path,
-                    });
-                    global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                    continue;
+                let source = global.range(link_file);
+
+                let url_str = self.string_map.get(url);
+                let url = resolve_url(url_str);
+                let resource = resource_cache_entry(&url);
+
+                let mut tempfile = tempfile::Builder::new()
+                    .tempfile_in(resource.path.parent().unwrap())
+                    .unwrap();
+
+                if !self.silent {
+                    println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
                 }
-                link_file_paths.insert(link_file, path.to_string_lossy().into_owned());
+
+
+                let file_hash = download_and_hash(&url, tempfile.as_file_mut()).unwrap();
+                if let Some((hash, source_hash)) = hash {
+                    let hash_str = self.string_map.get(hash);
+                    if hex::decode(hash_str).unwrap() != file_hash {
+                        let found_hash = hex::encode(file_hash);
+                        let found_hash = self.string_map.insert(&found_hash);
+                        let err = pe.push(Error::HashMismatch { 
+                            source_extern: source, 
+                            source_hash,
+                            expected: hash,
+                            actual: found_hash,
+                        });
+
+                        global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                        continue
+                    }
+                }
+
+                tempfile.persist(&resource.path).unwrap();
+                link_file_paths.insert(link_file, resource.path.to_string_lossy().into_owned());
             }
 
 
@@ -211,9 +239,9 @@ impl<'me> Compiler<'me> {
                     Decl::ImportRepo { alias, repo } => {
                         let repo_str = self.string_map.get(repo);
                         let alias_str = self.string_map.get(alias);
-                        let url = resolve_resource(repo_str);
+                        let url = resolve_url(repo_str);
 
-                        let resource = allocate_resource(&url);
+                        let resource = resource_cache_entry(&url);
 
                         package_urls.insert(
                             resource.partial_string_hash.clone(), 
@@ -643,7 +671,7 @@ impl BuildLock {
 }
 
 
-fn resolve_resource(url: &str) -> String {
+fn resolve_url(url: &str) -> String {
     if !url.starts_with("pkg:") {
         url.to_string()
     } else {
@@ -653,6 +681,7 @@ fn resolve_resource(url: &str) -> String {
 
         let base = base.as_ref().map(|x| x.as_str())
             .unwrap_or("https://pkg.daymare.net/margarine");
+
         let base = base.trim_end_matches('/');
         let url = url.trim_start_matches('/');
         let url = &url["pkg:".len()..];
@@ -669,15 +698,13 @@ struct Resource {
 }
 
 
-fn allocate_resource(ident: &str) -> Resource {
+fn resource_cache_entry(ident: &str) -> Resource {
     let full_hash = sha2::Sha256::digest(ident.as_bytes());
     let partial_hash = u128::from_be_bytes(full_hash[..16].try_into().unwrap());
-    let string_hash = format!("{:016x}", partial_hash);
+    let string_hash = format!("{partial_hash:032}");
 
     let artifacts_dir = PathBuf::from("artifacts");
-    if !std::fs::exists(&artifacts_dir).unwrap_or(false) {
-        std::fs::create_dir(&artifacts_dir).unwrap();
-    }
+    std::fs::create_dir_all(&artifacts_dir).unwrap();
 
     let local_path = artifacts_dir.join(&string_hash);
     Resource {
@@ -688,3 +715,26 @@ fn allocate_resource(ident: &str) -> Resource {
 }
 
 
+fn download_and_hash(
+    url: &str,
+    file: &mut File,
+) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    let mut response = reqwest::blocking::get(url)?.error_for_status()?;
+    let mut hasher = Sha256::new();
+
+    let mut buf = [0u8; 64 * 1024];
+
+    loop {
+        let n = response.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+
+        let chunk = &buf[..n];
+
+        file.write_all(chunk)?;
+        hasher.update(chunk);
+    }
+
+    Ok(hasher.finalize().into())
+}

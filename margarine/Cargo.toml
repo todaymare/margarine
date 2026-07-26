@@ -23,6 +23,9 @@ colourful = { git = "https://github.com/rookieCookies/colourful" }
 
 rand = "*"
 git2 = "0.20.2"
+reqwest = { version = "0.12", features = ["blocking"] }
+tempfile = "3"
+hex = "*"
 
 tracing = "*"
 
