@@ -1217,10 +1217,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         &mut self, env: &mut Env<'_, 'ctx>,
         builder: &mut Builder<'ctx>, stmt: StmtId
     ) -> Result<(), ErrorId> {
-        if self.ty_info.disabled_cfg_stmts.contains(&stmt) {
-            return Ok(());
-        }
-
         macro_rules! out_if_err {
             () => {{
                 match self.ty_info.stmt(stmt) {

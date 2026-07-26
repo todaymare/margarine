@@ -9,6 +9,7 @@ use common::string_map::{self, StringIndex};
 use dashmap::DashMap;
 use margarine::{Arena, Compiler, FileData, SourceRange, StringMap};
 use parser::nodes::{decl::Decl, AST};
+use llvm_api::ctx::default_target_triple;
 use ropey::Rope;
 use sti::{ext::FromIn, key::Key};
 use tower_lsp::lsp_types::{CodeLensParams, Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverParams, MessageType, Position, Range, TextDocumentItem, Url};
@@ -174,7 +175,22 @@ impl Lsp {
             
             let arena = Arena::new();
             let mut ast = AST::new(&arena);
-            let (_, modules, _) = margarine::parse(tokens, 0, &arena, &mut self.compiler.string_map, &mut ast);
+            let mut cfg_env = std::env::vars()
+                .map(|(k, v)| (self.compiler.string_map.insert(&k), self.compiler.string_map.insert(&v)))
+                .collect::<HashMap<_, _>>();
+            
+            let comp_target = self.compiler.string_map.insert("COMPILATION_TARGET");
+            let target_triple = self.compiler.string_map.insert(&llvm_api::ctx::default_target_triple());
+            cfg_env.insert(comp_target, target_triple);
+
+            let (_, modules, _, _) = margarine::parse(
+                tokens, 
+                0, 
+                &arena, 
+                &mut self.compiler.string_map, 
+                &mut ast, 
+                &cfg_env
+            );
 
             for module in modules {
                 let Decl::ImportFile { name, .. } = ast.decl(module.1)
@@ -366,6 +382,17 @@ impl Lsp {
 
                     parser::errors::Error::TooManyEnumVariants(source) => {
                         (format!("too many enum variants"), source)
+                    },
+
+
+                    parser::errors::Error::InvalidCfg { source, expected } => {
+                        (format!("invalid cfg predicate: {expected}"), source)
+                    },
+
+
+                    parser::errors::Error::MissingCfgEnvironment { source, name } => {
+                        let name = self.compiler.string_map.get(*name);
+                        (format!("cfg environment variable '{name}' is not defined"), source)
                     },
                 };
 

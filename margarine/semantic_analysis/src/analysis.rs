@@ -1,148 +1,10 @@
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}, Once};
-use lexer::Literal;
-use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Attribute, AttributeValue, DeclGeneric, Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
-use sti::{alloc::GlobalAlloc, ext::FromIn, key::Key, vec::{KVec, Vec}};
+use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
+use sti::{alloc::GlobalAlloc, key::Key, vec::{KVec, Vec}};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, GenListId, Generic, GenericKind, SymbolId}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, CfgState, TyChecker};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, Generic, GenericKind, SymbolId}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
-    fn cfg_decl_enabled(&mut self, id: DeclId, attr: Attribute) -> bool {
-        if !matches!(attr.identifier(), Some(name) if self.string_map.get(name) == "cfg") {
-            return true;
-        }
-
-        let state = match self.cfg_decls.get(&id) {
-            Some(state) => *state,
-            None => {
-                let state = match self.eval_cfg(attr) {
-                    Ok(true) => CfgState::Enabled,
-                    Ok(false) => CfgState::Disabled,
-                    Err(error) => CfgState::Errored(self.error(id, error)),
-                };
-                self.cfg_decls.insert(id, state);
-                state
-            },
-        };
-
-        match state {
-            CfgState::Disabled => false,
-            CfgState::Enabled => true,
-            CfgState::Errored(error) => {
-                let _ = error;
-                true
-            },
-        }
-    }
-
-    fn cfg_stmt_enabled(&mut self, id: StmtId, attr: Attribute) -> bool {
-        if !matches!(attr.identifier(), Some(name) if self.string_map.get(name) == "cfg") {
-            return true;
-        }
-
-        let state = match self.cfg_stmts.get(&id) {
-            Some(state) => *state,
-            None => {
-                let state = match self.eval_cfg(attr) {
-                    Ok(true) => CfgState::Enabled,
-                    Ok(false) => CfgState::Disabled,
-                    Err(error) => CfgState::Errored(self.error(id, error)),
-                };
-                if matches!(state, CfgState::Disabled) {
-                    self.type_info.disabled_cfg_stmts.insert(id);
-                }
-                self.cfg_stmts.insert(id, state);
-                state
-            },
-        };
-
-        match state {
-            CfgState::Disabled => false,
-            CfgState::Enabled => true,
-            CfgState::Errored(error) => {
-                let _ = error;
-                true
-            },
-        }
-    }
-
-    fn eval_cfg(&self, attr: Attribute) -> Result<bool, Error> {
-        if attr.params.len() != 1 {
-            return Err(Error::InvalidCfg { source: attr.range, expected: "cfg expects exactly one predicate" });
-        }
-        self.eval_cfg_predicate(attr.params[0])
-    }
-
-    fn eval_cfg_predicate(&self, predicate: Attribute) -> Result<bool, Error> {
-        let Some(name) = predicate.identifier() else {
-            return Err(Error::InvalidCfg { source: predicate.range, expected: "cfg predicates must be identifiers" });
-        };
-
-        match self.string_map.get(name) {
-            "env" => {
-                if predicate.params.len() != 1 && predicate.params.len() != 2 {
-                    return Err(Error::InvalidCfg { source: predicate.range, expected: "env expects one or two string literals" });
-                }
-
-                let key = predicate.params[0];
-                let AttributeValue::Literal(Literal::String(key_name)) = key.value else {
-                    return Err(Error::InvalidCfg { source: key.range, expected: "env expects a string literal variable name" });
-                };
-                if !key.params.is_empty() {
-                    return Err(Error::InvalidCfg { source: key.range, expected: "env arguments cannot have parameters" });
-                }
-
-                let Some(value) = self.cfg_env.get(self.string_map.get(key_name)) else {
-                    return Err(Error::MissingCfgEnvironment { source: key.range, name: key_name });
-                };
-
-                if predicate.params.len() == 1 {
-                    return Ok(true);
-                }
-
-                let expected_arg = predicate.params[1];
-                let AttributeValue::Literal(Literal::String(expected)) = expected_arg.value else {
-                    return Err(Error::InvalidCfg { source: expected_arg.range, expected: "env expects a string literal value" });
-                };
-                if !expected_arg.params.is_empty() {
-                    return Err(Error::InvalidCfg { source: expected_arg.range, expected: "env arguments cannot have parameters" });
-                }
-
-                Ok(value == self.string_map.get(expected))
-            },
-
-            "not" => {
-                if predicate.params.len() != 1 {
-                    return Err(Error::InvalidCfg { source: predicate.range, expected: "not expects exactly one predicate" });
-                }
-                Ok(!self.eval_cfg_predicate(predicate.params[0])?)
-            },
-
-            "all" => {
-                if predicate.params.is_empty() {
-                    return Err(Error::InvalidCfg { source: predicate.range, expected: "all expects at least one predicate" });
-                }
-                let mut enabled = true;
-                for child in predicate.params {
-                    enabled &= self.eval_cfg_predicate(*child)?;
-                }
-                Ok(enabled)
-            },
-
-            "any" => {
-                if predicate.params.is_empty() {
-                    return Err(Error::InvalidCfg { source: predicate.range, expected: "any expects at least one predicate" });
-                }
-                let mut enabled = false;
-                for child in predicate.params {
-                    enabled |= self.eval_cfg_predicate(*child)?;
-                }
-                Ok(enabled)
-            },
-
-            _ => Err(Error::InvalidCfg { source: predicate.range, expected: "expected env, not, all, or any" }),
-        }
-    }
-
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
         let scope = scope;
         let namespace = Namespace::new(path);
@@ -296,13 +158,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                 Decl::Attribute { attr, decl } => {
-                    if !self.cfg_decl_enabled(id, attr) {
-                        continue;
-                    }
                     if matches!(attr.identifier(), Some(name) if self.string_map.get(name) == "silent") {
                         self.silent_ranges.push(self.ast.range(decl));
                     }
                     self.collect_names(path, ns_id, &[decl.into()], gen_count);
+                },
+
+                Decl::LinkFile { .. } => {
+                    self.link_files.push(id);
                 },
 
                 _ => (),
@@ -425,9 +288,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                 Decl::Attribute { attr, decl } => {
-                    if self.cfg_decl_enabled(id, attr) {
-                        self.collect_impls(path, scope, ns_id, &[decl.into()]);
-                    }
+                    self.collect_impls(path, scope, ns_id, &[decl.into()]);
                 },
 
                 _ => (),
@@ -474,9 +335,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                 Decl::Attribute { attr, decl } => {
-                    if self.cfg_decl_enabled(id, attr) {
-                        self.collect_uses(scope_id, ns_id, &[decl.into()]);
-                    }
+                    self.collect_uses(scope_id, ns_id, &[decl.into()]);
                 },
 
                 _ => continue,
@@ -939,9 +798,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
                 Decl::Attribute { attr, decl } => {
-                    if self.cfg_decl_enabled(*id, attr) {
-                        self.compute_types(path, scope, ns, &[decl.into()], impl_block);
-                    }
+                    self.compute_types(path, scope, ns, &[decl.into()], impl_block);
                 },
 
 
@@ -959,12 +816,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     self.type_info.set_decl(decl, e);
                     return AnalysisResult::new(Type::ERROR);
                 }
-
-                if let Decl::Attribute { attr, .. } = self.ast.decl(decl)
-                && !self.cfg_decl_enabled(decl, attr) {
-                    return AnalysisResult::new(Type::UNIT);
-                }
-
 
                 self.decl(scope, ns, decl);
                 AnalysisResult::new(Type::UNIT)
@@ -990,6 +841,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             Decl::Struct { .. } => (),
             Decl::Enum { .. } => (),
             Decl::OpaqueType { .. } => (),
+            Decl::LinkFile { .. } => (),
             Decl::ImportFile { .. } => unreachable!(),
             Decl::ImportRepo { .. } => unreachable!(),
             Decl::Error(_) => unreachable!(),
@@ -1244,16 +1096,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             Decl::Extern { .. } => (),
 
             Decl::Attribute { decl: decl_id, attr } => {
-                if !self.cfg_decl_enabled(n, attr) {
-                    return;
-                }
-
                 let attr_name = attr.identifier();
-                if matches!(attr_name, Some(name) if self.string_map.get(name) == "cfg") {
-                    self.decl(scope, ns, decl_id);
-                    return;
-                }
-
                 if matches!(attr_name, Some(name) if self.string_map.get(name) == "silent") {
                     for param in attr.params {
                         self.error(n, Error::UnknownAttrParam {
@@ -1584,10 +1427,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
             Stmt::Attribute { attr, node } => {
-                if !self.cfg_stmt_enabled(id, attr) {
-                    return;
-                }
-
                 if matches!(attr.identifier(), Some(name) if self.string_map.get(name) == "silent") {
                     for param in attr.params {
                         self.error(id, Error::UnknownAttrParam {
@@ -1595,7 +1434,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         });
                     }
                     self.silent_ranges.push(self.ast.range(id));
-                } else if !matches!(attr.identifier(), Some(name) if self.string_map.get(name) == "cfg") {
+                } else {
                     self.error(id, Error::UnknownAttr(attr.range));
                 }
 

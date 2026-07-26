@@ -30,16 +30,6 @@ pub enum Error {
         attr: SourceRange,
     },
 
-    InvalidCfg {
-        source: SourceRange,
-        expected: &'static str,
-    },
-
-    MissingCfgEnvironment {
-        source: SourceRange,
-        name: StringIndex,
-    },
-
     NameIsAlreadyDefined {
         source: SourceRange,
         name: StringIndex,
@@ -698,17 +688,6 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 let mut error = fmt.error("unknown attribute parameter");
                 error.highlight_with_note(*param, "is not valid for this attribute");
                 error.highlight_with_note(*attr, "attribute declared here");
-            },
-
-            Error::InvalidCfg { source, expected } => {
-                fmt.error("invalid cfg predicate")
-                    .highlight_with_note(*source, expected);
-            },
-
-            Error::MissingCfgEnvironment { source, name } => {
-                let msg = format!("environment variable '{}' is not defined", fmt.string(*name));
-                fmt.error("missing cfg environment variable")
-                    .highlight_with_note(*source, &msg);
             },
 
             Error::InvalidValueForAttr { attr, value, expected } => {

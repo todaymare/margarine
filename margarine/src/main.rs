@@ -19,7 +19,7 @@ fn main() {
             let arena = Arena::new();
             let mut sm = StringMap::new(&arena);
             let files = FileData::open(path, &mut sm).unwrap();
-            let (_, _) = margarine::run(sm, files, false);
+            let (link_files, _) = margarine::run(sm, files, false);
 
             let mut llc = Command::new("llc");
             llc.arg("-filetype=obj")
@@ -31,6 +31,7 @@ fn main() {
 
             let mut clang = Command::new("clang");
             clang.arg("artifacts/program.o")
+                .args(&link_files)
                 .arg("libmargarine.a")
                 .arg("-lzstd")
                 .arg("-lz")
@@ -59,7 +60,7 @@ fn main() {
             let arena = Arena::new();
             let mut sm = StringMap::new(&arena);
             let files = FileData::open(path, &mut sm).unwrap();
-            let (_, tests) = margarine::run(sm, files, true);
+            let (link_files, tests) = margarine::run(sm, files, true);
 
             let mut llc = Command::new("llc");
             llc.arg("-O2")
@@ -75,6 +76,7 @@ fn main() {
             clang.arg("-shared")
                 .arg("libmargarine.a")
                 .arg("artifacts/program.o")
+                .args(&link_files)
                 .arg("-lzstd")
                 .arg("-lz")
                 .arg("-lc++")

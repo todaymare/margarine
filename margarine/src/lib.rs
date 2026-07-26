@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
+use std::path::Path;
 
 use colourful::ColourBrush;
 use common::string_map;
@@ -60,6 +61,7 @@ pub struct CompilationResult<'a> {
     pub syms: semantic_analysis::syms::sym_map::SymbolMap<'a>,
     namespaces: semantic_analysis::namespace::NamespaceMap,
     scopes: semantic_analysis::scope::ScopeMap<'a>,
+    link_files: Vec<String>,
 }
 
 
@@ -110,6 +112,14 @@ impl<'me> Compiler<'me> {
 
         let mut file_offsets = vec![];
         let mut package_urls: HashMap<String, String> = HashMap::new();
+        let mut link_file_paths: HashMap<parser::nodes::decl::DeclId, String> = HashMap::new();
+        let mut cfg_env = std::env::vars()
+            .map(|(k, v)| (self.string_map.insert(&k), self.string_map.insert(&v)))
+            .collect::<HashMap<_, _>>();
+        
+        let comp_target = self.string_map.insert("COMPILATION_TARGET");
+        let target_triple = self.string_map.insert(&llvm_api::ctx::default_target_triple());
+        cfg_env.insert(comp_target, target_triple);
 
         while let Some((decl, name, path, is_root, depth)) = stack.pop() {
             let file_path = self.string_map.get(path);
@@ -142,9 +152,29 @@ impl<'me> Compiler<'me> {
                 tokens
             });
 
-            let (body, imports, mut pe) = DropTimer::with_timer("parsing", || {
-                parse(tokens, counter, &arena, &mut self.string_map, &mut global)
+            let (body, imports, link_files, mut pe) = 
+            DropTimer::with_timer("parsing", || {
+                parse(tokens, counter, &arena, &mut self.string_map, &mut global, &cfg_env)
             });
+
+            for (_, link_file) in link_files {
+                let Decl::LinkFile { path } = global.decl(link_file) 
+                else { unreachable!() };
+                let path = Path::new(file_path)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(self.string_map.get(path));
+                if !fs::exists(&path).unwrap_or(false) {
+                    let path = self.string_map.insert(&path.to_string_lossy());
+                    let err = pe.push(parser::errors::Error::FileDoesntExist {
+                        source: global.range(link_file),
+                        path,
+                    });
+                    global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                    continue;
+                }
+                link_file_paths.insert(link_file, path.to_string_lossy().into_owned());
+            }
 
 
             file_offsets.push((path, source_offset));
@@ -403,6 +433,15 @@ impl<'me> Compiler<'me> {
         }
 
 
+        let mut link_files = Vec::new();
+        let mut seen_link_files = HashSet::new();
+        for (_, link_file) in &sema.link_files {
+            let path = link_file_paths.get(link_file).unwrap();
+            if seen_link_files.insert(path.clone()) {
+                link_files.push(path.clone());
+            }
+        }
+
         CompilationResult {
             file_offsets,
 
@@ -419,6 +458,7 @@ impl<'me> Compiler<'me> {
             startups: sema.startups,
             ty_info: sema.type_info,
             scopes: sema.scopes,
+            link_files,
             namespaces: sema.namespaces,
             syms: sema.syms,
 
@@ -430,7 +470,7 @@ impl<'me> Compiler<'me> {
 
 
 impl<'me> CompilationResult<'me> {
-    pub fn codegen(&mut self, comp: &mut Compiler, tests: bool) -> Vec<u8> {
+    pub fn codegen(&mut self, comp: &mut Compiler, tests: bool) {
         let tests = 
         if tests { self.tests.iter().map(|s| s.0).collect() } 
         else { vec![] };
@@ -445,8 +485,9 @@ impl<'me> CompilationResult<'me> {
             &tests,
         );
 
-        vec![]
     }
+
+    pub fn link_files(&self) -> &[String] { &self.link_files }
 
     fn build_errors(&mut self, comp: &mut Compiler) -> [Vec<Vec<String>>; 3] {
         let mut lex_error_files = Vec::with_capacity(self.errors.lexer_errors.len());
@@ -526,7 +567,7 @@ impl Files {
 
 
 
-pub fn run<'str>(string_map: StringMap, files: FileData, tests: bool) -> (Vec<u8>, Vec<(String, bool)>) {
+pub fn run<'str>(string_map: StringMap, files: FileData, tests: bool) -> (Vec<String>, Vec<(String, bool)>) {
     let name = files.name();
     let arena = string_map.arena();
     let mut comp = Compiler::new(&arena);
@@ -535,14 +576,42 @@ pub fn run<'str>(string_map: StringMap, files: FileData, tests: bool) -> (Vec<u8
     comp.files.register(files);
 
     let mut result = comp.run(&arena, name);
-    let src = result.codegen(&mut comp, tests);
+    result.codegen(&mut comp, tests);
+    let link_files = result.link_files().to_vec();
 
     let mut tests = vec![];
     for (sym, should_panic) in &result.tests {
         tests.push((comp.string_map.get(result.syms.sym(*sym).name()).to_string(), *should_panic));
     }
 
-    (src, tests)
+    (link_files, tests)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_link_file_is_a_parser_error() {
+        let arena = Arena::new();
+        let mut compiler = Compiler::new(&arena);
+        let name = compiler.string_map.insert("test.mar");
+        compiler.files.register(FileData::new(
+            "extern \"missing-linker-input.o\";\n\
+             @cfg(env(\"PATH\", \"__margarine_cfg_disabled__\"))\n\
+             extern \"also-missing.o\";"
+                .to_string(),
+            name,
+            Extension::None,
+        ));
+
+        let result = compiler.run(&arena, name);
+        let errors: Vec<_> = result.errors.parser_errors.iter().flatten().collect();
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0].1, parser::errors::Error::FileDoesntExist { .. }));
+    }
 }
 
 

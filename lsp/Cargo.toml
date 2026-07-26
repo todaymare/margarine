@@ -24,9 +24,9 @@ chrono = "0.4"
 
 lexer = { path = "../margarine/lexer" }
 parser = { path = "../margarine/parser" }
+llvm-api = { path = "../margarine/llvm-api" }
 semantic_analysis = { path = "../margarine/semantic_analysis" }
 common = { path = "../margarine/common" }
 errors = { path = "../margarine/errors" }
 margarine = { path = "../margarine" }
 sti = { path = "../vendor/sti" }
-

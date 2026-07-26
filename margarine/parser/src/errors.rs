@@ -52,6 +52,16 @@ pub enum Error {
     },
 
     TooManyEnumVariants(SourceRange),
+
+    InvalidCfg {
+        source: SourceRange,
+        expected: &'static str,
+    },
+
+    MissingCfgEnvironment {
+        source: SourceRange,
+        name: StringIndex,
+    },
 }
 
 
@@ -147,6 +157,19 @@ impl ErrorType<()> for Error {
             Error::TooManyEnumVariants(source) => {
                 fmt.error("too many enum variants")
                     .highlight_with_note(*source, "enums cannot have more than 65535 variants");
+            }
+
+
+            Error::InvalidCfg { source, expected } => {
+                fmt.error("invalid cfg predicate")
+                    .highlight_with_note(*source, expected);
+            }
+
+
+            Error::MissingCfgEnvironment { source, name } => {
+                let msg = format!("cfg environment variable '{}' is not defined", fmt.string(*name));
+                fmt.error("missing cfg environment variable")
+                    .highlight_with_note(*source, &msg);
             }
         }
     }

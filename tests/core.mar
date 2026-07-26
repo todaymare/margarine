@@ -6,3 +6,5 @@ mod cow;
 mod enums;
 mod misc;
 mod panic;
+
+extern "boobs";

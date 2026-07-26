@@ -2,6 +2,7 @@ pub mod nodes;
 pub mod errors;
 pub mod dt;
 
+use std::collections::HashMap;
 use common::{source::SourceRange, string_map::{StringIndex, StringMap}};
 use dt::{DataType, DataTypeKind};
 use errors::Error;
@@ -18,7 +19,8 @@ pub fn parse<'a>(
     arena: &'a Arena, 
     string_map: &mut StringMap,
     ast: &mut AST<'a>,
-) -> (Block<'a>, KVec<u32, DeclId>, KVec<ParserError, Error>) {
+    cfg_env: &HashMap<StringIndex, StringIndex>,
+) -> (Block<'a>, KVec<u32, DeclId>, KVec<u32, DeclId>, KVec<ParserError, Error>) {
 
     let mut parser = Parser {
         tokens: &*tokens,
@@ -29,7 +31,9 @@ pub fn parse<'a>(
         is_in_panic: false,
         file,
         ast,
+        cfg_env,
         imports: KVec::new(),
+        link_files: KVec::new(),
     };
 
 
@@ -46,7 +50,7 @@ pub fn parse<'a>(
         },
     };
 
-    (result, parser.imports, parser.errors)
+    (result, parser.imports, parser.link_files, parser.errors)
 }
 
 
@@ -75,8 +79,10 @@ struct Parser<'me, 'ast, 'str> {
     arena: &'ast Arena,
     ast: &'me mut AST<'ast>,
     string_map: &'me mut StringMap<'str>,
+    cfg_env: &'me HashMap<StringIndex, StringIndex>,
 
     imports: Vec<DeclId>,
+    link_files: Vec<DeclId>,
 
     errors: KVec<ParserError, Error>,
     is_in_panic: bool,
@@ -416,6 +422,177 @@ impl<'out> Parser<'_, 'out, '_> {
     }
 
 
+    fn eval_cfg(&self, attr: Attribute) -> Result<bool, Error> {
+        if attr.params.len() != 1 {
+            return Err(Error::InvalidCfg {
+                source: attr.range,
+                expected: "cfg expects exactly one predicate",
+            });
+        }
+
+        self.eval_cfg_predicate(attr.params[0])
+    }
+
+
+    fn eval_cfg_predicate(&self, predicate: Attribute) -> Result<bool, Error> {
+        let Some(name) = predicate.identifier() 
+        else {
+            return Err(Error::InvalidCfg {
+                source: predicate.range,
+                expected: "cfg predicates must be identifiers",
+            });
+        };
+
+        match self.string_map.get(name) {
+            "env" => {
+                if predicate.params.len() != 1 
+                && predicate.params.len() != 2 {
+                    return Err(Error::InvalidCfg {
+                        source: predicate.range,
+                        expected: "env expects one or two string literals",
+                    });
+                }
+
+                let key = predicate.params[0];
+                let AttributeValue::Literal(Literal::String(key_name)) = key.value
+                else {
+                    return Err(Error::InvalidCfg {
+                        source: key.range,
+                        expected: "env expects a string literal variable name",
+                    });
+                };
+
+
+                if !key.params.is_empty() {
+                    return Err(Error::InvalidCfg {
+                        source: key.range,
+                        expected: "env arguments cannot have parameters",
+                    });
+                }
+
+
+                let Some(&value) = self.cfg_env.get(&key_name) 
+                else {
+                    return Err(Error::MissingCfgEnvironment {
+                        source: key.range,
+                        name: key_name,
+                    });
+                };
+
+                if predicate.params.len() == 1 {
+                    return Ok(true);
+                }
+
+                let expected_arg = predicate.params[1];
+                let AttributeValue::Literal(Literal::String(expected)) = expected_arg.value 
+                else {
+                    return Err(Error::InvalidCfg {
+                        source: expected_arg.range,
+                        expected: "env expects a string literal value",
+                    });
+                };
+
+                if !expected_arg.params.is_empty() {
+                    return Err(Error::InvalidCfg {
+                        source: expected_arg.range,
+                        expected: "env arguments cannot have parameters",
+                    });
+                }
+
+                Ok(value == expected)
+            },
+
+            "not" => {
+                if predicate.params.len() != 1 {
+                    return Err(Error::InvalidCfg {
+                        source: predicate.range,
+                        expected: "not expects exactly one predicate",
+                    });
+                }
+                Ok(!self.eval_cfg_predicate(predicate.params[0])?)
+            },
+
+            "all" => {
+                if predicate.params.is_empty() {
+                    return Err(Error::InvalidCfg {
+                        source: predicate.range,
+                        expected: "all expects at least one predicate",
+                    });
+                }
+                let mut enabled = true;
+                for child in predicate.params {
+                    enabled &= self.eval_cfg_predicate(*child)?;
+                }
+                Ok(enabled)
+            },
+
+            "any" => {
+                if predicate.params.is_empty() {
+                    return Err(Error::InvalidCfg {
+                        source: predicate.range,
+                        expected: "any expects at least one predicate",
+                    });
+                }
+                let mut enabled = false;
+                for child in predicate.params {
+                    enabled |= self.eval_cfg_predicate(*child)?;
+                }
+                Ok(enabled)
+            },
+
+            _ => Err(Error::InvalidCfg {
+                source: predicate.range,
+                expected: "expected env, not, all, or any",
+            }),
+        }
+    }
+
+
+    fn skip_cfg_item(&mut self) {
+        if self.current_is(TokenKind::Keyword(Keyword::Import)) {
+            // Repository imports do not require a semicolon, so consume their
+            // fixed header instead of relying only on statement delimiters.
+            for _ in 0..4 {
+                if self.current_kind() == TokenKind::EndOfFile {
+                    return;
+                }
+                self.advance();
+            }
+            if self.current_is(TokenKind::SemiColon) {
+                self.advance();
+            }
+            return;
+        }
+
+        let mut delimiters = std::vec::Vec::new();
+        loop {
+            match self.current_kind() {
+                TokenKind::EndOfFile => return,
+                TokenKind::SemiColon if delimiters.is_empty() => {
+                    self.advance();
+                    return;
+                },
+                TokenKind::LeftParenthesis | TokenKind::LeftSquare | TokenKind::LeftBracket => {
+                    delimiters.push(self.current_kind());
+                    self.advance();
+                },
+                TokenKind::RightParenthesis | TokenKind::RightSquare | TokenKind::RightBracket => {
+                    let opening = delimiters.pop();
+                    if opening.is_some() {
+                        self.advance();
+                        if matches!(opening, Some(TokenKind::LeftBracket)) && delimiters.is_empty() {
+                            return;
+                        }
+                    } else {
+                        return;
+                    }
+                },
+                _ => self.advance(),
+            }
+        }
+    }
+
+
     fn parse_till(
         &mut self, 
         terminator: TokenKind, 
@@ -466,9 +643,10 @@ impl<'out> Parser<'_, 'out, '_> {
             let statement = self.statement(settings);
 
             match statement {
-                Ok (e) => {
+                Ok (Some(e)) => {
                     storage.push(e.into());
                 },
+                Ok (None) => continue,
                 Err(e) => {
                     storage.push(NodeId::Err(e));
 
@@ -620,7 +798,7 @@ impl<'out> Parser<'_, 'out, '_> {
 }
 
 impl<'ta> Parser<'_, 'ta, '_> {
-    fn statement(&mut self, settings: &ParserSettings) -> Result<NodeId, ErrorId> {
+    fn statement(&mut self, settings: &ParserSettings) -> Result<Option<NodeId>, ErrorId> {
         let node = match self.current_kind() {
             | TokenKind::Keyword(Keyword::Struct)
             => self.struct_declaration()?.into(),
@@ -660,7 +838,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::For) => self.for_statement()?.into(),
 
             TokenKind::SemiColon => {
-                return Ok(self.ast.add_expr(Expr::Unit, self.current_range()).into())
+                return Ok(Some(self.ast.add_expr(Expr::Unit, self.current_range()).into()))
             }
 
             TokenKind::At => {
@@ -670,7 +848,23 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 let attr = self.parse_attr(start)?;
                 self.advance();
 
-                let stmt = self.statement(settings)?;
+                if matches!(attr.identifier(), Some(name) if self.string_map.get(name) == "cfg") {
+                    match self.eval_cfg(attr) {
+                        Ok(true) => return self.statement(settings),
+                        Ok(false) => {
+                            self.skip_cfg_item();
+                            return Ok(None);
+                        },
+                        Err(error) => {
+                            self.errors.push(error);
+                            return self.statement(settings);
+                        },
+                    }
+                }
+
+                let Some(stmt) = self.statement(settings)? else {
+                    return Ok(None);
+                };
 
                 match stmt {
                     NodeId::Decl(decl) => self.ast.add_decl(
@@ -692,7 +886,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             self.advance();
         }
 
-        Ok(node)
+        Ok(Some(node))
     }
 
 
@@ -1014,6 +1208,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
         self.advance();
+
+        if let Some(path) = self.is_literal_str() {
+            self.advance();
+            self.expect(TokenKind::SemiColon)?;
+            let decl = self.ast.add_decl(
+                Decl::LinkFile { path },
+                SourceRange::new(start, self.current_range().end()),
+            );
+            self.link_files.push(decl);
+            return Ok(decl);
+        }
 
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
@@ -2289,7 +2494,8 @@ mod tests {
         let file = FileData::new("fn f(x: Foo<T>) {}".to_string(), file_name, Extension::None);
         let (tokens, _) = lex(&file, &mut sm, 0);
         let mut ast = AST::new(&arena);
-        let (_, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast);
+        let cfg_env = std::collections::HashMap::new();
+        let (_, _, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
         assert!(errors.is_empty(), "parse errors: {errors:?}");
     }
 
@@ -2299,4 +2505,37 @@ mod tests {
         assert_eq!(format!("{}", BinaryOperator::BitshiftRight), ">>");
     }
 
+
+    #[test]
+    fn disabled_cfg_items_are_omitted_before_import_collection() {
+        let arena = Arena::new();
+        let mut sm = StringMap::new(&arena);
+        let file_name = sm.insert("test");
+        let file = FileData::new(
+            "@cfg(env(\"DISABLED\", \"no\")) import \"missing\" as missing;\n\
+             @cfg(env(\"DISABLED\", \"no\")) extern \"missing.o\";\n\
+             @cfg(env(\"DISABLED\", \"no\")) fn bad() { this is not valid; }\n\
+             fn enabled() {}"
+                .to_string(),
+            file_name,
+            Extension::None,
+        );
+        let (tokens, _) = lex(&file, &mut sm, 0);
+        let mut ast = AST::new(&arena);
+        let mut cfg_env = std::collections::HashMap::new();
+        cfg_env.insert(sm.insert("DISABLED"), sm.insert("yes"));
+
+        let (body, imports, links, errors) = parse(
+            tokens, 0, &arena, &mut sm, &mut ast, &cfg_env,
+        );
+
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        assert!(imports.is_empty());
+        assert!(links.is_empty());
+        assert_eq!(body.len(), 1);
+        assert!(matches!(ast.decl(match body[0] {
+            NodeId::Decl(id) => id,
+            _ => panic!("expected a declaration"),
+        }), Decl::Function { .. }));
+    }
 }

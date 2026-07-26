@@ -89,6 +89,10 @@ pub enum Decl<'a> {
         functions: &'a [ExternFunction<'a>],
     },
 
+    LinkFile {
+        path: StringIndex,
+    },
+
     Trait {
         name: StringIndex,
         header: SourceRange,
