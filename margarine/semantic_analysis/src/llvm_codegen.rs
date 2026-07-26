@@ -129,7 +129,8 @@ enum BlockTerminator<'a> {
 
 pub fn run<'a>(
     string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
-    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], _file_count: u32, startups: &[SymbolId], tests: &[SymbolId],
+    ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], 
+    _file_count: u32, startups: &[SymbolId], tests: &[SymbolId],
 ) {
     //println!("running llvm");
 

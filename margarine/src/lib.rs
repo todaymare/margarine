@@ -388,27 +388,6 @@ impl<'me> Compiler<'me> {
 
         self.files.sort_by(&file_offsets);
 
-        // todo: find a way to comrpess these errors into vecs
-        for l in &lex_errors {
-            let mut file = Vec::with_capacity(l.len());
-            for e in l.iter() {
-                let report = display(e, &self.string_map, &self.files.files, &mut ());
-                #[cfg(not(feature = "fuzzer"))]
-                println!("{report}");
-                file.push(report);
-            }
-        }
-
-        for l in &parse_errors {
-            let mut file = Vec::with_capacity(l.len());
-            for e in l.iter() {
-                let report = display(e, &self.string_map, &self.files.files, &mut ());
-                #[cfg(not(feature = "fuzzer"))]
-                println!("{report}");
-                file.push(report);
-            }
-        }
-
         let temp = Arena::new();
         let sema = {
             let _1 = DropTimer::new("semantic analysis");
@@ -470,12 +449,11 @@ impl<'me> Compiler<'me> {
 
 
 impl<'me> CompilationResult<'me> {
-    pub fn codegen(&mut self, comp: &mut Compiler, tests: bool) {
+    pub fn codegen(&mut self, comp: &mut Compiler, tests: bool, errors: [Vec<Vec<String>>; 3]) {
         let tests = 
         if tests { self.tests.iter().map(|s| s.0).collect() } 
         else { vec![] };
 
-        let errors = self.build_errors(comp);
         llvm_codegen::run(
             &mut comp.string_map, &mut self.syms,
             &mut self.namespaces, &mut self.ast,
@@ -489,14 +467,28 @@ impl<'me> CompilationResult<'me> {
 
     pub fn link_files(&self) -> &[String] { &self.link_files }
 
+    fn report_errors(&self, errors: &[Vec<Vec<String>>; 3]) {
+        for files in [&errors[0], &errors[1]] {
+            for file in files {
+                for error in file {
+                    println!("{error}");
+                }
+            }
+        }
+
+        for ((id, _), error) in (&self.errors.sema_errors).into_iter().zip(&errors[2][0]) {
+            if !self.is_silent_error(self.errors.sema_error_nodes[id]) {
+                println!("{error}");
+            }
+        }
+    }
+
     fn build_errors(&mut self, comp: &mut Compiler) -> [Vec<Vec<String>>; 3] {
         let mut lex_error_files = Vec::with_capacity(self.errors.lexer_errors.len());
         for l in &self.errors.lexer_errors {
             let mut file = Vec::with_capacity(l.len());
             for e in l.iter() {
                 let report = display(e, &comp.string_map, &comp.files.files, &mut ());
-                #[cfg(not(feature = "fuzzer"))]
-                println!("{report}");
                 file.push(report);
             }
             lex_error_files.push(file);
@@ -507,8 +499,6 @@ impl<'me> CompilationResult<'me> {
             let mut file = Vec::with_capacity(l.len());
             for e in l.iter() {
                 let report = display(e, &comp.string_map, &comp.files.files, &mut ());
-                #[cfg(not(feature = "fuzzer"))]
-                println!("{report}");
                 file.push(report);
             }
             parse_error_files.push(file);
@@ -517,10 +507,6 @@ impl<'me> CompilationResult<'me> {
         let mut sema_errors = Vec::with_capacity(self.errors.sema_errors.len());
         for (id, error) in &self.errors.sema_errors {
             let report = display(error, &comp.string_map, &comp.files.files, &mut self.syms);
-            #[cfg(not(feature = "fuzzer"))]
-            if !self.is_silent_error(self.errors.sema_error_nodes[id]) {
-                println!("{report}");
-            }
             sema_errors.push(report);
         }
 
@@ -576,7 +562,51 @@ pub fn run<'str>(string_map: StringMap, files: FileData, tests: bool) -> (Vec<St
     comp.files.register(files);
 
     let mut result = comp.run(&arena, name);
-    result.codegen(&mut comp, tests);
+    let mut lex_error_files = Vec::with_capacity(result.errors.lexer_errors.len());
+    for l in &result.errors.lexer_errors {
+        let mut file = Vec::with_capacity(l.len());
+        for e in l.iter() {
+            let report = display(e, &comp.string_map, &comp.files.files, &mut ());
+
+            if !cfg!(feature="fuzzer") {
+                println!("{report}");
+            }
+
+            file.push(report);
+        }
+        lex_error_files.push(file);
+    }
+
+    let mut parse_error_files = Vec::with_capacity(result.errors.parser_errors.len());
+    for l in &result.errors.parser_errors {
+        let mut file = Vec::with_capacity(l.len());
+        for e in l.iter() {
+            let report = display(e, &comp.string_map, &comp.files.files, &mut ());
+
+            if !cfg!(feature="fuzzer") {
+                println!("{report}");
+            }
+
+            file.push(report);
+        }
+        parse_error_files.push(file);
+    }
+
+    let mut sema_errors = Vec::with_capacity(result.errors.sema_errors.len());
+    for (id, error) in &result.errors.sema_errors {
+        let report = display(error, &comp.string_map, &comp.files.files, &mut result.syms);
+
+        if !cfg!(feature="fuzzer")
+        && !result.is_silent_error(result.errors.sema_error_nodes[id]) {
+            println!("{report}");
+        }
+
+        sema_errors.push(report);
+    }
+
+    let errors = [lex_error_files, parse_error_files, vec![sema_errors]];
+
+    result.codegen(&mut comp, tests, errors);
     let link_files = result.link_files().to_vec();
 
     let mut tests = vec![];
