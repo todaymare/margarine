@@ -1,12 +1,10 @@
 [package]
-name = "xtask"
+name = "margarine-installer"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
-git2 = "0.20.2"
 flate2 = "1"
 tar = "0.4"
 tempfile = "3"
-
-margarine-installer = { path = "../installer/" }

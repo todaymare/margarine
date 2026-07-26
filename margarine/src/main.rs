@@ -21,10 +21,13 @@ fn main() {
             let files = FileData::open(path, &mut sm).unwrap();
             let (link_files, _) = margarine::run(sm, files, false);
 
+            let target = llvm_api::ctx::package_target_triple();
+            let library_dir = margarine_installer::path_lib(&target);
+
             let mut clang = Command::new("clang");
             clang.arg("artifacts/program.o")
                 .args(&link_files)
-                .arg("libmargarine.a")
+                .arg(library_dir.join("libmargarine_rt.a"))
                 .arg("-lzstd")
                 .arg("-lz")
                 .arg("-lc++")
@@ -54,19 +57,12 @@ fn main() {
             let files = FileData::open(path, &mut sm).unwrap();
             let (link_files, tests) = margarine::run(sm, files, true);
 
-            let mut llc = Command::new("llc");
-            llc.arg("-O2")
-                .arg("-filetype=obj")
-                .arg("-relocation-model=pic")
-                .arg("artifacts/out.ll")
-                .arg("-o=artifacts/program.o");
-            if !run_step("emitting object...", &mut llc) {
-                return;
-            }
+            let target = llvm_api::ctx::package_target_triple();
+            let library_dir = margarine_installer::path_lib(&target);
 
             let mut clang = Command::new("clang");
             clang.arg("-shared")
-                .arg("libmargarine.a")
+                .arg(library_dir.join("libmargarine_rt.a"))
                 .arg("artifacts/program.o")
                 .args(&link_files)
                 .arg("-lzstd")
@@ -75,6 +71,7 @@ fn main() {
                 .arg("-lc++abi")
                 .arg("-o")
                 .arg("artifacts/program.dylib");
+
             if !run_step("linking...", &mut clang) {
                 return;
             }

@@ -1,30 +1,26 @@
-use std::{env, fs, io, path::{Path, PathBuf}, process::{Command, ExitCode}};
+use std::{env, fs::{self, File}, io, path::{Path, PathBuf}, process::{Command, ExitCode}};
 
+use flate2::{write::GzEncoder, Compression};
 use git2::Repository;
+use tar::Builder;
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
-    let Some(command) = args.next() else {
+    let Some(command) = args.next() 
+    else {
         eprintln!("usage: cargo run -p xtask -- bundle [--target <triple>] [--out <directory>] [--std-ref <ref>]");
         return ExitCode::from(2);
     };
 
-    match command.as_str() {
-        "bundle" => match bundle(args.collect()) {
-            Ok(path) => {
-                println!("created {}", path.display());
-                ExitCode::SUCCESS
-            }
-            Err(error) => {
-                eprintln!("bundle failed: {error}");
-                ExitCode::FAILURE
-            }
-        },
-        _ => {
-            eprintln!("unknown xtask command '{command}'");
-            ExitCode::from(2)
-        }
+
+
+    if command != "bundle" {
+        eprintln!("unknown xtask command '{command}'");
+        return ExitCode::from(2)
     }
+
+    bundle(args.collect()).unwrap();
+    ExitCode::SUCCESS
 }
 
 fn bundle(args: Vec<String>) -> io::Result<PathBuf> {
@@ -54,11 +50,15 @@ fn bundle(args: Vec<String>) -> io::Result<PathBuf> {
 
     let root = workspace_root()?;
     let version = compiler_version(&root)?;
-    let target = target.unwrap_or(host_target()?);
-    let explicit_target = args.iter().any(|arg| arg == "--target");
+    let target = target.ok_or(invalid("specify a target"))?;
+    let (_, rust_target) = margarine_installer::MAPPINGS.iter().find(|x| x.0 == target).unwrap();
+
     if !output.is_absolute() {
         output = root.join(output);
     }
+
+
+    println!("creating bundle");
 
     let bundle = output.join(format!("margarine-{version}"));
     let target_bundle = bundle.join(&target);
@@ -68,22 +68,17 @@ fn bundle(args: Vec<String>) -> io::Result<PathBuf> {
 
     let mut cargo = Command::new("cargo");
     cargo.current_dir(&root)
-        .args(["build", "--profile", "dist", "-p", "margarine", "-p", "runtime"]);
-    if explicit_target {
-        cargo.args(["--target", &target]);
-    }
+        .args(["build", "--profile", "dist", "-p", "margarine", "-p", "runtime", "--target", rust_target]);
+
     run(&mut cargo, "building compiler and runtime")?;
 
-    let release_dir = if explicit_target {
-        root.join("target").join(&target).join("dist")
-    } else {
-        root.join("target").join("dist")
-    };
+    let release_dir = root.join("target").join(&rust_target).join("dist");
 
     let bin_dir = target_bundle.join("bin");
     let runtime_dir = target_bundle.join("lib");
-    let std_dir = bundle.join("share/std");
-    let core_dir = bundle.join("share/core");
+    let share_dir = bundle.join("share");
+    let std_dir = share_dir.join("std");
+    let core_dir = share_dir.join("core");
     if std_dir.exists() {
         fs::remove_dir_all(&std_dir)?;
     }
@@ -96,8 +91,52 @@ fn bundle(args: Vec<String>) -> io::Result<PathBuf> {
     let std_source = checkout_standard_library(&root, &version, std_ref.as_deref())?;
     copy_dir(&std_source, &std_dir)?;
 
-    copy_file(&release_dir.join(executable_name()), &bin_dir.join(executable_name()))?;
-    copy_file(&release_dir.join(static_library_name()), &runtime_dir.join(static_library_name()))?;
+    let bin = bin_dir.join(executable_name());
+    let installer = bin_dir.join(installer_name());
+    let static_lib = runtime_dir.join(static_library_name());
+
+    copy_file(&release_dir.join(executable_name()), &bin)?;
+    copy_file(&release_dir.join(static_library_name()), &static_lib)?;
+
+    println!("creating installer payload");
+    let tar_gz = tempfile::Builder::new()
+        .prefix("margarine-")
+        .tempfile()?;
+
+    let encoder = GzEncoder::new(&tar_gz, Compression::none());
+    let mut tar = Builder::new(encoder);
+
+    tar.append_path_with_name(
+        &bin,
+        "margarine",
+    )?;
+
+
+    tar.append_path_with_name(
+        &static_lib,
+        "libmargarine_rt.a",
+    )?;
+
+
+    tar.append_dir_all(
+        "share",
+        share_dir,
+    )?;
+
+    tar.into_inner()?.finish()?;
+
+    println!("building installer");
+
+    let mut cargo = Command::new("cargo");
+    cargo.current_dir(&root)
+        .args(["build", "--profile", "dist", "-p", "margarine-installer", "--target", rust_target])
+        .env("MARGARINE_INSTALL_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("MARGARINE_INSTALL_TARGET", &target)
+        .env("MARGARINE_INSTALL_PAYLOAD", tar_gz.path().to_str().unwrap());
+
+    run(&mut cargo, "building installer")?;
+
+    copy_file(&release_dir.join(installer_name()), &installer)?;
 
     Ok(bundle)
 }
@@ -162,19 +201,6 @@ fn workspace_root() -> io::Result<PathBuf> {
         .ok_or_else(|| invalid("xtask is not inside a workspace"))
 }
 
-fn host_target() -> io::Result<String> {
-    let output = Command::new("rustc").arg("-vV").output()?;
-    if !output.status.success() {
-        return Err(invalid("rustc -vV failed"));
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines()
-        .find_map(|line| line.strip_prefix("host: "))
-        .map(str::to_owned)
-        .ok_or_else(|| invalid("rustc -vV did not report a host target"))
-}
-
 fn executable_name() -> &'static str {
     if cfg!(windows) { "margarine.exe" } else { "margarine" }
 }
@@ -182,6 +208,11 @@ fn executable_name() -> &'static str {
 fn static_library_name() -> &'static str {
     if cfg!(windows) { "margarine.lib" } else { "libmargarine.a" }
 }
+
+fn installer_name() -> &'static str {
+    if cfg!(windows) { "margarine-installer.exe" } else { "margarine-installer" }
+}
+
 
 fn copy_file(source: &Path, destination: &Path) -> io::Result<()> {
     if !source.is_file() {

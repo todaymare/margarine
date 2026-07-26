@@ -14,6 +14,26 @@ pub fn default_target_triple() -> String {
     value
 }
 
+
+pub fn package_target_triple() -> String {
+    let triple = default_target_triple();
+
+    if let Some(pos) = triple.find("-darwin") {
+        let end = pos + "-darwin".len();
+
+        if triple[end..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
+        {
+            return triple[..end].to_string();
+        }
+    }
+
+    triple
+}
+
+
 #[derive(Clone, Copy)]
 pub struct ContextRef<'ctx>(ContextImpl<'ctx>);
 

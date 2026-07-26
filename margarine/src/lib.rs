@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 
 use colourful::ColourBrush;
-use common::string_map;
 use common::string_map::StringIndex;
 use errors::LexerError;
 use errors::ParserError;
@@ -31,7 +31,6 @@ use sha2::Digest;
 pub use sti::arena::Arena;
 use sti::format_in;
 use sti::vec::KVec;
-use tracing::trace;
 
 
 pub use semantic_analysis;
@@ -477,52 +476,6 @@ impl<'me> CompilationResult<'me> {
 
     pub fn link_files(&self) -> &[String] { &self.link_files }
 
-    fn report_errors(&self, errors: &[Vec<Vec<String>>; 3]) {
-        for files in [&errors[0], &errors[1]] {
-            for file in files {
-                for error in file {
-                    println!("{error}");
-                }
-            }
-        }
-
-        for ((id, _), error) in (&self.errors.sema_errors).into_iter().zip(&errors[2][0]) {
-            if !self.is_silent_error(self.errors.sema_error_nodes[id]) {
-                println!("{error}");
-            }
-        }
-    }
-
-    fn build_errors(&mut self, comp: &mut Compiler) -> [Vec<Vec<String>>; 3] {
-        let mut lex_error_files = Vec::with_capacity(self.errors.lexer_errors.len());
-        for l in &self.errors.lexer_errors {
-            let mut file = Vec::with_capacity(l.len());
-            for e in l.iter() {
-                let report = display(e, &comp.string_map, &comp.files.files, &mut ());
-                file.push(report);
-            }
-            lex_error_files.push(file);
-        }
-
-        let mut parse_error_files = Vec::with_capacity(self.errors.parser_errors.len());
-        for l in &self.errors.parser_errors {
-            let mut file = Vec::with_capacity(l.len());
-            for e in l.iter() {
-                let report = display(e, &comp.string_map, &comp.files.files, &mut ());
-                file.push(report);
-            }
-            parse_error_files.push(file);
-        }
-
-        let mut sema_errors = Vec::with_capacity(self.errors.sema_errors.len());
-        for (id, error) in &self.errors.sema_errors {
-            let report = display(error, &comp.string_map, &comp.files.files, &mut self.syms);
-            sema_errors.push(report);
-        }
-
-        [lex_error_files, parse_error_files, vec![sema_errors]]
-    }
-
     fn is_silent_error(&self, node: NodeId) -> bool {
         let (start, end) = self.ast.range(node).range();
         let index = self.silent_ranges.partition_point(|range| range.range().0 <= start);
@@ -714,3 +667,4 @@ impl BuildLock {
         self.packages.insert(alias, commit);
     }
 }
+
