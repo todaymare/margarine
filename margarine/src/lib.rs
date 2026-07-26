@@ -267,62 +267,70 @@ impl<'me> Compiler<'me> {
 
                         let local_path = format!("{}/{}", artifacts_dir, dir_hash);
 
-                        // If the repo doesn't exist locally, clone it
-                        if !std::fs::exists(&local_path).unwrap_or(false) {
+                        let repository = if std::fs::exists(&local_path).unwrap_or(false) {
+                            match Repository::open(&local_path) {
+                                Ok(repo) => repo,
+                                Err(_) => {
+                                    let err = pe.push(parser::errors::Error::RepoDoesntExist {
+                                        source,
+                                        path: repo,
+                                    });
+                                    global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                                    continue;
+                                }
+                            }
+                        } else {
                             if !self.silent {
                                 println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
                             }
 
-                            let repo =
                             match Repository::clone(&url, &local_path) {
-                                Ok(v) => v,
+                                Ok(repo) => repo,
                                 Err(_) => {
-                                    let err = pe.push(parser::errors::Error::RepoDoesntExist { 
-                                        source, 
-                                        path: repo 
+                                    let err = pe.push(parser::errors::Error::RepoDoesntExist {
+                                        source,
+                                        path: repo,
                                     });
                                     global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
                                     continue;
-                                },
-                            };
-
-                            if let Some(commit) = commit {
-                                // If repo exists but user specified a commit, checkout it
-                                if let Ok(obj) = repo.revparse_single(commit) {
-                                    let _ = repo.checkout_tree(&obj, None);
                                 }
-                                build_lock.set(alias_str.to_string(), commit.to_string());
                             }
+                        };
 
-
-
-                            let target_commit =
-                            if let Some(commit) = commit {
-                                commit.to_string()
-                            } else if let Some(lock) = build_lock.get(&alias_str) {
-                                lock
-                            } else {
-                                // Get HEAD commit
-                                match repo.head() {
-                                    Ok(head) => {
-                                        head.target()
-                                            .map(|oid| oid.to_string())
-                                            .unwrap_or_else(|| "HEAD".to_string())
-                                    }
-                                    Err(_) => "HEAD".to_string(),
-                                }
-                            };
-
-                            // Checkout the commit
-                            if let Ok(obj) = repo.revparse_single(&target_commit) {
-                                let _ = repo.checkout_tree(&obj, None);
+                        let target_commit = if let Some(commit) = commit {
+                            commit.to_string()
+                        } else if let Some(lock) = build_lock.get(&alias_str) {
+                            lock
+                        } else {
+                            match repository.head() {
+                                Ok(head) => head.target()
+                                    .map(|oid| oid.to_string())
+                                    .unwrap_or_else(|| "HEAD".to_string()),
+                                Err(_) => "HEAD".to_string(),
                             }
+                        };
 
+                        let Ok(object) = repository.revparse_single(&target_commit) else {
+                            let err = pe.push(parser::errors::Error::RepoDoesntExist {
+                                source,
+                                path: repo,
+                            });
+                            global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                            continue;
+                        };
 
-                            // Update lock file
-                            build_lock.set(alias_str.to_string(), target_commit);
-
+                        if repository.checkout_tree(&object, None).is_err()
+                        || repository.set_head_detached(object.id()).is_err()
+                        {
+                            let err = pe.push(parser::errors::Error::RepoDoesntExist {
+                                source,
+                                path: repo,
+                            });
+                            global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                            continue;
                         }
+
+                        build_lock.set(alias_str.to_string(), target_commit);
 
                         // if the module is already in the top level, skip it
                         if top_modules.contains(&hash) {

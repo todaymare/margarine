@@ -3,4 +3,5 @@
 
 build.lock
 /artifacts
+/dist
 libmargarine.a
