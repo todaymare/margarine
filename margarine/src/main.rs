@@ -21,14 +21,6 @@ fn main() {
             let files = FileData::open(path, &mut sm).unwrap();
             let (link_files, _) = margarine::run(sm, files, false);
 
-            let mut llc = Command::new("llc");
-            llc.arg("-filetype=obj")
-                .arg("artifacts/out.ll")
-                .arg("-o=artifacts/program.o");
-            if !run_step("emitting object...", &mut llc) {
-                return;
-            }
-
             let mut clang = Command::new("clang");
             clang.arg("artifacts/program.o")
                 .args(&link_files)

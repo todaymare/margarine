@@ -1,6 +1,6 @@
-use std::{ffi::CStr, ops::Deref, ptr::{null_mut, NonNull}};
+use std::{ffi::{CStr, CString}, ops::Deref, path::Path, ptr::{null_mut, NonNull}};
 
-use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMConstStructInContext, LLVMContextCreate, LLVMContextDispose, LLVMDoubleType, LLVMDoubleTypeInContext, LLVMFloatType, LLVMFloatTypeInContext, LLVMGetDataLayout, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMVoidTypeInContext}, target::{LLVMGetModuleDataLayout, LLVMPointerSize, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineRef}, LLVMContext};
+use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDisposeMessage, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMSetTarget, LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMVoidTypeInContext}, target::{LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCodeGenFileType, LLVMCreateTargetDataLayout, LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMGetTargetMachineTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineEmitToFile}, LLVMContext};
 use sti::{arena::Arena, format_in};
 
 use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{array::Array, bool::Bool, fp::FP, int::Integer, strct::Struct, string::StringValue, unit::Unit, Value}};
@@ -62,10 +62,10 @@ impl<'me> ContextImpl<'me> {
             }
 
             unsafe { LLVMCreateTargetMachine(target, tt, c"".as_ptr() as _,
-                                     c"".as_ptr() as _,
+                                      c"".as_ptr() as _,
                                      llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
-                                     llvm_sys::target_machine::LLVMRelocMode::LLVMRelocDefault,
-                                     llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault) }
+                                      llvm_sys::target_machine::LLVMRelocMode::LLVMRelocDefault,
+                                      llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault) }
         };
 
         let tm = NonNull::new(tm).unwrap();
@@ -105,7 +105,47 @@ impl<'me> ContextImpl<'me> {
 
         let module = NonNull::new(module).expect("failed to create a module");
 
+        let target_triple = unsafe { LLVMGetTargetMachineTriple(self.target_machine.as_ptr()) };
+        unsafe { LLVMSetTarget(module.as_ptr(), target_triple) };
+        unsafe { LLVMDisposeMessage(target_triple) };
+
+        let data_layout = unsafe { LLVMCreateTargetDataLayout(self.target_machine.as_ptr()) };
+        unsafe {
+            LLVMSetModuleDataLayout(module.as_ptr(), data_layout);
+            LLVMDisposeTargetData(data_layout);
+        }
+
         Module::new(module, self.arena)
+    }
+
+    pub fn emit_object(&self, module: Module<'me>, path: &Path) -> Result<(), String> {
+        let path = CString::new(path.to_string_lossy().as_bytes())
+            .map_err(|_| format!("object path contains a null byte: {}", path.display()))?;
+        let mut error = null_mut();
+        let state = 
+        unsafe {
+            LLVMTargetMachineEmitToFile(
+                self.target_machine.as_ptr(),
+                module.ptr.as_ptr(),
+                path.as_ptr(),
+                LLVMCodeGenFileType::LLVMObjectFile,
+                &mut error,
+            )
+        };
+
+        if state != 0 {
+            let message = NonNull::new(error)
+                .map(|error| unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "LLVM failed to emit an object file".to_string());
+
+            if !error.is_null() {
+                unsafe { LLVMDisposeMessage(error) };
+            }
+
+            Err(message)
+        } else {
+            Ok(())
+        }
     }
 
         
@@ -316,6 +356,7 @@ impl<'ctx> AsRef<ContextImpl<'ctx>> for ContextRef<'ctx> {
 
 impl<'me> Drop for Context<'me> {
     fn drop(&mut self) {
+        unsafe { llvm_sys::target_machine::LLVMDisposeTargetMachine(self.0.0.target_machine.as_ptr()) }
         unsafe { LLVMContextDispose(self.0.0.ptr.as_ptr()) }
     }
 }

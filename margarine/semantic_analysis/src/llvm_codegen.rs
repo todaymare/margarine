@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, hash::Hash, path::Path};
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
@@ -263,10 +263,9 @@ pub fn run<'a>(
     }
 
 
-    let dump = module.dump_to_str();
-
     let _ = std::fs::create_dir("artifacts");
-std::fs::write("artifacts/out.ll", dump.as_str().as_bytes()).unwrap();
+    ctx.emit_object(module, Path::new("artifacts/program.o"))
+        .unwrap_or_else(|error| panic!("failed to emit object file: {error}"));
 }
 
 

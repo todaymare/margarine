@@ -267,7 +267,8 @@ impl<'me> Compiler<'me> {
 
                         let local_path = format!("{}/{}", artifacts_dir, dir_hash);
 
-                        let repository = if std::fs::exists(&local_path).unwrap_or(false) {
+                        let repository = 
+                        if std::fs::exists(&local_path).unwrap_or(false) {
                             match Repository::open(&local_path) {
                                 Ok(repo) => repo,
                                 Err(_) => {
@@ -297,7 +298,8 @@ impl<'me> Compiler<'me> {
                             }
                         };
 
-                        let target_commit = if let Some(commit) = commit {
+                        let target_commit = 
+                        if let Some(commit) = commit {
                             commit.to_string()
                         } else if let Some(lock) = build_lock.get(&alias_str) {
                             lock
