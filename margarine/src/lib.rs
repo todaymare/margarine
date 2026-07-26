@@ -5,7 +5,6 @@ use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
-use std::path::Path;
 use std::path::PathBuf;
 
 use colourful::ColourBrush;
@@ -39,8 +38,6 @@ use sti::vec::KVec;
 
 
 pub use semantic_analysis;
-use tempfile::tempfile;
-use tempfile::tempfile_in;
 
 
 pub struct Compiler<'me> {
@@ -172,19 +169,82 @@ impl<'me> Compiler<'me> {
                 let url = resolve_url(url_str);
                 let resource = resource_cache_entry(&url);
 
-                let mut tempfile = tempfile::Builder::new()
-                    .tempfile_in(resource.path.parent().unwrap())
-                    .unwrap();
+                let (tempfile, file_hash) = 
+                if resource.path.is_file() {
+                    let Ok(file) = std::fs::read(&resource.path)
+                    else {
+                        let reason = self.string_map.insert("unable to open cached resource file");
+                        let url = self.string_map.insert(&url);
+                        let err = pe.push(Error::ExternalFileError { source, url, operation: "check resource hash", reason });
+                        global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                        continue;
+                    };
 
-                if !self.silent {
-                    println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
-                }
+                    (None, Sha256::digest(file).try_into().unwrap())
+
+                } else {
+
+                    let Some(cache_dir) = resource.path.parent() 
+                    else {
+                        let reason = self.string_map.insert("unable to determine the resource cache directory");
+                        let url = self.string_map.insert(&url);
+                        let err = pe.push(Error::ExternalFileError { source, url, operation: "prepare resource cache", reason });
+                        global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                        continue;
+                    };
+
+                    let mut tempfile = 
+                    match tempfile::Builder::new().tempfile_in(cache_dir) {
+                        Ok(file) => file,
+                        Err(error) => {
+                            let reason = self.string_map.insert(&error.to_string());
+                            let url = self.string_map.insert(&url);
+                            let err = pe.push(Error::ExternalFileError { source, url, operation: "prepare resource cache", reason });
+                            global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                            continue;
+                        }
+                    };
+
+                    if !self.silent {
+                        println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
+                    }
 
 
-                let file_hash = download_and_hash(&url, tempfile.as_file_mut()).unwrap();
+                    let hash = 
+                    match download_and_hash(&url, tempfile.as_file_mut()) {
+                        Ok(hash) => hash,
+                        Err(error) => {
+                            let reason = self.string_map.insert(&error.to_string());
+                            let url = self.string_map.insert(&url);
+                            let err = pe.push(Error::ExternalFileError { 
+                                source, 
+                                url, 
+                                operation: "download external file", 
+                                reason 
+                            });
+
+                            global.set_decl(
+                                link_file, 
+                                Decl::Error(errors::ErrorId::Parser((counter, err)))
+                            );
+                            continue;
+                        }
+                    };
+
+                    (Some(tempfile), hash)
+                };
+
                 if let Some((hash, source_hash)) = hash {
                     let hash_str = self.string_map.get(hash);
-                    if hex::decode(hash_str).unwrap() != file_hash {
+
+                    let Ok(expected_hash) = hex::decode(hash_str) 
+                    else {
+                        let err = pe.push(Error::InvalidHash { source: source_hash });
+                        global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                        continue;
+                    };
+
+                    if expected_hash != file_hash {
                         let found_hash = hex::encode(file_hash);
                         let found_hash = self.string_map.insert(&found_hash);
                         let err = pe.push(Error::HashMismatch { 
@@ -194,13 +254,27 @@ impl<'me> Compiler<'me> {
                             actual: found_hash,
                         });
 
-                        global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                        global.set_decl(
+                            link_file, 
+                            Decl::Error(errors::ErrorId::Parser((counter, err)))
+                        );
                         continue
                     }
                 }
 
-                tempfile.persist(&resource.path).unwrap();
-                link_file_paths.insert(link_file, resource.path.to_string_lossy().into_owned());
+                if let Some(Err(error)) = tempfile.map(|t| t.persist(&resource.path)) {
+                    let reason = self.string_map.insert(&error.error.to_string());
+                    let url = self.string_map.insert(&url);
+                    let err = pe.push(Error::ExternalFileError { source, url, operation: "store external file", reason });
+                    global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                    continue;
+                }
+
+
+                link_file_paths.insert(
+                    link_file, 
+                    resource.path.to_string_lossy().into_owned()
+                );
             }
 
 
@@ -605,7 +679,7 @@ mod tests {
         let errors: Vec<_> = result.errors.parser_errors.iter().flatten().collect();
 
         assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0].1, parser::errors::Error::FileDoesntExist { .. }));
+        assert!(matches!(errors[0].1, parser::errors::Error::ExternalFileError { .. }));
     }
 }
 

@@ -443,7 +443,7 @@ impl<'out> Parser<'_, 'out, '_> {
         };
 
         let str = self.string_map.get(s);
-        if str.len() < 8 || str.len() > 64 {
+        if str.len() != 64 || !str.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(err);
         }
 
@@ -2597,5 +2597,28 @@ mod tests {
             NodeId::Decl(id) => id,
             _ => panic!("expected a declaration"),
         }), Decl::Function { .. }));
+    }
+
+    #[test]
+    fn hash_attribute_requires_64_hexadecimal_characters() {
+        for hash in [
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg",
+        ] {
+            let arena = Arena::new();
+            let mut sm = StringMap::new(&arena);
+            let file_name = sm.insert("test");
+            let file = FileData::new(
+                format!("@hash(\"{hash}\") extern \"missing.o\";"),
+                file_name,
+                Extension::None,
+            );
+            let (tokens, _) = lex(&file, &mut sm, 0);
+            let mut ast = AST::new(&arena);
+            let cfg_env = std::collections::HashMap::new();
+            let (_, _, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
+
+            assert!(matches!(errors.first(), Some(Error::InvalidCfg { .. })));
+        }
     }
 }
