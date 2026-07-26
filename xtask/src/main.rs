@@ -2,6 +2,7 @@ use std::{env, fs::{self, File}, io, path::{Path, PathBuf}, process::{Command, E
 
 use flate2::{write::GzEncoder, Compression};
 use git2::Repository;
+use margarine_installer::{executable_name, installer_name, static_library_name};
 use tar::Builder;
 
 fn main() -> ExitCode {
@@ -82,9 +83,11 @@ fn bundle(args: Vec<String>) -> io::Result<PathBuf> {
     if std_dir.exists() {
         fs::remove_dir_all(&std_dir)?;
     }
+
     if core_dir.exists() {
         fs::remove_dir_all(&core_dir)?;
     }
+
     fs::create_dir_all(&bin_dir)?;
     fs::create_dir_all(&runtime_dir)?;
     fs::create_dir_all(&core_dir)?;
@@ -199,18 +202,6 @@ fn workspace_root() -> io::Result<PathBuf> {
     manifest.parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| invalid("xtask is not inside a workspace"))
-}
-
-fn executable_name() -> &'static str {
-    if cfg!(windows) { "margarine.exe" } else { "margarine" }
-}
-
-fn static_library_name() -> &'static str {
-    if cfg!(windows) { "margarine.lib" } else { "libmargarine.a" }
-}
-
-fn installer_name() -> &'static str {
-    if cfg!(windows) { "margarine-installer.exe" } else { "margarine-installer" }
 }
 
 

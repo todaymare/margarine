@@ -116,8 +116,8 @@ impl<'me> Compiler<'me> {
             .map(|(k, v)| (self.string_map.insert(&k), self.string_map.insert(&v)))
             .collect::<HashMap<_, _>>();
         
-        let comp_target = self.string_map.insert("COMPILATION_TARGET");
-        let target_triple = self.string_map.insert(&llvm_api::ctx::default_target_triple());
+        let comp_target = self.string_map.insert("MARGARINE_COMPILATION_TARGET");
+        let target_triple = self.string_map.insert(&llvm_api::ctx::package_target_triple());
         cfg_env.insert(comp_target, target_triple);
 
         while let Some((decl, name, path, is_root, depth)) = stack.pop() {
@@ -210,41 +210,17 @@ impl<'me> Compiler<'me> {
 
                     Decl::ImportRepo { alias, repo } => {
                         let repo_str = self.string_map.get(repo);
-                        let (url, commit) = if repo_str.contains('@') {
-                            let parts: Vec<_> = repo_str.splitn(2, '@').collect();
-                            (parts[0], Some(parts[1]))
-                        } else {
-                            (repo_str, None)
-                        };
-
-
-
                         let alias_str = self.string_map.get(alias);
+                        let url = resolve_resource(repo_str);
 
-                        let url =
-                        if !url.starts_with("pkg:") {
-                            url.to_string()
-                        } else {
-                            let base =
-                            if !cfg!(feature="fuzzer") { std::env::var("MARGARINE_DEFAULT_URL").ok() }
-                            else { None };
+                        let resource = allocate_resource(&url);
 
-                            let base = base.as_ref().map(|x| x.as_str()).unwrap_or("https://pkg.daymare.net/margarine");
-                            let base = base.trim_end_matches('/');
-                            let url = url.trim_start_matches('/');
-                            let url = &url["pkg:".len()..];
+                        package_urls.insert(
+                            resource.partial_string_hash.clone(), 
+                            url.clone()
+                        );
 
-                            format!("{base}/{url}")
-                        };
-
-
-                        let dir_hash = sha2::Sha256::digest(url.as_bytes());
-                        let dir_hash = u64::from_be_bytes(dir_hash[..8].try_into().unwrap());
-                        let dir_hash = format!("{:016x}", dir_hash);
-
-                        package_urls.insert(dir_hash.clone(), url.clone());
-
-                        let hash = self.string_map.insert(&dir_hash);
+                        let hash = self.string_map.insert(&resource.partial_string_hash);
 
                         {
                             let item = UseItem::new(
@@ -259,16 +235,9 @@ impl<'me> Compiler<'me> {
                             );
                         }
 
-                        let artifacts_dir = "artifacts";
-                        if !std::fs::exists(artifacts_dir).unwrap_or(false) {
-                            std::fs::create_dir(artifacts_dir).unwrap();
-                        }
-
-                        let local_path = format!("{}/{}", artifacts_dir, dir_hash);
-
                         let repository = 
-                        if std::fs::exists(&local_path).unwrap_or(false) {
-                            match Repository::open(&local_path) {
+                        if std::fs::exists(&resource.path).unwrap_or(false) {
+                            match Repository::open(&resource.path) {
                                 Ok(repo) => repo,
                                 Err(_) => {
                                     let err = pe.push(parser::errors::Error::RepoDoesntExist {
@@ -284,7 +253,7 @@ impl<'me> Compiler<'me> {
                                 println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
                             }
 
-                            match Repository::clone(&url, &local_path) {
+                            match Repository::clone(&url, &resource.path) {
                                 Ok(repo) => repo,
                                 Err(_) => {
                                     let err = pe.push(parser::errors::Error::RepoDoesntExist {
@@ -297,6 +266,7 @@ impl<'me> Compiler<'me> {
                             }
                         };
 
+                        /*
                         let target_commit = 
                         if let Some(commit) = commit {
                             commit.to_string()
@@ -310,6 +280,9 @@ impl<'me> Compiler<'me> {
                                 Err(_) => "HEAD".to_string(),
                             }
                         };
+                        */
+
+                        let target_commit = "HEAD";
 
                         let Ok(object) = repository.revparse_single(&target_commit) else {
                             let err = pe.push(parser::errors::Error::RepoDoesntExist {
@@ -331,7 +304,8 @@ impl<'me> Compiler<'me> {
                             continue;
                         }
 
-                        build_lock.set(alias_str.to_string(), target_commit);
+                        let commit = object.id().to_string();
+                        build_lock.set(alias_str.to_string(), commit);
 
                         // if the module is already in the top level, skip it
                         if top_modules.contains(&hash) {
@@ -339,10 +313,10 @@ impl<'me> Compiler<'me> {
                         }
 
                         // Load lib.mar from the cloned repo
-                        let lib_path = format!("{}/lib.mar", local_path);
+                        let lib_path = resource.path.join("lib.mar");
                         let Ok(file) = FileData::open(&lib_path, &mut self.string_map)
                         else {
-                            let lib_path_str = self.string_map.insert(&lib_path);
+                            let lib_path_str = self.string_map.insert(&lib_path.to_string_lossy());
                             let err = pe.push(parser::errors::Error::FileDoesntExist { source, path: lib_path_str });
                             global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
                             
@@ -667,4 +641,50 @@ impl BuildLock {
         self.packages.insert(alias, commit);
     }
 }
+
+
+fn resolve_resource(url: &str) -> String {
+    if !url.starts_with("pkg:") {
+        url.to_string()
+    } else {
+        let base =
+        if !cfg!(feature="fuzzer") { std::env::var("MARGARINE_DEFAULT_URL").ok() }
+        else { None };
+
+        let base = base.as_ref().map(|x| x.as_str())
+            .unwrap_or("https://pkg.daymare.net/margarine");
+        let base = base.trim_end_matches('/');
+        let url = url.trim_start_matches('/');
+        let url = &url["pkg:".len()..];
+
+        format!("{base}/{url}")
+    }
+}
+
+
+struct Resource {
+    full_hash: [u8; 32],
+    partial_string_hash: String,
+    path: PathBuf,
+}
+
+
+fn allocate_resource(ident: &str) -> Resource {
+    let full_hash = sha2::Sha256::digest(ident.as_bytes());
+    let partial_hash = u128::from_be_bytes(full_hash[..16].try_into().unwrap());
+    let string_hash = format!("{:016x}", partial_hash);
+
+    let artifacts_dir = PathBuf::from("artifacts");
+    if !std::fs::exists(&artifacts_dir).unwrap_or(false) {
+        std::fs::create_dir(&artifacts_dir).unwrap();
+    }
+
+    let local_path = artifacts_dir.join(&string_hash);
+    Resource {
+        full_hash: full_hash[..].try_into().unwrap(),
+        partial_string_hash: string_hash,
+        path: local_path,
+    }
+}
+
 

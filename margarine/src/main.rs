@@ -21,13 +21,9 @@ fn main() {
             let files = FileData::open(path, &mut sm).unwrap();
             let (link_files, _) = margarine::run(sm, files, false);
 
-            let target = llvm_api::ctx::package_target_triple();
-            let library_dir = margarine_installer::path_lib(&target);
-
             let mut clang = Command::new("clang");
             clang.arg("artifacts/program.o")
                 .args(&link_files)
-                .arg(library_dir.join("libmargarine_rt.a"))
                 .arg("-lzstd")
                 .arg("-lz")
                 .arg("-lc++")
