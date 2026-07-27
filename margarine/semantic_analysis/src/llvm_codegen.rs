@@ -264,6 +264,8 @@ pub fn run<'a>(
 
 
     let _ = std::fs::create_dir("artifacts");
+    ctx.emit_bitcode(module, Path::new("artifacts/program.bc"))
+        .unwrap_or_else(|error| panic!("failed to emit bitcode: {error}"));
     ctx.emit_object(module, Path::new("artifacts/program.o"))
         .unwrap_or_else(|error| panic!("failed to emit object file: {error}"));
 }
@@ -775,6 +777,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
                 builder.call(self.assert_not_null_fn.0, self.assert_not_null_fn.1, &[*ptr]);
                 let val = builder.local_get(builder.arg(1).unwrap());
+                let val = self.emit_copy(&mut builder, val, elem_ty);
 
                 let old = builder.load(ptr, llvm_elem.repr);
                 self.emit_drop(&mut builder, old, elem_ty);
@@ -810,6 +813,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
                 builder.call(self.assert_not_null_fn.0, self.assert_not_null_fn.1, &[*ptr]);
                 let val = builder.local_get(builder.arg(1).unwrap());
+                let val = self.emit_copy(&mut builder, val, gens[0].1);
 
                 builder.store(ptr, val);
                 builder.ret(*builder.const_unit());

@@ -1,6 +1,6 @@
 use std::{ffi::{CStr, CString}, ops::Deref, path::Path, ptr::{null_mut, NonNull}};
 
-use llvm_sys::{core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDisposeMessage, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMSetTarget, LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMVoidTypeInContext}, target::{LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCodeGenFileType, LLVMCreateTargetDataLayout, LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMGetTargetMachineTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineEmitToFile}, LLVMContext};
+use llvm_sys::{bit_writer::LLVMWriteBitcodeToFile, core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDisposeMessage, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMSetTarget, LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMVoidTypeInContext}, target::{LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCodeGenFileType, LLVMCreateTargetDataLayout, LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMGetTargetMachineTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineEmitToFile}, LLVMContext};
 use sti::{arena::Arena, format_in};
 
 use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{array::Array, bool::Bool, fp::FP, int::Integer, strct::Struct, string::StringValue, unit::Unit, Value}};
@@ -165,6 +165,18 @@ impl<'me> ContextImpl<'me> {
             Err(message)
         } else {
             Ok(())
+        }
+    }
+
+
+    pub fn emit_bitcode(&self, module: Module<'me>, path: &Path) -> Result<(), String> {
+        let path = CString::new(path.to_string_lossy().as_bytes())
+            .map_err(|_| format!("bitcode path contains a null byte: {}", path.display()))?;
+
+        if unsafe { LLVMWriteBitcodeToFile(module.ptr.as_ptr(), path.as_ptr()) } == 0 {
+            Ok(())
+        } else {
+            Err("LLVM failed to emit bitcode".to_string())
         }
     }
 
