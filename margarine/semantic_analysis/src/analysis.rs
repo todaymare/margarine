@@ -298,22 +298,29 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
     pub fn collect_uses(&mut self, scope_id: ScopeId, ns_id: NamespaceId, nodes: &[NodeId]) {
         let scope = self.scopes.get(scope_id);
+        for n in nodes.iter().rev() {
+            let NodeId::Decl(id) = *n
+            else { continue; };
+
+            let Decl::Module { name, body, .. } = self.ast.decl(id)
+            else { continue; };
+
+            let module_ns = self.namespaces.get_ns(ns_id);
+            let Some(Ok(module_ns)) = module_ns.get_sym(name)
+            else { continue; };
+
+            let module_ns = self.syms.as_ns(module_ns);
+            let child_scope = Scope::new(Some(scope_id), ScopeKind::ImplicitNamespace(module_ns));
+            let child_scope = self.scopes.push(child_scope);
+            self.collect_uses(child_scope, module_ns, &body);
+        }
+
         for n in nodes {
             let NodeId::Decl(id) = *n
             else { continue; };
 
             match self.ast.decl(id) {
-                Decl::Module { name, body, .. } => {
-                    let module_ns = self.namespaces.get_ns(ns_id);
-                    let Some(Ok(module_ns)) = module_ns.get_sym(name)
-                    else { continue; };
-
-                    let module_ns = self.syms.as_ns(module_ns);
-
-                    let scope = Scope::new(Some(scope_id), ScopeKind::ImplicitNamespace(module_ns));
-                    let scope = self.scopes.push(scope);
-                    self.collect_uses(scope, module_ns, &body);
-                }
+                Decl::Module { .. } => continue,
 
 
                 Decl::Impl { body, .. } => {
