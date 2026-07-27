@@ -15,7 +15,6 @@ semantic_analysis = { path = "./semantic_analysis" }
 llvm-api = { path = "./llvm-api" }
 common = { path = "./common" }
 errors = { path = "./errors" }
-margarine-installer = { path = "../installer" }
 
 sti = { path = "../vendor/sti" }
 
