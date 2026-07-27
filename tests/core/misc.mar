@@ -1,6 +1,3 @@
-import "pkg:std" as std;
-use std::*;
-
 extern {
     fn inout_extern(&value: int)
 }
@@ -48,7 +45,7 @@ import "cfg-disabled-import-should-not-be-resolved" as cfg_disabled_import;
 extern "missing-linker-input.o";
 
 @test
-@cfg(env("COMPILATION_TARGET"))
+@cfg(env("MARGARINE_COMPILATION_TARGET"))
 fn cfg_compilation_target_is_injected() {
     assert(true, "the compiler did not provide COMPILATION_TARGET");
 }

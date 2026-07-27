@@ -106,7 +106,7 @@ impl<'me> Compiler<'me> {
         }, SourceRange::ZERO);
 
 
-        let mut stack = vec![(root, entry, entry, true, 0)];
+        let mut stack = vec![(root, entry, entry, true, 0, false)];
         let mut source_offset = 0;
         let mut counter = 0;
 
@@ -124,7 +124,14 @@ impl<'me> Compiler<'me> {
         let target_triple = self.string_map.insert(&llvm_api::ctx::package_target_triple());
         cfg_env.insert(comp_target, target_triple);
 
-        while let Some((decl, name, path, is_root, depth)) = stack.pop() {
+        // parse preludes
+        let preludes = std::env::var("MARGARINE_PRELUDE").unwrap_or("std=pkg:std".to_string());
+        let preludes = preludes.split(';');
+        let preludes = preludes.filter_map(|n| n.split_once('='));
+        let preludes = preludes.map(|(k, v)| (self.string_map.insert(k), self.string_map.insert(v)));
+        let preludes = preludes.collect::<Vec<_>>();
+
+        while let Some((decl, name, path, is_root, depth, is_prelude)) = stack.pop() {
             let file_path = self.string_map.get(path);
 
             if !self.silent {
@@ -155,10 +162,27 @@ impl<'me> Compiler<'me> {
                 tokens
             });
 
-            let (body, imports, link_files, mut pe) = 
+            let (body, mut imports, link_files, mut pe) = 
             DropTimer::with_timer("parsing", || {
                 parse(tokens, counter, &arena, &mut self.string_map, &mut global, &cfg_env)
             });
+
+            let body = 
+            if is_prelude { body }
+            else {
+                let mut vec = sti::vec::Vec::with_cap_in(arena, preludes.len() * 2 + body.len());
+                
+                for &p in &preludes {
+                    let import = global.add_decl(Decl::ImportRepo { alias: p.0, repo: p.1 }, SourceRange::ZERO);
+                    let using = global.add_decl(Decl::Using { item: UseItem::new(p.0, UseItemKind::All, SourceRange::ZERO) }, SourceRange::ZERO);
+                    vec.push(import.into());
+                    vec.push(using.into());
+                    imports.push(import);
+                }
+
+                vec.extend_from_slice(&body);
+                Block::new(vec.leak(), body.range())
+            };
 
             for (_, link_file) in link_files {
                 let Decl::LinkFile { url, hash } = global.decl(link_file) 
@@ -306,7 +330,7 @@ impl<'me> Compiler<'me> {
                             self.files.register(file);
                         }
 
-                        stack.push((i, name, path_idx, false, depth+1));
+                        stack.push((i, name, path_idx, false, depth+1, is_prelude));
                     }
 
 
@@ -368,22 +392,6 @@ impl<'me> Compiler<'me> {
                             }
                         };
 
-                        /*
-                        let target_commit = 
-                        if let Some(commit) = commit {
-                            commit.to_string()
-                        } else if let Some(lock) = build_lock.get(&alias_str) {
-                            lock
-                        } else {
-                            match repository.head() {
-                                Ok(head) => head.target()
-                                    .map(|oid| oid.to_string())
-                                    .unwrap_or_else(|| "HEAD".to_string()),
-                                Err(_) => "HEAD".to_string(),
-                            }
-                        };
-                        */
-
                         let target_commit = "HEAD";
 
                         let Ok(object) = repository.revparse_single(&target_commit) else {
@@ -439,7 +447,8 @@ impl<'me> Compiler<'me> {
                         top_level.push(module.into());
                         top_modules.insert(hash);
 
-                        stack.insert(0, (module, hash, name, true, 0));
+                        let is_prelude = preludes.iter().find(|n| n.1 == repo).is_some();
+                        stack.insert(0, (module, hash, name, true, 0, is_prelude));
 
                     }
 
@@ -450,7 +459,6 @@ impl<'me> Compiler<'me> {
 
 
             let offset = global.range(decl);
-
             global.set_decl(
                 decl, 
                 Decl::Module { 

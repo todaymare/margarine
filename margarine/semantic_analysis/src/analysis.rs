@@ -399,6 +399,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 else { return; };
 
                 let import_ns = self.syms.sym_ns(import_ns);
+                if ns_id == import_ns { return };
 
                 let (ns, import_ns) = self.namespaces.get_double(ns_id, import_ns);
 

@@ -1,6 +1,3 @@
-import "pkg:std" as std;
-use std::*;
-
 struct StructCounter { id: int }
 
 @test

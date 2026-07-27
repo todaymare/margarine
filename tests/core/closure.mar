@@ -1,6 +1,3 @@
-import "pkg:std" as std;
-use std::*;
-
 @test
 fn closure_basic() {
     var x = 5;

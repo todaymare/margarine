@@ -1,6 +1,3 @@
-import "pkg:std" as std;
-use std::*;
-
 struct CowPoint {
     x: int,
     y: int,

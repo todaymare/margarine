@@ -1,6 +1,3 @@
-import "pkg:std" as std;
-use std::*;
-
 @test(should_panic)
 fn panic_caught() {
     panic("this should be caught");
