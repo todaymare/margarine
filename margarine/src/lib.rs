@@ -179,7 +179,9 @@ impl<'me> Compiler<'me> {
                 
                 for &p in &preludes {
                     let import = global.add_decl(Decl::ImportRepo { alias: p.0, repo: p.1 }, SourceRange::ZERO);
-                    let using = global.add_decl(Decl::Using { item: UseItem::new(p.0, UseItemKind::All, SourceRange::ZERO) }, SourceRange::ZERO);
+                    let item = UseItem::new(StringMap::PRELUDE, UseItemKind::All, SourceRange::ZERO);
+                    let item = UseItem::new(p.0, UseItemKind::List { list: arena.alloc_new([item]) }, SourceRange::ZERO);
+                    let using = global.add_decl(Decl::Using { item }, SourceRange::ZERO);
                     vec.push(import.into());
                     vec.push(using.into());
                     imports.push(import);

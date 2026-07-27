@@ -71,7 +71,8 @@ impl<'str> StringMap<'str> {
     pub const PTR_DROP      : StringIndex = StringIndex(55);
     pub const PTR_WRITE_UNINIT : StringIndex = StringIndex(56);
 
-    pub const ROOT : StringIndex = StringIndex(57);
+    pub const PRELUDE : StringIndex = StringIndex(57);
+    pub const ROOT : StringIndex = StringIndex(58);
 
  
     #[inline(always)]
@@ -148,6 +149,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("destroy"), Self::DESTROY_FUNC);
         assert_eq!(s.insert("$ptr_drop"), Self::PTR_DROP);
         assert_eq!(s.insert("$ptr_write_uninit"), Self::PTR_WRITE_UNINIT);
+        assert_eq!(s.insert("prelude"), Self::PRELUDE);
         assert_eq!(s.insert("root"), Self::ROOT);
         s
     }
