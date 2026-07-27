@@ -125,7 +125,12 @@ impl<'me> Compiler<'me> {
         cfg_env.insert(comp_target, target_triple);
 
         // parse preludes
-        let preludes = std::env::var("MARGARINE_PRELUDE").unwrap_or("std=pkg:std".to_string());
+        let default_prelude = format!(
+            "std=https://cdn.daymare.net/margarine/{}/share/std", 
+            env!("CARGO_PKG_VERSION")
+        );
+
+        let preludes = std::env::var("MARGARINE_PRELUDE").unwrap_or(default_prelude);
         let preludes = preludes.split(';');
         let preludes = preludes.filter_map(|n| n.split_once('='));
         let preludes = preludes.map(|(k, v)| (self.string_map.insert(k), self.string_map.insert(v)));
