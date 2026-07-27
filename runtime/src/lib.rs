@@ -1,7 +1,7 @@
 pub mod tys;
 
-use core::{alloc::Layout, ptr::{null, null_mut}, fmt::Write};
-use std::{io::Write as _, marker::PhantomData};
+use core::{alloc::Layout, mem::size_of, ptr::{null, null_mut}, fmt::Write};
+use std::{env, io::Write as _, marker::PhantomData};
 
 use common::symbol_id::SymbolId;
 
@@ -89,6 +89,26 @@ pub extern "C" fn margarineAssertNotNull(ptr: *mut u8) {
     if ptr.is_null() {
         panic_message("null pointer dereference");
     }
+}
+
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn margarineEnvVariable(value: Str) -> Enum<Str> {
+    let name = value.read();
+
+    match std::env::var(name) {
+        Ok(v) => Enum { tag: 0, data: Str::new(&v) },
+        Err(e) => Enum { tag: 1, data: Str::new(&e.to_string()) },
+    }
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn margarineEnvArgs() -> *mut List {
+    let args = env::args()
+        .map(|arg| Str::new(&arg))
+        .collect::<std::vec::Vec<_>>();
+    List::from_values(&args)
 }
 
 
@@ -460,15 +480,42 @@ pub struct Str {
 }
 
 
-// #[derive(Clone, Copy)]
-// #[repr(C)]
-// struct List {
-//     len: u32,
-//     cap: u32,
-//     data: *mut u8,
-// }
-// 
-// 
+#[repr(C)]
+pub struct List {
+    ref_count: u64,
+    len: u64,
+    cap: u64,
+    data: *mut u8,
+}
+
+impl List {
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn from_values<T: Copy>(values: &[T]) -> *mut Self {
+        let len = values.len() as u64;
+        let cap = len.max(1);
+        let data = margarineAlloc(cap * size_of::<T>() as u64);
+        unsafe {
+            core::ptr::copy_nonoverlapping(values.as_ptr(), data.cast::<T>(), values.len());
+        }
+
+        let list = margarineRcAlloc(size_of::<Self>() as u64).cast::<Self>();
+        unsafe {
+            list.write(Self { ref_count: 1, len, cap, data });
+        }
+        list
+    }
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn list_len(list: *const List) -> i64 {
+    unsafe { (*list).len as i64 }
+}
+
+
 macro_rules! test {
     ($($e: expr),* ; $($f: expr),*) => {
         $(

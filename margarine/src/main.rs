@@ -16,6 +16,7 @@ fn main() {
     match command.as_str() {
         "run" => {
             let path = args.next().unwrap();
+            let program_args = args.collect::<Vec<_>>();
             let arena = Arena::new();
             let mut sm = StringMap::new(&arena);
             let files = FileData::open(path, &mut sm).unwrap();
@@ -36,6 +37,7 @@ fn main() {
 
             println!("{}",
                 std::str::from_utf8(&Command::new("./artifacts/program")
+                    .args(program_args)
                     .output()
                     .unwrap()
                     .stdout

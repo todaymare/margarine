@@ -1255,19 +1255,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             parser::nodes::stmt::Stmt::UpdateValue { lhs, rhs } => {
                 if let Err(e) = self.ty_info.expr(lhs) { return Err(e) }
-                let rhs_expr = rhs;
-                let rhs_is_param = match self.ast.expr(rhs) {
-                    Expr::Identifier(name, _) => env.is_var_param(name),
-                    _ => false,
-                };
-                let mut rhs = self.expr(env, builder, rhs)?;
+                let rhs = self.expr(env, builder, rhs)?;
 
                 out_if_err!();
-
-                if rhs_is_param {
-                    let ty = self.ty_info.expr(rhs_expr).unwrap().resolve(&[env.gens], self.syms);
-                    rhs = self.emit_copy(builder, rhs, ty);
-                }
 
                 self.assign(env, builder, lhs, rhs);
                 Ok(())
@@ -1278,7 +1268,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let iter_expr = self.expr(env, builder, expr)?;
                 out_if_err!();
 
-                let (iter_fn_ret_ty, func_ptr, func_ty) = {
+                let (iter_fn_ret_ty, iter_fn_is_inout, func_ptr, func_ty) = {
                     let iter_sym = self.ty_info.expr(expr).unwrap();
                     let iter_sym = iter_sym.resolve(&[env.gens], self.syms);
 
@@ -1295,13 +1285,23 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let ret_ty = self.syms.sym(sym);
                     let SymbolKind::Function(ret_ty) = ret_ty.kind()
                     else { unreachable!() };
+                    let iter_fn_is_inout = ret_ty.args().first().is_some_and(|arg| arg.is_inout());
 
                     let gens = iter_sym.gens(self.syms);
                     let gens = self.syms.get_gens(gens);
                     let ret_ty = ret_ty.ret().to_ty(gens, self.syms).unwrap();
 
                     let func = self.get_func(func).unwrap();
-                    (ret_ty, func.func_ptr, func.func_ty)
+                    (ret_ty, iter_fn_is_inout, func.func_ptr, func.func_ty)
+                };
+
+                // Iterator advancement mutates the iterator through its in-out receiver.
+                let iter_expr = if iter_fn_is_inout {
+                    let iter_ty = self.ty_info.expr(expr).unwrap().resolve(&[env.gens], self.syms);
+                    let value = self.emit_copy(builder, iter_expr, iter_ty);
+                    *builder.alloca_store(value)
+                } else {
+                    iter_expr
                 };
 
                 let iter_fn_binding_value_ty = iter_fn_ret_ty.gens(&self.syms);
@@ -1428,16 +1428,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
     fn emit_panic(&mut self, builder: &mut Builder<'ctx>, message: &str) {
         let array_ty = self.ctx.array(*self.ctx.integer(8), message.len());
-        let strct_ty = self.ctx.structure("str");
-        strct_ty.set_fields(&[*self.i32, *array_ty], true);
-
-        let len = self.ctx.const_int(self.i32, message.len() as _, false);
         let bytes = *self.ctx.const_str(message);
-        let value = self.ctx.const_struct(strct_ty, &[*len, bytes]);
-        let string = self.module.add_global(*strct_ty, "str");
-        string.set_initialiser(*value);
+        let string_data = self.module.add_global(*array_ty, "panic_message");
+        string_data.set_initialiser(bytes);
+        let len = builder.const_int(self.i64, message.len() as _, false);
+        let string = builder.call(
+            self.string_from_utf8_fn.0,
+            self.string_from_utf8_fn.1,
+            &[*string_data, *len],
+        );
 
-        builder.call(self.panic_fn.0, self.panic_fn.1, &[*string]);
+        builder.call(self.panic_fn.0, self.panic_fn.1, &[string]);
     }
 
 
@@ -1949,11 +1950,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 let value = builder.local_get(env.find_var(name).unwrap());
-                if env.is_var_param(name) {
-                    value
-                } else {
-                    self.emit_copy(builder, value, ty)
-                }
+                self.emit_copy(builder, value, ty)
             },
 
 
