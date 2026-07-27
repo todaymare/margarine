@@ -35,6 +35,7 @@ fn main() {
                 return;
             }
 
+            println!("running");
             println!("{}",
                 std::str::from_utf8(&Command::new("./artifacts/program")
                     .args(program_args)

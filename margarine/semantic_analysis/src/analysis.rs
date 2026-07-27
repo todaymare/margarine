@@ -29,13 +29,17 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
         // Analyze all nodes
         let mut last_node = None;
+        let mut has_never = false;
         for node in body.iter() {
             let eval = self.node(path, &mut scope, namespace, *node);
+            if eval.ty.is_never(&mut self.syms) { has_never = true };
             last_node = Some(eval);
         }
 
         // Finalise
-        let result = match last_node {
+        let result = 
+        match last_node {
+            _ if has_never => AnalysisResult::new(Type::NEVER),
             Some(v) => v,
             None    => AnalysisResult::new(Type::UNIT),
         };
@@ -1638,7 +1642,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                                     }
                                 };
 
-                                anal.is_mut = false;
+                                anal.is_mut = true;
                                 return Ok(anal)
 
                             },
@@ -1694,7 +1698,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let mut fargs = sti::vec::Vec::new_in(self.syms.arena());
                 let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
                 let mut gen_list = sti::vec::Vec::with_cap_in(self.syms.arena(), sargs.len() + 1);
-                let t = BoundedGeneric::T;
+                let t = BoundedGeneric::new(StringMap::INVALID_IDENT, &[]);
                 let ret_ty = ret.ty;
                 gens.push((t, ret_ty));
                 gen_list.push(t);

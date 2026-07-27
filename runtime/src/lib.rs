@@ -1,18 +1,45 @@
 pub mod tys;
 
 use core::{alloc::Layout, mem::size_of, ptr::{null, null_mut}, fmt::Write};
-use std::{env, io::Write as _};
+use std::{
+    backtrace::Backtrace, collections::HashMap, env, ffi::CString, hint::black_box, io::Write as _, sync::{Mutex, OnceLock}
+};
 
 use common::symbol_id::SymbolId;
 
+struct Allocation {
+    size: u64,
+    backtrace: Backtrace,
+}
+
+static ALLOCATIONS: OnceLock<Mutex<HashMap<usize, Allocation>>> = OnceLock::new();
+
+fn allocations() -> &'static Mutex<HashMap<usize, Allocation>> {
+    ALLOCATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
-    unsafe { std::alloc::alloc(Layout::from_size_align(size as _, 8).unwrap()) }
+    let ptr = unsafe { std::alloc::alloc(Layout::from_size_align(size as _, 8).unwrap()) };
+    if !ptr.is_null() {
+        allocations().lock().unwrap().insert(
+            ptr as usize,
+            Allocation {
+                size,
+                backtrace: Backtrace::force_capture(),
+            },
+        );
+    }
+    ptr
 }
 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineDealloc(ptr: *mut u8, size: u64) {
+    if allocations().lock().unwrap().remove(&(ptr as usize)).is_none() {
+        println!("tried to free an invalid pointer");
+        return;
+    }
     unsafe { std::alloc::dealloc(ptr, Layout::from_size_align(size as _, 8).unwrap()) }
 }
 
@@ -29,6 +56,10 @@ pub extern "C" fn margarineRcAlloc(total_size: u64) -> *mut u8 {
 pub extern "C" fn margarineRcClone(ptr: *mut u8) -> *mut u8 {
     unsafe {
         let rc = &mut *(ptr as *mut u64);
+        let val = Backtrace::force_capture().to_string();
+        let c = CString::new(val).unwrap();
+        let bt = c.into_raw();
+        margarineRcCloneBp(ptr, bt);
         *rc += 1;
     }
     ptr
@@ -36,16 +67,28 @@ pub extern "C" fn margarineRcClone(ptr: *mut u8) -> *mut u8 {
 
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineRcDrop(ptr: *mut u8, total_size: u64) {
+pub extern "C" fn margarineRcCloneBp(ptr: *mut u8, bt: *mut i8) {
+    black_box((ptr, bt));
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn margarineRcDrop(ptr: *mut u8) -> bool {
     unsafe {
         let rc = &mut *(ptr as *mut u64);
+        let val = Backtrace::force_capture().to_string();
+        let c = CString::new(val).unwrap();
+        let bt = c.into_raw();
+        margarineRcDropBp(ptr, bt);
         *rc -= 1;
-        if *rc == 0 {
-            margarineDealloc(ptr, total_size);
-        }
+        *rc == 0
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn margarineRcDropBp(ptr: *mut u8, bt: *mut i8) {
+    black_box((ptr, bt));
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineStringFromUtf8(bytes: *const u8, len: u64) -> *mut u8 {
@@ -65,8 +108,11 @@ pub extern "C" fn print_int(size: i32) {
 
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineAbort() -> ! {
-    panic_message("margarine abort")
+pub extern "C" fn margarineAbort(code: i32) -> ! {
+    report_leaks();
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    std::process::exit(code);
 }
 
 
@@ -78,9 +124,25 @@ pub extern "C" fn margarinePanic(message: Str) -> ! {
 
 fn panic_message(message: &str) -> ! {
     println!("panic: {message}");
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
-    std::process::abort();
+    margarineAbort(1)
+}
+
+fn report_leaks() {
+    let allocations = allocations().lock().unwrap();
+    if allocations.is_empty() {
+        return;
+    }
+
+    println!("leaked memory:");
+    for (ptr, allocation) in allocations.iter() {
+        println!("  {ptr:#x} ({} bytes)", allocation.size);
+        let bytes = unsafe { core::slice::from_raw_parts(*ptr as *const u8, allocation.size as usize) };
+        for b in bytes {
+            print!("{b:02x}");
+        }
+        println!();
+        println!("{}", allocation.backtrace);
+    }
 }
 
 

@@ -1,6 +1,6 @@
-use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
+use std::{collections::HashSet, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetParam, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, vec::KVec};
 
 use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
@@ -95,6 +95,52 @@ impl<'ctx> Builder<'ctx> {
         // make prelude jump to the entry
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), self.prelude.as_ptr()) };
         unsafe { LLVMBuildBr(self.ptr.as_ptr(), self.entry.as_ptr()) };
+
+        unsafe {
+        let entry = self.prelude.as_ptr();
+
+        let mut reachable = HashSet::<LLVMBasicBlockRef>::new();
+        let mut stack = vec![entry];
+
+        // Mark all blocks reachable from entry.
+        while let Some(bb) = stack.pop() {
+            if !reachable.insert(bb) {
+                continue;
+            }
+
+            let terminator = LLVMGetBasicBlockTerminator(bb);
+
+            // Ideally every block is well-formed by this point.
+            if terminator.is_null() {
+                continue;
+            }
+
+            let count = LLVMGetNumSuccessors(terminator);
+
+            for i in 0..count {
+                let successor = LLVMGetSuccessor(terminator, i);
+
+                if !successor.is_null() {
+                    stack.push(successor);
+                }
+            }
+        }
+
+        // Delete everything that wasn't visited.
+        //
+        // IMPORTANT: grab next BEFORE deleting bb.
+        let mut bb = self.prelude.as_ptr();
+
+        while !bb.is_null() {
+            let next = LLVMGetNextBasicBlock(bb);
+
+            if !reachable.contains(&bb) {
+                LLVMDeleteBasicBlock(bb);
+            }
+
+            bb = next;
+        }
+        }
 
         // finalise
         // oh wait we don't need to do nothing

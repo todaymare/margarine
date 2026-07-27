@@ -16,7 +16,7 @@ members = [
 ]
 
 [profile.release]
-debug = false
+debug = true
 lto = false
 opt-level = 2
 codegen-units = 1

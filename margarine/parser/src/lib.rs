@@ -378,7 +378,8 @@ impl<'out> Parser<'_, 'out, '_> {
 
 
         if let Err(e) = result {
-            while !terminator.contains(&self.current_kind()) {
+            while !terminator.contains(&self.current_kind()) 
+                  && self.current_kind() != TokenKind::EndOfFile {
                 self.advance();
             }
 
