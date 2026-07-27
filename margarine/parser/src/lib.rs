@@ -1723,8 +1723,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn comparisson(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
-            Self::bitwise_or, 
-            Self::bitwise_or, 
+            Self::range_expr,
+            Self::range_expr,
             &[
                 TokenKind::LeftAngle, TokenKind::RightAngle,
                 TokenKind::GreaterEquals, TokenKind::LesserEquals,
@@ -1791,15 +1791,15 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn product(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         self.binary_operation(
-            Self::range_expr, 
-            Self::range_expr, 
+            Self::unary_neg,
+            Self::unary_neg,
             &[TokenKind::Star, TokenKind::Slash, TokenKind::Percent], 
             settings,
         )
     }
 
     fn range_expr(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
-        let lhs = self.unary_neg(settings)?;
+        let lhs = self.bitwise_or(settings)?;
 
         if !self.peek_is(TokenKind::DoubleDot) {
             return Ok(lhs);
@@ -1810,7 +1810,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                      else { false };
         self.advance();
 
-        let mut rhs = self.unary_neg(settings)?;
+        let mut rhs = self.bitwise_or(settings)?;
         if is_inc {
             let range = self.ast.range(rhs);
             let r = self.ast.add_expr(

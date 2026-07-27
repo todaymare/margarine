@@ -634,7 +634,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                             if val != impl_ty { return false; }
 
-                            //if !sig.arguments[0].is_inout() { return false; }
+                             if !sig.arguments[0].is_inout() { return false; }
                             if ret.sym() != Some(SymbolId::OPTION) { return false; }
 
                             true
@@ -1887,6 +1887,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let anal = self.expr(path, scope, value);
 
                 let sym = anal.ty.sym(&mut self.syms)?;
+
+                if sym == SymbolId::ERR {
+                    return Err(Error::Bypass);
+                }
+
                 let sym = self.syms.sym(sym);
 
                 let SymbolKind::Container(cont) = sym.kind()
@@ -2048,8 +2053,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let sym = self.syms.sym(sym_id);
 
                 let field_check = 'b: {
+                    let err = Error::FieldDoesntExist {
+                        source: range, field: field_name, typ: expr.ty };
                     let SymbolKind::Container(cont) = sym.kind()
-                    else { break 'b Err(Error::FieldAccessOnNonEnumOrStruct { source: range, typ: expr.ty }) };
+                    else { break 'b Err(err) };
 
                     let field = cont.fields().iter().enumerate().find(|(_, f)| {
                         let name = f.0;
@@ -2057,8 +2064,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     });
 
                     let Some((_, field)) = field
-                    else { break 'b Err(Error::FieldDoesntExist {
-                        source: range, field: field_name, typ: expr.ty }) };
+                    else { break 'b Err(err)  };
+
                     Ok((field, cont))
                 };
 

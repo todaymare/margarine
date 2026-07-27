@@ -714,7 +714,7 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
 
             Error::IteratorFunctionInvalidSig(v) => {
                 fmt.error("invalid iterator function signature")
-                    .highlight_with_note(*v, "signature must match 'fn __next__(&self): Option<[type]>`");
+                    .highlight_with_note(*v, "signature must match 'fn __next__(&self): Option<[type]>'");
             },
 
             Error::CantUseHoleHere { source } => {

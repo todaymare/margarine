@@ -204,8 +204,15 @@ impl Type {
         let b = oth.instantiate_shallow(map);
         match (a, b) {
             (Type::Ty(symida, gena), Type::Ty(symidb, genb)) => {
-                if matches!(symida, SymbolId::ERR | SymbolId::NEVER) { return true; }
-                if matches!(symidb, SymbolId::ERR | SymbolId::NEVER) { return true; }
+                if [SymbolId::ERR, SymbolId::NEVER].contains(&symida) {
+                    b.propagate_taint(map, a);
+                    return true;
+                }
+
+                if [SymbolId::ERR, SymbolId::NEVER].contains(&symidb) {
+                    a.propagate_taint(map, b);
+                    return true;
+                }
 
                 let gena = instantiate_gens(map, gena);
                 let gena = map.gens()[gena];
@@ -299,6 +306,23 @@ impl Type {
                 true
             },
 
+        }
+    }
+
+
+    fn propagate_taint(self, map: &mut SymbolMap, taint: Type) {
+        match self.instantiate_shallow(map) {
+            Type::Ty(_, gens) => {
+                let len = map.get_gens(gens).len();
+                for i in 0..len {
+                    let ty = map.get_gens(gens)[i];
+                    ty.1.propagate_taint(map, taint);
+                }
+            },
+
+            Type::Var(id) => {
+                map.vars_mut()[id].set_sub(VarSub::Concrete(taint));
+            },
         }
     }
 
@@ -470,5 +494,3 @@ impl Type {
     pub const RANGE: Self = Self::Ty(SymbolId::RANGE, GenListId::EMPTY);
     pub const STR  : Self = Self::Ty(SymbolId::STR  , GenListId::EMPTY);
 }
-
-

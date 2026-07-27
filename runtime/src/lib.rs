@@ -201,6 +201,47 @@ unsafe extern "C" fn str_len(s: Str) -> i64 {
 
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn str_contains(s: Str, value: Str) -> Enum<()> {
+    Enum {
+        tag: s.read().contains(value.read()) as u32,
+        data: (),
+    }
+}
+
+
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn format(s: Str, values: *const List) -> Str {
+    let template = s.read();
+    let values = unsafe { &*values };
+    let values = unsafe {
+        core::slice::from_raw_parts(values.data.cast::<Str>(), values.len as usize)
+    };
+
+    let mut result = String::with_capacity(template.len());
+    let mut offset = 0;
+    let mut value_index = 0;
+
+    while let Some(relative) = template[offset..].find("{}") {
+        let start = offset + relative;
+        result.push_str(&template[offset..start]);
+
+        if let Some(value) = values.get(value_index) {
+            result.push_str(value.read());
+            value_index += 1;
+        } else {
+            result.push_str("{}");
+        }
+
+        offset = start + 2;
+    }
+
+    result.push_str(&template[offset..]);
+    Str::new(&result)
+}
+
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn str_nth(s: Str, n: i64) -> Str {
     let ch = s.read().chars().nth(n as usize).unwrap();
     Str::new(&ch.to_string())
@@ -294,13 +335,31 @@ unsafe extern "C" fn str_split_once(s: Str, delimeter: Str) -> Enum<Pair<Str, St
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_slice(s: Str, min: i64, max: i64) -> Str {
-    let sliced = s.read()
-        .chars()
-        .skip(min as usize)
-        .take((max - min) as usize)
-        .collect::<String>();
+    Str::new(&s.read()[min as usize..max as usize])
+}
 
-    Str::new(&sliced)
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn str_concat(a: Str, b: Str) -> Str {
+    let a = a.read();
+    let b = b.read();
+    let mut s = String::with_capacity(a.len() + b.len());
+    s.push_str(a);
+    s.push_str(b);
+    Str::new(&s)
+}
+
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn str_byte_at(s: Str, idx: i64) -> Enum<i64> {
+    let str = s.read().as_bytes();
+    let idx = idx as usize;
+    if str.len() <= idx {
+        return Enum { tag: 1, data: 0 }
+    }
+
+    let byte = str[idx] as i64;
+    Enum { tag: 0, data: byte }
 }
 
 
