@@ -18,7 +18,7 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     ty_mappings: HashMap<TypeHash, TypeMapping<'ctx>>,
     errors: [Vec<Vec<String>>; 3],
 
-    externs: HashMap<StringIndex, (FunctionType<'ctx>, FunctionPtr<'ctx>)>,
+    externs: HashMap<StringIndex, (FunctionType<'ctx>, FunctionPtr<'ctx>, ExternAbi<'ctx>)>,
     funcs: HashMap<TypeHash, Function<'ctx>>,
 
     func_counter: u32,
@@ -90,6 +90,7 @@ struct Function<'ctx> {
 
     func_ty: FunctionType<'ctx>,
     func_ptr: FunctionPtr<'ctx>,
+    extern_abi: ExternAbi<'ctx>,
 }
 
 
@@ -97,6 +98,13 @@ struct Function<'ctx> {
 enum FunctionKind {
     Code,
     Extern(StringIndex),
+}
+
+
+#[derive(Debug, Clone, Copy)]
+enum ExternAbi<'ctx> {
+    Direct,
+    SRet(LLVMType<'ctx>),
 }
 
 
@@ -213,8 +221,8 @@ pub fn run<'a>(
             string_from_utf8_fn: (string_from_utf8_fn, string_from_utf8_fn_ty),
         };
 
-        conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn));
-        conv.externs.insert(conv.string_map.insert("margarinePanic"), (panic_fn_ty, panic_fn));
+        conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn, ExternAbi::Direct));
+        conv.externs.insert(conv.string_map.insert("margarinePanic"), (panic_fn_ty, panic_fn, ExternAbi::Direct));
 
 
         // register primitives
@@ -312,8 +320,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 .to_ty(gens, self.syms).unwrap()
             ).collect::<Vec<_>>();
 
+        let extern_abi = self.extern_abi(llvm_ret.repr);
         let llvm_args = {
             let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, sym_func.args().len());
+            if matches!(sym_func.kind(), syms::func::FunctionKind::Extern(_))
+            && matches!(extern_abi, ExternAbi::SRet(_)) {
+                vec.push(*self.ctx.ptr());
+            }
             for (arg, ty) in sym_func.args().iter().zip(&args) {
                 if arg.is_inout() {
                     vec.push(*self.ctx.ptr());
@@ -333,9 +346,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         match sym_func.kind() {
             syms::func::FunctionKind::Extern(path) => {
                 let (func_ty, func_ptr) =
-                if let Some(vals) = self.externs.get(&path) { *vals }
+                if let Some((func_ty, func_ptr, _)) = self.externs.get(&path) { (*func_ty, *func_ptr) }
                 else {
-                    let func_ty = llvm_ret.repr.fn_ty(
+                    let ret = match extern_abi {
+                        ExternAbi::Direct => llvm_ret.repr,
+                        ExternAbi::SRet(_) => *self.ctx.void(),
+                    };
+                    let func_ty = ret.fn_ty(
                         self.ctx.arena, 
                         llvm_args.as_slice(),
                         false,
@@ -344,13 +361,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let func_ptr = self.module.function(self.string_map.get(path), func_ty);
                     func_ptr.set_linkage(Linkage::External);
+                    if let ExternAbi::SRet(ret) = extern_abi {
+                        func_ptr.set_sret(self.ctx, ret);
+                    }
 
                     if is_never {
                         func_ptr.set_noreturn(self.ctx);
                     }
 
-                    self.externs.insert(path, (func_ty, func_ptr));
-                    self.externs[&path]
+                    self.externs.insert(path, (func_ty, func_ptr, extern_abi));
+                    (func_ty, func_ptr)
                 };
 
                 let func = Function {
@@ -361,6 +381,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -391,6 +412,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -471,6 +493,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -502,6 +525,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -535,6 +559,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -578,6 +603,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -616,6 +642,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -654,6 +681,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -691,6 +719,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -729,6 +758,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -765,6 +795,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -804,6 +835,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -838,6 +870,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -873,6 +906,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -901,6 +935,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -936,6 +971,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -988,6 +1024,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
+                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1069,9 +1106,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 //dbg!(ret.display(self.string_map, self.syms));
 
                 let ret = self.to_llvm_ty(ret).repr;
+                let extern_abi = if matches!(function_ty.kind(), syms::func::FunctionKind::Extern(_)) {
+                    self.extern_abi(ret)
+                } else {
+                    ExternAbi::Direct
+                };
 
                 let llvm_args = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, function_ty.args().len());
+                    if matches!(extern_abi, ExternAbi::SRet(_)) {
+                        vec.push(*self.ctx.ptr());
+                    }
                     for i in function_ty.args().iter() {
                         let arg = i.symbol().to_ty(gens, self.syms).unwrap();
                         if i.is_inout() {
@@ -1087,6 +1132,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
 
+                let ret = match extern_abi {
+                    ExternAbi::Direct => ret,
+                    ExternAbi::SRet(_) => *self.ctx.void(),
+                };
                 let strct = ret.fn_ty(self.ctx.arena, llvm_args, false);
                 let mapping = TypeMapping { repr: *self.func_ref, strct: *strct };
                 self.ty_mappings.insert(hash, mapping);
@@ -2416,6 +2465,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let func_ty = func_ty.resolve(&[env.gens], self.syms);
                 assert!(func_ty.is_resolved(self.syms));
+                let extern_abi = self.get_func(func_ty)?.extern_abi;
 
                 let func_ty = self.to_llvm_ty(func_ty);
 
@@ -2424,7 +2474,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 llvm_args.push(capture_ptr);
                 //dbg!(&llvm_args);
-                let result = builder.call(func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args);
+                let result = self.call_function(builder, extern_abi, func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args);
 
                 for (ptr, expr, ty) in inouts {
                     let value = builder.load(ptr, self.to_llvm_ty(ty).repr);
@@ -2553,6 +2603,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         error: None,
                         func_ty: llvm_func_ty,
                         func_ptr,
+                        extern_abi: ExternAbi::Direct,
                     };
 
 
@@ -3265,14 +3316,51 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         };
 
         let func_sym = self.ns.get_ns(ns).get_sym(func_name).unwrap().ok()?;
-        let func = self.get_func(Type::Ty(func_sym, ty.gens(self.syms))).ok()?;
+        let (extern_abi, func_ptr, func_ty) = {
+            let func = self.get_func(Type::Ty(func_sym, ty.gens(self.syms))).ok()?;
+            (func.extern_abi, func.func_ptr, func.func_ty)
+        };
 
         let null = builder.ptr_null();
         let mut call_args = Vec::with_capacity(args.len() + 1);
         call_args.extend_from_slice(args);
         call_args.push(*null);
 
-        Some(builder.call(func.func_ptr, func.func_ty, &call_args))
+        Some(self.call_function(builder, extern_abi, func_ptr, func_ty, &call_args))
+    }
+
+
+    fn extern_abi(&self, ret: LLVMType<'ctx>) -> ExternAbi<'ctx> {
+        let is_arm64_darwin = llvm_api::ctx::default_target_triple().starts_with("arm64-apple-darwin");
+        if is_arm64_darwin
+        && ret.kind() == TypeKind::Struct
+        && ret.size_of(self.module).is_some_and(|size| size > 16) {
+            ExternAbi::SRet(ret)
+        } else {
+            ExternAbi::Direct
+        }
+    }
+
+
+    fn call_function(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        extern_abi: ExternAbi<'ctx>,
+        func_ptr: FunctionPtr<'ctx>,
+        func_ty: FunctionType<'ctx>,
+        args: &[Value<'ctx>],
+    ) -> Value<'ctx> {
+        match extern_abi {
+            ExternAbi::Direct => builder.call(func_ptr, func_ty, args),
+            ExternAbi::SRet(ret) => {
+                let result = builder.alloca(ret);
+                let mut call_args = Vec::with_capacity(args.len() + 1);
+                call_args.push(*result);
+                call_args.extend_from_slice(args);
+                builder.call_sret(func_ptr, func_ty, ret, &call_args);
+                builder.load(result, ret)
+            },
+        }
     }
 
 

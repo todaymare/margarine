@@ -1,7 +1,7 @@
 pub mod tys;
 
 use core::{alloc::Layout, mem::size_of, ptr::{null, null_mut}, fmt::Write};
-use std::{env, io::Write as _, marker::PhantomData};
+use std::{env, io::Write as _};
 
 use common::symbol_id::SymbolId;
 
@@ -237,7 +237,7 @@ unsafe extern "C" fn str_lines_iter_next(s: *mut Lines) -> Enum<Str> {
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn str_split_at(s: Str, idx: i64) -> Tuple2<Str, Str>{
+unsafe extern "C" fn str_split_at(s: Str, idx: i64) -> Pair<Str, Str> {
     let idx = idx as u64;
     if idx >= s.len() {
         panic!("index '{idx}' is out of bounds");
@@ -245,7 +245,7 @@ unsafe extern "C" fn str_split_at(s: Str, idx: i64) -> Tuple2<Str, Str>{
 
     let (s1, s2) = s.read().split_at(idx as usize);
 
-    Tuple2::new(Str::new(s1), Str::new(s2))
+    Pair { a: Str::new(s1), b: Str::new(s2) }
 }
 
 
@@ -278,16 +278,16 @@ unsafe extern "C" fn str_hash(s: Str, hasher: *const ()) {
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn str_split_once(s: Str, delimeter: Str) -> Enum<Tuple2<Str, Str>> {
+unsafe extern "C" fn str_split_once(s: Str, delimeter: Str) -> Enum<Pair<Str, Str>> {
     let res = s.read().split_once(delimeter.read());
 
     match res {
         Some((a, b)) => {
-            Enum { tag: 0, data: Tuple2::new(Str::new(a), Str::new(b)) }
+            Enum { tag: 0, data: Pair { a: Str::new(a), b: Str::new(b) } }
         },
 
 
-        None => Enum { tag: 1, data: Tuple2::new(Str { data: null() }, Str { data: null() }) },
+        None => Enum { tag: 1, data: Pair { a: Str { data: null() }, b: Str { data: null() } } },
     }
 }
 
@@ -422,30 +422,10 @@ struct Lines {
 }
 
 
-#[derive(Clone, Copy)]
 #[repr(C)]
-struct Tuple2<A, B> {
-    data: *mut InnerTuple2<A, B>,
-    _marker: PhantomData<(A, B)>,
-}
-
-
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct InnerTuple2<A, B> {
+struct Pair<A, B> {
     a: A,
     b: B,
-}
-
-impl<A, B> Tuple2<A, B> {
-    fn new(a: A, b: B) -> Self {
-        let data = InnerTuple2 { a, b };
-        let data = alloc(data);
-        Self {
-            data,
-            _marker: PhantomData,
-        }
-    }
 }
 
 

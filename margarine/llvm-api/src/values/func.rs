@@ -1,8 +1,8 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddAttributeAtIndex, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute, LLVMGetEnumAttributeKindForName, LLVMSetLinkage}, LLVMAttributeFunctionIndex, LLVMLinkage};
+use llvm_sys::{core::{LLVMAddAttributeAtIndex, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute, LLVMCreateTypeAttribute, LLVMGetEnumAttributeKindForName, LLVMSetLinkage}, LLVMAttributeFunctionIndex, LLVMLinkage};
 
-use crate::{builder::Builder, cstr, ctx::ContextRef, tys::{func::FunctionType, ptr::PtrTy, TypeKind}};
+use crate::{builder::Builder, cstr, ctx::ContextRef, tys::{func::FunctionType, ptr::PtrTy, Type, TypeKind}};
 
 use super::Value;
 
@@ -38,6 +38,13 @@ impl<'ctx> FunctionPtr<'ctx> {
         let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("noreturn"), 8) };
         let attr = unsafe { LLVMCreateEnumAttribute(ctx.ptr.as_ptr(), attr_kind, 0) };
         unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeFunctionIndex, attr) };
+    }
+
+
+    pub fn set_sret(self, ctx: ContextRef<'ctx>, ty: Type<'ctx>) {
+        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("sret"), 4) };
+        let attr = unsafe { LLVMCreateTypeAttribute(ctx.ptr.as_ptr(), attr_kind, ty.llvm_ty().as_ptr()) };
+        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), 1, attr) };
     }
 }
 
@@ -97,4 +104,3 @@ impl Linkage {
         }
     }
 }
-
