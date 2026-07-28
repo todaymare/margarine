@@ -1,4 +1,3 @@
-#![feature(if_let_guard)]
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;

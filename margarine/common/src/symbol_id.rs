@@ -32,6 +32,11 @@ impl SymbolId {
     pub const PTR_CAST   : Self = Self(32);
     pub const DESTROY_TRAIT : Self = Self(33);
     pub const PTR_DROP       : Self = Self(34);
+    pub const LIST_CONCAT    : Self = Self(35);
+    pub const LIST_SLICE_PAIR: Self = Self(36);
+    pub const LIST_SLICE     : Self = Self(37);
+    pub const STR_CONCAT     : Self = Self(38);
+    pub const STR_SLICE      : Self = Self(39);
 
 
     pub fn supports_arith(self) -> bool {

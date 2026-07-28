@@ -73,6 +73,10 @@ impl<'str> StringMap<'str> {
 
     pub const PRELUDE : StringIndex = StringIndex(57);
     pub const ROOT : StringIndex = StringIndex(58);
+    pub const LIST_CONCAT : StringIndex = StringIndex(59);
+    pub const LIST_SLICE : StringIndex = StringIndex(60);
+    pub const STR_CONCAT : StringIndex = StringIndex(61);
+    pub const STR_SLICE : StringIndex = StringIndex(62);
 
  
     #[inline(always)]
@@ -151,6 +155,10 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("$ptr_write_uninit"), Self::PTR_WRITE_UNINIT);
         assert_eq!(s.insert("prelude"), Self::PRELUDE);
         assert_eq!(s.insert("root"), Self::ROOT);
+        assert_eq!(s.insert("$list_concat"), Self::LIST_CONCAT);
+        assert_eq!(s.insert("$list_slice"), Self::LIST_SLICE);
+        assert_eq!(s.insert("$str_concat"), Self::STR_CONCAT);
+        assert_eq!(s.insert("$str_slice"), Self::STR_SLICE);
         s
     }
 

@@ -51,6 +51,11 @@ pub enum FunctionKind {
     PtrOffset,
     PtrCast,
 
+    ListConcat,
+    ListSlice,
+    StrConcat,
+    StrSlice,
+
     Enum {
         sym: SymbolId,
         index: usize,

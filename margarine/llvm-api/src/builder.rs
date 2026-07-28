@@ -1,6 +1,6 @@
 use std::{collections::HashSet, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, vec::KVec};
 
 use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
@@ -476,6 +476,26 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
+    pub fn max_int(&self, lhs: Integer<'ctx>, rhs: Integer<'ctx>) -> Integer<'ctx> {
+        let cond = self.cmp_int(lhs, rhs, IntCmp::UnsignedGe);
+        let ptr = unsafe { LLVMBuildSelect(
+            self.ptr.as_ptr(), cond.llvm_val().as_ptr(),
+            lhs.llvm_val().as_ptr(), rhs.llvm_val().as_ptr(), cstr!("maxi"),
+        ) };
+        unsafe { Integer::new(Value::new(NonNull::new(ptr).unwrap())) }
+    }
+
+
+    pub fn min_int(&self, lhs: Integer<'ctx>, rhs: Integer<'ctx>) -> Integer<'ctx> {
+        let cond = self.cmp_int(lhs, rhs, IntCmp::UnsignedLe);
+        let ptr = unsafe { LLVMBuildSelect(
+            self.ptr.as_ptr(), cond.llvm_val().as_ptr(),
+            lhs.llvm_val().as_ptr(), rhs.llvm_val().as_ptr(), cstr!("mini"),
+        ) };
+        unsafe { Integer::new(Value::new(NonNull::new(ptr).unwrap())) }
+    }
+
+
     pub fn cmp_fp(&self, lhs: FP<'ctx>, rhs: FP<'ctx>, cmp: FPCmp) -> Bool<'ctx> {
         let pred = match cmp {
             FPCmp::Eq => LLVMRealPredicate::LLVMRealUEQ,
@@ -708,4 +728,3 @@ impl<'ctx> Drop for Builder<'ctx> {
         unsafe { LLVMDisposeBuilder(self.ptr.as_ptr()) };
     }
 }
-

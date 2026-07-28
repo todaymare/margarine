@@ -1008,6 +1008,236 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
+            // $list_concat([T], [T]): [T]
+            syms::func::FunctionKind::ListConcat => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                    extern_abi: ExternAbi::Direct,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+
+                let left_list = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                let right_list = builder.local_get(builder.arg(1).unwrap()).as_ptr();
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+
+                let left_header = builder.load(left_list, *self.list_ty).as_struct();
+                let left_len = builder.field_load(left_header, 1).as_integer();
+                let right_header = builder.load(right_list, *self.list_ty).as_struct();
+                let right_len = builder.field_load(right_header, 1).as_integer();
+                let one_i64 = builder.const_int(self.i64, 1, false);
+                let left_data = builder.field_load(left_header, 3).as_ptr();
+                let right_data = builder.field_load(right_header, 3).as_ptr();
+
+                let (new_buf, new_len) = self.concat_sequence(
+                    &mut builder, left_data, left_len, right_data, right_len, llvm_elem.repr, Some(elem_ty),
+                );
+
+                let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
+                let header_size = builder.const_int(self.i64, header_size, false);
+                let new_header = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*header_size]).as_ptr();
+                let new_header_value = builder.struct_instance(self.list_ty, [*one_i64, *new_len, *new_len, *new_buf]);
+                builder.store(new_header, *new_header_value);
+
+                builder.ret(*new_header);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            // $list_slice([T], int): Option<([T], [T])>
+            syms::func::FunctionKind::ListSlice => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+
+                    func_ty,
+                    func_ptr,
+                    extern_abi: ExternAbi::Direct,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+                let list_value = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                let index = builder.local_get(builder.arg(1).unwrap()).as_integer();
+                let list_header = builder.load(list_value, *self.list_ty).as_struct();
+                let list_len = builder.field_load(list_header, 1).as_integer();
+                let zero_i64 = builder.const_int(self.i64, 0, false);
+                let negative = builder.cmp_int(index, zero_i64, IntCmp::SignedLt);
+                let past_end = builder.cmp_int(index, list_len, IntCmp::SignedGt);
+                let invalid = unsafe { Bool::new(*builder.or(negative.as_integer(), past_end.as_integer())) };
+                let result = builder.alloca(llvm_ret.repr);
+
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+                let option_gens = self.syms.get_gens(ret.gens(self.syms));
+                let pair_ty = option_gens[0].1;
+                let data = builder.field_load(list_header, 3).as_ptr();
+                let one_i64 = builder.const_int(self.i64, 1, false);
+                let none_tag = *builder.const_int(self.i32, 1, false);
+                let unit = *builder.const_unit();
+
+                let none = self.create_enum(&mut builder, ret, none_tag, unit);
+                let pair_first = self.string_map.num(0);
+                let pair_second = self.string_map.num(1);
+
+                builder.ite(&mut (), invalid,
+                    |builder, _| {
+                        builder.store(result, none);
+                    },
+                    |builder, _| {
+                        let (left_data, right_data, right_len) = self.split_sequence(
+                            builder, data, list_len, index, llvm_elem.repr, Some(elem_ty),
+                        );
+
+                        let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
+                        let header_size = builder.const_int(self.i64, header_size, false);
+                        let left = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*header_size]).as_ptr();
+                        let right = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*header_size]).as_ptr();
+                        builder.store(left, *builder.struct_instance(self.list_ty, [*one_i64, *index, *index, *left_data]));
+                        builder.store(right, *builder.struct_instance(self.list_ty, [*one_i64, *right_len, *right_len, *right_data]));
+
+                        let pair = self.create_struct(builder, pair_ty, &[
+                            (pair_first, *left),
+                            (pair_second, *right),
+                        ]);
+                        let some = self.create_enum(builder, ret, *builder.const_int(self.i32, 0, false), *pair);
+                        builder.store(result, some);
+                    },
+                );
+
+                builder.ret(builder.load(result, llvm_ret.repr));
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::StrConcat => {
+                let func_ty = llvm_ret.repr.fn_ty(self.ctx.arena, &llvm_args, false);
+                let func_ptr = self.module.function(name, func_ty);
+                let func = Function { sym: ty, name: name_idx, kind: FunctionKind::Code, error: None, func_ty, func_ptr, extern_abi: ExternAbi::Direct };
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+                let left = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                let right = builder.local_get(builder.arg(1).unwrap()).as_ptr();
+                let left_header = builder.load(left, *self.str_ty).as_struct();
+                let right_header = builder.load(right, *self.str_ty).as_struct();
+                let left_len = builder.field_load(left_header, 1).as_integer();
+                let right_len = builder.field_load(right_header, 1).as_integer();
+                let byte_ty = *self.ctx.integer(8);
+                let one = builder.const_int(self.i64, 1, false);
+
+                let left_data = builder.gep(left, *self.str_ty, one);
+                let right_data = builder.gep(right, *self.str_ty, one);
+
+                let (data, len) = self.concat_sequence(&mut builder, left_data, left_len, right_data, right_len, byte_ty, None);
+
+                let fixed_size = builder.const_int(self.i64, 16, false);
+                let total_size = builder.add_int(fixed_size, len);
+                let string = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
+                builder.store(string, *builder.struct_instance(self.str_ty, [*one, *len]));
+
+                let dst = builder.gep(string, *self.str_ty, one);
+                self.copy_sequence(&mut builder, data, dst, byte_ty, None, len);
+                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*data, *builder.mul_int(len, builder.const_int(self.i64, 1, false))]);
+                builder.ret(*string);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+            syms::func::FunctionKind::StrSlice => {
+                let func_ty = llvm_ret.repr.fn_ty(self.ctx.arena, &llvm_args, false);
+                let func_ptr = self.module.function(name, func_ty);
+                let func = Function { sym: ty, name: name_idx, kind: FunctionKind::Code, error: None, func_ty, func_ptr, extern_abi: ExternAbi::Direct };
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+                let value = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                let min = builder.local_get(builder.arg(1).unwrap()).as_integer();
+                let max = builder.local_get(builder.arg(2).unwrap()).as_integer();
+                let header = builder.load(value, *self.str_ty).as_struct();
+                let len = builder.field_load(header, 1).as_integer();
+                let zero = builder.const_int(self.i64, 0, false);
+                let min_negative = builder.cmp_int(min, zero, IntCmp::SignedLt);
+                let max_before_min = builder.cmp_int(max, min, IntCmp::SignedLt);
+                let max_past_end = builder.cmp_int(max, len, IntCmp::SignedGt);
+                let invalid = unsafe { Bool::new(*builder.or(
+                    builder.or(min_negative.as_integer(), max_before_min.as_integer()),
+                    max_past_end.as_integer(),
+                )) };
+                let result = builder.alloca(llvm_ret.repr);
+                let message = "string slice index out of bounds";
+                let message_ty = self.ctx.array(*self.ctx.integer(8), message.len());
+                let message_data = self.module.add_global(*message_ty, "string_slice_panic_message");
+                message_data.set_initialiser(*self.ctx.const_str(message));
+                let string_from_utf8 = self.string_from_utf8_fn;
+                let panic = self.panic_fn;
+                let i64 = self.i64;
+
+                builder.ite(&mut (), invalid,
+                    |builder, _| {
+                        let message_len = builder.const_int(i64, message.len() as i64, false);
+                        let message = builder.call(string_from_utf8.0, string_from_utf8.1, &[*message_data, *message_len]);
+                        builder.call(panic.0, panic.1, &[message]);
+                        builder.unreachable();
+                    },
+                    |builder, _| {
+                        let slice_len = builder.sub_int(max, min);
+                        let one = builder.const_int(self.i64, 1, false);
+                        let byte_ty = *self.ctx.integer(8);
+                        let data = builder.gep(value, *self.str_ty, one);
+                        let (before, rest, rest_len) = self.split_sequence(builder, data, len, min, byte_ty, None);
+                        builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*before, *min]);
+                        let (slice, after, after_len) = self.split_sequence(builder, rest, rest_len, slice_len, byte_ty, None);
+                        builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*rest, *rest_len]);
+                        builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*after, *after_len]);
+
+                        let fixed_size = builder.const_int(self.i64, 16, false);
+                        let total_size = builder.add_int(fixed_size, slice_len);
+                        let string = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
+
+                        builder.store(string, *builder.struct_instance(self.str_ty, [*one, *slice_len]));
+                        let dst = builder.gep(string, *self.str_ty, one);
+                        self.copy_sequence(builder, slice, dst, byte_ty, None, slice_len);
+                        builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*slice, *slice_len]);
+                        builder.store(result, *string);
+                    },
+                );
+                builder.ret(builder.load(result, llvm_ret.repr));
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
             syms::func::FunctionKind::Enum { sym: sym_id, index } => {
                 let sym = self.syms.sym(sym_id);
                 let SymbolKind::Container(cont) = sym.kind()
@@ -1091,6 +1321,78 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         self.emit_panic(builder, &message);
         builder.unreachable();
+    }
+
+
+    fn copy_sequence(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        source: Ptr<'ctx>,
+        destination: Ptr<'ctx>,
+        elem_repr: LLVMType<'ctx>,
+        elem_ty: Option<Type>,
+        len: Integer<'ctx>,
+    ) {
+        let counter = builder.alloca(*self.i64);
+        let zero = builder.const_int(self.i64, 0, false);
+        let one = builder.const_int(self.i64, 1, false);
+        builder.store(counter, *zero);
+        builder.loop_indefinitely(|builder, l| {
+            let i = builder.load(counter, *self.i64).as_integer();
+            let done = builder.cmp_int(i, len, IntCmp::SignedGe);
+            builder.ite(&mut (), done,
+                |builder, _| builder.loop_break(l),
+                |builder, _| {
+                    let value = builder.load(builder.gep(source, elem_repr, i), elem_repr);
+                    let value = elem_ty.map_or(value, |ty| self.emit_copy(builder, value, ty));
+                    builder.store(builder.gep(destination, elem_repr, i), value);
+                    builder.store(counter, *builder.add_int(i, one));
+                },
+            );
+        });
+    }
+
+
+    fn concat_sequence(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        left_data: Ptr<'ctx>,
+        left_len: Integer<'ctx>,
+        right_data: Ptr<'ctx>,
+        right_len: Integer<'ctx>,
+        elem_repr: LLVMType<'ctx>,
+        elem_ty: Option<Type>,
+    ) -> (Ptr<'ctx>, Integer<'ctx>) {
+        let len = builder.add_int(left_len, right_len);
+        let elem_size = builder.const_int(self.i64, elem_repr.size_of(self.module).unwrap() as i64, false);
+        let size = builder.mul_int(len, elem_size);
+        let data = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]).as_ptr();
+        self.copy_sequence(builder, left_data, data, elem_repr, elem_ty, left_len);
+        let right_dst = builder.gep(data, elem_repr, left_len);
+        self.copy_sequence(builder, right_data, right_dst, elem_repr, elem_ty, right_len);
+        (data, len)
+    }
+
+
+    fn split_sequence(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        data: Ptr<'ctx>,
+        len: Integer<'ctx>,
+        index: Integer<'ctx>,
+        elem_repr: LLVMType<'ctx>,
+        elem_ty: Option<Type>,
+    ) -> (Ptr<'ctx>, Ptr<'ctx>, Integer<'ctx>) {
+        let right_len = builder.sub_int(len, index);
+        let elem_size = builder.const_int(self.i64, elem_repr.size_of(self.module).unwrap() as i64, false);
+        let left_size = builder.mul_int(index, elem_size);
+        let right_size = builder.mul_int(right_len, elem_size);
+        let left_data = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*left_size]).as_ptr();
+        let right_data = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*right_size]).as_ptr();
+        self.copy_sequence(builder, data, left_data, elem_repr, elem_ty, index);
+        let right_source = builder.gep(data, elem_repr, index);
+        self.copy_sequence(builder, right_source, right_data, elem_repr, elem_ty, right_len);
+        (left_data, right_data, right_len)
     }
 
 
@@ -1449,23 +1751,20 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         &mut self,
         builder: &mut Builder<'ctx>,
         list_slot: Ptr<'ctx>,
+        list_ty: Type,
         elem_ty: Type,
         llvm_ty: TypeMapping<'ctx>,
     ) -> Ptr<'ctx> {
         let list_val = builder.load(list_slot, *self.ctx.ptr()).as_ptr();
         let header = builder.load(list_val, *self.list_ty).as_struct();
         let refcount = builder.field_load(header, 0).as_integer();
+        let len = builder.field_load(header, 1).as_integer();
+        let cap = builder.field_load(header, 2).as_integer();
         let one_i64 = builder.const_int(self.i64, 1, false);
-        let needs_cow = builder.cmp_int(refcount, one_i64, IntCmp::SignedGt);
+        let shared = builder.cmp_int(refcount, one_i64, IntCmp::UnsignedGt);
 
-        builder.ite(&mut (), needs_cow,
+        builder.ite(&mut (), shared,
         |builder, _| {
-            let new_rc = builder.sub_int(refcount, one_i64);
-            let rc_ptr = builder.field_ptr(list_val, self.list_ty, 0);
-            builder.store(rc_ptr, *new_rc);
-
-            let len = builder.field_load(header, 1).as_integer();
-            let cap = builder.field_load(header, 2).as_integer();
             let old_data = builder.field_load(header, 3).as_ptr();
 
             let elem_size = llvm_ty.repr.size_of(self.module).unwrap() as i64;
@@ -1499,12 +1798,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             let header_size = self.list_ty.size_of(self.module).unwrap() as i64;
             let header_size_val = builder.const_int(self.i64, header_size, false);
-            let new_header_ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*header_size_val]).as_ptr();
+            let new_header_ptr = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*header_size_val]).as_ptr();
 
             let new_header_strct = builder.struct_instance(self.list_ty, [*one_i64, *len, *cap, *new_buf]);
             builder.store(new_header_ptr, *new_header_strct);
 
             builder.store(list_slot, *new_header_ptr);
+            self.emit_drop(builder, *list_val, list_ty);
         }, |_, _| {});
 
         builder.load(list_slot, *self.ctx.ptr()).as_ptr()
@@ -1595,10 +1895,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let elem_ty = self.syms.get_gens(elem_ty)[0].1;
                 let elem_ty = elem_ty.resolve(&[env.gens], self.syms);
                 let llvm_ty = self.to_llvm_ty(elem_ty);
+                let list_ty = self.ty_info.expr(list).unwrap().resolve(&[env.gens], self.syms);
 
                 let list_val = builder.load(list_slot, *self.ctx.ptr()).as_ptr();
                 self.check_list_index(builder, list_val, index_val);
-                let list_val = self.ensure_unique_list_at(builder, list_slot, elem_ty, llvm_ty);
+                let list_val = self.ensure_unique_list_at(builder, list_slot, list_ty, elem_ty, llvm_ty);
 
                 let buf_ptr = builder.field_ptr(list_val, self.list_ty, 3);
                 let buf_ptr = builder.load(buf_ptr, *self.ctx.ptr()).as_ptr();

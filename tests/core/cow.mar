@@ -34,6 +34,98 @@ fn cow_rc_list() {
 }
 
 @test
+fn list_concat_appends_and_preserves_source() {
+    var a = [1, 2];
+    var b = [3, 4];
+    a.concat(b);
+
+    assert(a.len() == 4, "concat: combined length");
+    assert(a[0] == 1 && a[1] == 2 && a[2] == 3 && a[3] == 4, "concat: preserves order");
+    assert(b.len() == 2 && b[0] == 3 && b[1] == 4, "concat: source unchanged");
+
+    a.push(5);
+    assert(a.len() == 5 && a[4] == 5, "push: uses concat");
+}
+
+@test
+fn list_concat_detaches_shared_destination() {
+    var a = [1, 2];
+    var b = a;
+    b.concat([3]);
+
+    assert(a.len() == 2 && a[0] == 1 && a[1] == 2, "concat: original unchanged");
+    assert(b.len() == 3 && b[2] == 3, "concat: copy appended");
+}
+
+@test
+fn list_concat_self() {
+    var a = [1, 2];
+    a.concat(a);
+
+    assert(a.len() == 4, "concat self: combined length");
+    assert(a[0] == 1 && a[1] == 2 && a[2] == 1 && a[3] == 2, "concat self: preserves order");
+}
+
+@test
+fn list_concat_rc_elements() {
+    var a = [$rc(5)];
+    var b = [$rc(10)];
+    a.concat(b);
+
+    assert($rc_get(a[0]) == 5 && $rc_get(a[1]) == 10, "concat: copies rc elements");
+    assert($rc_get(b[0]) == 10, "concat: preserves rc source");
+}
+
+@test
+fn list_slice_splits_and_preserves_source() {
+    var a = [1, 2, 3, 4];
+    match a.slice(2) {
+        some: pair => {
+            assert(pair.0.len() == 2 && pair.0[0] == 1 && pair.0[1] == 2, "slice: left half");
+            assert(pair.1.len() == 2 && pair.1[0] == 3 && pair.1[1] == 4, "slice: right half");
+        },
+        none => assert(false, "slice: valid index returned none"),
+    }
+
+    assert(a.len() == 4 && a[0] == 1 && a[3] == 4, "slice: source unchanged");
+}
+
+@test
+fn list_slice_boundaries_and_invalid_indices() {
+    var a = [1, 2];
+    match a.slice(0) {
+        some: pair => assert(pair.0.len() == 0 && pair.1.len() == 2, "slice: zero index"),
+        none => assert(false, "slice: zero index returned none"),
+    }
+    match a.slice(2) {
+        some: pair => assert(pair.0.len() == 2 && pair.1.len() == 0, "slice: end index"),
+        none => assert(false, "slice: end index returned none"),
+    }
+
+    match a.slice(-1) {
+        some: _ => assert(false, "slice: negative index returned some"),
+        none => (),
+    }
+    match a.slice(3) {
+        some: _ => assert(false, "slice: out-of-bounds index returned some"),
+        none => (),
+    }
+}
+
+@test
+fn list_slice_rc_elements() {
+    var a = [$rc(5), $rc(10)];
+    match a.slice(1) {
+        some: pair => {
+            assert($rc_get(pair.0[0]) == 5, "slice: copies left rc element");
+            assert($rc_get(pair.1[0]) == 10, "slice: copies right rc element");
+        },
+        none => assert(false, "slice: valid rc index returned none"),
+    }
+    assert($rc_get(a[0]) == 5 && $rc_get(a[1]) == 10, "slice: preserves rc source");
+}
+
+@test
 fn cow_list_field_assign() {
     var a = [CowPoint { x: 1, y: 2 }, CowPoint { x: 3, y: 4 }];
     var b = a;

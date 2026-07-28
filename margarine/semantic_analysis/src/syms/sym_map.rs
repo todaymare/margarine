@@ -973,6 +973,137 @@ impl<'me> SymbolMap<'me> {
         }
 
 
+        // $list_concat<T>(left: [T], right: [T]): [T]
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let pending = slf.pending(ns_map, StringMap::LIST_CONCAT, 1);
+            assert_eq!(pending, SymbolId::LIST_CONCAT);
+
+            let t_gen = Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None);
+            let list_ty = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST, arena.alloc_new([t_gen])),
+                None,
+            );
+            let args = [
+                FunctionArgument::new(StringMap::VALUE, list_ty),
+                FunctionArgument::new(StringMap::VALUE, list_ty),
+            ];
+
+            let sym = Symbol::new(
+                StringMap::LIST_CONCAT,
+                arena.alloc_new([t]),
+                SymbolKind::Function(FunctionTy::new(
+                    arena.alloc_new(args),
+                    list_ty,
+                    FunctionKind::ListConcat,
+                    None,
+                )),
+            );
+
+            slf.add_sym(pending, sym);
+        }
+
+
+        // Internal tuple type for $list_slice<T>'s Option<([T], [T])> return value.
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let a = BoundedGeneric::new(StringMap::A, &[]);
+            let pending = slf.pending(ns_map, StringMap::INVALID_IDENT, 2);
+            assert_eq!(pending, SymbolId::LIST_SLICE_PAIR);
+            let fields = arena.alloc_new([
+                (string_map.num(0), Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)),
+                (string_map.num(1), Generic::new(SourceRange::ZERO, GenericKind::Generic(a), None)),
+            ]);
+            let sym = Symbol::new(
+                StringMap::TUPLE,
+                arena.alloc_new([t, a]),
+                SymbolKind::Container(Container::new(fields, ContainerKind::Tuple)),
+            );
+            slf.add_sym(pending, sym);
+        }
+
+
+        // $list_slice<T>(list: [T], idx: int): Option<([T], [T])>
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let pending = slf.pending(ns_map, StringMap::LIST_SLICE, 1);
+            assert_eq!(pending, SymbolId::LIST_SLICE);
+
+            let t_gen = Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None);
+            let list_ty = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST, arena.alloc_new([t_gen])),
+                None,
+            );
+            let pair_ty = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST_SLICE_PAIR, arena.alloc_new([list_ty, list_ty])),
+                None,
+            );
+            let ret = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::OPTION, arena.alloc_new([pair_ty])),
+                None,
+            );
+            let args = [
+                FunctionArgument::new(StringMap::VALUE, list_ty),
+                FunctionArgument::new(StringMap::VALUE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None)),
+            ];
+
+            let sym = Symbol::new(
+                StringMap::LIST_SLICE,
+                arena.alloc_new([t]),
+                SymbolKind::Function(FunctionTy::new(
+                    arena.alloc_new(args),
+                    ret,
+                    FunctionKind::ListSlice,
+                    None,
+                )),
+            );
+
+            slf.add_sym(pending, sym);
+        }
+
+
+        // $str_concat(left: str, right: str): str
+        {
+            let pending = slf.pending(ns_map, StringMap::STR_CONCAT, 0);
+            assert_eq!(pending, SymbolId::STR_CONCAT);
+            let str_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::STR, &[]), None);
+            let args = [
+                FunctionArgument::new(StringMap::VALUE, str_ty),
+                FunctionArgument::new(StringMap::VALUE, str_ty),
+            ];
+            let sym = Symbol::new(
+                StringMap::STR_CONCAT,
+                &[],
+                SymbolKind::Function(FunctionTy::new(arena.alloc_new(args), str_ty, FunctionKind::StrConcat, None)),
+            );
+            slf.add_sym(pending, sym);
+        }
+
+
+        // $str_slice(value: str, min: int, max: int): str
+        {
+            let pending = slf.pending(ns_map, StringMap::STR_SLICE, 0);
+            assert_eq!(pending, SymbolId::STR_SLICE);
+            let str_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::STR, &[]), None);
+            let int_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None);
+            let args = [
+                FunctionArgument::new(StringMap::VALUE, str_ty),
+                FunctionArgument::new(StringMap::MIN, int_ty),
+                FunctionArgument::new(StringMap::MAX, int_ty),
+            ];
+            let sym = Symbol::new(
+                StringMap::STR_SLICE,
+                &[],
+                SymbolKind::Function(FunctionTy::new(arena.alloc_new(args), str_ty, FunctionKind::StrSlice, None)),
+            );
+            slf.add_sym(pending, sym);
+        }
+
+
         slf
     }
 }

@@ -1,4 +1,3 @@
-#![feature(slice_partition_dedup)]
 use std::collections::HashMap;
 
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}};
@@ -149,6 +148,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let _ = add_sym!(PTR_CAST);
             let _ = add_sym!(PTR_DROP);
             let _ = add_sym!(PTR_WRITE_UNINIT);
+            let _ = add_sym!(LIST_CONCAT);
+            let _ = add_sym!(LIST_SLICE);
+            let _ = add_sym!(STR_CONCAT);
+            let _ = add_sym!(STR_SLICE);
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
