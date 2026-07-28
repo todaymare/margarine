@@ -1516,15 +1516,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         else { return None };
 
                         let ns = self.namespaces.get_ns(ns);
-
-                        for s in ns.syms().values() {
-                            let Ok(s) = s
-                            else { continue };
-
-                            let Some((_, g, generics)) = candidates.get(s)
+                        for trait_id in ns.syms().values().filter_map(|sym| sym.as_ref().ok()) {
+                            let Some((_, ty, generics)) = candidates.get(trait_id)
                             else { continue; };
 
-                            let sym = self.syms.sym(*s);
+                            let sym = self.syms.sym(*trait_id);
                             let SymbolKind::Trait(tr) = sym.kind()
                             else { continue; };
 
@@ -1532,17 +1528,31 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             else { continue; };
 
                             if candidate.is_none() {
-                                candidate = Some((*s, ft.1, *g, generics));
+                                candidate = Some((*trait_id, ft.1, *ty, *generics));
                                 return Some(());
                             } else {
                                 todo!("ambigious");
                             }
-
                         }
 
                         None
-
                     });
+
+                    // Bounds are available to a generic even when their trait was qualified.
+                    if candidate.is_none() {
+                        for (trait_id, (ns, ty, generics)) in candidates {
+                            if ns != NamespaceId::MAX { continue; }
+
+                            let sym = self.syms.sym(trait_id);
+                            let SymbolKind::Trait(tr) = sym.kind()
+                            else { continue; };
+
+                            let Some(ft) = tr.funcs.iter().find(|x| x.0 == ident)
+                            else { continue; };
+
+                            candidate = Some((trait_id, ft.1, ty, generics));
+                        }
+                    }
 
                     let Some((t, func, g, generics)) = candidate
                     else { return None; };
@@ -2184,15 +2194,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     else { return None };
 
                     let ns = self.namespaces.get_ns(ns);
-
-                    for s in ns.syms().values() {
-                        let Ok(s) = s
-                        else { continue };
-
-                        let Some((_, g, generics)) = candidates.get(s)
+                    for trait_id in ns.syms().values().filter_map(|sym| sym.as_ref().ok()) {
+                        let Some((_, ty, generics)) = candidates.get(trait_id)
                         else { continue; };
 
-                        let sym = self.syms.sym(*s);
+                        let sym = self.syms.sym(*trait_id);
                         let SymbolKind::Trait(tr) = sym.kind()
                         else { continue; };
 
@@ -2200,17 +2206,31 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         else { continue; };
 
                         if candidate.is_none() {
-                            candidate = Some((*s, ft.1, *g, generics));
+                            candidate = Some((*trait_id, ft.1, *ty, *generics));
                             return Some(());
                         } else {
                             todo!("ambigious");
                         }
-
                     }
 
                     None
-
                 });
+
+                // Bounds are available to a generic even when their trait was qualified.
+                if candidate.is_none() {
+                    for (trait_id, (ns, ty, generics)) in candidates {
+                        if ns != NamespaceId::MAX { continue; }
+
+                        let sym = self.syms.sym(trait_id);
+                        let SymbolKind::Trait(tr) = sym.kind()
+                        else { continue; };
+
+                        let Some(ft) = tr.funcs.iter().find(|x| x.0 == field_name)
+                        else { continue; };
+
+                        candidate = Some((trait_id, ft.1, ty, generics));
+                    }
+                }
 
 
                 let sym = ();
@@ -2225,8 +2245,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
                 let sym_gens = self.syms.get_gens(expr.ty.gens(&self.syms));
-
-                assert!(sym_gens.iter().zip(&vgens).all(|(a, b)| a.0 == b.1.0));
 
                 for ((n0, g0), (_, (n1, g1))) in sym_gens.iter().zip(&vgens) {
                     if n0 == n1 {

@@ -66,3 +66,20 @@ fn trait_inout_self() {
     counter.increment();
     assert(counter.value == 1, "in-out self was not updated");
 }
+
+
+mod generic_bound_trait {
+    trait Value {
+        fn value(self): int
+    }
+}
+
+impl<T: generic_bound_trait::Value> generic_bound_trait::Value for [T] {
+    fn value(self): int {
+        self[0].value()
+    }
+}
+
+@test
+fn qualified_generic_trait_bound_allows_method_lookup() {
+}
