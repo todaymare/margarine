@@ -311,6 +311,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let gens = self.syms.gens()[gens_id];
 
+        dbg!(sym);
         assert_eq!(gens.len(), sym.generics().len());
         for ((g0, _), n1) in gens.iter().zip(sym.generics()) {
             assert_eq!(g0.name, n1.name);
@@ -2578,8 +2579,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let ret_val = self.expr(env, builder, mapping.expr());
                     debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local, field_ty, false));
 
-                    let Ok(ret_val) = ret_val
-                    else { return };
+                    let ret_val = match ret_val {
+                        Ok(value) => value,
+                        Err(error) => {
+                            self.error(builder, error);
+                            return;
+                        },
+                    };
 
                     let value = builder.local_get(local);
                     self.emit_drop(builder, value, field_ty);
@@ -2652,6 +2658,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let val = self.ty_info.expr(val).unwrap();
                 let val = val.resolve(&[env.gens], self.syms);
+                println!("val: {}", val.display(self.string_map, self.syms));
                 let ty = val.sym(self.syms).unwrap();
 
                 if let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
@@ -2734,12 +2741,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 if let Some(sym) = ns.get_sym(field_name) {
                     let sym = sym.unwrap();
+                    let val = val.gens(self.syms);
                     let gens = slf.gens(self.syms);
+                    dbg!(env.gens, gens, sym_gens);
 
                     let sym = Type::Ty(sym, gens)
                         .resolve(&[env.gens, sym_gens], self.syms);
 
                     assert!(sym.is_resolved(self.syms));
+                    println!("{}", sym.display(self.string_map, self.syms));
+
+                    for s in env.gens {
+                        println!("{}: {}", self.string_map.get(s.0.name), s.1.display(self.string_map, self.syms));
+                    }
 
                     let func = self.get_func(sym)?;
 
@@ -2765,6 +2779,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             parser::nodes::expr::Expr::CallFunction { lhs, args } => {
                 out_if_err!();
+
+                // Type errors are attached to individual arguments, not necessarily the call.
+                // Check them before materializing the callee, which may instantiate generic code.
+                for arg in args {
+                    self.ty_info.expr(arg.expr)?;
+                }
+
                 let (func, func_ty) = self.expr_ex(env, builder, lhs)?;
 
                 let callable_ty = func_ty.resolve(&[env.gens], self.syms);

@@ -434,7 +434,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
     // `Self::collect_names` must be ran before this
     pub fn compute_types(&mut self, path: StringIndex, scope: ScopeId,
-                         ns: NamespaceId, nodes: &[NodeId], impl_block: Option<(SymbolId, &[BoundedGeneric<'out>])>) {
+                         ns: NamespaceId, nodes: &[NodeId],
+                         impl_block: Option<(SymbolId, &[BoundedGeneric<'out>], Option<StringIndex>)>) {
         for n in nodes {
             let NodeId::Decl(id) = n
             else { continue };
@@ -478,7 +479,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     // finalise
                     let generics = {
-                        let (_, impl_gens) = impl_block.unwrap_or((SymbolId::MAX, &[]));
+                        let (_, impl_gens, _) = impl_block.unwrap_or((SymbolId::MAX, &[], None));
                         let mut vec = Buffer::new(self.output, impl_gens.len() + generics.len());
                         vec.extend_from_slice(impl_gens);
                         vec.extend_from_slice(generics);
@@ -510,7 +511,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     };
 
                     let generics = {
-                        let (_, impl_gens) = impl_block.unwrap_or((SymbolId::MAX, &[]));
+                        let (_, impl_gens, _) = impl_block.unwrap_or((SymbolId::MAX, &[], None));
                         let mut vec = Buffer::new(self.output, impl_gens.len() + gens.len());
                         vec.extend_from_slice(impl_gens);
                         vec.extend_from_slice(gens);
@@ -560,7 +561,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     // finalise
                     let generics = {
-                        let (_, impl_gens) = impl_block.unwrap_or((SymbolId::MAX, &[]));
+                        let (_, impl_gens, _) = impl_block.unwrap_or((SymbolId::MAX, &[], None));
                         let mut vec = Buffer::new(self.output, impl_gens.len() + generics.len());
                         vec.extend_from_slice(impl_gens);
                         vec.extend_from_slice(generics);
@@ -590,7 +591,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     };
 
                     let generics = {
-                        let (_, impl_gens) = impl_block.unwrap_or((SymbolId::MAX, &[]));
+                        let (_, impl_gens, _) = impl_block.unwrap_or((SymbolId::MAX, &[], None));
                         let mut vec = Buffer::new(self.output, impl_gens.len() + sig.generics.len());
                         vec.extend_from_slice(impl_gens);
                         vec.extend_from_slice(gens);
@@ -632,7 +633,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     if impl_block.is_some() && sig.name == StringMap::ITER_NEXT_FUNC {
                         let validate_sig = || {
                             if sig.arguments.len() != 1 { return false }
-                            let (impl_ty, _) = impl_block.unwrap_or((SymbolId::MAX, &[]));
+                            let (impl_ty, _, _) = impl_block.unwrap_or((SymbolId::MAX, &[], None));
                             let Some(val) = args[0].symbol().sym()
                             else { return false };
 
@@ -653,7 +654,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     // Finalise
                     let sym_name = self.syms.sym_ns(fid);
-                    let sym_name = self.namespaces.get_ns(sym_name).path;
+                    let mut sym_name = self.namespaces.get_ns(sym_name).path;
+
+                    if let Some((impl_ty, _, Some(trait_path))) = impl_block {
+                        let method_path = self.string_map.concat(trait_path, sig.name);
+                        sym_name = self.string_map.concat(self.syms.sym(impl_ty).name(), method_path);
+                    }
 
                     let func = FunctionTy::new(args.leak(), ret, FunctionKind::UserDefined, Some(*id));
                     let func = Symbol::new(sym_name, generics, SymbolKind::Function(func));
@@ -806,7 +812,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let ns = self.syms.sym_ns(sym);
                     let scope = self.scopes.push(Scope::new(scope, ScopeKind::AliasDecl(StringMap::SELF_TY, *ty)));
 
-                    self.compute_types(path, scope, ns, &body, Some((sym, gens)));
+                    self.compute_types(path, scope, ns, &body, Some((sym, gens, None)));
                 }
 
                 Decl::Attribute { attr, decl } => {
@@ -1007,7 +1013,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 self.collect_names(path, ns_id, &body, gens.len());
                 self.collect_impls(path, scope, ns_id, &body);
-                self.compute_types(path, scope, ns_id, &body, Some((sym, gens)));
+                self.compute_types(path, scope, ns_id, &body, Some((sym, gens, Some(trait_sym.name()))));
 
 
                 for node in body.iter() {
@@ -1427,7 +1433,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let scope = Scope::new(*scope, ScopeKind::Loop);
                 let mut scope = self.scopes.push(scope);
 
-                self.resolve_pattern(
+                let _ = self.resolve_pattern(
                     id.into(), &mut scope, binding, 
                     AnalysisResult::new(binding_ty), source
                 );
@@ -2238,18 +2244,16 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 else { return Err(e); };
 
                 let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.iter().len());
+                let sym_gens = self.syms.get_gens(expr.ty.gens(&self.syms));
 
-                for g in generics.iter() {
+                for g in sym_gens.iter().map(|x| &x.0).chain(generics.iter()) {
                     let var = self.syms.new_var(id, g.name, range);
                     vgens.push((*g, var));
                 }
 
-                let sym_gens = self.syms.get_gens(expr.ty.gens(&self.syms));
 
-                for ((n0, g0), (_, (n1, g1))) in sym_gens.iter().zip(&vgens) {
-                    if n0 == n1 {
-                        (*g0).eq(&mut self.syms, *g1);
-                    }
+                for ((_, g0), (_, (_, g1))) in sym_gens.iter().zip(&vgens) {
+                    (*g0).eq(&mut self.syms, *g1);
                 }
 
                 if let Some(gens) = expr_gens {

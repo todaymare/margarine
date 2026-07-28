@@ -175,20 +175,8 @@ pub extern "C" fn margarineEnvArgs() -> *mut List {
 
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn print_raw(value: Any) {
-    let buf_ptr = unsafe { *(value.inner.add(24) as *const *mut u8) };
-    match SymbolId(value.ty as u32) {
-        SymbolId::I64 => print!("{}", unsafe { *buf_ptr.cast::<i64>() }),
-        SymbolId::F64 => print!("{}", unsafe { *buf_ptr.cast::<f64>() }),
-        SymbolId::BOOL => print!("{}", unsafe { *buf_ptr.cast::<Enum<()>>() }.tag != 0),
-        SymbolId::STR => {
-            let s = unsafe { *buf_ptr.cast::<Str>() };
-            print!("{}", s.read());
-        }
-
-
-        _ => todo!(),
-    }
+unsafe extern "C" fn print_raw(value: Str) {
+    print!("{}", s.read());
     let _ = std::io::stdout().flush();
 }
 

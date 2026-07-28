@@ -1,0 +1,68 @@
+use std::string::format;
+
+fn main(): int {
+    var args = std::env::args();
+    if args.len() != 2 {
+        println("usage: brainfuck (file)");
+        return 1;
+    }
+
+    var path = args[1];
+    var file =
+    match std::io::read_file(path) {
+        ok: value => value,
+        err: msg => {
+            println(format("failed to read file '{}': {}", [path, msg]));
+            return 1;
+        }
+    };
+
+
+    var tape = [];
+    var tape_size = 64;
+
+    println("populating tape");
+    for _ in 0..tape_size {
+        tape.push(0);
+    }
+
+foo(tape);
+    println(tape.len());
+    println(tape.to_str());
+    var ptr = 0;
+    var pc = 0;
+
+    var stack = [];
+    var jumps = [];
+
+    var left_square = 133;
+    var right_square = 135;
+
+    for i in 0..file.len() {
+        var ch = file.byte_at(i)!;
+        if ch == left_square { stack.push(i) }
+        else if ch == right_square {
+            jumps.push((stack.pop()!, i));
+        }
+    }
+
+    1
+}
+
+
+struct VM {
+    tape: [int],
+    ptr: int,
+    pc: int,
+    program: str,
+}
+
+
+impl VM {
+    fn run(program: str) {
+
+    }
+}
+
+
+fn foo<T: std::string::ToStr>(val: T) { val.to_str(); }
