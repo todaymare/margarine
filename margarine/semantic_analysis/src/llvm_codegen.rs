@@ -311,7 +311,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let gens = self.syms.gens()[gens_id];
 
-        dbg!(sym);
         assert_eq!(gens.len(), sym.generics().len());
         for ((g0, _), n1) in gens.iter().zip(sym.generics()) {
             assert_eq!(g0.name, n1.name);
@@ -2654,11 +2653,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let value = self.expr(env, builder, val)?;
                 env.info.insert(expr, value);
 
-                let slf = out_if_err!();
+                let this = out_if_err!();
 
                 let val = self.ty_info.expr(val).unwrap();
                 let val = val.resolve(&[env.gens], self.syms);
-                println!("val: {}", val.display(self.string_map, self.syms));
                 let ty = val.sym(self.syms).unwrap();
 
                 if let SymbolKind::Container(cont) = self.syms.sym(ty).kind()
@@ -2670,16 +2668,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                           ContainerKind::Tuple
                         | ContainerKind::Struct => {
                             let field = builder.field_load(value.as_struct(), i as _);
-                            let field_ty = slf.resolve(&[env.gens], self.syms);
+                            let field_ty = this.resolve(&[env.gens], self.syms);
                             let field = self.emit_copy(builder, field, field_ty);
                             self.emit_drop(builder, value, val);
-                            return Ok((field, slf))
+                            return Ok((field, this))
                         },
 
                         ContainerKind::Enum => {
                             let val_ty = val.resolve(&[env.gens], self.syms);
                             let val_llvm_ty = self.to_llvm_ty(val_ty);
-                            let result_ty = slf.resolve(&[env.gens], self.syms);
+                            let result_ty = this.resolve(&[env.gens], self.syms);
                             let result_llvm_ty = self.to_llvm_ty(result_ty);
 
                             let enum_strct = value.as_struct();
@@ -2716,7 +2714,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 },
                             );
 
-                            return Ok((builder.load(result_buf, result_llvm_ty.repr), slf))
+                            return Ok((builder.load(result_buf, result_llvm_ty.repr), this))
                         },
 
 
@@ -2726,11 +2724,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
 
-                let sym_gens = self.syms.get_gens(val.gens(self.syms));
+                let val_gens = self.syms.get_gens(val.gens(self.syms));
 
                 let ns = 
                 if let Some(tr) = self.ty_info.trait_funcs.get(&expr) {
-                    self.syms.traits(ty)[tr].0
+                    // Semantic analysis has already reported the invalid accessor. Do not
+                    // index partial trait metadata while emitting its recovery path.
+                    let Some(implementation) = self.syms.traits(ty).get(tr) else {
+                        return Err(ErrorId::Bypass);
+                    };
+                    implementation.0
                 } else {
                     self.syms.sym_ns(ty)
                 };
@@ -2741,19 +2744,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 if let Some(sym) = ns.get_sym(field_name) {
                     let sym = sym.unwrap();
-                    let val = val.gens(self.syms);
-                    let gens = slf.gens(self.syms);
-                    dbg!(env.gens, gens, sym_gens);
+                    let gens = if self.ty_info.trait_funcs.contains_key(&expr) {
+                        // Trait implementation methods are generic over the receiver's
+                        // implementation arguments, not the synthetic accessor function.
+                        val.gens(self.syms)
+                    } else {
+                        this.gens(self.syms)
+                    };
 
                     let sym = Type::Ty(sym, gens)
-                        .resolve(&[env.gens, sym_gens], self.syms);
+                        .resolve(&[env.gens, val_gens], self.syms);
 
                     assert!(sym.is_resolved(self.syms));
-                    println!("{}", sym.display(self.string_map, self.syms));
-
-                    for s in env.gens {
-                        println!("{}: {}", self.string_map.get(s.0.name), s.1.display(self.string_map, self.syms));
-                    }
 
                     let func = self.get_func(sym)?;
 

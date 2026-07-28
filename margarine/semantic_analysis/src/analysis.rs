@@ -1565,6 +1565,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.iter().len());
 
+                    for g in generics {
+                        let var = self.syms.new_var(id, g.name, range);
+                        vgens.push((*g, var));
+                    }
+
+
                     for g in generics.iter() {
                         let var = self.syms.new_var(id, g.name, range);
                         vgens.push((*g, var));
@@ -2242,19 +2248,17 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let sym = ();
                 let Some((t, func, g, generics)) = candidate
                 else { return Err(e); };
-
-                let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.iter().len());
                 let sym_gens = self.syms.get_gens(expr.ty.gens(&self.syms));
 
-                for g in sym_gens.iter().map(|x| &x.0).chain(generics.iter()) {
+                let mut vgens = sti::vec::Vec::with_cap_in(self.output, sym_gens.len() + generics.len());
+
+                vgens.extend(sym_gens.iter().copied());
+
+                for g in generics {
                     let var = self.syms.new_var(id, g.name, range);
                     vgens.push((*g, var));
                 }
 
-
-                for ((_, g0), (_, (_, g1))) in sym_gens.iter().zip(&vgens) {
-                    (*g0).eq(&mut self.syms, *g1);
-                }
 
                 if let Some(gens) = expr_gens {
                     for (g, (_, s)) in gens.iter().zip(vgens.iter().skip(sym_gens.len())) {
@@ -2391,6 +2395,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let sym = value.sym(&self.syms)?;
                     for bound in sym_g.bounds {
                         if self.syms.implements_trait(sym, *bound) { continue }
+                        if sym == SymbolId::ERR
+                        || sym == SymbolId::NEVER { return Ok(AnalysisResult::error()) }
 
                         self.error(
                             lhs_expr,

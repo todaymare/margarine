@@ -68,18 +68,12 @@ fn trait_inout_self() {
 }
 
 
-mod generic_bound_trait {
-    trait Value {
-        fn value(self): int
-    }
-}
-
-impl<T: generic_bound_trait::Value> generic_bound_trait::Value for [T] {
-    fn value(self): int {
-        self[0].value()
-    }
-}
-
 @test
 fn qualified_generic_trait_bound_allows_method_lookup() {
+    var values = [1];
+    assert(list_to_str(values) == "[1]", "generic trait bound did not dispatch to List::ToStr");
+}
+
+fn list_to_str<T: std::string::ToStr>(value: T): str {
+    value.to_str()
 }
