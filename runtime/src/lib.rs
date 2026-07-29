@@ -1,19 +1,30 @@
 pub mod tys;
 
 use core::{alloc::Layout, mem::size_of, ptr::{null, null_mut}, fmt::Write};
+use std::{env, io::Write as _};
+
+#[cfg(feature = "sanitizer")]
 use std::{
-    backtrace::Backtrace, collections::HashMap, env, ffi::CString, hint::black_box, io::Write as _, sync::{Mutex, OnceLock}
+    backtrace::Backtrace,
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
 };
+
+#[cfg(feature = "sanitizer")]
+use std::{ffi::CString, hint::black_box};
 
 use common::symbol_id::SymbolId;
 
+#[cfg(feature = "sanitizer")]
 struct Allocation {
     size: u64,
     backtrace: Backtrace,
 }
 
+#[cfg(feature = "sanitizer")]
 static ALLOCATIONS: OnceLock<Mutex<HashMap<usize, Allocation>>> = OnceLock::new();
 
+#[cfg(feature = "sanitizer")]
 fn allocations() -> &'static Mutex<HashMap<usize, Allocation>> {
     ALLOCATIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -21,6 +32,8 @@ fn allocations() -> &'static Mutex<HashMap<usize, Allocation>> {
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
     let ptr = unsafe { std::alloc::alloc(Layout::from_size_align(size as _, 8).unwrap()) };
+
+    #[cfg(feature = "sanitizer")]
     if !ptr.is_null() {
         allocations().lock().unwrap().insert(
             ptr as usize,
@@ -36,6 +49,7 @@ pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineDealloc(ptr: *mut u8, size: u64) {
+    #[cfg(feature = "sanitizer")]
     if allocations().lock().unwrap().remove(&(ptr as usize)).is_none() {
         println!("tried to free an invalid pointer");
         return;
@@ -56,9 +70,17 @@ pub extern "C" fn margarineRcAlloc(total_size: u64) -> *mut u8 {
 pub extern "C" fn margarineRcClone(ptr: *mut u8) -> *mut u8 {
     unsafe {
         let rc = &mut *(ptr as *mut u64);
+
+        #[cfg(feature = "sanitizer")]
         let val = Backtrace::force_capture().to_string();
+
+        #[cfg(feature = "sanitizer")]
         let c = CString::new(val).unwrap();
+
+        #[cfg(feature = "sanitizer")]
         let bt = c.into_raw();
+
+        #[cfg(feature = "sanitizer")]
         margarineRcCloneBp(ptr, bt);
         *rc += 1;
     }
@@ -67,8 +89,9 @@ pub extern "C" fn margarineRcClone(ptr: *mut u8) -> *mut u8 {
 
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineRcCloneBp(ptr: *mut u8, bt: *mut i8) {
-    black_box((ptr, bt));
+pub extern "C" fn margarineRcCloneBp(_ptr: *mut u8, _bt: *mut i8) {
+    #[cfg(feature = "sanitizer")]
+    black_box((_ptr, _bt));
 }
 
 
@@ -76,9 +99,17 @@ pub extern "C" fn margarineRcCloneBp(ptr: *mut u8, bt: *mut i8) {
 pub extern "C" fn margarineRcDrop(ptr: *mut u8) -> bool {
     unsafe {
         let rc = &mut *(ptr as *mut u64);
+
+        #[cfg(feature = "sanitizer")]
         let val = Backtrace::force_capture().to_string();
+
+        #[cfg(feature = "sanitizer")]
         let c = CString::new(val).unwrap();
+
+        #[cfg(feature = "sanitizer")]
         let bt = c.into_raw();
+
+        #[cfg(feature = "sanitizer")]
         margarineRcDropBp(ptr, bt);
         *rc -= 1;
         *rc == 0
@@ -86,8 +117,9 @@ pub extern "C" fn margarineRcDrop(ptr: *mut u8) -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineRcDropBp(ptr: *mut u8, bt: *mut i8) {
-    black_box((ptr, bt));
+pub extern "C" fn margarineRcDropBp(_ptr: *mut u8, _bt: *mut i8) {
+    #[cfg(feature = "sanitizer")]
+    black_box((_ptr, _bt));
 }
 
 #[unsafe(no_mangle)]
@@ -109,6 +141,7 @@ pub extern "C" fn print_int(size: i32) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAbort(code: i32) -> ! {
+    #[cfg(feature = "sanitizer")]
     report_leaks();
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
@@ -127,6 +160,7 @@ fn panic_message(message: &str) -> ! {
     margarineAbort(1)
 }
 
+#[cfg(feature = "sanitizer")]
 fn report_leaks() {
     let allocations = allocations().lock().unwrap();
     if allocations.is_empty() {
@@ -176,7 +210,7 @@ pub extern "C" fn margarineEnvArgs() -> *mut List {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn print_raw(value: Str) {
-    print!("{}", s.read());
+    print!("{}", value.read());
     let _ = std::io::stdout().flush();
 }
 

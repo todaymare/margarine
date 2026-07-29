@@ -8,7 +8,7 @@ fn main(): int {
     }
 
     var path = args[1];
-    var file =
+    var program =
     match std::io::read_file(path) {
         ok: value => value,
         err: msg => {
@@ -17,53 +17,99 @@ fn main(): int {
         }
     };
 
-
     var tape = [];
     var tape_size = 64;
-
-    println("populating tape");
     for _ in 0..tape_size {
         tape.push(0);
     }
 
-    foo(tape);
-
-    println(tape.len());
-    println(tape.to_str());
-    var ptr = 0;
-    var pc = 0;
+    // Each bracket points directly to its matching bracket.
+    var jumps = [];
+    for _ in 0..program.len() {
+        jumps.push(-1);
+    }
 
     var stack = [];
-    var jumps = [];
+    for i in 0..program.len() {
+        var ch = program.byte_at(i)!;
+        if ch == 91 {
+            stack.push(i);
+        } else if ch == 93 {
+            if stack.len() == 0 {
+                println(format("unmatched ']' at byte {}", [i.to_str()]));
+                return 1;
+            }
 
-    var left_square = 133;
-    var right_square = 135;
-
-    for i in 0..file.len() {
-        var ch = file.byte_at(i)!;
-        if ch == left_square { stack.push(i) }
-        else if ch == right_square {
-            jumps.push((stack.pop()!, i));
+            var open = stack.pop()!;
+            jumps[open] = i;
+            jumps[i] = open;
         }
     }
 
-    1
-}
-
-
-struct VM {
-    tape: [int],
-    ptr: int,
-    pc: int,
-    program: str,
-}
-
-
-impl VM {
-    fn run(program: str) {
-
+    if stack.len() != 0 {
+        println(format("unmatched '[' at byte {}", [stack[stack.len() - 1].to_str()]));
+        return 1;
     }
+
+    var ptr = 0;
+    var pc = 0;
+    // Printable ASCII, indexed by byte value minus 32.
+    var ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+
+    while pc < program.len() {
+        var ch = program.byte_at(pc)!;
+
+        if ch == 62 {
+            if ptr == tape_size - 1 {
+                println("tape pointer moved past the right edge");
+                return 1;
+            }
+            ptr += 1;
+        } else if ch == 60 {
+            if ptr == 0 {
+                println("tape pointer moved past the left edge");
+                return 1;
+            }
+            ptr -= 1;
+        } else if ch == 43 {
+            tape[ptr] += 1;
+            if tape[ptr] == 256 { tape[ptr] = 0 }
+        } else if ch == 45 {
+            tape[ptr] -= 1;
+            if tape[ptr] == -1 { tape[ptr] = 255 }
+        } else if ch == 46 {
+            if tape[ptr] == 0 {
+                print("\0");
+            } else if tape[ptr] == 10 {
+                print("\n");
+            } else if tape[ptr] >= 32 && tape[ptr] <= 126 {
+                print(ascii.slice((tape[ptr] - 32)..(tape[ptr] - 31)));
+            } else {
+                println(format("unsupported output byte {}", [tape[ptr].to_str()]));
+                return 1;
+            }
+        } else if ch == 44 {
+            match std::io::read_line() {
+                ok: input => {
+                    if input.len() == 0 {
+                        tape[ptr] = 0;
+                    } else {
+                        tape[ptr] = input.byte_at(0)!;
+                    }
+                },
+                err: msg => {
+                    println(format("failed to read input: {}", [msg]));
+                    return 1;
+                }
+            }
+        } else if ch == 91 {
+            if tape[ptr] == 0 { pc = jumps[pc] }
+        } else if ch == 93 {
+            if tape[ptr] != 0 { pc = jumps[pc] }
+        }
+
+        pc += 1;
+    }
+
+    0
 }
-
-
-fn foo<T: std::string::ToStr>(val: T) { val.to_str(); }

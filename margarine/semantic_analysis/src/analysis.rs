@@ -2211,6 +2211,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         let Some(ft) = tr.funcs.iter().find(|x| x.0 == field_name)
                         else { continue; };
 
+                        if !self.syms.type_implements_trait(expr.ty, *trait_id) {
+                            continue;
+                        }
+
                         if candidate.is_none() {
                             candidate = Some((*trait_id, ft.1, *ty, *generics));
                             return Some(());
@@ -2233,6 +2237,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         let Some(ft) = tr.funcs.iter().find(|x| x.0 == field_name)
                         else { continue; };
+
+                        if !self.syms.type_implements_trait(expr.ty, trait_id) {
+                            continue;
+                        }
 
                         candidate = Some((trait_id, ft.1, ty, generics));
                     }
@@ -2383,11 +2391,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     if sym_g.bounds.is_empty() { continue }
 
-                    let sym = value.sym(&self.syms)?;
                     for bound in sym_g.bounds {
-                        if self.syms.implements_trait(sym, *bound) { continue }
-                        if sym == SymbolId::ERR
-                        || sym == SymbolId::NEVER { return Ok(AnalysisResult::error()) }
+                        if self.syms.type_implements_trait(*value, *bound) { continue }
+                        if value.is_err(&mut self.syms)
+                        || value.is_never(&mut self.syms) { return Ok(AnalysisResult::error()) }
 
                         self.error(
                             lhs_expr,

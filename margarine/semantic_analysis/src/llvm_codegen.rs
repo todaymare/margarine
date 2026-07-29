@@ -471,7 +471,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 self.current_function_name = previous_function_name;
 
                 if let Some(e) = self.ty_info.decl(sym_func.decl().unwrap()) {
-                    self.error(&mut builder, e);
+                    self.error(&env, &mut builder, e);
                 } else {
                     match result {
                         Ok(v) => {
@@ -487,7 +487,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                         Err(e) => {
-                            self.error(&mut builder, e);
+                            self.error(&env, &mut builder, e);
                         },
                     }
                 }
@@ -1323,7 +1323,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    fn error(&mut self, builder: &mut Builder<'ctx>, e: errors::ErrorId) {
+    fn error(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>, e: errors::ErrorId) {
+        self.drop_all_locals(env, builder);
         let message = match e {
             ErrorId::Lexer((file, error)) => self.errors[0][file as usize][error.0 as usize].clone(),
             ErrorId::Parser((file, error)) => self.errors[1][file as usize][error.0 as usize].clone(),
@@ -1337,7 +1338,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         self.emit_panic(builder, &message);
         builder.unreachable();
     }
-
 
     fn copy_sequence(
         &mut self,
@@ -1683,7 +1683,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let gens = self.syms.get_gens(gens);
                     let ret_ty = ret_ty.ret().to_ty(gens, self.syms).unwrap();
 
-                    let func = self.get_func(func).unwrap();
+                    let func = self.get_func(func)?;
                     (ret_ty, iter_fn_is_inout, func.func_ptr, func.func_ty)
                 };
 
@@ -1724,7 +1724,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let result = self.block(env, builder, &*body);
                     if let Err(e) = result {
-                        self.error(builder, e);
+                        self.error(env, builder, e);
                     };
 
                     env.loop_id = lo;
@@ -2330,7 +2330,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let sym = sym.resolve(&[env.gens], self.syms);
 
-                    let func = self.get_func(sym).unwrap();
+                    let func = self.get_func(sym)?;
 
                     // create func ref
                     // we want a null ptr as the environment pointer
@@ -2591,16 +2591,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     // run the body
                     let ret_val = self.expr(env, builder, mapping.expr());
-                    debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local, field_ty, false));
 
                     let ret_val = match ret_val {
                         Ok(value) => value,
                         Err(error) => {
-                            self.error(builder, error);
+                            self.error(env, builder, error);
                             return;
                         },
                     };
 
+                    debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local, field_ty, false));
                     let value = builder.local_get(local);
                     self.emit_drop(builder, value, field_ty);
                     builder.local_set(ret_local, ret_val);
@@ -2760,9 +2760,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 if let Some(sym) = ns.get_sym(field_name) {
                     let sym = sym.unwrap();
                     let gens = if self.ty_info.trait_funcs.contains_key(&expr) {
-                        // Trait implementation methods are generic over the receiver's
-                        // implementation arguments, not the synthetic accessor function.
-                        val.gens(self.syms)
+                        // Tuple symbols bind slots as 0, 1, ... while an implementation may
+                        // name them T0, T1, .... Match the implementation arguments by position.
+                        let implementation_gens = self.syms.sym(sym).generics();
+                        let receiver_gens = self.syms.get_gens(val.gens(self.syms));
+                        assert_eq!(implementation_gens.len(), receiver_gens.len());
+                        let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), implementation_gens.len());
+                        for (implementation_gen, (_, receiver_ty)) in implementation_gens.iter().zip(receiver_gens) {
+                            gens.push((*implementation_gen, *receiver_ty));
+                        }
+                        self.syms.add_gens(gens.leak())
                     } else {
                         this.gens(self.syms)
                     };
@@ -3063,7 +3070,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             self.drop_all_locals(&env, &mut builder);
                             builder.ret(v);
                         },
-                        Err(e) => self.error(&mut builder, e),
+                        Err(e) => self.error(&env, &mut builder, e),
                     };
  
                     &self.funcs[&hash]
@@ -3092,7 +3099,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let result = self.block(env, builder, &body);
 
                     if let Err(e) = result {
-                        self.error(builder, e);
+                        self.error(env, builder, e);
                         value = Err(e) 
                     };
                 });
@@ -3741,15 +3748,29 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         args: &[Value<'ctx>],
         before_call: impl FnOnce(&mut Self, &mut Builder<'ctx>),
     ) -> Option<Value<'ctx>> {
-        let sym = ty.sym(self.syms).ok()?;
-        let ns = match self.syms.trait_implementation(sym, trait_id)? {
+        let ns = match self.syms.trait_implementation(ty, trait_id)? {
             TraitImplementation::Explicit(ns, _, _) => ns,
             TraitImplementation::Synthesized(_) => return None,
         };
 
         let func_sym = self.ns.get_ns(ns).get_sym(func_name).unwrap().ok()?;
+        let actual_gens: Vec<_> = self.syms.get_gens(ty.gens(self.syms))
+            .iter()
+            .map(|(_, ty)| *ty)
+            .collect();
+        let func_gens = self.syms.sym(func_sym).generics();
+        if actual_gens.len() != func_gens.len() {
+            return None;
+        }
+        let gens = {
+            let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
+            for (generic, ty) in func_gens.iter().zip(actual_gens) {
+                gens.push((*generic, ty));
+            }
+            self.syms.add_gens(gens.leak())
+        };
         let (extern_abi, func_ptr, func_ty) = {
-            let func = self.get_func(Type::Ty(func_sym, ty.gens(self.syms))).ok()?;
+            let func = self.get_func(Type::Ty(func_sym, gens)).ok()?;
             (func.extern_abi, func.func_ptr, func.func_ty)
         };
 

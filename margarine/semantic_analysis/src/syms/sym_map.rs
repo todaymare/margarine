@@ -97,7 +97,8 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn trait_implementation(&self, sym: SymbolId, trait_id: SymbolId) -> Option<TraitImplementation<'me>> {
+    pub fn trait_implementation(&self, ty: Type, trait_id: SymbolId) -> Option<TraitImplementation<'me>> {
+        let sym = ty.sym(self).ok()?;
         if let Some(&(ns, ty, gens)) = self.syms[sym].2.get(&trait_id) {
             return Some(TraitImplementation::Explicit(ns, ty, gens));
         }
@@ -113,8 +114,65 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn implements_trait(&self, sym: SymbolId, trait_id: SymbolId) -> bool {
-        self.trait_implementation(sym, trait_id).is_some()
+    pub fn type_implements_trait(&mut self, ty: Type, trait_id: SymbolId) -> bool {
+        match self.trait_implementation(ty, trait_id) {
+            Some(TraitImplementation::Synthesized(_)) => true,
+            Some(TraitImplementation::Explicit(_, impl_ty, impl_gens)) => {
+                let mut bindings = std::vec::Vec::with_capacity(impl_gens.len());
+                if !self.match_impl_type(impl_ty, ty, impl_gens, &mut bindings) {
+                    return false;
+                }
+
+                impl_gens.iter().all(|generic| {
+                    let Some((_, ty)) = bindings.iter().find(|(name, _)| *name == generic.name)
+                    else { return false };
+
+                    generic.bounds.iter().all(|bound| self.type_implements_trait(*ty, *bound))
+                })
+            },
+            None => false,
+        }
+    }
+
+    fn match_impl_type(
+        &mut self,
+        pattern: Generic<'me>,
+        actual: Type,
+        impl_gens: &[BoundedGeneric<'me>],
+        bindings: &mut std::vec::Vec<(StringIndex, Type)>,
+    ) -> bool {
+        match pattern.kind {
+            GenericKind::Generic(generic) => {
+                if !impl_gens.iter().any(|value| value.name == generic.name) {
+                    return false;
+                }
+
+                match bindings.iter().find(|(name, _)| *name == generic.name) {
+                    Some((_, bound)) => (*bound).eq(self, actual),
+                    None => {
+                        bindings.push((generic.name, actual));
+                        true
+                    },
+                }
+            },
+
+            GenericKind::Sym(sym, gens) => {
+                let Type::Ty(actual_sym, actual_gens) = actual.instantiate_shallow(self)
+                else { return false };
+
+                let actual_gens: std::vec::Vec<_> = self.get_gens(actual_gens)
+                    .iter()
+                    .map(|value| value.1)
+                    .collect();
+                if sym != actual_sym || gens.len() != actual_gens.len() {
+                    return false;
+                }
+
+                gens.iter().zip(actual_gens).all(|(pattern, actual)| {
+                    self.match_impl_type(*pattern, actual, impl_gens, bindings)
+                })
+            },
+        }
     }
 
 

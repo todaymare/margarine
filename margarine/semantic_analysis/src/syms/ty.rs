@@ -309,7 +309,6 @@ impl Type {
         }
     }
 
-
     fn propagate_taint(self, map: &mut SymbolMap, taint: Type) {
         match self.instantiate_shallow(map) {
             Type::Ty(_, gens) => {

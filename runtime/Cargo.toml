@@ -7,6 +7,10 @@ edition = "2024"
 name = "margarine_rt"
 crate-type = ["staticlib"]
 
+[features]
+default = []
+sanitizer = []
+
 [dependencies]
 common = { path = "../margarine/common" }
 itoa = "*"

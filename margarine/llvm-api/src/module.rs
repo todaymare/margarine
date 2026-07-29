@@ -1,4 +1,4 @@
-use std::{ffi::CStr, ptr::NonNull};
+use std::{ffi::{CStr, CString}, ptr::NonNull};
 
 use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMPrintModuleToString}, error::{LLVMDisposeErrorMessage, LLVMGetErrorMessage}, target::{LLVMGetModuleDataLayout, LLVMPointerSize}, target_machine::LLVMOpaqueTargetMachine, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMPassBuilderOptionsSetLoopUnrolling, LLVMPassBuilderOptionsSetVerifyEach, LLVMRunPasses}, LLVMModule};
 use sti::arena::Arena;
@@ -75,6 +75,15 @@ impl<'ctx> Module<'ctx> {
 
 
     pub fn optimize(&self) -> Result<(), String> {
+        let level = std::env::var("MARGARINE_OPT_LEVEL").unwrap_or_else(|_| "O3".to_string());
+        if !matches!(level.as_str(), "O0" | "O1" | "O2" | "O3") {
+            return Err(format!(
+                "invalid MARGARINE_OPT_LEVEL '{level}'; expected O0, O1, O2, or O3"
+            ));
+        }
+        let pipeline = CString::new(format!("default<{level}>"))
+            .expect("optimization pipeline cannot contain a null byte");
+
         let options = unsafe { LLVMCreatePassBuilderOptions() };
         let Some(options) = NonNull::new(options) else {
             return Err("LLVM failed to create pass builder options".to_string());
@@ -88,7 +97,7 @@ impl<'ctx> Module<'ctx> {
         let error = unsafe {
             LLVMRunPasses(
                 self.ptr.as_ptr(),
-                c"default<O2>".as_ptr(),
+                pipeline.as_ptr(),
                 self.target_machine.as_ptr(),
                 options.as_ptr(),
             )

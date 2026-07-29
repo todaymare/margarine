@@ -35,6 +35,7 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub errors     : KVec<SemaError, Error>,
     pub error_nodes: KVec<SemaError, NodeId>,
     pub silent_ranges: std::vec::Vec<SourceRange>,
+    tuple_syms: std::vec::Vec<SymbolId>,
     base_scope  : ScopeId,
 }
 
@@ -91,6 +92,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             errors: KVec::new(),
             error_nodes: KVec::new(),
             silent_ranges: std::vec::Vec::new(),
+            tuple_syms: std::vec::Vec::new(),
             type_info: TyInfo {
                 exprs: KVec::new(),
                 stmts: KVec::new(),
@@ -654,29 +656,31 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
     fn tuple_sym(&mut self, range: SourceRange, fields: &[Option<StringIndex>]) -> SymbolId {
-        let pending = self.syms.pending(&mut self.namespaces, StringMap::INVALID_IDENT, fields.len());
-        let (fields, gens) = {
-            let mut sym_fields = Buffer::new(self.output, fields.len());
-            let mut gens = Buffer::new(self.output, fields.len());
-            for (index, name) in fields.iter().enumerate() {
-                let str = self.string_map.num(index);
-                let str = BoundedGeneric::new(str, &[]);
-                gens.push(str);
+        while self.tuple_syms.len() <= fields.len() {
+            let arity = self.tuple_syms.len();
+            let pending = self.syms.pending(&mut self.namespaces, StringMap::INVALID_IDENT, arity);
+            let (fields, gens) = {
+                let mut sym_fields = Buffer::new(self.output, arity);
+                let mut gens = Buffer::new(self.output, arity);
+                for index in 0..arity {
+                    let str = self.string_map.num(index);
+                    let str = BoundedGeneric::new(str, &[]);
+                    gens.push(str);
 
-                let name = name.unwrap_or_else(|| self.string_map.num(index));
-                let g = Generic::new(range, GenericKind::Generic(str), None);
-                sym_fields.push((name, g));
-            }
+                    let g = Generic::new(range, GenericKind::Generic(str), None);
+                    sym_fields.push((self.string_map.num(index), g));
+                }
 
-            (sym_fields.leak(), gens.leak())
-        };
+                (sym_fields.leak(), gens.leak())
+            };
 
+            let cont = Container::new(fields, syms::containers::ContainerKind::Tuple);
+            let sym = Symbol::new(StringMap::TUPLE, gens, syms::SymbolKind::Container(cont));
+            self.syms.add_sym(pending, sym);
+            self.tuple_syms.push(pending);
+        }
 
-        let cont = Container::new(fields, syms::containers::ContainerKind::Tuple);
-        let sym = Symbol::new(StringMap::TUPLE, gens, syms::SymbolKind::Container(cont));
-        self.syms.add_sym(pending, sym);
-
-        pending
+        self.tuple_syms[fields.len()]
     }
 
 
