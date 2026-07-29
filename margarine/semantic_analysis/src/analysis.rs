@@ -1563,15 +1563,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let Some((t, func, g, generics)) = candidate
                     else { return None; };
 
-                    let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.iter().len());
+                    let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.len());
 
                     for g in generics {
-                        let var = self.syms.new_var(id, g.name, range);
-                        vgens.push((*g, var));
-                    }
-
-
-                    for g in generics.iter() {
                         let var = self.syms.new_var(id, g.name, range);
                         vgens.push((*g, var));
                     }
@@ -2248,20 +2242,19 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let sym = ();
                 let Some((t, func, g, generics)) = candidate
                 else { return Err(e); };
-                let sym_gens = self.syms.get_gens(expr.ty.gens(&self.syms));
-
-                let mut vgens = sti::vec::Vec::with_cap_in(self.output, sym_gens.len() + generics.len());
-
-                vgens.extend(sym_gens.iter().copied());
+                let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.len());
 
                 for g in generics {
                     let var = self.syms.new_var(id, g.name, range);
                     vgens.push((*g, var));
                 }
 
+                let gens = self.syms.add_gens(vgens.leak());
+                let implementation_ty = g.to_ty(self.syms.get_gens(gens), &mut self.syms)?;
+                assert!(expr.ty.eq(&mut self.syms, implementation_ty));
 
-                if let Some(gens) = expr_gens {
-                    for (g, (_, s)) in gens.iter().zip(vgens.iter().skip(sym_gens.len())) {
+                if let Some(explicit_gens) = expr_gens {
+                    for (g, (_, s)) in explicit_gens.iter().zip(self.syms.get_gens(gens)) {
                         let ty = self.dt_to_ty(scope, id, *g);
 
                         let ty = match ty {
@@ -2277,8 +2270,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         }
                     }
                 }
-
-                let gens = self.syms.add_gens(vgens.leak());
 
                 let closure = self.syms.new_closure();
 

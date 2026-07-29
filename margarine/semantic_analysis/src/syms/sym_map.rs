@@ -1084,21 +1084,30 @@ impl<'me> SymbolMap<'me> {
         }
 
 
-        // $str_slice(value: str, min: int, max: int): str
+        // $str_slice(value: str, idx: int): Option<(str, str)>
         {
             let pending = slf.pending(ns_map, StringMap::STR_SLICE, 0);
             assert_eq!(pending, SymbolId::STR_SLICE);
             let str_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::STR, &[]), None);
             let int_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None);
+            let pair_ty = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST_SLICE_PAIR, arena.alloc_new([str_ty, str_ty])),
+                None,
+            );
+            let ret = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::OPTION, arena.alloc_new([pair_ty])),
+                None,
+            );
             let args = [
                 FunctionArgument::new(StringMap::VALUE, str_ty),
-                FunctionArgument::new(StringMap::MIN, int_ty),
-                FunctionArgument::new(StringMap::MAX, int_ty),
+                FunctionArgument::new(StringMap::VALUE, int_ty),
             ];
             let sym = Symbol::new(
                 StringMap::STR_SLICE,
                 &[],
-                SymbolKind::Function(FunctionTy::new(arena.alloc_new(args), str_ty, FunctionKind::StrSlice, None)),
+                SymbolKind::Function(FunctionTy::new(arena.alloc_new(args), ret, FunctionKind::StrSlice, None)),
             );
             slf.add_sym(pending, sym);
         }
