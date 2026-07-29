@@ -1,19 +1,24 @@
-use std::{ffi::CStr, marker::PhantomData, ptr::{null_mut, NonNull}};
+use std::{ffi::CStr, ptr::NonNull};
 
-use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMPrintModuleToString}, target::{LLVMGetModuleDataLayout, LLVMPointerSize}, LLVMModule};
+use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMPrintModuleToString}, error::{LLVMDisposeErrorMessage, LLVMGetErrorMessage}, target::{LLVMGetModuleDataLayout, LLVMPointerSize}, target_machine::LLVMOpaqueTargetMachine, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMPassBuilderOptionsSetLoopUnrolling, LLVMPassBuilderOptionsSetVerifyEach, LLVMRunPasses}, LLVMModule};
 use sti::arena::Arena;
 
-use crate::{cstr, info::Message, tys::{func::FunctionType, Type}, values::{func::FunctionPtr, global::GlobalPtr, Value}};
+use crate::{info::Message, tys::{func::FunctionType, Type}, values::{func::FunctionPtr, global::GlobalPtr, Value}};
 
 #[derive(Clone, Copy)]
 pub struct Module<'ctx> {
     pub(crate) ptr: NonNull<LLVMModule>,
+    target_machine: NonNull<LLVMOpaqueTargetMachine>,
     arena: &'ctx Arena,
 }
 
 impl<'ctx> Module<'ctx> {
-    pub fn new(ptr: NonNull<LLVMModule>, arena: &'ctx Arena) -> Self {
-        Self { ptr, arena }
+    pub fn new(
+        ptr: NonNull<LLVMModule>,
+        target_machine: NonNull<LLVMOpaqueTargetMachine>,
+        arena: &'ctx Arena,
+    ) -> Self {
+        Self { ptr, target_machine, arena }
     }
 
 
@@ -69,7 +74,38 @@ impl<'ctx> Module<'ctx> {
     }
 
 
-    pub fn optimize(&self) {
-        todo!();
+    pub fn optimize(&self) -> Result<(), String> {
+        let options = unsafe { LLVMCreatePassBuilderOptions() };
+        let Some(options) = NonNull::new(options) else {
+            return Err("LLVM failed to create pass builder options".to_string());
+        };
+
+        unsafe {
+            LLVMPassBuilderOptionsSetVerifyEach(options.as_ptr(), 1);
+            LLVMPassBuilderOptionsSetLoopUnrolling(options.as_ptr(), 1);
+        }
+
+        let error = unsafe {
+            LLVMRunPasses(
+                self.ptr.as_ptr(),
+                c"default<O2>".as_ptr(),
+                self.target_machine.as_ptr(),
+                options.as_ptr(),
+            )
+        };
+        unsafe { LLVMDisposePassBuilderOptions(options.as_ptr()) };
+
+        if error.is_null() {
+            return Ok(());
+        }
+
+        let error_message = unsafe { LLVMGetErrorMessage(error) };
+        if error_message.is_null() {
+            return Err("LLVM optimization failed".to_string());
+        }
+
+        let message = unsafe { CStr::from_ptr(error_message) }.to_string_lossy().into_owned();
+        unsafe { LLVMDisposeErrorMessage(error_message) };
+        Err(message)
     }
 }

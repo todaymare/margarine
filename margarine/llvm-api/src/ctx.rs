@@ -135,7 +135,7 @@ impl<'me> ContextImpl<'me> {
             LLVMDisposeTargetData(data_layout);
         }
 
-        Module::new(module, self.arena)
+        Module::new(module, self.target_machine, self.arena)
     }
 
     pub fn emit_object(&self, module: Module<'me>, path: &Path) -> Result<(), String> {
