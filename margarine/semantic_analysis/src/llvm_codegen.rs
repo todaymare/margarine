@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash, iter::once, path::Path};
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
-use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, union::UnionTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
+use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, union::UnionTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{AllocKind, FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
 use parser::nodes::{decl::{DeclGeneric, Decl}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
 use sti::{hash::fxhash::{FxHasher32, FxHasher64}, static_assert};
 
@@ -168,6 +168,12 @@ pub fn run<'a>(
         let dealloc_fn_ty = void.fn_ty(ctx.arena, &[*ctx.ptr(), *ctx.integer(64)], false);
         let dealloc_fn = module.function("margarineDealloc", dealloc_fn_ty);
         dealloc_fn.set_linkage(Linkage::External);
+        alloc_fn.set_noalias_return(ctx.as_ctx_ref());
+        alloc_fn.set_alloc_size(ctx.as_ctx_ref(), 0);
+        alloc_fn.set_alloc_kind(ctx.as_ctx_ref(), AllocKind::AllocUninitialized);
+        alloc_fn.set_malloc_family(ctx.as_ctx_ref());
+        dealloc_fn.set_alloc_kind(ctx.as_ctx_ref(), AllocKind::Free);
+        dealloc_fn.set_malloc_family(ctx.as_ctx_ref());
 
         let rc_alloc_fn_ty = ptr.fn_ty(ctx.arena, &[*ctx.integer(64)], false);
         let rc_alloc_fn = module.function("margarineRcAlloc", rc_alloc_fn_ty);

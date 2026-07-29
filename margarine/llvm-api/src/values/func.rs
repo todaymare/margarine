@@ -1,6 +1,6 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddAttributeAtIndex, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute, LLVMCreateTypeAttribute, LLVMGetEnumAttributeKindForName, LLVMSetLinkage}, LLVMAttributeFunctionIndex, LLVMLinkage};
+use llvm_sys::{core::{LLVMAddAttributeAtIndex, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute, LLVMCreateStringAttribute, LLVMCreateTypeAttribute, LLVMGetEnumAttributeKindForName, LLVMSetLinkage}, LLVMAttributeFunctionIndex, LLVMAttributeReturnIndex, LLVMLinkage};
 
 use crate::{builder::Builder, cstr, ctx::ContextRef, tys::{func::FunctionType, ptr::PtrTy, Type, TypeKind}};
 
@@ -41,6 +41,47 @@ impl<'ctx> FunctionPtr<'ctx> {
     }
 
 
+    /// Marks the result as a fresh allocation that cannot alias existing pointers.
+    pub fn set_noalias_return(self, ctx: ContextRef<'ctx>) {
+        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("noalias"), 7) };
+        let attr = unsafe { LLVMCreateEnumAttribute(ctx.ptr.as_ptr(), attr_kind, 0) };
+        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeReturnIndex, attr) };
+    }
+
+
+    /// Records the argument containing the allocation size.
+    pub fn set_alloc_size(self, ctx: ContextRef<'ctx>, size_arg: u32) {
+        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("allocsize"), 9) };
+        // The low 32 bits hold the zero-based element-size argument; UINT32_MAX omits a count argument.
+        let raw_value = u64::from(size_arg) << 32 | u64::from(u32::MAX);
+        let attr = unsafe { LLVMCreateEnumAttribute(ctx.ptr.as_ptr(), attr_kind, raw_value) };
+        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeFunctionIndex, attr) };
+    }
+
+
+    /// Gives LLVM the allocation/deallocation operation encoded by this function.
+    pub fn set_alloc_kind(self, ctx: ContextRef<'ctx>, kind: AllocKind) {
+        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("allockind"), 9) };
+        let attr = unsafe { LLVMCreateEnumAttribute(ctx.ptr.as_ptr(), attr_kind, kind as u64) };
+        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeFunctionIndex, attr) };
+    }
+
+
+    /// Associates this function with LLVM's malloc allocation family.
+    pub fn set_malloc_family(self, ctx: ContextRef<'ctx>) {
+        let attr = unsafe {
+            LLVMCreateStringAttribute(
+                ctx.ptr.as_ptr(),
+                cstr!("alloc-family"),
+                12,
+                cstr!("malloc"),
+                6,
+            )
+        };
+        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeFunctionIndex, attr) };
+    }
+
+
     pub fn set_sret(self, ctx: ContextRef<'ctx>, ty: Type<'ctx>) {
         let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("sret"), 4) };
         let attr = unsafe { LLVMCreateTypeAttribute(ctx.ptr.as_ptr(), attr_kind, ty.llvm_ty().as_ptr()) };
@@ -58,6 +99,13 @@ impl<'ctx> Deref for FunctionPtr<'ctx> {
 
 pub enum FunctionAttribute {
     NoReturn,
+}
+
+
+#[repr(u64)]
+pub enum AllocKind {
+    AllocUninitialized = 1 | 8,
+    Free = 4,
 }
 
 
