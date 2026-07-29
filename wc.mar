@@ -1,0 +1,33 @@
+use std::string::format;
+
+fn main(): int {
+    var args = std::env::args();
+    if args.len() != 2 {
+        println("usage: wc (file)");
+        return -1;
+    }
+
+    var file = args[1];
+
+    var file = 
+    match std::io::read_file(file) {
+        ok: value => value,
+        err => {
+            println("missing file");
+            return -1
+        }
+    };
+
+    var bytes = file.len();
+    var line = 0;
+    var words = 0;
+    for l in file.lines() {
+        line += 1;
+        words += l.split(" ").filter(|s| s != "").count();
+    }
+
+    println(format("{} {} {}", [words.to_str(), line.to_str(), bytes.to_str()]));
+
+    return 0
+}
+

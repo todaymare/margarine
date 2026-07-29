@@ -1,0 +1,36 @@
+use std::string::format;
+
+fn main(): int {
+    var args = std::env::args();
+    if args.len() != 3 {
+        print("hello");
+        var x = "bye";
+        println("usage: mgrep (pattern) (file)");
+        return -1;
+    }
+
+    var pattern = args[1];
+    var file = args[2];
+
+    var file = 
+    match std::io::read_file(file) {
+        ok: value => value,
+        err => {
+            println("missing file");
+            return -1
+        }
+    };
+
+    var line = 0;
+    for l in file.lines() {
+        line += 1;
+
+        if l.contains(pattern) {
+            println(format("{}: {}", [line.to_str(), l]));
+        }
+    }
+
+    return 0
+}
+
+
