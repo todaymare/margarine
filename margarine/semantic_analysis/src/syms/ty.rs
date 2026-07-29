@@ -416,9 +416,10 @@ impl Type {
     fn hash_ex(self, map: &SymbolMap, hasher: &mut impl Hasher) {
         match self {
             Type::Ty(v, g) => {
-                if matches!(map.sym(v).kind(), SymbolKind::Container(container) if container.kind() == ContainerKind::Tuple) {
+                let is_tuple = matches!(map.sym(v).kind(), SymbolKind::Container(container) if container.kind() == ContainerKind::Tuple);
+                if is_tuple {
                     // Tuples are structural types. Their compiler-generated symbol IDs
-                    // differ between equivalent tuple expressions.
+                    // and generic parameter names differ between equivalent tuples.
                     u32::MAX.hash(hasher);
                 } else {
                     v.hash(hasher);
@@ -426,7 +427,9 @@ impl Type {
 
                 let arr = map.gens()[g];
                 for g in arr.iter() {
-                    g.0.name().hash(hasher);
+                    if !is_tuple {
+                        g.0.name().hash(hasher);
+                    }
                     g.1.hash_ex(map, hasher)
                 }
             },

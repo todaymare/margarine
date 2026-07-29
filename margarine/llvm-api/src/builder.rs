@@ -1,6 +1,6 @@
 use std::{collections::HashSet, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlock, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, vec::KVec};
 
 use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
@@ -37,10 +37,10 @@ impl<'ctx> Builder<'ctx> {
         let bb = unsafe { LLVMGetFirstBasicBlock(func.llvm_val().as_ptr()) };
         assert!(bb.is_null(), "this function already has a builder");
 
-        let prelude = unsafe { LLVMAppendBasicBlock(func.llvm_val().as_ptr(), cstr!("prelude")) };
+        let prelude = unsafe { LLVMAppendBasicBlockInContext(ctx.ptr.as_ptr(), func.llvm_val().as_ptr(), cstr!("prelude")) };
         let prelude = NonNull::new(prelude).expect("failed to initialise the prelude basic-block");
 
-        let entry = unsafe { LLVMAppendBasicBlock(func.llvm_val().as_ptr(), cstr!("entry")) };
+        let entry = unsafe { LLVMAppendBasicBlockInContext(ctx.ptr.as_ptr(), func.llvm_val().as_ptr(), cstr!("entry")) };
         let entry = NonNull::new(entry).unwrap();
         
         unsafe { LLVMPositionBuilderAtEnd(ptr.as_ptr(), entry.as_ptr()) };
@@ -155,7 +155,7 @@ impl<'ctx> Builder<'ctx> {
 
     pub fn unreachable(&self) {
         unsafe { LLVMBuildUnreachable(self.ptr.as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
     
@@ -164,10 +164,10 @@ impl<'ctx> Builder<'ctx> {
         &mut self,
         body: impl FnOnce(&mut Self, Loop)
     ) {
-        let body_bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), cstr!("loop_body")) };
+        let body_bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), cstr!("loop_body")) };
         let body_bb = NonNull::new(body_bb).unwrap();
 
-        let cont_bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), cstr!("loop_cont")) };
+        let cont_bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), cstr!("loop_cont")) };
         let cont_bb = NonNull::new(cont_bb).unwrap();
 
         let data = Loop { body_bb, cont_bb };
@@ -184,14 +184,14 @@ impl<'ctx> Builder<'ctx> {
 
     pub fn loop_continue(&mut self, l: Loop) {
         unsafe { LLVMBuildBr(self.ptr.as_ptr(), l.body_bb.as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
 
 
     pub fn loop_break(&mut self, l: Loop) {
         unsafe { LLVMBuildBr(self.ptr.as_ptr(), l.cont_bb.as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
 
@@ -203,9 +203,9 @@ impl<'ctx> Builder<'ctx> {
         then_body: impl FnOnce(&mut Self, &mut T),
         else_body: impl FnOnce(&mut Self, &mut T),
     ) {
-        let then_bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), cstr!("then")) };
-        let else_bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), cstr!("else")) };
-        let cont_bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), cstr!("cont")) };
+        let then_bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), cstr!("then")) };
+        let else_bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), cstr!("else")) };
+        let cont_bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), cstr!("cont")) };
 
         unsafe { LLVMBuildCondBr(self.ptr.as_ptr(), cond.llvm_val().as_ptr(), then_bb, else_bb) };
 
@@ -226,11 +226,11 @@ impl<'ctx> Builder<'ctx> {
 
 
     pub fn switch<T>(&mut self, value: Integer<'ctx>, datas: impl Iterator<Item=T>, mut f: impl FnMut(&mut Self, T)) {
-        let end_bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), cstr!("switch_end")) };
+        let end_bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), cstr!("switch_end")) };
         let switch = unsafe { LLVMBuildSwitch(self.ptr.as_ptr(), value.llvm_val().as_ptr(), end_bb, datas.size_hint().0 as u32) };
 
         for (i, d) in datas.into_iter().enumerate() {
-            let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), cstr!("switch_br")) };
+            let bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), cstr!("switch_br")) };
             unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
 
             f(self, d);
@@ -646,14 +646,14 @@ impl<'ctx> Builder<'ctx> {
 
     pub fn ret(&self, val: Value<'ctx>) {
         unsafe { LLVMBuildRet(self.ptr.as_ptr(), val.llvm_val().as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
 
 
     pub fn ret_void(&self) {
         unsafe { LLVMBuildRetVoid(self.ptr.as_ptr()) };
-        let bb = unsafe { LLVMAppendBasicBlock(self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
+        let bb = unsafe { LLVMAppendBasicBlockInContext(self.ctx.ptr.as_ptr(), self.func.llvm_val().as_ptr(), c"".as_ptr() as _) };
         unsafe { LLVMPositionBuilderAtEnd(self.ptr.as_ptr(), bb) };
     }
 

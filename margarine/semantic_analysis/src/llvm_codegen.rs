@@ -280,6 +280,8 @@ pub fn run<'a>(
 
 
     let _ = std::fs::create_dir("artifacts");
+    module.validate()
+        .unwrap_or_else(|error| panic!("generated invalid LLVM module: {error}"));
     module.optimize()
         .unwrap_or_else(|error| panic!("failed to optimize LLVM module: {error}"));
     ctx.emit_bitcode(module, Path::new("artifacts/program.bc"))
