@@ -36,14 +36,16 @@ fn main() {
             }
 
             println!("running");
-            println!("{}",
-                std::str::from_utf8(&Command::new("./artifacts/program")
-                    .args(program_args)
-                    .output()
-                    .unwrap()
-                    .stdout
-                ).unwrap()
-            );
+            let output = Command::new("./artifacts/program")
+                .args(program_args)
+                .stdin(std::process::Stdio::inherit())
+                .output()
+                .unwrap();
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+            if !output.status.success() {
+                eprintln!("program exited with {}", output.status);
+            }
             return;
         },
 

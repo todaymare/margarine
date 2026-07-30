@@ -14,7 +14,7 @@ fn main(): int {
 
     var file = 
     match std::io::read_file(file) {
-        ok: value => value,
+        ok(value) => value,
         err => {
             println("missing file");
             return -1
@@ -32,5 +32,4 @@ fn main(): int {
 
     return 0
 }
-
 

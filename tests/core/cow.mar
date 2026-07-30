@@ -80,7 +80,7 @@ fn list_concat_rc_elements() {
 fn list_slice_splits_and_preserves_source() {
     var a = [1, 2, 3, 4];
     match a.slice(2) {
-        some: pair => {
+        some(pair) => {
             assert(pair.0.len() == 2 && pair.0[0] == 1 && pair.0[1] == 2, "slice: left half");
             assert(pair.1.len() == 2 && pair.1[0] == 3 && pair.1[1] == 4, "slice: right half");
         },
@@ -94,20 +94,20 @@ fn list_slice_splits_and_preserves_source() {
 fn list_slice_boundaries_and_invalid_indices() {
     var a = [1, 2];
     match a.slice(0) {
-        some: pair => assert(pair.0.len() == 0 && pair.1.len() == 2, "slice: zero index"),
+        some(pair) => assert(pair.0.len() == 0 && pair.1.len() == 2, "slice: zero index"),
         none => assert(false, "slice: zero index returned none"),
     }
     match a.slice(2) {
-        some: pair => assert(pair.0.len() == 2 && pair.1.len() == 0, "slice: end index"),
+        some(pair) => assert(pair.0.len() == 2 && pair.1.len() == 0, "slice: end index"),
         none => assert(false, "slice: end index returned none"),
     }
 
     match a.slice(-1) {
-        some: _ => assert(false, "slice: negative index returned some"),
+        some(_) => assert(false, "slice: negative index returned some"),
         none => (),
     }
     match a.slice(3) {
-        some: _ => assert(false, "slice: out-of-bounds index returned some"),
+        some(_) => assert(false, "slice: out-of-bounds index returned some"),
         none => (),
     }
 }
@@ -116,7 +116,7 @@ fn list_slice_boundaries_and_invalid_indices() {
 fn list_slice_rc_elements() {
     var a = [$rc(5), $rc(10)];
     match a.slice(1) {
-        some: pair => {
+        some(pair) => {
             assert($rc_get(pair.0[0]) == 5, "slice: copies left rc element");
             assert($rc_get(pair.1[0]) == 10, "slice: copies right rc element");
         },

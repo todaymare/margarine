@@ -216,6 +216,13 @@ unsafe extern "C" fn print_raw(value: Str) {
 
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn eprint_raw(value: Str) {
+    eprint!("{}", value.read());
+    let _ = std::io::stderr().flush();
+}
+
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn int_to_str(value: i64) -> Str {
     let mut buf = itoa::Buffer::new();
     let str = buf.format(value);
@@ -444,6 +451,25 @@ unsafe extern "C" fn str_byte_at(s: Str, idx: i64) -> Enum<i64> {
 
     let byte = str[idx] as i64;
     Enum { tag: 0, data: byte }
+}
+
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn str_from_codepoint(value: i64) -> Enum<Str> {
+    if !(0..=0x10ffff).contains(&value) {
+        return Enum { tag: 1, data: Str { data: null() } };
+    }
+
+    let Some(ch) = char::from_u32(value as u32) else {
+        return Enum { tag: 1, data: Str { data: null() } };
+    };
+
+    let mut bytes = [0; 4];
+    let encoded = ch.encode_utf8(&mut bytes);
+    Enum {
+        tag: 0,
+        data: Str::new(encoded),
+    }
 }
 
 

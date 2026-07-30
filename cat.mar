@@ -1,0 +1,33 @@
+use std::string::format;
+
+fn main(): int {
+    var args = std::env::args();
+
+    if args.len() == 1 {
+        loop {
+            match std::io::read_line() {
+                ok(line) => {
+                    if line.len() == 0 { return 0 }
+                    print(line);
+                },
+                err(msg) => {
+                    eprintln(format("cat: {}", [msg]));
+                    return 1;
+                }
+            }
+        }
+    }
+
+    for i in 1..args.len() {
+        var path = args[i];
+        match std::io::read_file(path) {
+            ok(file) => print(file),
+            err(msg) => {
+                eprintln(format("cat: {}: {}", [path, msg]));
+                return 1;
+            }
+        }
+    }
+
+    0
+}

@@ -2294,11 +2294,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 TokenKind::Literal(Literal::Bool(false)) => StringMap::FALSE,
                 _ => parser.expect_identifier()?,
             };
-            let source_range = SourceRange::new(start, parser.current_range().end());
             parser.advance();
 
             let (bind_to, binding_range) =
-                if parser.current_is(TokenKind::Colon) {
+                if parser.current_is(TokenKind::LeftParenthesis) {
                     parser.advance();
 
                     let binding_start = parser.current_range().start();
@@ -2306,12 +2305,16 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     let name = parser.expect_identifier()?;
                     let binding_range = SourceRange::new(binding_start, parser.current_range().end());
                     parser.advance();
+
+                    parser.expect(TokenKind::RightParenthesis)?;
+                    parser.advance();
                     (name, binding_range)
 
                 } else {
                     (parser.string_map.insert("_"), parser.current_range())
                 };
 
+            let source_range = SourceRange::new(start, parser.current_range().start());
 
             parser.expect(TokenKind::Arrow)?;
             parser.advance();
@@ -2564,6 +2567,24 @@ mod tests {
     fn binary_operator_display() {
         assert_eq!(format!("{}", BinaryOperator::BitshiftLeft), "<<");
         assert_eq!(format!("{}", BinaryOperator::BitshiftRight), ">>");
+    }
+
+
+    #[test]
+    fn match_bindings_use_parentheses() {
+        let arena = Arena::new();
+        let mut sm = StringMap::new(&arena);
+        let file_name = sm.insert("test");
+        let file = FileData::new(
+            "fn f(x: Option<int>) { match x { some(value) => value, none => 0, } }".to_string(),
+            file_name,
+            Extension::None,
+        );
+        let (tokens, _) = lex(&file, &mut sm, 0);
+        let mut ast = AST::new(&arena);
+        let cfg_env = std::collections::HashMap::new();
+        let (_, _, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
     }
 
 

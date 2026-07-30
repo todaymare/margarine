@@ -4,13 +4,13 @@ fn option_basic() {
     var a = some(42);
     print("checking some...\n");
     match a {
-        some: val => assert(val == 42, "opt some"),
+        some(val) => assert(val == 42, "opt some"),
         none      => panic("should be some"),
     }
     var b: Option<int> = none();
     if b.is_some() { panic("b is_some but should be none") }
     match b {
-        some: val => panic("should be none"),
+        some(val) => panic("should be none"),
         none      => (),
     }
 }
@@ -59,9 +59,9 @@ fn option_unwrap() {
 fn nested_option() {
     var a = some(some(7));
     match a {
-        some: inner => {
+        some(inner) => {
             match inner {
-                some: val => assert(val == 7, "nested match"),
+                some(val) => assert(val == 7, "nested match"),
                 none      => panic("inner none"),
             }
         },
@@ -78,12 +78,12 @@ fn result_basic() {
     var a: Result<int, str> = ok(100);
     var b: Result<int, str> = err("fail");
     match a {
-        ok:  val => assert(val == 100, "result ok"),
-        err: msg => panic("should be ok"),
+        ok(val) => assert(val == 100, "result ok"),
+        err(msg) => panic("should be ok"),
     }
     match b {
-        ok:  val => panic("should be err"),
-        err: msg => assert(msg == "fail", "result err"),
+        ok(val) => panic("should be err"),
+        err(msg) => assert(msg == "fail", "result err"),
     }
 }
 
@@ -109,7 +109,7 @@ struct BigS { a: int, b: int, c: int, d: int, e: int }
 fn big_enum_payload() {
     var b = some(BigS { a: 1, b: 2, c: 3, d: 4, e: 5 });
     match b {
-        some: val => {
+        some(val) => {
             assert(val.a == 1, "big a");
             assert(val.b == 2, "big b");
             assert(val.c == 3, "big c");
