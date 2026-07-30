@@ -141,8 +141,6 @@ pub fn run<'a>(
     ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], 
     _file_count: u32, startups: &[SymbolId], tests: &[SymbolId],
 ) {
-    //println!("running llvm");
-
     let ctx = Context::new(ast.arena);
     let mut module = ctx.module("margarine");
     // generate the code 
@@ -1591,6 +1589,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 NodeId::Expr(expr_id) => {
                     let result = self.expr_ex(env, builder, expr_id)?;
+                    assert!(result.1.is_resolved(self.syms));
                     has_ret = Some(result);
                 },
 
@@ -2258,6 +2257,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let val = self.ast.expr(expr);
         let ty = self.ty_info.exprs[expr];
+        let result_ty = match ty.unwrap_or(crate::ExprInfo::Errored(ErrorId::Bypass)) {
+            crate::ExprInfo::Result { ty } => ty.resolve(&[env.gens], self.syms),
+            crate::ExprInfo::Errored(e) => return Err(e),
+        };
 
 
         Ok((match val {
@@ -3303,10 +3306,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 payload
             },
-        }, match ty.unwrap_or(crate::ExprInfo::Errored(ErrorId::Bypass)) {
-            crate::ExprInfo::Result { ty } => ty,
-            crate::ExprInfo::Errored(e) => return Err(e),
-        }))
+        }, result_ty))
     }
 
 
@@ -3557,7 +3557,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
     fn emit_drop(&mut self, builder: &mut Builder<'ctx>, value: Value<'ctx>, ty: Type) {
-        let ty = ty.instantiate(self.syms, 0);
+        assert!(ty.is_resolved(self.syms));
 
         let Ok(sym_id) = ty.sym(&self.syms) 
         else { return; };
