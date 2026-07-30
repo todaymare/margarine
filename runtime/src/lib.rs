@@ -20,6 +20,7 @@ use common::symbol_id::SymbolId;
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_print(ptr: *const u8, len: usize);
+    fn host_abort(code: i32) -> !;
 }
 
 #[cfg(feature = "sanitizer")]
@@ -153,9 +154,8 @@ pub extern "C" fn margarineStringFromUtf8(bytes: *const u8, len: usize) -> *mut 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAbort(code: i32) -> ! {
     #[cfg(target_arch = "wasm32")]
-    {
-        let _ = code;
-        core::arch::wasm32::unreachable();
+    unsafe {
+        host_abort(code);
     }
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "sanitizer")]

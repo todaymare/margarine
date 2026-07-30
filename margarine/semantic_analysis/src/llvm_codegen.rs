@@ -315,12 +315,8 @@ pub fn run<'a>(
             }
         }
 
-        if target == CompilationTarget::Wasm32UnknownUnknown {
-            builder.ret(*ctx.const_int(i32_ty, 0, false));
-        } else {
-            builder.call(abort_fn, abort_fn_ty, &[*ctx.const_int(i32_ty, 0, false)]);
-            builder.unreachable();
-        }
+        builder.call(abort_fn, abort_fn_ty, &[*ctx.const_int(i32_ty, 0, false)]);
+        builder.unreachable();
 
         module = conv.module;
     }
