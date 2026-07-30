@@ -1,0 +1,13 @@
+fn main(): int {
+    var args = std::env::args();
+    var text = "y";
+
+    if args.len() > 1 {
+        var _, values = args.slice(1)!;
+        text = values.join(" ");
+    }
+
+    loop {
+        println(text);
+    }
+}

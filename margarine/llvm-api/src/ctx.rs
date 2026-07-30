@@ -54,14 +54,14 @@ pub struct ContextImpl<'me> {
 
 
 impl<'ctx> Context<'ctx> {
-    pub fn new(arena: &'ctx Arena) -> Self {
-        Self(ContextRef(ContextImpl::new(arena)))
+    pub fn new(arena: &'ctx Arena, target_triple: &str) -> Self {
+        Self(ContextRef(ContextImpl::new(arena, target_triple)))
     }
 }
 
 
 impl<'me> ContextImpl<'me> {
-    fn new(arena: &'me Arena) -> Self {
+    fn new(arena: &'me Arena, target_triple: &str) -> Self {
         unsafe { LLVM_InitializeAllTargets() };
         unsafe { LLVM_InitializeAllTargetInfos() };
         unsafe { LLVM_InitializeAllTargetMCs() };
@@ -73,15 +73,16 @@ impl<'me> ContextImpl<'me> {
         let ctx = NonNull::new(ptr).expect("failed to create an llvm context");
 
         let tm = {
-            let tt = unsafe { LLVMGetDefaultTargetTriple() };
+            let tt = CString::new(target_triple)
+                .expect("target triple cannot contain a null byte");
             let mut target = null_mut();
             let mut msg = null_mut();
-            if unsafe { LLVMGetTargetFromTriple(tt, &mut target, &mut msg) } != 0 {
+            if unsafe { LLVMGetTargetFromTriple(tt.as_ptr(), &mut target, &mut msg) } != 0 {
                 let cstr = unsafe { CStr::from_ptr(msg) };
                 panic!("{}", cstr.to_str().unwrap());
             }
 
-            unsafe { LLVMCreateTargetMachine(target, tt, c"".as_ptr() as _,
+            unsafe { LLVMCreateTargetMachine(target, tt.as_ptr(), c"".as_ptr() as _,
                                       c"".as_ptr() as _,
                                      llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
                                       llvm_sys::target_machine::LLVMRelocMode::LLVMRelocDefault,

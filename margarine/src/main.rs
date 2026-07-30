@@ -15,6 +15,66 @@ fn main() {
     };
 
     match command.as_str() {
+        "build" => {
+            let mut target = CompilationTarget::Arm64AppleDarwin;
+            let mut path = None;
+
+            while let Some(arg) = args.next() {
+                if arg == "--target" {
+                    let Some(value) = args.next() else {
+                        eprintln!("missing value for --target");
+                        return;
+                    };
+                    target = value.into();
+                } else if path.replace(arg).is_some() {
+                    eprintln!("build accepts exactly one source path");
+                    return;
+                }
+            }
+
+            let Some(path) = path else {
+                eprintln!("missing source path");
+                return;
+            };
+
+            let arena = Arena::new();
+            let (link_files, _) = margarine::run(CompilationSettings {
+                compilation_target: target,
+                preludes: parse_env_preludes(),
+                entry: path,
+                output: &arena,
+                tests: false,
+            });
+
+            match target {
+                CompilationTarget::Arm64AppleDarwin => {
+                    let mut clang = Command::new("clang");
+                    clang.arg("artifacts/program.o")
+                        .args(&link_files)
+                        .arg("-lzstd")
+                        .arg("-lz")
+                        .arg("-lc++")
+                        .arg("-lc++abi")
+                        .arg("-o")
+                        .arg("artifacts/program");
+                    run_step("linking...", &mut clang);
+                }
+                CompilationTarget::Wasm32UnknownUnknown => {
+                    let mut linker = Command::new("wasm-ld");
+                    linker.arg("--no-entry")
+                        .arg("--export=main")
+                        .arg("--export-memory")
+                        .arg("--allow-undefined")
+                        .arg("artifacts/program.wasm.o")
+                        .args(&link_files)
+                        .arg("-o")
+                        .arg("artifacts/program.wasm");
+                    run_step("linking browser wasm...", &mut linker);
+                }
+            }
+            return;
+        },
+
         "run" => {
             let path = args.next().unwrap();
             let program_args = args.collect::<Vec<_>>();

@@ -6,11 +6,9 @@ fn main(): int {
     if args.len() == 1 {
         loop {
             match std::io::read_line() {
-                ok(line) => {
-                    if line.len() == 0 { return 0 }
-                    print(line);
-                },
+                ok(line) => print(line),
                 err(msg) => {
+                    if msg == "EOF" { return 0 }
                     eprintln(format("cat: {}", [msg]));
                     return 1;
                 }
@@ -18,8 +16,7 @@ fn main(): int {
         }
     }
 
-    for i in 1..args.len() {
-        var path = args[i];
+    for path in args.iter().skip(1) {
         match std::io::read_file(path) {
             ok(file) => print(file),
             err(msg) => {

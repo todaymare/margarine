@@ -17,7 +17,7 @@ use common::symbol_id::SymbolId;
 
 #[cfg(feature = "sanitizer")]
 struct Allocation {
-    size: u64,
+    size: usize,
     backtrace: Backtrace,
 }
 
@@ -30,8 +30,8 @@ fn allocations() -> &'static Mutex<HashMap<usize, Allocation>> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
-    let ptr = unsafe { std::alloc::alloc(Layout::from_size_align(size as _, 8).unwrap()) };
+pub extern "C" fn margarineAlloc(size: usize) -> *mut u8 {
+    let ptr = unsafe { std::alloc::alloc(Layout::from_size_align(size, 8).unwrap()) };
 
     #[cfg(feature = "sanitizer")]
     if !ptr.is_null() {
@@ -48,20 +48,20 @@ pub extern "C" fn margarineAlloc(size: u64) -> *mut u8 {
 
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineDealloc(ptr: *mut u8, size: u64) {
+pub extern "C" fn margarineDealloc(ptr: *mut u8, size: usize) {
     #[cfg(feature = "sanitizer")]
     if allocations().lock().unwrap().remove(&(ptr as usize)).is_none() {
         println!("tried to free an invalid pointer");
         return;
     }
-    unsafe { std::alloc::dealloc(ptr, Layout::from_size_align(size as _, 8).unwrap()) }
+    unsafe { std::alloc::dealloc(ptr, Layout::from_size_align(size, 8).unwrap()) }
 }
 
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineRcAlloc(total_size: u64) -> *mut u8 {
+pub extern "C" fn margarineRcAlloc(total_size: usize) -> *mut u8 {
     let ptr = margarineAlloc(total_size);
-    unsafe { *(ptr as *mut u64) = 1; }
+    unsafe { *(ptr as *mut usize) = 1; }
     ptr
 }
 
@@ -69,7 +69,7 @@ pub extern "C" fn margarineRcAlloc(total_size: u64) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineRcClone(ptr: *mut u8) -> *mut u8 {
     unsafe {
-        let rc = &mut *(ptr as *mut u64);
+        let rc = &mut *(ptr as *mut usize);
 
         #[cfg(feature = "sanitizer")]
         let val = Backtrace::force_capture().to_string();
@@ -98,7 +98,7 @@ pub extern "C" fn margarineRcCloneBp(_ptr: *mut u8, _bt: *mut i8) {
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineRcDrop(ptr: *mut u8) -> bool {
     unsafe {
-        let rc = &mut *(ptr as *mut u64);
+        let rc = &mut *(ptr as *mut usize);
 
         #[cfg(feature = "sanitizer")]
         let val = Backtrace::force_capture().to_string();
@@ -123,11 +123,12 @@ pub extern "C" fn margarineRcDropBp(_ptr: *mut u8, _bt: *mut i8) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn margarineStringFromUtf8(bytes: *const u8, len: u64) -> *mut u8 {
-    let buf = margarineRcAlloc(16 + len);
+pub extern "C" fn margarineStringFromUtf8(bytes: *const u8, len: usize) -> *mut u8 {
+    let header_size = size_of::<StrHeader>();
+    let buf = margarineRcAlloc(header_size + len);
     unsafe {
-        *(buf.add(8) as *mut u64) = len;
-        core::ptr::copy_nonoverlapping(bytes, buf.add(16), len as usize);
+        (buf as *mut StrHeader).write(StrHeader { ref_count: 1, len });
+        core::ptr::copy_nonoverlapping(bytes, buf.add(header_size), len);
     }
     buf
 }
@@ -170,7 +171,7 @@ fn report_leaks() {
     println!("leaked memory:");
     for (ptr, allocation) in allocations.iter() {
         println!("  {ptr:#x} ({} bytes)", allocation.size);
-        let bytes = unsafe { core::slice::from_raw_parts(*ptr as *const u8, allocation.size as usize) };
+        let bytes = unsafe { core::slice::from_raw_parts(*ptr as *const u8, allocation.size) };
         for b in bytes {
             print!("{b:02x}");
         }
@@ -257,6 +258,8 @@ unsafe extern "C" fn io_read_line() -> Enum<Str> {
 
     if let Err(e) = result {
         Enum { tag: 1, data: Str::new(&e.to_string()) }
+    } else if str.is_empty() {
+        Enum { tag: 1, data: Str::new("EOF") }
     } else {
         Enum { tag: 0, data: Str::new(&str) }
     }
@@ -334,7 +337,8 @@ unsafe extern "C" fn format(s: Str, values: *const List) -> Str {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_nth(s: Str, n: i64) -> Str {
-    let ch = s.read().chars().nth(n as usize).unwrap();
+    let n = usize::try_from(n).expect("string index is out of bounds");
+    let ch = s.read().chars().nth(n).expect("string index is out of bounds");
     Str::new(&ch.to_string())
 }
 
@@ -351,12 +355,12 @@ unsafe extern "C" fn str_lines_iter(s: Str) -> *mut Lines {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_lines_iter_next(s: *mut Lines) -> Enum<Str> {
     let lines = unsafe { &mut *s };
-    if lines.offset >= lines.str.len() as usize {
+    if lines.offset >= lines.str.len() {
         return Enum { tag: 1, data: Str { data: null() } }
     }
 
     let str = lines.str.read();
-    let str = &str[lines.offset as usize..];
+    let str = &str[lines.offset..];
     let str = str.lines().next();
     lines.offset += str.unwrap_or("").len() + 1;
 
@@ -370,12 +374,12 @@ unsafe extern "C" fn str_lines_iter_next(s: *mut Lines) -> Enum<Str> {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_split_at(s: Str, idx: i64) -> Pair<Str, Str> {
-    let idx = idx as u64;
+    let idx = usize::try_from(idx).expect("string index is out of bounds");
     if idx >= s.len() {
         panic!("index '{idx}' is out of bounds");
     }
 
-    let (s1, s2) = s.read().split_at(idx as usize);
+    let (s1, s2) = s.read().split_at(idx);
 
     Pair { a: Str::new(s1), b: Str::new(s2) }
 }
@@ -426,7 +430,9 @@ unsafe extern "C" fn str_split_once(s: Str, delimeter: Str) -> Enum<Pair<Str, St
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_slice(s: Str, min: i64, max: i64) -> Str {
-    Str::new(&s.read()[min as usize..max as usize])
+    let min = usize::try_from(min).expect("string range is out of bounds");
+    let max = usize::try_from(max).expect("string range is out of bounds");
+    Str::new(&s.read()[min..max])
 }
 
 
@@ -444,7 +450,9 @@ unsafe extern "C" fn str_concat(a: Str, b: Str) -> Str {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn str_byte_at(s: Str, idx: i64) -> Enum<i64> {
     let str = s.read().as_bytes();
-    let idx = idx as usize;
+    let Ok(idx) = usize::try_from(idx) else {
+        return Enum { tag: 1, data: 0 };
+    };
     if str.len() <= idx {
         return Enum { tag: 1, data: 0 }
     }
@@ -630,27 +638,34 @@ pub struct Str {
 
 
 #[repr(C)]
+struct StrHeader {
+    ref_count: usize,
+    len: usize,
+}
+
+
+#[repr(C)]
 pub struct List {
-    ref_count: u64,
-    len: u64,
-    cap: u64,
+    ref_count: usize,
+    len: usize,
+    cap: usize,
     data: *mut u8,
 }
 
 impl List {
-    pub fn len(&self) -> u64 {
+    pub fn len(&self) -> usize {
         self.len
     }
 
     fn from_values<T: Copy>(values: &[T]) -> *mut Self {
-        let len = values.len() as u64;
+        let len = values.len();
         let cap = len.max(1);
-        let data = margarineAlloc(cap * size_of::<T>() as u64);
+        let data = margarineAlloc(cap * size_of::<T>());
         unsafe {
             core::ptr::copy_nonoverlapping(values.as_ptr(), data.cast::<T>(), values.len());
         }
 
-        let list = margarineRcAlloc(size_of::<Self>() as u64).cast::<Self>();
+        let list = margarineRcAlloc(size_of::<Self>()).cast::<Self>();
         unsafe {
             list.write(Self { ref_count: 1, len, cap, data });
         }
@@ -679,10 +694,11 @@ macro_rules! test {
 
 impl Str {
     pub fn new(s: &str) -> Str {
-        let buf = margarineRcAlloc(16 + s.len() as u64);
+        let header_size = size_of::<StrHeader>();
+        let buf = margarineRcAlloc(header_size + s.len());
         unsafe {
-            *(buf.add(8) as *mut u64) = s.len() as u64;
-            let data = buf.add(16);
+            (buf as *mut StrHeader).write(StrHeader { ref_count: 1, len: s.len() });
+            let data = buf.add(header_size);
             let slice = core::slice::from_raw_parts_mut(data, s.len());
 
             slice.copy_from_slice(s.as_bytes());
@@ -692,15 +708,15 @@ impl Str {
     }
 
 
-    pub fn len(&self) -> u64 {
-        unsafe { *(self.data.add(8) as *const u64) }
+    pub fn len(&self) -> usize {
+        unsafe { (*(self.data as *const StrHeader)).len }
     }
 
 
     pub fn read(&self) -> &str {
-        let len = self.len() as usize;
+        let len = self.len();
         unsafe {
-        let data = self.data.add(16);
+        let data = self.data.add(size_of::<StrHeader>());
         let slice = core::slice::from_raw_parts(data, len);
 
         let result = core::str::from_utf8(slice).unwrap();

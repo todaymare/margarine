@@ -28,6 +28,7 @@ pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
 use semantic_analysis::llvm_codegen;
 use common::symbol_id::SymbolId;
+pub use semantic_analysis::llvm_codegen::CompilationTarget;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
 use sha2::Digest;
@@ -87,31 +88,12 @@ pub struct CompilationSettings<'out> {
 }
 
 
-#[derive(Clone, Copy)]
-pub enum CompilationTarget {
-    Arm64AppleDarwin,
-    Wasm32UnknownUnknown,
-}
 
 
 #[derive(Clone)]
 pub struct Prelude {
     pub alias: String,
     pub url: String,
-}
-
-
-impl<T: AsRef<str>> From<T> for CompilationTarget {
-    fn from(value: T) -> Self {
-        match value.as_ref() {
-            "default" | "arm64-apple-arch" => CompilationTarget::Arm64AppleDarwin,
-            "wasm32-unknown-unknown" => CompilationTarget::Wasm32UnknownUnknown,
-            value => {
-                eprintln!("unsupported compilation target: {value}");
-                std::process::abort();
-            }
-        }
-    }
 }
 
 
@@ -185,7 +167,7 @@ impl<'me> Compiler<'me> {
         });
         
         let comp_target = self.string_map.insert("MARGARINE_COMPILATION_TARGET");
-        let target_triple = self.string_map.insert(&llvm_api::ctx::package_target_triple());
+        let target_triple = self.string_map.insert(&settings.compilation_target.llvm_target_triple());
         cfg_env.insert(comp_target, target_triple);
 
 
@@ -615,7 +597,13 @@ impl<'me> Compiler<'me> {
 
 
 impl<'me> CompilationResult<'me> {
-    pub fn codegen(&mut self, comp: &mut Compiler, tests: bool, errors: [Vec<Vec<String>>; 3]) {
+    pub fn codegen(
+        &mut self,
+        comp: &mut Compiler,
+        target: CompilationTarget,
+        tests: bool,
+        errors: [Vec<Vec<String>>; 3],
+    ) {
         let tests = 
         if tests { self.tests.iter().map(|s| s.0).collect() } 
         else { vec![] };
@@ -627,6 +615,7 @@ impl<'me> CompilationResult<'me> {
             self.file_offsets.len() as u32,
             &self.startups,
             &tests,
+            target,
         );
 
     }
@@ -727,7 +716,7 @@ pub fn run<'str>(mut settings: CompilationSettings) -> (Vec<String>, Vec<(String
 
     let errors = [lex_error_files, parse_error_files, vec![sema_errors]];
 
-    result.codegen(&mut comp, settings.tests, errors);
+    result.codegen(&mut comp, settings.compilation_target, settings.tests, errors);
     let link_files = result.link_files().to_vec();
 
     let mut tests = vec![];
@@ -757,7 +746,13 @@ mod tests {
             Extension::None,
         ));
 
-        let result = compiler.run(&arena, name);
+        let result = compiler.run(&CompilationSettings {
+            compilation_target: CompilationTarget::Arm64AppleDarwin,
+            preludes: vec![],
+            entry: "test.mar".to_string(),
+            output: &arena,
+            tests: false,
+        });
         let errors: Vec<_> = result.errors.parser_errors.iter().flatten().collect();
 
         assert_eq!(errors.len(), 1);
@@ -785,7 +780,13 @@ mod tests {
             Extension::None,
         ));
 
-        let result = compiler.run(&arena, name);
+        let result = compiler.run(&CompilationSettings {
+            compilation_target: CompilationTarget::Arm64AppleDarwin,
+            preludes: vec![],
+            entry: "test.mar".to_string(),
+            output: &arena,
+            tests: false,
+        });
         let errors: Vec<_> = result.errors.sema_errors.iter().collect();
 
         assert_eq!(errors.iter().filter(|error| matches!(
