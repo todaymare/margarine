@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, iter::once, path::Path};
+use std::{collections::HashMap, fmt, hash::Hash, iter::once, path::Path};
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
@@ -122,11 +122,24 @@ pub struct CompilationSettings<'out> {
 }
 
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompilationTarget {
     Arm64AppleDarwin,
     Wasm32UnknownUnknown,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnsupportedCompilationTarget {
+    pub target: String,
+}
+
+impl fmt::Display for UnsupportedCompilationTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unsupported compilation target: {}", self.target)
+    }
+}
+
+impl std::error::Error for UnsupportedCompilationTarget {}
 
 
 #[derive(Clone)]
@@ -136,24 +149,49 @@ pub struct Prelude {
 }
 
 
-impl<T: AsRef<str>> From<T> for CompilationTarget {
-    fn from(value: T) -> Self {
-        match value.as_ref() {
-            "default" | "arm64-apple-darwin" => CompilationTarget::Arm64AppleDarwin,
-            "wasm32-unknown-unknown" => CompilationTarget::Wasm32UnknownUnknown,
-            value => {
-                eprintln!("unsupported compilation target: {value}");
-                std::process::abort();
-            }
+impl TryFrom<&str> for CompilationTarget {
+    type Error = UnsupportedCompilationTarget;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "default" | "arm64-apple-darwin" => Ok(CompilationTarget::Arm64AppleDarwin),
+            "wasm32-unknown-unknown" => Ok(CompilationTarget::Wasm32UnknownUnknown),
+            value => Err(UnsupportedCompilationTarget {
+                target: value.to_owned(),
+            }),
         }
+    }
+}
+
+impl TryFrom<String> for CompilationTarget {
+    type Error = UnsupportedCompilationTarget;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_from(value.as_str())
     }
 }
 
 
 impl CompilationTarget {
+    pub fn margarine_target_triple(self) -> String {
+        match self {
+            CompilationTarget::Arm64AppleDarwin => "arm64-apple-darwin".into(),
+            CompilationTarget::Wasm32UnknownUnknown => "wasm32-unknown-unknown".into(),
+        }
+    }
+
+
     pub fn llvm_target_triple(self) -> String {
         match self {
             CompilationTarget::Arm64AppleDarwin => "arm64-apple-darwin".into(),
+            CompilationTarget::Wasm32UnknownUnknown => "wasm32-unknown-unknown".into(),
+        }
+    }
+
+
+    pub fn rust_target_triple(self) -> String {
+        match self {
+            CompilationTarget::Arm64AppleDarwin => "aarch64-apple-darwin".into(),
             CompilationTarget::Wasm32UnknownUnknown => "wasm32-unknown-unknown".into(),
         }
     }

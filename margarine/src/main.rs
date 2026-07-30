@@ -13,7 +13,41 @@ fn main() {
         return;
     };
 
+    if matches!(command.as_str(), "--version" | "-V") {
+        println!("margarine {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     match command.as_str() {
+        "lib" => {
+            let cmd = args.next();
+            match cmd.unwrap_or("".into()).as_str() {
+                "init" => {
+                    let cd = std::env::current_dir().unwrap();
+                    let path = args.next()
+                        .map(|s| cd.join(s))
+                        .unwrap_or(cd);
+
+                    margarine::library::validate_prerequisites().unwrap();
+                    margarine::library::init(path).unwrap();
+                }
+
+
+                "build" => {
+                    let path = std::env::current_dir().unwrap();
+                    if let Err(error) = margarine::library::build(&path) {
+                        eprintln!("cannot build library: {error}");
+                        return;
+                    }
+                }
+
+                _ => {
+                    println!("help menu");
+                }
+            }
+        }
+
+
         "build" => {
             let mut target = CompilationTarget::Arm64AppleDarwin;
             let mut path = None;
@@ -26,7 +60,13 @@ fn main() {
                         eprintln!("missing value for --target");
                         return;
                     };
-                    target = value.into();
+                    target = match CompilationTarget::try_from(value.as_str()) {
+                        Ok(target) => target,
+                        Err(error) => {
+                            eprintln!("{error}");
+                            return;
+                        }
+                    };
                 } else if arg == "-o" {
                     let Some(value) = args.next() else {
                         eprintln!("missing value for -o");
@@ -110,7 +150,7 @@ fn main() {
             let program_args = args.collect::<Vec<_>>();
             let arena = Arena::new();
             let (link_files, _) = margarine::run(CompilationSettings {
-                compilation_target: "default".into(),
+                compilation_target: CompilationTarget::try_from("default").unwrap(),
                 preludes: parse_env_preludes(),
                 entry: path,
                 output: "artifacts/program".to_string(),
@@ -152,7 +192,7 @@ fn main() {
             let filter = args.next();
             let arena = Arena::new();
             let (link_files, tests) = margarine::run(CompilationSettings {
-                compilation_target: "default".into(),
+                compilation_target: CompilationTarget::try_from("default").unwrap(),
                 preludes: parse_env_preludes(),
                 entry: path,
                 output: "artifacts/program".to_string(),

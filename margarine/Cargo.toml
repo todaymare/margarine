@@ -30,3 +30,5 @@ tracing = "*"
 
 libc = "0.2"
 sha2 = "0.10"
+
+toml_edit = "*"
