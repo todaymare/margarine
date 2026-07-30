@@ -28,6 +28,7 @@ pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
 use semantic_analysis::llvm_codegen;
 use common::symbol_id::SymbolId;
+pub use semantic_analysis::llvm_codegen::{CompilationSettings, Prelude};
 pub use semantic_analysis::llvm_codegen::CompilationTarget;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
@@ -78,23 +79,6 @@ pub struct CompilationErrors {
 }
 
 
-#[derive(Clone)]
-pub struct CompilationSettings<'out> {
-    pub compilation_target: CompilationTarget,
-    pub preludes: Vec<Prelude>,
-    pub entry: String,
-    pub output: &'out Arena,
-    pub tests: bool,
-}
-
-
-
-
-#[derive(Clone)]
-pub struct Prelude {
-    pub alias: String,
-    pub url: String,
-}
 
 
 impl<'me> Compiler<'me> {
@@ -112,9 +96,7 @@ impl<'me> Compiler<'me> {
         &mut self, 
         settings: &CompilationSettings<'out>
     ) -> CompilationResult<'out> {
-        println!("{}", settings.entry);
-
-        let arena = settings.output;
+        let arena = settings.arena;
         let entry = self.string_map.insert(&settings.entry);
         let preludes = settings.preludes
             .iter()
@@ -177,7 +159,7 @@ impl<'me> Compiler<'me> {
             let depth = entry.intercrate_depth as usize;
 
             if !self.silent {
-                let display = display_compile_path(file_path, &package_urls);
+                let display = display_compile_path(settings, file_path, &package_urls);
                 if depth != 0 {
                     println!(
                         "{}{}{} {} {}",
@@ -234,7 +216,7 @@ impl<'me> Compiler<'me> {
 
                 let url_str = self.string_map.get(url);
                 let url = resolve_url(url_str);
-                let resource = resource_cache_entry(&url);
+                let resource = resource_cache_entry(settings, &url);
 
                 let (tempfile, file_hash) = 
                 if resource.path.is_file() {
@@ -388,7 +370,7 @@ impl<'me> Compiler<'me> {
                         let alias_str = self.string_map.get(alias);
                         let url = resolve_url(repo_str);
 
-                        let resource = resource_cache_entry(&url);
+                        let resource = resource_cache_entry(settings, &url);
 
                         package_urls.insert(
                             resource.partial_string_hash.clone(), 
@@ -600,7 +582,7 @@ impl<'me> CompilationResult<'me> {
     pub fn codegen(
         &mut self,
         comp: &mut Compiler,
-        target: CompilationTarget,
+        settings: &CompilationSettings,
         tests: bool,
         errors: [Vec<Vec<String>>; 3],
     ) {
@@ -615,7 +597,7 @@ impl<'me> CompilationResult<'me> {
             self.file_offsets.len() as u32,
             &self.startups,
             &tests,
-            target,
+            settings,
         );
 
     }
@@ -663,7 +645,9 @@ impl Files {
 
 
 pub fn run<'str>(mut settings: CompilationSettings) -> (Vec<String>, Vec<(String, bool)>) {
-    let mut comp = Compiler::new(settings.output);
+    let _ = std::fs::create_dir_all(&settings.cache);
+
+    let mut comp = Compiler::new(settings.arena);
     comp.silent = false;
 
     let file = FileData::open(&settings.entry, &mut comp.string_map).unwrap();
@@ -716,7 +700,7 @@ pub fn run<'str>(mut settings: CompilationSettings) -> (Vec<String>, Vec<(String
 
     let errors = [lex_error_files, parse_error_files, vec![sema_errors]];
 
-    result.codegen(&mut comp, settings.compilation_target, settings.tests, errors);
+    result.codegen(&mut comp, &settings, settings.tests, errors);
     let link_files = result.link_files().to_vec();
 
     let mut tests = vec![];
@@ -750,8 +734,9 @@ mod tests {
             compilation_target: CompilationTarget::Arm64AppleDarwin,
             preludes: vec![],
             entry: "test.mar".to_string(),
-            output: &arena,
+            arena: &arena,
             tests: false,
+            output: "program".to_string()
         });
         let errors: Vec<_> = result.errors.parser_errors.iter().flatten().collect();
 
@@ -784,8 +769,9 @@ mod tests {
             compilation_target: CompilationTarget::Arm64AppleDarwin,
             preludes: vec![],
             entry: "test.mar".to_string(),
-            output: &arena,
+            arena: &arena,
             tests: false,
+            output: "program".to_string()
         });
         let errors: Vec<_> = result.errors.sema_errors.iter().collect();
 
@@ -797,8 +783,10 @@ mod tests {
 }
 
 
-fn display_compile_path(file_path: &str, package_urls: &HashMap<String, String>) -> String {
-    let path = file_path.strip_prefix("artifacts/").unwrap_or(file_path);
+fn display_compile_path(settings: &CompilationSettings, file_path: &str, package_urls: &HashMap<String, String>) -> String {
+    let path = file_path.strip_prefix(&settings.cache).unwrap_or(file_path);
+    let path = path.strip_prefix("/").unwrap_or(file_path);
+
     let mut parts = path.split('/');
     let Some(first) = parts.next() else {
         return format!("{}.mar", file_path.replace("<>", "::"));
@@ -885,12 +873,12 @@ struct Resource {
 }
 
 
-fn resource_cache_entry(ident: &str) -> Resource {
+fn resource_cache_entry(settings: &CompilationSettings, ident: &str) -> Resource {
     let full_hash = sha2::Sha256::digest(ident.as_bytes());
     let partial_hash = u128::from_be_bytes(full_hash[..16].try_into().unwrap());
-    let string_hash = format!("{partial_hash:032}");
+    let string_hash = format!("{partial_hash:x}");
 
-    let artifacts_dir = PathBuf::from("artifacts");
+    let artifacts_dir = PathBuf::from(&settings.cache);
     std::fs::create_dir_all(&artifacts_dir).unwrap();
 
     let local_path = artifacts_dir.join(&string_hash);

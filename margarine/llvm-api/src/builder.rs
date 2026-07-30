@@ -663,10 +663,10 @@ impl<'ctx> Builder<'ctx> {
 
 
     fn internal_call(&self,
-                func: unsafe extern "C" fn(*mut LLVMBuilder, *mut LLVMValue, *mut LLVMValue, *const i8) -> *mut LLVMValue,
+                func: unsafe extern "C" fn(*mut LLVMBuilder, *mut LLVMValue, *mut LLVMValue, *const std::ffi::c_char) -> *mut LLVMValue,
                 v1  : impl Deref<Target=Value<'ctx>>,
                 v2  : impl Deref<Target=Value<'ctx>>,
-                name: *const i8,
+                name: *const std::ffi::c_char,
                 ) -> Value<'ctx> {
         let ptr = unsafe { func(self.ptr.as_ptr(), v1.llvm_val().as_ptr(),
                                         v2.deref().llvm_val().as_ptr(), name) };
@@ -680,7 +680,7 @@ impl<'ctx> Builder<'ctx> {
         }
 
         let is_void = func_ty.ret().kind() == TypeKind::Void;
-        let name = if is_void { c"".as_ptr() as *const i8 }
+        let name = if is_void { c"".as_ptr() as *const std::ffi::c_char }
                    else { cstr!("name") };
 
         let ptr = unsafe { LLVMBuildCall2(self.ptr.as_ptr(), func_ty.llvm_ty().as_ptr(),

@@ -121,7 +121,7 @@ impl<'me> ContextImpl<'me> {
         let pool = self.arena;
         let name = sti::format_in!(&*pool, "{name}\0");
 
-        let module = unsafe { LLVMModuleCreateWithNameInContext(name.as_ptr() as *const i8,
+        let module = unsafe { LLVMModuleCreateWithNameInContext(name.as_ptr() as *const std::ffi::c_char,
                                                                 self.ptr.as_ptr()) };
 
         let module = NonNull::new(module).expect("failed to create a module");
@@ -218,7 +218,7 @@ impl<'me> ContextImpl<'me> {
         let name = format_in!(&*pool, "{name}\0");
 
         let ptr = unsafe { LLVMStructCreateNamed(self.ptr.as_ptr(),
-                                                 name.as_ptr() as *const i8) };
+                                                  name.as_ptr() as *const std::ffi::c_char) };
 
         unsafe { StructTy::new(Type::new(NonNull::new(ptr).unwrap())) }
     }
@@ -249,7 +249,7 @@ impl<'me> ContextImpl<'me> {
         let name = format_in!(&*pool, "{name}\0");
 
         let ptr = unsafe { LLVMStructCreateNamed(self.ptr.as_ptr(),
-                                                 name.as_ptr() as *const i8) };
+                                                  name.as_ptr() as *const std::ffi::c_char) };
 
         unsafe { UnionTy::new(Type::new(NonNull::new(ptr).unwrap())) }
     }
@@ -264,7 +264,7 @@ impl<'me> ContextImpl<'me> {
 
     pub fn const_str(&self, str: &str) -> StringValue<'me> {
         let ptr = unsafe { LLVMConstStringInContext(self.ptr.as_ptr(),
-                                                    str.as_ptr() as *const i8,
+                                                    str.as_ptr() as *const std::ffi::c_char,
                                                     str.len() as u32,
                                                     1) };
 

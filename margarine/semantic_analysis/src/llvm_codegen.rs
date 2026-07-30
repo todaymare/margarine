@@ -4,7 +4,7 @@ use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
 use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, union::UnionTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{AllocKind, FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
 use parser::nodes::{decl::{DeclGeneric, Decl}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
-use sti::{hash::fxhash::{FxHasher32, FxHasher64}, static_assert};
+use sti::{arena::Arena, hash::fxhash::{FxHasher32, FxHasher64}, static_assert};
 
 use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind, TraitImplementation}, AnalysisResult, TyChecker, TyInfo};
 
@@ -110,10 +110,29 @@ enum ExternAbi<'ctx> {
 }
 
 
+#[derive(Clone)]
+pub struct CompilationSettings<'out> {
+    pub compilation_target: CompilationTarget,
+    pub preludes: Vec<Prelude>,
+    pub entry: String,
+    pub output: String,
+    pub cache: String,
+    pub arena: &'out Arena,
+    pub tests: bool,
+}
+
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum CompilationTarget {
     Arm64AppleDarwin,
     Wasm32UnknownUnknown,
+}
+
+
+#[derive(Clone)]
+pub struct Prelude {
+    pub alias: String,
+    pub url: String,
 }
 
 
@@ -138,14 +157,6 @@ impl CompilationTarget {
             CompilationTarget::Wasm32UnknownUnknown => "wasm32-unknown-unknown".into(),
         }
     }
-
-
-    pub fn object_path(self) -> String {
-        match self {
-            CompilationTarget::Arm64AppleDarwin => "artifacts/program.o".into(),
-            CompilationTarget::Wasm32UnknownUnknown => "artifacts/program.wasm.o".into(),
-        }
-    }
 }
 
 
@@ -159,28 +170,12 @@ struct Env<'a, 'ctx> {
 }
 
 
-struct Block<'a> {
-    index: BlockIndex,
-    bytecode: Builder<'a>,
-    terminator: BlockTerminator<'a>,
-}
-
-
-#[derive(Debug, Clone, Copy)]
-enum BlockTerminator<'a> {
-    Goto(BlockIndex),
-    SwitchBool { op1: BlockIndex, op2: BlockIndex },
-    Switch(&'a [BlockIndex]),
-    Err(ErrorId),
-    Ret,
-}
-
-
 pub fn run<'a>(
     string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
     ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], 
-    _file_count: u32, startups: &[SymbolId], tests: &[SymbolId], target: CompilationTarget,
+    _file_count: u32, startups: &[SymbolId], tests: &[SymbolId], settings: &CompilationSettings,
 ) {
+    let target = settings.compilation_target;
     let ctx = Context::new(ast.arena, &target.llvm_target_triple());
     let mut module = ctx.module("margarine");
 
@@ -331,15 +326,13 @@ pub fn run<'a>(
     }
 
 
-    let _ = std::fs::create_dir("artifacts");
     module.validate()
         .unwrap_or_else(|error| panic!("generated invalid LLVM module: {error}"));
     module.optimize()
         .unwrap_or_else(|error| panic!("failed to optimize LLVM module: {error}"));
-    let object_path = &target.object_path();
-    ctx.emit_bitcode(module, Path::new("artifacts/program.bc"))
+    ctx.emit_bitcode(module, Path::new(&format!("{}.bc", settings.output)))
         .unwrap_or_else(|error| panic!("failed to emit bitcode: {error}"));
-    ctx.emit_object(module, Path::new(object_path))
+    ctx.emit_object(module, Path::new(&format!("{}.o", settings.output)))
         .unwrap_or_else(|error| panic!("failed to emit object file: {error}"));
 }
 
@@ -440,25 +433,71 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let (func_ty, func_ptr) =
                 if let Some((func_ty, func_ptr, _)) = self.externs.get(&path) { (*func_ty, *func_ptr) }
                 else {
-                    let ret = match extern_abi {
+                    let external_ret = match extern_abi {
                         ExternAbi::Direct => llvm_ret.repr,
                         ExternAbi::SRet(_) => *self.ctx.void(),
                     };
-                    let func_ty = ret.fn_ty(
+                    let mut external_args = Vec::with_capacity(sym_func.args().len() + 1);
+                    if matches!(extern_abi, ExternAbi::SRet(_)) {
+                        external_args.push(*self.ctx.ptr());
+                    }
+                    for (arg, ty) in sym_func.args().iter().zip(&args) {
+                        if arg.is_inout() {
+                            external_args.push(*self.ctx.ptr());
+                        } else {
+                            external_args.push(self.to_llvm_ty(*ty).repr);
+                        }
+                    }
+
+                    let external_fn_ty = external_ret.fn_ty(
                         self.ctx.arena, 
-                        llvm_args.as_slice(),
+                        &external_args,
                         false,
                     );
+                    let external_fn = self.module.function(self.string_map.get(path), external_fn_ty);
+                    external_fn.set_linkage(Linkage::External);
+                    if let ExternAbi::SRet(ret) = extern_abi {
+                        external_fn.set_sret(self.ctx, ret);
+                    }
+                    if is_never {
+                        external_fn.set_noreturn(self.ctx);
+                    }
 
-
-                    let func_ptr = self.module.function(self.string_map.get(path), func_ty);
-                    func_ptr.set_linkage(Linkage::External);
+                    // Margarine function values carry a trailing capture pointer. Keep that
+                    // internal ABI behind a wrapper so runtime imports retain their C ABI.
+                    let wrapper_name = format!("__margarine_extern_wrapper.{}", self.func_counter);
+                    let wrapper_name = self.string_map.insert(&wrapper_name);
+                    self.func_counter += 1;
+                    let func_ty = llvm_ret.repr.fn_ty(self.ctx.arena, llvm_args.as_slice(), false);
+                    let func_ptr = self.module.function(self.string_map.get(wrapper_name), func_ty);
                     if let ExternAbi::SRet(ret) = extern_abi {
                         func_ptr.set_sret(self.ctx, ret);
                     }
-
                     if is_never {
                         func_ptr.set_noreturn(self.ctx);
+                    }
+
+                    let builder = func_ptr.builder(self.ctx, func_ty);
+                    let call_args = (0..external_args.len())
+                        .map(|i| builder.local_get(builder.arg(i).unwrap()))
+                        .collect::<Vec<_>>();
+                    match extern_abi {
+                        ExternAbi::Direct => {
+                            let result = builder.call(external_fn, external_fn_ty, &call_args);
+                            if is_never {
+                                builder.unreachable();
+                            } else {
+                                builder.ret(result);
+                            }
+                        }
+                        ExternAbi::SRet(ret) => {
+                            builder.call_sret(external_fn, external_fn_ty, ret, &call_args);
+                            if is_never {
+                                builder.unreachable();
+                            } else {
+                                builder.ret_void();
+                            }
+                        }
                     }
 
                     self.externs.insert(path, (func_ty, func_ptr, extern_abi));

@@ -1,7 +1,6 @@
 use std::{ffi::CString, fmt::Write, io::{self, Write as _}, process::Command, time::Instant};
 
 use colourful::ColourBrush;
-use common::{source::FileData, string_map::StringMap};
 use margarine::{CompilationSettings, CompilationTarget, Prelude};
 use sti::{arena::Arena};
 
@@ -18,6 +17,8 @@ fn main() {
         "build" => {
             let mut target = CompilationTarget::Arm64AppleDarwin;
             let mut path = None;
+            let mut output = None;
+            let mut cache = None;
 
             while let Some(arg) = args.next() {
                 if arg == "--target" {
@@ -26,37 +27,67 @@ fn main() {
                         return;
                     };
                     target = value.into();
+                } else if arg == "-o" {
+                    let Some(value) = args.next() else {
+                        eprintln!("missing value for -o");
+                        return;
+                    };
+                    if output.replace(value).is_some() {
+                        eprintln!("build accepts exactly one output path");
+                        return;
+                    }
+                } else if arg == "--cache" {
+                    let Some(value) = args.next() else {
+                        eprintln!("missing value for --cache");
+                        return;
+                    };
+                    if cache.replace(value).is_some() {
+                        eprintln!("build accepts exactly one cache path");
+                        return;
+                    }
                 } else if path.replace(arg).is_some() {
                     eprintln!("build accepts exactly one source path");
                     return;
                 }
             }
 
-            let Some(path) = path else {
+            let Some(path) = path
+            else {
                 eprintln!("missing source path");
                 return;
             };
+
+            let output = output.unwrap_or({
+                match target {
+                    CompilationTarget::Arm64AppleDarwin => "artifacts/program".into(),
+                    CompilationTarget::Wasm32UnknownUnknown => "artifacts/program.wasm".into(),
+                }
+            });
+
+            let cache = cache.unwrap_or("artifacts".to_string());
 
             let arena = Arena::new();
             let (link_files, _) = margarine::run(CompilationSettings {
                 compilation_target: target,
                 preludes: parse_env_preludes(),
                 entry: path,
-                output: &arena,
+                output: output.clone(),
+                cache,
+                arena: &arena,
                 tests: false,
             });
 
             match target {
                 CompilationTarget::Arm64AppleDarwin => {
                     let mut clang = Command::new("clang");
-                    clang.arg("artifacts/program.o")
+                    clang.arg(format!("{output}.o"))
                         .args(&link_files)
                         .arg("-lzstd")
                         .arg("-lz")
                         .arg("-lc++")
                         .arg("-lc++abi")
                         .arg("-o")
-                        .arg("artifacts/program");
+                        .arg(output);
                     run_step("linking...", &mut clang);
                 }
                 CompilationTarget::Wasm32UnknownUnknown => {
@@ -64,11 +95,10 @@ fn main() {
                     linker.arg("--no-entry")
                         .arg("--export=main")
                         .arg("--export-memory")
-                        .arg("--allow-undefined")
-                        .arg("artifacts/program.wasm.o")
+                        .arg(format!("{output}.o"))
                         .args(&link_files)
                         .arg("-o")
-                        .arg("artifacts/program.wasm");
+                        .arg(output);
                     run_step("linking browser wasm...", &mut linker);
                 }
             }
@@ -83,7 +113,9 @@ fn main() {
                 compilation_target: "default".into(),
                 preludes: parse_env_preludes(),
                 entry: path,
-                output: &arena,
+                output: "artifacts/program".to_string(),
+                cache: "artifacts".into(),
+                arena: &arena,
                 tests: false,
             });
 
@@ -123,7 +155,9 @@ fn main() {
                 compilation_target: "default".into(),
                 preludes: parse_env_preludes(),
                 entry: path,
-                output: &arena,
+                output: "artifacts/program".to_string(),
+                cache: "artifacts".into(),
+                arena: &arena,
                 tests: true,
             });
 

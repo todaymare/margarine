@@ -1,10 +1,10 @@
-use std::{ffi::CStr, ptr::NonNull};
+use std::{ffi::{c_char, CStr}, ptr::NonNull};
 
 use llvm_sys::core::LLVMDisposeMessage;
 
 /// An LLVM message 
 pub struct Message {
-    msg: NonNull<i8>,
+    msg: NonNull<c_char>,
 }
 
 
@@ -12,7 +12,7 @@ impl Message {
 
     /// # Safety
     /// Undefined behaviour if the string is not from LLVM
-    pub unsafe fn new(msg: NonNull<i8>) -> Self {
+    pub unsafe fn new(msg: NonNull<c_char>) -> Self {
         Self { msg }
     }
 

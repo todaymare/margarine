@@ -1,6 +1,7 @@
 pub mod tys;
 
-use core::{alloc::Layout, mem::size_of, ptr::{null, null_mut}, fmt::Write};
+use core::{alloc::Layout, ffi::c_void, mem::size_of, ptr::{null, null_mut}, fmt::Write};
+#[cfg(not(target_arch = "wasm32"))]
 use std::{env, io::Write as _};
 
 #[cfg(feature = "sanitizer")]
@@ -15,6 +16,12 @@ use std::{ffi::CString, hint::black_box};
 
 use common::symbol_id::SymbolId;
 
+#[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "env")]
+unsafe extern "C" {
+    fn host_print(ptr: *const u8, len: usize);
+}
+
 #[cfg(feature = "sanitizer")]
 struct Allocation {
     size: usize,
@@ -28,6 +35,7 @@ static ALLOCATIONS: OnceLock<Mutex<HashMap<usize, Allocation>>> = OnceLock::new(
 fn allocations() -> &'static Mutex<HashMap<usize, Allocation>> {
     ALLOCATIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineAlloc(size: usize) -> *mut u8 {
@@ -44,6 +52,14 @@ pub extern "C" fn margarineAlloc(size: usize) -> *mut u8 {
         );
     }
     ptr
+}
+
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, len: usize) -> *mut c_void {
+    unsafe { core::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), len) };
+    dst
 }
 
 
@@ -135,18 +151,20 @@ pub extern "C" fn margarineStringFromUtf8(bytes: *const u8, len: usize) -> *mut 
 
 
 #[unsafe(no_mangle)]
-pub extern "C" fn print_int(size: i32) {
-    println!("{size}");
-}
-
-
-#[unsafe(no_mangle)]
 pub extern "C" fn margarineAbort(code: i32) -> ! {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = code;
+        core::arch::wasm32::unreachable();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "sanitizer")]
+    {
     report_leaks();
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     std::process::exit(code);
+    }
 }
 
 
@@ -157,8 +175,32 @@ pub extern "C" fn margarinePanic(message: Str) -> ! {
 
 
 fn panic_message(message: &str) -> ! {
-    println!("panic: {message}");
+    write_output("panic: ");
+    write_output(message);
+    write_output("\n");
     margarineAbort(1)
+}
+
+
+fn write_output(value: &str) {
+    #[cfg(target_arch = "wasm32")]
+    unsafe { host_print(value.as_ptr(), value.len()); }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        print!("{value}");
+        let _ = std::io::stdout().flush();
+    }
+}
+
+
+fn write_error(value: &str) {
+    #[cfg(target_arch = "wasm32")]
+    unsafe { host_print(value.as_ptr(), value.len()); }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        eprint!("{value}");
+        let _ = std::io::stderr().flush();
+    }
 }
 
 #[cfg(feature = "sanitizer")]
@@ -189,6 +231,7 @@ pub extern "C" fn margarineAssertNotNull(ptr: *mut u8) {
 }
 
 
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn margarineEnvVariable(value: Str) -> Enum<Str> {
     let name = value.read();
@@ -200,6 +243,7 @@ unsafe extern "C" fn margarineEnvVariable(value: Str) -> Enum<Str> {
 }
 
 
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn margarineEnvArgs() -> *mut List {
     let args = env::args()
@@ -211,15 +255,13 @@ pub extern "C" fn margarineEnvArgs() -> *mut List {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn print_raw(value: Str) {
-    print!("{}", value.read());
-    let _ = std::io::stdout().flush();
+    write_output(value.read());
 }
 
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn eprint_raw(value: Str) {
-    eprint!("{}", value.read());
-    let _ = std::io::stderr().flush();
+    write_error(value.read());
 }
 
 
@@ -239,6 +281,7 @@ unsafe extern "C" fn float_to_str(value: f64) -> Str {
 }
 
 
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn io_read_file(path: Str) -> Enum<Str> {
     let str = std::fs::read_to_string(path.read());
@@ -251,6 +294,7 @@ unsafe extern "C" fn io_read_file(path: Str) -> Enum<Str> {
 
 
 
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn io_read_line() -> Enum<Str> {
     let mut str = String::new();
@@ -266,6 +310,7 @@ unsafe extern "C" fn io_read_line() -> Enum<Str> {
 }
 
 
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn now_secs() -> i64 {
     let Ok(time) = std::time::SystemTime::now()
@@ -277,6 +322,7 @@ unsafe extern "C" fn now_secs() -> i64 {
 }
 
 
+#[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn now_nanos() -> i64 {
     let Ok(time) = std::time::SystemTime::now()

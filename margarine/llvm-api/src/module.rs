@@ -44,7 +44,7 @@ impl<'ctx> Module<'ctx> {
         let pool = self.arena;
         let name = sti::format_in!(&*pool, "{name}\0");
 
-        let ptr = unsafe { LLVMAddGlobal(self.ptr.as_ptr(), ty.llvm_ty().as_ptr(), name.as_ptr() as *const i8) };
+        let ptr = unsafe { LLVMAddGlobal(self.ptr.as_ptr(), ty.llvm_ty().as_ptr(), name.as_ptr() as *const std::ffi::c_char) };
 
         unsafe { GlobalPtr::new(Value::new(NonNull::new(ptr).unwrap())) }
     }
