@@ -35,8 +35,51 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub errors     : KVec<SemaError, Error>,
     pub error_nodes: KVec<SemaError, NodeId>,
     pub silent_ranges: std::vec::Vec<SourceRange>,
+    control_flow: ControlFlowState,
     tuple_syms: std::vec::Vec<SymbolId>,
     base_scope  : ScopeId,
+}
+
+
+#[derive(Default)]
+struct ControlFlowState {
+    loops: std::vec::Vec<LoopContext>,
+}
+
+
+struct LoopContext {
+    has_break: bool,
+}
+
+
+impl ControlFlowState {
+    fn enter_loop(&mut self) {
+        self.loops.push(LoopContext { has_break: false });
+    }
+
+
+    fn exit_loop(&mut self) -> LoopContext {
+        self.loops.pop().expect("exiting a loop that was never entered")
+    }
+
+
+    fn mark_break(&mut self) -> bool {
+        let Some(loop_context) = self.loops.last_mut()
+        else { return false };
+
+        loop_context.has_break = true;
+        true
+    }
+
+
+    fn suspend(&mut self) -> Self {
+        std::mem::take(self)
+    }
+
+
+    fn restore(&mut self, previous: Self) {
+        *self = previous;
+    }
 }
 
 
@@ -92,6 +135,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             errors: KVec::new(),
             error_nodes: KVec::new(),
             silent_ranges: std::vec::Vec::new(),
+            control_flow: ControlFlowState::default(),
             tuple_syms: std::vec::Vec::new(),
             type_info: TyInfo {
                 exprs: KVec::new(),

@@ -15,6 +15,7 @@ use git2::Repository;
 pub use lexer::lex;
 use parser::errors::Error;
 use parser::nodes::decl::Decl;
+use parser::nodes::decl::DeclId;
 use parser::nodes::decl::UseItem;
 use parser::nodes::decl::UseItemKind;
 use parser::nodes::expr::Block;
@@ -76,6 +77,44 @@ pub struct CompilationErrors {
 }
 
 
+#[derive(Clone)]
+pub struct CompilationSettings<'out> {
+    pub compilation_target: CompilationTarget,
+    pub preludes: Vec<Prelude>,
+    pub entry: String,
+    pub output: &'out Arena,
+    pub tests: bool,
+}
+
+
+#[derive(Clone, Copy)]
+pub enum CompilationTarget {
+    Arm64AppleDarwin,
+    Wasm32UnknownUnknown,
+}
+
+
+#[derive(Clone)]
+pub struct Prelude {
+    pub alias: String,
+    pub url: String,
+}
+
+
+impl<T: AsRef<str>> From<T> for CompilationTarget {
+    fn from(value: T) -> Self {
+        match value.as_ref() {
+            "default" | "arm64-apple-arch" => CompilationTarget::Arm64AppleDarwin,
+            "wasm32-unknown-unknown" => CompilationTarget::Wasm32UnknownUnknown,
+            value => {
+                eprintln!("unsupported compilation target: {value}");
+                std::process::abort();
+            }
+        }
+    }
+}
+
+
 impl<'me> Compiler<'me> {
     pub fn new(arena: &'me Arena) -> Self {
         Self {
@@ -87,8 +126,18 @@ impl<'me> Compiler<'me> {
     }
 
 
-    pub fn run<'out>(&mut self, arena: &'out Arena, entry: StringIndex) -> CompilationResult<'out> {
-        tracing::trace!("compiling program. entry point is '{}'", self.string_map.get(entry));
+    pub fn run<'out>(
+        &mut self, 
+        settings: &CompilationSettings<'out>
+    ) -> CompilationResult<'out> {
+        println!("{}", settings.entry);
+
+        let arena = settings.output;
+        let entry = self.string_map.insert(&settings.entry);
+        let preludes = settings.preludes
+            .iter()
+            .map(|p| (self.string_map.insert(&p.alias), self.string_map.insert(&p.url)))
+            .collect::<Vec<_>>();
 
         let mut global = AST::new(&arena);
         let mut lex_errors = vec![];
@@ -105,7 +154,15 @@ impl<'me> Compiler<'me> {
         }, SourceRange::ZERO);
 
 
-        let mut stack = vec![(root, entry, entry, true, 0, false)];
+        struct StackEntry {
+            ast_node: DeclId,
+            alias: StringIndex,
+            path: StringIndex,
+            intercrate_depth: u32,
+            is_included_by_prelude: bool,
+        }
+
+        let mut stack = vec![];
         let mut source_offset = 0;
         let mut counter = 0;
 
@@ -118,25 +175,24 @@ impl<'me> Compiler<'me> {
         let mut cfg_env = std::env::vars()
             .map(|(k, v)| (self.string_map.insert(&k), self.string_map.insert(&v)))
             .collect::<HashMap<_, _>>();
+
+        stack.push(StackEntry {
+            ast_node: root,
+            alias: entry,
+            path: entry,
+            intercrate_depth: 0,
+            is_included_by_prelude: false,
+        });
         
         let comp_target = self.string_map.insert("MARGARINE_COMPILATION_TARGET");
         let target_triple = self.string_map.insert(&llvm_api::ctx::package_target_triple());
         cfg_env.insert(comp_target, target_triple);
 
-        // parse preludes
-        let default_prelude = format!(
-            "std=https://cdn.daymare.net/margarine/{}/share/std", 
-            env!("CARGO_PKG_VERSION")
-        );
 
-        let preludes = std::env::var("MARGARINE_PRELUDE").unwrap_or(default_prelude);
-        let preludes = preludes.split(';');
-        let preludes = preludes.filter_map(|n| n.split_once('='));
-        let preludes = preludes.map(|(k, v)| (self.string_map.insert(k), self.string_map.insert(v)));
-        let preludes = preludes.collect::<Vec<_>>();
-
-        while let Some((decl, name, path, is_root, depth, is_prelude)) = stack.pop() {
-            let file_path = self.string_map.get(path);
+        while let Some(entry) = stack.pop() {
+            let file_path = self.string_map.get(entry.path);
+            let file = self.files.get(entry.path).unwrap();
+            let depth = entry.intercrate_depth as usize;
 
             if !self.silent {
                 let display = display_compile_path(file_path, &package_urls);
@@ -159,7 +215,6 @@ impl<'me> Compiler<'me> {
             }
 
 
-            let file = self.files.get(path).unwrap();
 
             let (tokens, le) = DropTimer::with_timer("tokenisation", || {
                 let tokens = lex(&file, &mut self.string_map, source_offset);
@@ -172,7 +227,7 @@ impl<'me> Compiler<'me> {
             });
 
             let body = 
-            if is_prelude { body }
+            if entry.is_included_by_prelude { body }
             else {
                 let mut vec = sti::vec::Vec::with_cap_in(arena, preludes.len() * 2 + body.len());
                 
@@ -308,7 +363,7 @@ impl<'me> Compiler<'me> {
             }
 
 
-            file_offsets.push((path, source_offset));
+            file_offsets.push((entry.path, source_offset));
             source_offset += file.read().len() as u32;
 
 
@@ -336,7 +391,13 @@ impl<'me> Compiler<'me> {
                             self.files.register(file);
                         }
 
-                        stack.push((i, name, path_idx, false, depth+1, is_prelude));
+                        stack.push(StackEntry {
+                            ast_node: i,
+                            alias: name,
+                            path: path_idx,
+                            intercrate_depth: entry.intercrate_depth+1,
+                            is_included_by_prelude: entry.is_included_by_prelude,
+                        });
                     }
 
 
@@ -454,7 +515,13 @@ impl<'me> Compiler<'me> {
                         top_modules.insert(hash);
 
                         let is_prelude = preludes.iter().find(|n| n.1 == repo).is_some();
-                        stack.insert(0, (module, hash, name, true, 0, is_prelude));
+                        stack.insert(0, StackEntry { 
+                            ast_node: module, 
+                            alias: hash, 
+                            path: name, 
+                            intercrate_depth: 0, 
+                            is_included_by_prelude: is_prelude
+                        });
 
                     }
 
@@ -464,14 +531,14 @@ impl<'me> Compiler<'me> {
             }
 
 
-            let offset = global.range(decl);
+            let offset = global.range(entry.ast_node);
             global.set_decl(
-                decl, 
+                entry.ast_node, 
                 Decl::Module { 
-                    name, 
+                    name: entry.alias, 
                     header: offset, 
                     body, 
-                    is_root
+                    is_root: entry.intercrate_depth == 0,
                 }
             );
             
@@ -606,15 +673,16 @@ impl Files {
 
 
 
-pub fn run<'str>(string_map: StringMap, files: FileData, tests: bool) -> (Vec<String>, Vec<(String, bool)>) {
-    let name = files.name();
-    let arena = string_map.arena();
-    let mut comp = Compiler::new(&arena);
-    comp.string_map = string_map;
+pub fn run<'str>(mut settings: CompilationSettings) -> (Vec<String>, Vec<(String, bool)>) {
+    let mut comp = Compiler::new(settings.output);
     comp.silent = false;
-    comp.files.register(files);
 
-    let mut result = comp.run(&arena, name);
+    let file = FileData::open(&settings.entry, &mut comp.string_map).unwrap();
+    settings.entry = comp.string_map.get(file.name()).into();
+    comp.files.register(file);
+
+    let mut result = comp.run(&settings);
+
     let mut lex_error_files = Vec::with_capacity(result.errors.lexer_errors.len());
     for l in &result.errors.lexer_errors {
         let mut file = Vec::with_capacity(l.len());
@@ -659,7 +727,7 @@ pub fn run<'str>(string_map: StringMap, files: FileData, tests: bool) -> (Vec<St
 
     let errors = [lex_error_files, parse_error_files, vec![sema_errors]];
 
-    result.codegen(&mut comp, tests, errors);
+    result.codegen(&mut comp, settings.tests, errors);
     let link_files = result.link_files().to_vec();
 
     let mut tests = vec![];
@@ -694,6 +762,36 @@ mod tests {
 
         assert_eq!(errors.len(), 1);
         assert!(matches!(errors[0].1, parser::errors::Error::ExternalFileError { .. }));
+    }
+
+    #[test]
+    fn conditional_trait_impl_requires_its_generic_bounds() {
+        let arena = Arena::new();
+        let mut compiler = Compiler::new(&arena);
+        let name = compiler.string_map.insert("test.mar");
+        compiler.files.register(FileData::new(
+            "trait Printable {}\n\
+             impl Printable for int {}\n\
+             impl<T0: Printable, T1: Printable> Printable for (T0, T1) {}\n\
+             struct Wrapper<T> { value: T }\n\
+             impl<T: Printable> Printable for Wrapper<T> {}\n\
+             fn requires_printable<T: Printable>(value: T) {}\n\
+             fn main() {\n\
+                 requires_printable((1, 2));\n\
+                 requires_printable(Wrapper { value: (1, false) });\n\
+             }"
+                .to_string(),
+            name,
+            Extension::None,
+        ));
+
+        let result = compiler.run(&arena, name);
+        let errors: Vec<_> = result.errors.sema_errors.iter().collect();
+
+        assert_eq!(errors.iter().filter(|error| matches!(
+            error,
+            semantic_analysis::errors::Error::TypeDoesntImplTrait { .. }
+        )).count(), 1);
     }
 }
 

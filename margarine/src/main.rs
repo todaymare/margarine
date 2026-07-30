@@ -2,6 +2,7 @@ use std::{ffi::CString, fmt::Write, io::{self, Write as _}, process::Command, ti
 
 use colourful::ColourBrush;
 use common::{source::FileData, string_map::StringMap};
+use margarine::{CompilationSettings, CompilationTarget, Prelude};
 use sti::{arena::Arena};
 
 fn main() {
@@ -18,9 +19,13 @@ fn main() {
             let path = args.next().unwrap();
             let program_args = args.collect::<Vec<_>>();
             let arena = Arena::new();
-            let mut sm = StringMap::new(&arena);
-            let files = FileData::open(path, &mut sm).unwrap();
-            let (link_files, _) = margarine::run(sm, files, false);
+            let (link_files, _) = margarine::run(CompilationSettings {
+                compilation_target: "default".into(),
+                preludes: parse_env_preludes(),
+                entry: path,
+                output: &arena,
+                tests: false,
+            });
 
             let mut clang = Command::new("clang");
             clang.arg("artifacts/program.o")
@@ -36,15 +41,15 @@ fn main() {
             }
 
             println!("running");
-            let output = Command::new("./artifacts/program")
+            let status = Command::new("./artifacts/program")
                 .args(program_args)
                 .stdin(std::process::Stdio::inherit())
-                .output()
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
                 .unwrap();
-            print!("{}", String::from_utf8_lossy(&output.stdout));
-            eprint!("{}", String::from_utf8_lossy(&output.stderr));
-            if !output.status.success() {
-                eprintln!("program exited with {}", output.status);
+            if !status.success() {
+                eprintln!("program exited with {}", status);
             }
             return;
         },
@@ -54,9 +59,13 @@ fn main() {
             let path = args.next().unwrap_or_else(|| ".".to_string());
             let filter = args.next();
             let arena = Arena::new();
-            let mut sm = StringMap::new(&arena);
-            let files = FileData::open(path, &mut sm).unwrap();
-            let (link_files, tests) = margarine::run(sm, files, true);
+            let (link_files, tests) = margarine::run(CompilationSettings {
+                compilation_target: "default".into(),
+                preludes: parse_env_preludes(),
+                entry: path,
+                output: &arena,
+                tests: true,
+            });
 
             let mut clang = Command::new("clang");
             clang.arg("-shared")
@@ -330,4 +339,27 @@ fn wifsignaled(status: i32) -> bool {
 
 fn wtermsig(status: i32) -> i32 {
     status & 0x7f
+}
+
+
+fn parse_env_preludes() -> Vec<Prelude> {
+    let preludes = 
+    std::env::var("MARGARINE_PRELUDE")
+        .iter()
+        .flat_map(|s| s.split(';'))
+        .filter_map(|s| s.split_once('='))
+        .map(|(alias, url)| Prelude { alias: alias.into(), url: url.into() })
+        .collect::<Vec<_>>();
+
+
+    if preludes.is_empty() {
+        let url = format!(
+            "https://cdn.daymare.net/margarine/{}/share/std", 
+            env!("CARGO_PKG_VERSION")
+        );
+
+        vec![Prelude { alias: "std".into(), url }]
+    } else {
+        preludes
+    }
 }

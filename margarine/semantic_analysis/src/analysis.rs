@@ -944,7 +944,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let scope = self.scopes.push(scope);
 
                 // GO GO GO
+                let flow = self.control_flow.suspend();
                 let anal = self.block(sym.name(), scope, &*body);
+                self.control_flow.restore(flow);
 
                 if !anal.ty.eq(&mut self.syms, ret) {
                     self.error(n, Error::FunctionBodyAndReturnMismatch {
@@ -1379,7 +1381,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         AnalysisResult::error(), range
                     );
 
+                    self.control_flow.enter_loop();
                     let _ = self.block(path, scope, &body);
+                    self.control_flow.exit_loop();
 
                     return;
                 };
@@ -1399,7 +1403,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         AnalysisResult::error(), range
                     );
 
+                    self.control_flow.enter_loop();
                     let _ = self.block(path, scope, &body);
+                    self.control_flow.exit_loop();
 
                     return;
                 };
@@ -1439,7 +1445,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 );
 
 
+                self.control_flow.enter_loop();
                 let _ = self.block(path, scope, &body);
+                self.control_flow.exit_loop();
 
             },
 
@@ -1481,12 +1489,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         }
     }
 
-
     pub fn expr(&mut self, path: StringIndex, scope: ScopeId, id: ExprId) -> AnalysisResult {
-        self.expr_ex(path, scope, id, None)
-    }
-
-    pub fn expr_ex(&mut self, path: StringIndex, scope: ScopeId, id: ExprId, expected: Option<Type>) -> AnalysisResult {
         let range = self.ast.range(id);
         let expr = self.ast.expr(id);
         let result = (|| -> Result<AnalysisResult, Error> {Ok(match expr {
@@ -1702,7 +1705,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                 // process the body
+                let flow = self.control_flow.suspend();
                 let ret = self.expr(path, active_scope, body);
+                self.control_flow.restore(flow);
 
 
                 if !ret.ty.eq(&mut self.syms, ret_var) {
@@ -2459,9 +2464,15 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             Expr::Loop { body } => {
                 let scope = Scope::new(Some(scope), ScopeKind::Loop);
                 let scope = self.scopes.push(scope);
+                self.control_flow.enter_loop();
                 self.block(path, scope, &*body);
 
-                AnalysisResult::new(Type::UNIT)
+                let loop_context = self.control_flow.exit_loop();
+                if loop_context.has_break {
+                    AnalysisResult::new(Type::UNIT)
+                } else {
+                    AnalysisResult::new(Type::NEVER)
+                }
             },
 
 
@@ -2493,7 +2504,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
             Expr::Break => {
-                if self.scopes.get(scope).find_loop(&self.scopes).is_none() { 
+                if self.scopes.get(scope).find_loop(&self.scopes).is_none()
+                || !self.control_flow.mark_break() {
                     return Err(Error::BreakOutsideOfLoop(range)) 
                 }
 
