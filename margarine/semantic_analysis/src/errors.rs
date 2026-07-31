@@ -35,6 +35,11 @@ pub enum Error {
         name: StringIndex,
     },
 
+    PrivateSymbol {
+        source: SourceRange,
+        name: StringIndex,
+    },
+
     UnknownType(StringIndex, SourceRange),
 
     FunctionBodyAndReturnMismatch {
@@ -266,6 +271,12 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                         *source,
                         &format!("there's already a symbol with the name '{name}'"),
                     )
+            },
+
+            Error::PrivateSymbol { source, name } => {
+                let name = fmt.string(*name).to_string();
+                fmt.error("symbol is private")
+                    .highlight_with_note(*source, &format!("'{name}' is private in this module"))
             },
 
             

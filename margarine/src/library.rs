@@ -508,7 +508,7 @@ fn init_temp<P: AsRef<Path>>(path: P, name: &str) -> io::Result<()> {
     std::fs::write(path.join("native/lib.c"), DEFAULT_NATIVE)?;
 
     const DEFAULT_STR: &str = "\
-fn add(a: int, b: int): int {
+pub fn add(a: int, b: int): int {
     a + b
 }
 

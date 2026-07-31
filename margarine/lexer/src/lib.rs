@@ -186,6 +186,7 @@ pub enum Literal {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Keyword {
+    Pub,
     Fn,
     Struct,
     Impl,
@@ -424,6 +425,7 @@ impl Lexer<'_, '_> {
 
         match value {
             "_"         => TokenKind::Underscore,
+            "pub"       => TokenKind::Keyword(Keyword::Pub),
             "fn"        => TokenKind::Keyword(Keyword::Fn),
             "struct"    => TokenKind::Keyword(Keyword::Struct),
             "impl"      => TokenKind::Keyword(Keyword::Impl),

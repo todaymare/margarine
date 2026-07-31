@@ -78,6 +78,14 @@ impl<'me> Scope<'me> {
 
 
     pub fn find_sym(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<Result<SymbolId, Error>> {
+        let requester = self.over(scope_map, |scope| match scope.kind {
+            ScopeKind::ImplicitNamespace(ns) => Some(ns),
+            _ => None,
+        })?;
+        self.find_sym_from(name, scope_map, symbols, namespaces, requester)
+    }
+
+    pub fn find_sym_from(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap, requester: NamespaceId) -> Option<Result<SymbolId, Error>> {
         let mut fence = false;
         let r = self.over(scope_map, |scope| {
             if let ScopeKind::NamespaceFence = scope.kind {
@@ -86,8 +94,7 @@ impl<'me> Scope<'me> {
 
 
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
-                let ns = namespaces.get_ns(ns);
-                if let Some(ty) = ns.get_sym(name) {
+                if let Some(ty) = namespaces.get_sym(ns, requester, name) {
                     return Some(ty)
                 }
             }
@@ -146,6 +153,11 @@ impl<'me> Scope<'me> {
         symbols: &mut SymbolMap
     ) -> Option<Result<VariableScope, Result<SymbolId, Error>>> {
 
+        let requester = self.over(scope_map, |scope| match scope.kind {
+            ScopeKind::ImplicitNamespace(ns) => Some(ns),
+            _ => None,
+        });
+
         let mut fence = false;
         self.over(scope_map, |scope| {
             if let ScopeKind::NamespaceFence = scope.kind {
@@ -181,8 +193,8 @@ impl<'me> Scope<'me> {
             if fence && scope.parent().is_some() { return None }
 
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
-                let ns = namespaces.get_ns(ns);
-                if let Some(ty) = ns.get_sym(name) {
+                let requester = requester.unwrap_or(ns);
+                if let Some(ty) = namespaces.get_sym(ns, requester, name) {
                     return Some(Err(ty))
                 }
             }

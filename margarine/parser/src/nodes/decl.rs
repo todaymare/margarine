@@ -7,6 +7,12 @@ use crate::{nodes::NodeId, Block, DataType};
 
 define_key!(pub DeclId(u32));
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Visibility {
+    Private,
+    Public,
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum AttributeValue {
     Identifier(StringIndex),
@@ -32,6 +38,7 @@ impl Attribute<'_> {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Decl<'a> {
     Struct {
+        visibility: Visibility,
         name: StringIndex,
         header: SourceRange,
         fields: &'a [(StringIndex, DataType<'a>, SourceRange)],
@@ -39,6 +46,7 @@ pub enum Decl<'a> {
     },
 
     Enum {
+        visibility: Visibility,
         name: StringIndex,
         header: SourceRange,
         mappings: &'a [EnumMapping<'a>],
@@ -46,6 +54,7 @@ pub enum Decl<'a> {
     },
 
     Function {
+        visibility: Visibility,
         sig: FunctionSignature<'a>,
         body: Block<'a>,
     },
@@ -65,10 +74,12 @@ pub enum Decl<'a> {
     },
 
     Using {
+        visibility: Visibility,
         item: UseItem<'a>,
     },
 
     Module {
+        visibility: Visibility,
         name: StringIndex,
         header: SourceRange,
         body: Block<'a>,
@@ -76,6 +87,7 @@ pub enum Decl<'a> {
     },
 
     ImportFile {
+        visibility: Visibility,
         name: StringIndex,
         body: &'a [NodeId],
     },
@@ -86,6 +98,7 @@ pub enum Decl<'a> {
     },
 
     Extern {
+        visibility: Visibility,
         functions: &'a [ExternFunction<'a>],
     },
 
@@ -95,12 +108,14 @@ pub enum Decl<'a> {
     },
 
     Trait {
+        visibility: Visibility,
         name: StringIndex,
         header: SourceRange,
         functions: &'a [FunctionSignature<'a>],
     },
 
     OpaqueType {
+        visibility: Visibility,
         name: StringIndex,
         header: SourceRange,
         gens: &'a [DeclGeneric<'a>],
@@ -155,6 +170,7 @@ impl<'a> DeclGeneric<'a> {
 
 #[derive(Debug, PartialEq)]
 pub struct ExternFunction<'a> {
+    visibility: Visibility,
     name: StringIndex,
     path: StringIndex,
     gens: &'a [DeclGeneric<'a>],
@@ -164,11 +180,13 @@ pub struct ExternFunction<'a> {
 }
 
 impl<'a> ExternFunction<'a> {
-    pub(crate) fn new(name: StringIndex, path: StringIndex, gens: &'a [DeclGeneric<'a>], args: &'a [FunctionArgument<'a>], return_type: DataType<'a>, source_range: SourceRange) -> Self { 
-        Self { name, gens, args, return_type, source_range, path } 
+    pub(crate) fn new(visibility: Visibility, name: StringIndex, path: StringIndex, gens: &'a [DeclGeneric<'a>], args: &'a [FunctionArgument<'a>], return_type: DataType<'a>, source_range: SourceRange) -> Self { 
+        Self { visibility, name, gens, args, return_type, source_range, path } 
     }
 
 
+    #[inline(always)]
+    pub fn visibility(&self) -> Visibility { self.visibility }
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
     #[inline(always)]

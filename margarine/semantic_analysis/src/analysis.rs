@@ -1,5 +1,5 @@
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}, Once};
-use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
+use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind, Visibility}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
 use sti::{alloc::GlobalAlloc, key::Key, vec::{KVec, Vec}};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, Generic, GenericKind, SymbolId}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
@@ -7,8 +7,8 @@ use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{Function
 impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
         let scope = scope;
-        let namespace = Namespace::new(path);
-        let namespace = self.namespaces.push(namespace);
+        let parent = self.scopes.get(scope).over(&self.scopes, |scope| match scope.kind() { ScopeKind::ImplicitNamespace(ns) => Some(ns), _ => None });
+        let namespace = self.namespaces.push(Namespace::new(path), parent);
 
         // Collect type names
         self.collect_names(path, namespace, body, 0);
@@ -58,10 +58,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let decl = self.ast.decl(id);
             let range = self.ast.range(*n);
             match decl {
-                | Decl::Enum { name, header, generics, .. } 
-                | Decl::Struct { name, header, generics, .. }
-                | Decl::OpaqueType { name, header, gens: generics, .. }
-                | Decl::Function { sig: FunctionSignature { name, source: header, generics, .. }, .. }=> {
+                | Decl::Enum { visibility, name, header, generics, .. } 
+                | Decl::Struct { visibility, name, header, generics, .. }
+                | Decl::OpaqueType { visibility, name, header, gens: generics, .. }
+                | Decl::Function { visibility, sig: FunctionSignature { name, source: header, generics, .. }, .. }=> {
                     if let Some(sym) = ns.get_sym(name) {
                         let err = Error::NameIsAlreadyDefined {
                             source: header, name };
@@ -77,16 +77,16 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     }
 
                     let path = self.string_map.concat(path, name);
-                    let pend = self.syms.pending(&mut self.namespaces, path, generics.len() + gen_count);
+                    let pend = self.syms.pending(&mut self.namespaces, Some(ns_id), path, generics.len() + gen_count);
                     ns = self.namespaces.get_ns_mut(ns_id);
 
-                    if let Err(e) = ns.add_sym(range, name, pend) {
+                    if let Err(e) = ns.add_sym(range, name, pend, visibility) {
                         self.error(*n, e);
                     }
                 },
 
 
-                Decl::Trait { name, header, .. } => {
+                Decl::Trait { visibility, name, header, .. } => {
                     if let Some(sym) = ns.get_sym(name) {
                         let err = Error::NameIsAlreadyDefined {
                             source: header, name };
@@ -98,17 +98,17 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                     let path = self.string_map.concat(path, name);
-                    let pend = self.syms.pending(&mut self.namespaces, path, gen_count);
+                    let pend = self.syms.pending(&mut self.namespaces, Some(ns_id), path, gen_count);
                     ns = self.namespaces.get_ns_mut(ns_id);
 
-                    if let Err(e) = ns.add_sym(range, name, pend) {
+                    if let Err(e) = ns.add_sym(range, name, pend, visibility) {
                         self.error(*n, e);
                     }
 
                 }
 
 
-                Decl::Extern { functions }=> {
+                Decl::Extern { functions, .. }=> {
                     for f in functions {
                         if let Some(sym) = ns.get_sym(f.name()) {
                             let err = Error::NameIsAlreadyDefined {
@@ -123,10 +123,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         }
 
                         let path = self.string_map.concat(path, f.name());
-                        let pend = self.syms.pending(&mut self.namespaces, path, f.gens().len());
+                        let pend = self.syms.pending(&mut self.namespaces, Some(ns_id), path, f.gens().len());
                         ns = self.namespaces.get_ns_mut(ns_id);
 
-                        if let Err(e) = ns.add_sym(range, f.name(), pend) {
+                        if let Err(e) = ns.add_sym(range, f.name(), pend, f.visibility()) {
                             self.error(*n, e);
                             ns = self.namespaces.get_ns_mut(ns_id);
                         }
@@ -135,10 +135,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 },
 
 
-                Decl::Module { name, header, body, is_root, .. } => {
+                Decl::Module { visibility, name, header, body, is_root, .. } => {
                     let path = self.string_map.concat(path, name);
 
-                    let sym = self.syms.pending(&mut self.namespaces, path, 0);
+                    let sym = self.syms.pending(&mut self.namespaces, Some(ns_id), path, 0);
                     self.syms.add_sym(sym, Symbol::new(name, &[], SymbolKind::Namespace));
 
                     let module_ns = self.syms.as_ns(sym);
@@ -147,12 +147,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         let module_ns = self.namespaces.get_ns_mut(module_ns);
 
                         if is_root {
-                            module_ns.add_sym(header, StringMap::ROOT, sym).unwrap();
+                            module_ns.add_sym(header, StringMap::ROOT, sym, Visibility::Public).unwrap();
                         }
                     }
                     
 
-                    if let Err(e) = self.namespaces.get_ns_mut(ns_id).add_sym(header, name, sym) {
+                    if let Err(e) = self.namespaces.get_ns_mut(ns_id).add_sym(header, name, sym, visibility) {
                         self.error(*n, e);
                         continue;
                     }
@@ -282,7 +282,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                     let ns = Namespace::new(path);
-                    let ns = self.namespaces.push(ns);
+                    let ns = self.namespaces.push(ns, Some(ns_id));
 
                     self.syms.traits(sym).insert(trait_sym_id, (ns, ty, gens));
                 }
@@ -340,8 +340,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
 
-                Decl::Using { item } => {
-                    self.collect_use_item(*n, scope, ns_id, item)
+                Decl::Using { visibility, item } => {
+                    self.collect_use_item(*n, scope, ns_id, item, visibility)
                 }
 
 
@@ -355,39 +355,43 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
     }
 
 
-    fn collect_use_item(&mut self, node: NodeId, scope: Scope, ns_id: NamespaceId, item: UseItem) {
+    fn collect_use_item(&mut self, node: NodeId, scope: Scope, ns_id: NamespaceId, item: UseItem, visibility: Visibility) {
         match item.kind() {
             UseItemKind::List { list } => {
-                let Some(import_ns) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces)
+                let Some(import_ns) = scope.find_sym_from(item.name(), &self.scopes, &mut self.syms, &self.namespaces, ns_id)
                 else {
                     self.error(node, Error::NamespaceNotFound { source: item.range(), namespace: item.name() });
                     return;
                 };
 
-                let Ok(import_ns) = import_ns
-                // @todo: we should probably recursively go and mark everything imported as
-                // "errored" as well
-                else { return; };
+                let import_ns = 
+                match import_ns {
+                    Ok(import_ns) => import_ns,
+                    Err(error) => { self.error(node, Self::use_error(error, item.range())); return; }
+                };
 
                 let import_ns = self.syms.sym_ns(import_ns);
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(import_ns));
                 for ui in list {
-                    self.collect_use_item(node, scope, ns_id, *ui);
+                    self.collect_use_item(node, scope, ns_id, *ui, visibility);
                 }
             },
 
 
             UseItemKind::BringName(alias) => {
-                if let Some(import_sym) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces) {
+                if let Some(import_sym) = scope.find_sym_from(item.name(), &self.scopes, &mut self.syms, &self.namespaces, ns_id) {
                     let ns = self.namespaces.get_ns_mut(ns_id);
 
                     match import_sym {
                         Ok(v) => {
-                            if let Err(e) = ns.add_sym(item.range(), alias, v) {
+                            if let Err(e) = ns.add_sym(item.range(), alias, v, visibility) {
                                 self.error(node, e);
                             }
                         },
-                        Err(e) => ns.set_err_sym(item.name(), e),
+                        Err(e) => {
+                            ns.set_err_sym(item.name(), e.clone());
+                            self.error(node, Self::use_error(e, item.range()));
+                        },
                     };
                     return;
                 };
@@ -398,37 +402,47 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
             UseItemKind::All => {
-                let Some(import_ns) = scope.find_sym(item.name(), &self.scopes, &mut self.syms, &self.namespaces)
+                let Some(import_ns) = scope.find_sym_from(item.name(), &self.scopes, &mut self.syms, &self.namespaces, ns_id)
                 else {
                     self.error(node, Error::NamespaceNotFound { source: item.range(), namespace: item.name() });
                     return;
                 };
 
-                let Ok(import_ns) = import_ns
-                // @todo: we should probably recursively go and mark everything imported as
-                // "errored" as well
-                else { return; };
+                let import_ns = 
+                match import_ns {
+                    Ok(import_ns) => import_ns,
+                    Err(error) => { self.error(node, Self::use_error(error, item.range())); return; }
+                };
 
                 let import_ns = self.syms.sym_ns(import_ns);
                 if ns_id == import_ns { return };
-
                 let (ns, import_ns) = self.namespaces.get_double(ns_id, import_ns);
 
                 for s in import_ns.syms() {
                     if *s.0 == StringMap::ROOT { continue }
+                    if s.1.visibility() == Visibility::Private {
+                        continue;
+                    }
 
-                    match s.1 {
+                    match s.1.result() {
                         Ok(v) => {
-                            if let Err(e) = ns.add_sym(item.range(), *s.0, *v) {
+                            if let Err(e) = ns.add_sym(item.range(), *s.0, v, visibility) {
                                 Self::error_ex(&mut self.errors, &mut self.error_nodes, &mut self.type_info, node, e);
                             }
                         },
-                        Err(e) => ns.set_err_sym(*s.0, e.clone()),
+                        Err(e) => ns.set_err_sym(*s.0, e),
                     }
                 }
             },
         };
 
+    }
+
+    fn use_error(error: Error, source: SourceRange) -> Error {
+        match error {
+            Error::PrivateSymbol { name, .. } => Error::PrivateSymbol { source, name },
+            error => error,
+        }
     }
 
 
@@ -668,7 +682,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
 
-                Decl::Extern { functions } => {
+                Decl::Extern { functions, .. } => {
                     for f in functions {
                         let mut args = Buffer::new(self.output, f.args().len());
 
@@ -722,7 +736,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
 
-                Decl::Trait { name, functions, header } => {
+                Decl::Trait { name, functions, header, .. } => {
                     let Some(Ok(sym)) = self.namespaces.get_ns(ns).get_sym(name)
                     else { continue };
 
@@ -883,7 +897,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let generics = {
                     let mut vec = Buffer::new(&*self.output, generics.len());
                     for g in generics {
-                        let ty = self.syms.pending(&mut self.namespaces, g.name(), 0);
+                        let ty = self.syms.pending(&mut self.namespaces, None, g.name(), 0);
                         let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Generic));
 
                         self.syms.add_sym(ty, Symbol::new(g.name(), &[], kind));
@@ -1525,11 +1539,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         else { return None };
 
                         let ns = self.namespaces.get_ns(ns);
-                        for trait_id in ns.syms().values().filter_map(|sym| sym.as_ref().ok()) {
-                            let Some((_, ty, generics)) = candidates.get(trait_id)
+                        for trait_id in ns.syms().values().filter_map(|sym| sym.result().ok()) {
+                            let Some((_, ty, generics)) = candidates.get(&trait_id)
                             else { continue; };
 
-                            let sym = self.syms.sym(*trait_id);
+                            let sym = self.syms.sym(trait_id);
                             let SymbolKind::Trait(tr) = sym.kind()
                             else { continue; };
 
@@ -1537,7 +1551,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             else { continue; };
 
                             if candidate.is_none() {
-                                candidate = Some((*trait_id, ft.1, *ty, *generics));
+                                candidate = Some((trait_id, ft.1, *ty, *generics));
                                 return Some(());
                             } else {
                                 todo!("ambigious");
@@ -2215,23 +2229,23 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     else { return None };
 
                     let ns = self.namespaces.get_ns(ns);
-                    for trait_id in ns.syms().values().filter_map(|sym| sym.as_ref().ok()) {
-                        let Some((_, ty, generics)) = candidates.get(trait_id)
+                    for trait_id in ns.syms().values().filter_map(|sym| sym.result().ok()) {
+                        let Some((_, ty, generics)) = candidates.get(&trait_id)
                         else { continue; };
 
-                        let sym = self.syms.sym(*trait_id);
+                        let sym = self.syms.sym(trait_id);
                         let SymbolKind::Trait(tr) = sym.kind()
                         else { continue; };
 
                         let Some(ft) = tr.funcs.iter().find(|x| x.0 == field_name)
                         else { continue; };
 
-                        if !self.syms.type_implements_trait(expr.ty, *trait_id) {
+                        if !self.syms.type_implements_trait(expr.ty, trait_id) {
                             continue;
                         }
 
                         if candidate.is_none() {
-                            candidate = Some((*trait_id, ft.1, *ty, *generics));
+                            candidate = Some((trait_id, ft.1, *ty, *generics));
                             return Some(());
                         } else {
                             todo!("ambigious");

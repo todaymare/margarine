@@ -165,11 +165,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             macro_rules! add_sym {
                 ($n: ident) => {
-                    namespace.add_sym(SourceRange::ZERO, StringMap::$n, SymbolId::$n)
+                    namespace.add_sym(SourceRange::ZERO, StringMap::$n, SymbolId::$n, parser::nodes::decl::Visibility::Public)
                 };
             }
 
-            let _ = add_sym!(I64);
+                let _ = add_sym!(I64);
             let _ = add_sym!(F64);
             let _ = add_sym!(BOOL);
             let _ = add_sym!(PTR);
@@ -201,17 +201,17 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
-                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap());
-                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap());
+                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
             }
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::RESULT));
-                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap());
-                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap());
+                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
             }
 
-            analyzer.namespaces.push(namespace)
+            analyzer.namespaces.push(namespace, None)
         };
 
         let scope = Scope::new(None, ScopeKind::ImplicitNamespace(core_ns));
@@ -702,7 +702,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
     fn tuple_sym(&mut self, range: SourceRange, fields: &[Option<StringIndex>]) -> SymbolId {
         while self.tuple_syms.len() <= fields.len() {
             let arity = self.tuple_syms.len();
-            let pending = self.syms.pending(&mut self.namespaces, StringMap::INVALID_IDENT, arity);
+            let pending = self.syms.pending(&mut self.namespaces, None, StringMap::INVALID_IDENT, arity);
             let (fields, gens) = {
                 let mut sym_fields = Buffer::new(self.output, arity);
                 let mut gens = Buffer::new(self.output, arity);
@@ -751,7 +751,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
         let func = FunctionTy::new(fields, ret, syms::func::FunctionKind::Closure(closure), None);
         let sym = Symbol::new(StringMap::CLOSURE, &gens, syms::SymbolKind::Function(func));
-        let id = self.syms.pending(&mut self.namespaces, StringMap::CLOSURE, gens.len());
+        let id = self.syms.pending(&mut self.namespaces, None, StringMap::CLOSURE, gens.len());
         self.syms.add_sym(id, sym);
 
         id

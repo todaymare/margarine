@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use common::{copy_slice_in, source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use errors::ErrorId;
-use parser::nodes::{decl::{DeclId}, NodeId};
+use parser::nodes::{decl::{DeclId, Visibility}, NodeId};
 use sti::{arena::Arena, define_key, ext::FromIn, key::Key, vec::KVec};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind, Trait, TraitImplementation, TraitSynthesis}};
@@ -80,10 +80,9 @@ pub enum GenericKind<'me> {
 
 impl<'me> SymbolMap<'me> {
     #[inline(always)]
-    pub fn pending(&mut self, ns_map: &mut NamespaceMap,
-                   path: StringIndex, gen_count: usize) -> SymbolId {
-
-        self.syms.push((Err(gen_count), ns_map.push(Namespace::new(path)), HashMap::new()))
+    pub fn pending(&mut self, ns_map: &mut NamespaceMap, parent: Option<NamespaceId>,
+                      path: StringIndex, gen_count: usize) -> SymbolId {
+        self.syms.push((Err(gen_count), ns_map.push(Namespace::new(path), parent), HashMap::new()))
     }
 
 
@@ -212,12 +211,12 @@ impl<'me> SymbolMap<'me> {
                        else { &*self.arena.alloc_new([FunctionArgument::new(StringMap::VALUE, i.1)]) };
             let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id, index }, decl);
             let sym = Symbol::new(func_name, generics, SymbolKind::Function(sym));
-            let id = self.pending(ns_map, func_name, generics.len());
+            let id = self.pending(ns_map, Some(ns), func_name, generics.len());
             self.add_sym(id, sym);
 
             let ns = ns_map.get_ns_mut(ns);
 
-            ns.add_sym(range, mapping_name, id).unwrap();
+            ns.add_sym(range, mapping_name, id, Visibility::Private).unwrap();
         }
     }
 
@@ -398,7 +397,7 @@ impl<'me> SymbolMap<'me> {
 
         macro_rules! init {
             ($name: ident) => {
-                let pending = slf.pending(ns_map, StringMap::$name, 0);
+                let pending = slf.pending(ns_map, None, StringMap::$name, 0);
                 assert_eq!(pending, SymbolId::$name);
                 let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Struct));
                 slf.add_sym(pending, Symbol::new(StringMap::$name, &[], kind));
@@ -411,7 +410,7 @@ impl<'me> SymbolMap<'me> {
 
         // bool
         {
-            let pending = slf.pending(ns_map, StringMap::BOOL, 0);
+            let pending = slf.pending(ns_map, None, StringMap::BOOL, 0);
             assert_eq!(pending, SymbolId::BOOL);
             let fields = [
                 (StringMap::FALSE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None)),
@@ -428,14 +427,14 @@ impl<'me> SymbolMap<'me> {
         // ptr<T> — opaque raw pointer
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR, 1);
             assert_eq!(pending, SymbolId::PTR);
             slf.add_sym(pending, Symbol::new(StringMap::PTR, arena.alloc_new([t]), SymbolKind::Opaque));
         }
 
         // range
         {
-            let pending = slf.pending(ns_map, StringMap::RANGE, 0);
+            let pending = slf.pending(ns_map, None, StringMap::RANGE, 0);
             assert_eq!(pending, SymbolId::RANGE);
             let fields = [
                 (StringMap::MIN, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None)),
@@ -452,7 +451,7 @@ impl<'me> SymbolMap<'me> {
         // option 
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::OPTION, 1);
+            let pending = slf.pending(ns_map, None, StringMap::OPTION, 1);
             assert_eq!(pending, SymbolId::OPTION);
             let fields = [
                 (StringMap::SOME, Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)),
@@ -471,7 +470,7 @@ impl<'me> SymbolMap<'me> {
             let t = BoundedGeneric::new(StringMap::T, &[]);
             let a = BoundedGeneric::new(StringMap::A, &[]);
 
-            let pending = slf.pending(ns_map, StringMap::RESULT, 2);
+            let pending = slf.pending(ns_map, None, StringMap::RESULT, 2);
             assert_eq!(pending, SymbolId::RESULT);
             let fields = [
                 (StringMap::OK , Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)),
@@ -488,7 +487,7 @@ impl<'me> SymbolMap<'me> {
 
         // str 
         {
-            let pending = slf.pending(ns_map, StringMap::STR, 0);
+            let pending = slf.pending(ns_map, None, StringMap::STR, 0);
             assert_eq!(pending, SymbolId::STR);
 
             let sym = Symbol::new(StringMap::STR, &[], SymbolKind::Opaque);
@@ -500,7 +499,7 @@ impl<'me> SymbolMap<'me> {
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
 
-            let pending = slf.pending(ns_map, StringMap::LIST, 1);
+            let pending = slf.pending(ns_map, None, StringMap::LIST, 1);
             assert_eq!(pending, SymbolId::LIST);
             slf.add_sym(pending, Symbol::new(StringMap::LIST, arena.alloc_new([t]), SymbolKind::Opaque));
         }
@@ -510,7 +509,7 @@ impl<'me> SymbolMap<'me> {
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
 
-            let pending = slf.pending(ns_map, StringMap::BUILTIN_TYPE_ID, 1);
+            let pending = slf.pending(ns_map, None, StringMap::BUILTIN_TYPE_ID, 1);
             assert_eq!(pending, SymbolId::BUILTIN_TYPE_ID);
 
             let sym = Symbol::new(
@@ -530,7 +529,7 @@ impl<'me> SymbolMap<'me> {
         // $size_of
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::BUILTIN_SIZE_OF, 1);
+            let pending = slf.pending(ns_map, None, StringMap::BUILTIN_SIZE_OF, 1);
             assert_eq!(pending, SymbolId::BUILTIN_SIZE_OF);
 
             let sym = Symbol::new(
@@ -549,7 +548,7 @@ impl<'me> SymbolMap<'me> {
 
         // $size_of
         {
-            let pending = slf.pending(ns_map, StringMap::EQ_TRAIT, 0);
+            let pending = slf.pending(ns_map, None, StringMap::EQ_TRAIT, 0);
             assert_eq!(pending, SymbolId::EQ_TRAIT);
 
             let sym = Symbol::new(
@@ -599,7 +598,7 @@ impl<'me> SymbolMap<'me> {
         // Rc
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::RC, 1);
+            let pending = slf.pending(ns_map, None, StringMap::RC, 1);
             assert_eq!(pending, SymbolId::RC);
             slf.add_sym(pending, Symbol::new(StringMap::RC, arena.alloc_new([t]), SymbolKind::Opaque));
         }
@@ -608,7 +607,7 @@ impl<'me> SymbolMap<'me> {
         // $rc
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::BUILTIN_RC, 1);
+            let pending = slf.pending(ns_map, None, StringMap::BUILTIN_RC, 1);
             assert_eq!(pending, SymbolId::BUILTIN_RC);
 
             let args = [
@@ -641,7 +640,7 @@ impl<'me> SymbolMap<'me> {
         // $rc_get
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::RC_GET, 1);
+            let pending = slf.pending(ns_map, None, StringMap::RC_GET, 1);
             assert_eq!(pending, SymbolId::RC_GET);
 
             let args = [
@@ -672,7 +671,7 @@ impl<'me> SymbolMap<'me> {
         // $rc_set
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::RC_SET, 1);
+            let pending = slf.pending(ns_map, None, StringMap::RC_SET, 1);
             assert_eq!(pending, SymbolId::RC_SET);
 
             let rc_ty_generic = Generic::new(
@@ -705,7 +704,7 @@ impl<'me> SymbolMap<'me> {
         // $ptr_alloc<T>(count: int): ptr<T>
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_ALLOC, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_ALLOC, 1);
             assert_eq!(pending, SymbolId::PTR_ALLOC);
 
             let args = [
@@ -734,7 +733,7 @@ impl<'me> SymbolMap<'me> {
         // $ptr_free<T>(p: ptr<T>, count: int)
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_FREE, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_FREE, 1);
             assert_eq!(pending, SymbolId::PTR_FREE);
 
             let ptr_ty = Generic::new(
@@ -768,7 +767,7 @@ impl<'me> SymbolMap<'me> {
         // $ptr_read<T>(p: ptr<T>): T
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_READ, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_READ, 1);
             assert_eq!(pending, SymbolId::PTR_READ);
 
             let args = [
@@ -799,7 +798,7 @@ impl<'me> SymbolMap<'me> {
         // $ptr_write<T>(p: ptr<T>, value: T)
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_WRITE, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_WRITE, 1);
             assert_eq!(pending, SymbolId::PTR_WRITE);
 
             let ptr_ty = Generic::new(
@@ -833,7 +832,7 @@ impl<'me> SymbolMap<'me> {
         // $ptr_write_uninit<T>(p: ptr<T>, value: T)
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_WRITE_UNINIT, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_WRITE_UNINIT, 1);
             assert_eq!(pending, SymbolId::PTR_WRITE_UNINIT);
 
             let ptr_ty = Generic::new(
@@ -867,7 +866,7 @@ impl<'me> SymbolMap<'me> {
         // $ptr_null<T>(): ptr<T>
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_NULL, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_NULL, 1);
             assert_eq!(pending, SymbolId::PTR_NULL);
 
             let ret_gens = arena.alloc_new([Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)]);
@@ -889,7 +888,7 @@ impl<'me> SymbolMap<'me> {
         // $ptr_offset<T>(p: ptr<T>, off: int): ptr<T>
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_OFFSET, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_OFFSET, 1);
             assert_eq!(pending, SymbolId::PTR_OFFSET);
 
             let ptr_ty = Generic::new(
@@ -926,7 +925,7 @@ impl<'me> SymbolMap<'me> {
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
             let u = BoundedGeneric::new(StringMap::A, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_CAST, 2);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_CAST, 2);
             assert_eq!(pending, SymbolId::PTR_CAST);
 
             let t_gen = Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None);
@@ -963,7 +962,7 @@ impl<'me> SymbolMap<'me> {
 
         // Destroy
         {
-            let pending = slf.pending(ns_map, StringMap::DESTROY_TRAIT, 0);
+            let pending = slf.pending(ns_map, None, StringMap::DESTROY_TRAIT, 0);
             assert_eq!(pending, SymbolId::DESTROY_TRAIT);
 
             let sym = Symbol::new(
@@ -1004,7 +1003,7 @@ impl<'me> SymbolMap<'me> {
         // $ptr_drop<T>(p: ptr<T>)
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::PTR_DROP, 1);
+            let pending = slf.pending(ns_map, None, StringMap::PTR_DROP, 1);
             assert_eq!(pending, SymbolId::PTR_DROP);
 
             let ptr_ty = Generic::new(
@@ -1034,7 +1033,7 @@ impl<'me> SymbolMap<'me> {
         // $list_concat<T>(left: [T], right: [T]): [T]
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::LIST_CONCAT, 1);
+            let pending = slf.pending(ns_map, None, StringMap::LIST_CONCAT, 1);
             assert_eq!(pending, SymbolId::LIST_CONCAT);
 
             let t_gen = Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None);
@@ -1067,7 +1066,7 @@ impl<'me> SymbolMap<'me> {
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
             let a = BoundedGeneric::new(StringMap::A, &[]);
-            let pending = slf.pending(ns_map, StringMap::INVALID_IDENT, 2);
+            let pending = slf.pending(ns_map, None, StringMap::INVALID_IDENT, 2);
             assert_eq!(pending, SymbolId::LIST_SLICE_PAIR);
             let fields = arena.alloc_new([
                 (string_map.num(0), Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None)),
@@ -1085,7 +1084,7 @@ impl<'me> SymbolMap<'me> {
         // $list_slice<T>(list: [T], idx: int): Option<([T], [T])>
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
-            let pending = slf.pending(ns_map, StringMap::LIST_SLICE, 1);
+            let pending = slf.pending(ns_map, None, StringMap::LIST_SLICE, 1);
             assert_eq!(pending, SymbolId::LIST_SLICE);
 
             let t_gen = Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None);
@@ -1126,7 +1125,7 @@ impl<'me> SymbolMap<'me> {
 
         // $str_concat(left: str, right: str): str
         {
-            let pending = slf.pending(ns_map, StringMap::STR_CONCAT, 0);
+            let pending = slf.pending(ns_map, None, StringMap::STR_CONCAT, 0);
             assert_eq!(pending, SymbolId::STR_CONCAT);
             let str_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::STR, &[]), None);
             let args = [
@@ -1144,7 +1143,7 @@ impl<'me> SymbolMap<'me> {
 
         // $str_slice(value: str, idx: int): Option<(str, str)>
         {
-            let pending = slf.pending(ns_map, StringMap::STR_SLICE, 0);
+            let pending = slf.pending(ns_map, None, StringMap::STR_SLICE, 0);
             assert_eq!(pending, SymbolId::STR_SLICE);
             let str_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::STR, &[]), None);
             let int_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None);

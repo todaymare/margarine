@@ -8,7 +8,7 @@ use dt::{DataType, DataTypeKind};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
-use nodes::{decl::{Attribute, AttributeValue, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind}, expr::{Block, CallArgument, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
+use nodes::{decl::{Attribute, AttributeValue, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind, Visibility}, expr::{Block, CallArgument, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
 use sti::{alloc::Alloc, arena::Arena, vec::{KVec, Vec}};
 
 use crate::nodes::{decl::DeclGeneric, expr::{BinaryOperator, ExprId}, Pattern};
@@ -829,41 +829,26 @@ impl<'out> Parser<'_, 'out, '_> {
 
 impl<'ta> Parser<'_, 'ta, '_> {
     fn statement(&mut self, settings: &ParserSettings) -> Result<Option<NodeId>, ErrorId> {
+        if self.current_is(TokenKind::Keyword(Keyword::Pub)) {
+            self.advance();
+            let Some(decl) = self.parse_decl(settings, Visibility::Public) 
+            else {
+                let err = self.errors.push(Error::UnexpectedToken(self.current_range()));
+                return Err(ErrorId::Parser((self.file, err)));
+            };
+
+            let node = decl?.into();
+            if self.peek_is(TokenKind::SemiColon) { self.advance(); }
+            return Ok(Some(node));
+        }
+
+        if let Some(decl) = self.parse_decl(settings, Visibility::Private) {
+            let node = decl?.into();
+            if self.peek_is(TokenKind::SemiColon) { self.advance(); }
+            return Ok(Some(node));
+        }
+
         let node = match self.current_kind() {
-            | TokenKind::Keyword(Keyword::Struct)
-            => self.struct_declaration()?.into(),
-
-
-            TokenKind::Keyword(Keyword::Fn) => self.function_declaration(&settings)?.into(),
-
-            TokenKind::Keyword(Keyword::Impl) => self.impl_declaration()?.into(),
-            TokenKind::Keyword(Keyword::Trait) => self.trait_declaration()?.into(),
-            TokenKind::Keyword(Keyword::Mod) => self.mod_declaration()?.into(),
-            TokenKind::Keyword(Keyword::Extern) => self.extern_declaration(settings)?.into(),
-            TokenKind::Keyword(Keyword::Import) => self.import_declaration()?.into(),
-            TokenKind::Keyword(Keyword::Enum) => self.enum_declaration()?.into(),
-            TokenKind::Keyword(Keyword::Use) => self.using_declaration()?.into(),
-
-
-            TokenKind::Keyword(Keyword::Type) => {
-                let start = self.current_range().start();
-                self.advance();
-                let ident = self.expect_identifier()?;
-                let gens = if self.peek_is(TokenKind::LeftAngle) {
-                    self.advance();
-                    let res = self.generic_decl()?;
-                    self.index -= 1;
-                    res
-                } else { &[] };
-
-                let range = SourceRange::new(start, self.current_range().end());
-                self.ast.add_decl(
-                    Decl::OpaqueType { name: ident, header: range, gens },
-                    range,
-                ).into()
-            },
-
-
             TokenKind::Keyword(Keyword::Var) => self.let_statement()?.into(),
             TokenKind::Keyword(Keyword::For) => self.for_statement()?.into(),
 
@@ -943,15 +928,40 @@ impl<'ta> Parser<'_, 'ta, '_> {
             _ => self.assignment(&settings)?.into(),
         };
 
-        if let NodeId::Decl(_) = node && self.peek_is(TokenKind::SemiColon) {
-            self.advance();
-        }
-
         Ok(Some(node))
     }
 
+    fn parse_decl(&mut self, settings: &ParserSettings, visibility: Visibility) -> Option<DeclResult<'ta>> {
+        Some(match self.current_kind() {
+            TokenKind::Keyword(Keyword::Struct) => self.struct_declaration(visibility),
+            TokenKind::Keyword(Keyword::Fn) => self.function_declaration(settings, visibility),
+            TokenKind::Keyword(Keyword::Trait) => self.trait_declaration(visibility),
+            TokenKind::Keyword(Keyword::Mod) => self.mod_declaration(visibility),
+            TokenKind::Keyword(Keyword::Extern) => self.extern_declaration(settings, visibility),
+            TokenKind::Keyword(Keyword::Enum) => self.enum_declaration(visibility),
+            TokenKind::Keyword(Keyword::Use) => self.using_declaration(visibility),
+            TokenKind::Keyword(Keyword::Type) => self.opaque_type_declaration(visibility),
+            TokenKind::Keyword(Keyword::Impl) if visibility == Visibility::Private => self.impl_declaration(),
+            TokenKind::Keyword(Keyword::Import) if visibility == Visibility::Private => self.import_declaration(),
+            _ => return None,
+        })
+    }
 
-    fn struct_declaration(&mut self) -> DeclResult<'ta> {
+    fn opaque_type_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
+        let start = self.current_range().start();
+        self.advance();
+        let name = self.expect_identifier()?;
+        let gens = if self.peek_is(TokenKind::LeftAngle) {
+            self.advance();
+            let result = self.generic_decl()?;
+            self.index -= 1;
+            result
+        } else { &[] };
+        let range = SourceRange::new(start, self.current_range().end());
+        Ok(self.ast.add_decl(Decl::OpaqueType { visibility, name, header: range, gens }, range))
+    }
+
+    fn struct_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Struct))?;
         self.advance();
@@ -986,7 +996,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::RightBracket)?;
         let end = self.current_range().end();
 
-        let node = Decl::Struct { name, header, fields, generics };
+        let node = Decl::Struct { visibility, name, header, fields, generics };
 
         Ok(self.ast.add_decl(node, SourceRange::new(start, end)))
     }
@@ -1078,7 +1088,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn function_declaration(
         &mut self, 
-        settings: &ParserSettings
+        settings: &ParserSettings,
+        visibility: Visibility,
     ) -> DeclResult<'ta> {
         let start = self.current_range().start();
         let sig = self.function_sig(settings)?;
@@ -1093,6 +1104,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         Ok(self.ast.add_decl(
             Decl::Function {
+                visibility,
                 sig,
                 body,
             },
@@ -1102,7 +1114,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn trait_declaration(&mut self) -> DeclResult<'ta> {
+    fn trait_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Trait))?;
         self.advance();
@@ -1125,7 +1137,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         )?;
 
         Ok(self.ast.add_decl(
-            Decl::Trait { header, functions, name },
+            Decl::Trait { visibility, header, functions, name },
             SourceRange::new(start, self.current_range().end())
         ))
     }
@@ -1193,7 +1205,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
     }
 
 
-    fn mod_declaration(&mut self) -> DeclResult<'ta> {
+    fn mod_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Mod))?;
         self.advance();
@@ -1212,7 +1224,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let end = self.current_range().end();
 
             return Ok(self.ast.add_decl(
-                Decl::Module { name, body, header: SourceRange::new(start, header_end), is_root: true },
+                Decl::Module { visibility, name, body, header: SourceRange::new(start, header_end), is_root: true },
                 SourceRange::new(start, end)
             ))
         }
@@ -1220,7 +1232,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
         self.expect(TokenKind::SemiColon)?;
         let decl = self.ast.add_decl(
-            Decl::ImportFile { name, body: &[] },
+            Decl::ImportFile { visibility, name, body: &[] },
             SourceRange::new(start, self.current_range().end())
         );
 
@@ -1265,8 +1277,12 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
 
-    fn extern_declaration(&mut self, settings: &ParserSettings) -> DeclResult<'ta> {
+    fn extern_declaration(&mut self, settings: &ParserSettings, visibility: Visibility) -> DeclResult<'ta> {
         let start = self.current_range().start();
+        if visibility == Visibility::Public {
+            let err = self.errors.push(Error::UnexpectedToken(self.current_range()));
+            return Err(ErrorId::Parser((self.file, err)));
+        }
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
         self.advance();
 
@@ -1286,6 +1302,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         let functions = self.list(TokenKind::RightBracket, None, |parser, _| {
             let start = parser.current_range().start();
+            let function_visibility = 
+            if parser.current_is(TokenKind::Keyword(Keyword::Pub)) {
+                parser.advance();
+                Visibility::Public
+            } else {
+                Visibility::Private
+            };
             parser.expect(TokenKind::Keyword(Keyword::Fn))?;
             parser.advance();
 
@@ -1365,6 +1388,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
 
             Ok(ExternFunction::new(
+                function_visibility,
                 name,
                 path,
                 gens,
@@ -1379,13 +1403,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(self.ast.add_decl(
-            Decl::Extern { functions },
+            Decl::Extern { visibility, functions },
             SourceRange::new(start, end)
         ))
     }
 
 
-    fn enum_declaration(&mut self) -> DeclResult<'ta> {
+    fn enum_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Enum))?;
         self.advance();
@@ -1447,13 +1471,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(self.ast.add_decl(
-            Decl::Enum { name, mappings, header, generics },
+            Decl::Enum { visibility, name, mappings, header, generics },
             SourceRange::new(start, end)
         ))
     }
 
 
-    fn using_declaration(&mut self) -> DeclResult<'ta> {
+    fn using_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Use))?;
         self.advance();
@@ -1461,7 +1485,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let item = self.parse_use_item()?;
 
         Ok(self.ast.add_decl(
-            Decl::Using { item },
+            Decl::Using { visibility, item },
             SourceRange::new(start, self.current_range().end())
         ))
     }

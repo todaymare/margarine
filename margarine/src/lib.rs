@@ -20,6 +20,7 @@ use parser::nodes::decl::Decl;
 use parser::nodes::decl::DeclId;
 use parser::nodes::decl::UseItem;
 use parser::nodes::decl::UseItemKind;
+use parser::nodes::decl::Visibility;
 use parser::nodes::expr::Block;
 use parser::nodes::NodeId;
 use parser::nodes::AST;
@@ -113,6 +114,7 @@ impl<'me> Compiler<'me> {
 
         let root = 
         global.add_decl(Decl::Module { 
+            visibility: Visibility::Public,
             name: entry, 
             header: SourceRange::ZERO, 
             body: Block::new(&[], SourceRange::ZERO), 
@@ -124,6 +126,7 @@ impl<'me> Compiler<'me> {
             ast_node: DeclId,
             alias: StringIndex,
             path: StringIndex,
+            visibility: Visibility,
             intercrate_depth: u32,
             is_included_by_prelude: bool,
         }
@@ -146,6 +149,7 @@ impl<'me> Compiler<'me> {
             ast_node: root,
             alias: entry,
             path: entry,
+            visibility: Visibility::Public,
             intercrate_depth: 0,
             is_included_by_prelude: false,
         });
@@ -208,7 +212,7 @@ impl<'me> Compiler<'me> {
                     let import = global.add_decl(Decl::ImportRepo { alias: p.0, repo: p.1 }, SourceRange::ZERO);
                     let item = UseItem::new(StringMap::PRELUDE, UseItemKind::All, SourceRange::ZERO);
                     let item = UseItem::new(p.0, UseItemKind::List { list: arena.alloc_new([item]) }, SourceRange::ZERO);
-                    let using = global.add_decl(Decl::Using { item }, SourceRange::ZERO);
+                    let using = global.add_decl(Decl::Using { visibility: Visibility::Private, item }, SourceRange::ZERO);
                     vec.push(import.into());
                     vec.push(using.into());
                     imports.push(import);
@@ -343,7 +347,7 @@ impl<'me> Compiler<'me> {
             for (_, i) in imports {
                 let source = global.range(i);
                 match global.decl(i) {
-                    Decl::ImportFile { name, .. } => {
+                    Decl::ImportFile { name, visibility, .. } => {
                         let path = format_in!(&arena, "{}/{}.mar", file_path, self.string_map.get(name));
 
                         let path_idx = self.string_map.insert(
@@ -367,6 +371,7 @@ impl<'me> Compiler<'me> {
                         stack.push(StackEntry {
                             ast_node: i,
                             alias: name,
+                            visibility,
                             path: path_idx,
                             intercrate_depth: entry.intercrate_depth+1,
                             is_included_by_prelude: entry.is_included_by_prelude,
@@ -397,7 +402,7 @@ impl<'me> Compiler<'me> {
 
                             global.set_decl(
                                 i, 
-                                Decl::Using { item }
+                                Decl::Using { visibility: Visibility::Private, item }
                             );
                         }
 
@@ -477,6 +482,7 @@ impl<'me> Compiler<'me> {
                         self.files.register(file);
 
                         let module = Decl::Module { 
+                            visibility: Visibility::Private,
                             name: hash,
                             header: source, 
                             body: Block::new(&[], SourceRange::ZERO), 
@@ -492,6 +498,7 @@ impl<'me> Compiler<'me> {
                             ast_node: module, 
                             alias: hash, 
                             path: name, 
+                            visibility: Visibility::Private,
                             intercrate_depth: 0, 
                             is_included_by_prelude: is_prelude
                         });
@@ -508,6 +515,7 @@ impl<'me> Compiler<'me> {
             global.set_decl(
                 entry.ast_node, 
                 Decl::Module { 
+                    visibility: entry.visibility,
                     name: entry.alias, 
                     header: offset, 
                     body, 
@@ -745,7 +753,8 @@ mod tests {
             entry: "test.mar".to_string(),
             arena: &arena,
             tests: false,
-            output: "program".to_string()
+            output: "program".to_string(),
+            cache: "artifacts".to_string(),
         });
         let errors: Vec<_> = result.errors.parser_errors.iter().flatten().collect();
 
@@ -780,7 +789,8 @@ mod tests {
             entry: "test.mar".to_string(),
             arena: &arena,
             tests: false,
-            output: "program".to_string()
+            output: "program".to_string(),
+            cache: "artifacts".to_string(),
         });
         let errors: Vec<_> = result.errors.sema_errors.iter().collect();
 
@@ -788,6 +798,34 @@ mod tests {
             error,
             semantic_analysis::errors::Error::TypeDoesntImplTrait { .. }
         )).count(), 1);
+    }
+
+    fn compile_source(source: &str) -> CompilationResult<'_> {
+        let arena = Box::leak(Box::new(Arena::new()));
+        let mut compiler = Compiler::new(arena);
+        let name = compiler.string_map.insert("test.mar");
+        compiler.files.register(FileData::new(source.to_owned(), name, Extension::None));
+        compiler.run(&CompilationSettings {
+            compilation_target: CompilationTarget::Arm64AppleDarwin,
+            preludes: vec![],
+            entry: "test.mar".to_string(),
+            arena,
+            tests: false,
+            output: "program".to_string(),
+            cache: "artifacts".to_string(),
+        })
+    }
+
+    #[test]
+    fn private_symbols_cannot_be_imported_by_a_sibling_module() {
+        let result = compile_source("mod a { fn secret() {} } mod b { use a::secret }");
+        assert!(result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::PrivateSymbol { .. })));
+    }
+
+    #[test]
+    fn public_symbols_can_be_imported_and_reexported() {
+        let result = compile_source("mod a { pub fn exposed() {} } mod b { pub use a::exposed } use b::exposed");
+        assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::PrivateSymbol { .. })));
     }
 }
 
