@@ -488,11 +488,14 @@ fn parse_env_preludes() -> Vec<Prelude> {
 
     if preludes.is_empty() {
         let url = format!(
-            "https://cdn.daymare.net/margarine/{}/share/std", 
+            "https://cdn.daymare.net/margarine/{}/share", 
             env!("CARGO_PKG_VERSION")
         );
 
-        vec![Prelude { alias: "std".into(), url }]
+        vec![
+            Prelude { alias: "core".into(), url: format!("{url}/core") },
+            Prelude { alias: "std".into(), url: format!("{url}/std") },
+        ]
     } else {
         preludes
     }

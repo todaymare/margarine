@@ -1967,6 +1967,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 // ty chck
                 let ret_ty = self.syms.new_var(id, StringMap::RESULT, range);
+                let mut errored = false;
+                let mut has_a_branch = false;
                 for (m, f) in mappings.iter().zip(cont.fields().iter()) {
                     let gens = anal.ty.gens(&self.syms);
                     let gens = self.syms.get_gens(gens);
@@ -1976,13 +1978,21 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let scope = self.scopes.push(scope);
 
                     let anal = self.expr(path, scope, m.expr());
+                    if anal.ty.is_err(&mut self.syms) {
+                        errored = true;
+                        continue;
+                    }
 
+                    has_a_branch = true;
                     if !anal.ty.eq(&mut self.syms, ret_ty) {
                         let range = self.ast.range(m.expr());
                         self.error(m.expr(), Error::InvalidType {
                             source: range, found: anal.ty, expected: ret_ty });
                     }
+                }
 
+                if !has_a_branch && errored {
+                    ret_ty.eq(&mut self.syms, Type::ERROR);
                 }
                 
 

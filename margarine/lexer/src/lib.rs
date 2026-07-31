@@ -526,7 +526,18 @@ impl Lexer<'_, '_> {
             match value {
                 b'\\' => is_in_escape = true,
                 b'"' => break,
-                _ => string.push(value as char),
+                _ if value.is_ascii() => string.push(value as char),
+                _ => {
+                    let width = if value & 0b1111_1000 == 0b1111_0000 { 4 }
+                    else if value & 0b1111_0000 == 0b1110_0000 { 3 }
+                    else { 2 };
+                    let mut bytes = [0; 4];
+                    bytes[0] = value;
+                    for byte in bytes.iter_mut().take(width).skip(1) {
+                        *byte = self.reader.next().unwrap();
+                    }
+                    string.push_str(std::str::from_utf8(&bytes[..width]).unwrap());
+                },
             }
         }
 

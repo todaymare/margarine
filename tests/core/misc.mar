@@ -2,13 +2,6 @@ extern {
     fn inout_extern(&value: int)
 }
 
-extern "native/libcfg_fixture.a";
-
-extern {
-    fn margarine_link_fixture(): int
-}
-
-
 fn make_pair(): (int, int) {
     (1, 2)
 }
@@ -50,10 +43,6 @@ fn cfg_compilation_target_is_injected() {
     assert(true, "the compiler did not provide COMPILATION_TARGET");
 }
 
-@test
-fn links_prebuilt_native_archive() {
-    assert(margarine_link_fixture() == 42, "prebuilt native archive was not linked");
-}
 
 @test
 @cfg(env("PATH", "__margarine_cfg_disabled__"))

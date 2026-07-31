@@ -1,0 +1,72 @@
+use std::string::format;
+
+fn print_head(file: str, limit: int): int {
+    var count = 0;
+    for line in file.lines() {
+        if count >= limit { break }
+        println(line);
+        count += 1;
+    }
+
+    0
+}
+
+fn main(): int {
+    var args = std::env::args();
+    var limit = 10;
+    var first_file = 1;
+
+    if args.len() > 1 && args[1] == "-n" {
+        if args.len() < 3 {
+            eprintln("head: option requires an argument -- 'n'");
+            return 1;
+        }
+
+        var parsed_limit: int = match args[2].parse::<int>() {
+            some(value) => value,
+            none => {
+                eprintln("head: invalid integer");
+                return 1;
+            }
+        };
+        limit = parsed_limit;
+        first_file = 3;
+    }
+
+    if limit < 0 {
+        eprintln("head: number of lines cannot be negative");
+        return 1;
+    }
+
+    if first_file == args.len() {
+        var count = 0;
+        loop {
+            if count >= limit { return 0 }
+
+            match std::io::read_line() {
+                ok(line) => {
+                    print(line);
+                    count += 1;
+                },
+                err(msg) => {
+                    if msg == "EOF" { return 0 }
+                    eprintln(format("head: {}", [msg]));
+                    return 1;
+                }
+            }
+        }
+    }
+
+    for i in first_file..args.len() {
+        var path = args[i];
+        match std::io::read_file(path) {
+            ok(file) => print_head(file, limit),
+            err(msg) => {
+                eprintln(format("head: {}: {}", [path, msg]));
+                return 1;
+            }
+        }
+    }
+
+    0
+}

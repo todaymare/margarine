@@ -189,7 +189,7 @@ impl CompilationTarget {
     }
 
 
-    pub fn rust_target_triple(self) -> String {
+    pub fn c_target_triple(self) -> String {
         match self {
             CompilationTarget::Arm64AppleDarwin => "aarch64-apple-darwin".into(),
             CompilationTarget::Wasm32UnknownUnknown => "wasm32-unknown-unknown".into(),
@@ -1250,7 +1250,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let list_len_i64 = self.usize_to_i64(&builder, list_len);
                 let past_end = builder.cmp_int(index_i64, list_len_i64, IntCmp::SignedGt);
                 let invalid = unsafe { Bool::new(*builder.or(negative.as_integer(), past_end.as_integer())) };
-                let index = self.int_to_usize(&mut builder, index_i64);
                 let result = builder.alloca(llvm_ret.repr);
 
                 let elem_ty = gens[0].1;
@@ -1271,6 +1270,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         builder.store(result, none);
                     },
                     |builder, _| {
+                        let index = self.int_to_usize(builder, index_i64);
                         let (left_data, right_data, right_len) = self.split_sequence(
                             builder, data, list_len, index, llvm_elem.repr, Some(elem_ty),
                         );

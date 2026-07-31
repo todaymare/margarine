@@ -7,9 +7,9 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
-use toml_edit::{value, Array, DocumentMut, Item, Table};
+use toml_edit::{value, DocumentMut, Item, Table};
 
-const REQUIRED_COMMANDS: &[&str] = &["cargo", "git", "rustc", "rustup"];
+const REQUIRED_COMMANDS: &[&str] = &["clang", "git", "llvm-ar"];
 const DEFAULT_EXPORT_FORMAT: &str = "{base-url}/{version}/{arch}/{name}";
 
 /// Describes the executables that are required to release a library.
@@ -58,7 +58,7 @@ pub fn validate_project<P: AsRef<Path>>(path: P) -> io::Result<()> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum NativeBackend {
-    Rust,
+    C,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -133,7 +133,7 @@ fn read_manifest<P: AsRef<Path>>(path: P) -> io::Result<LibraryManifest> {
     }
 
     let native_backend = match required_string(native, "backend", "[native]")?.as_str() {
-        "rust" => NativeBackend::Rust,
+        "c" => NativeBackend::C,
         backend => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -216,16 +216,12 @@ fn optional_string(table: &Table, key: &str, section: &str) -> io::Result<Option
 pub fn build<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
     let manifest = read_manifest(path)?;
-    validate_rust_targets(&manifest.targets)?;
-
     let tempdir = tempfile::tempdir()?;
-    let cargo_target_dir = manifest.native_path.join("target");
 
     for &target in &manifest.targets {
-        build_target(&manifest, target, tempdir.path(), &cargo_target_dir)?;
+        build_target(&manifest, target, tempdir.path())?;
     }
 
-    create_generated_source(&manifest, tempdir.path())?;
     create_share(path, &manifest, tempdir.path())?;
 
     let staged_path = tempdir.keep();
@@ -239,8 +235,12 @@ pub fn build<P: AsRef<Path>>(path: P) -> io::Result<()> {
     Ok(())
 }
 
-fn create_generated_source(manifest: &LibraryManifest, output_dir: &Path) -> io::Result<()> {
-    let generated_source = output_dir.join("lib.mar");
+fn create_generated_source(
+    manifest: &LibraryManifest,
+    output_dir: &Path,
+    destination: &Path,
+) -> io::Result<()> {
+    let generated_source = destination.join("lib.mar");
     std::fs::copy(&manifest.source_path, &generated_source)?;
 
     let mut file = std::fs::OpenOptions::new()
@@ -280,24 +280,19 @@ fn create_share(
     output_dir: &Path,
 ) -> io::Result<()> {
     let share_path = output_dir.join("share");
-    std::fs::create_dir(&share_path)?;
+    let package_path = share_path.join(&manifest.name);
+    std::fs::create_dir_all(&package_path)?;
 
-    let native_lib = manifest.native_path.join("src/lib.rs");
-    std::fs::copy(&native_lib, share_path.join("lib.rs")).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("could not copy {}: {error}", native_lib.display()),
-        )
-    })?;
+    create_generated_source(manifest, output_dir, &package_path)?;
 
     let library_path = project_path.join("lib");
     if library_path.is_dir() {
-        copy_directory(&library_path, &share_path.join("lib"))?;
+        copy_directory(&library_path, &package_path.join("lib"))?;
     }
 
-    run_git(&share_path, &["init"])?;
-    run_git(&share_path, &["add", "--all"])?;
-    run_git_with_args(&share_path, &["commit", "-m", manifest.version.as_str()])
+    run_git(&package_path, &["init"])?;
+    run_git(&package_path, &["add", "--all"])?;
+    run_git_with_args(&package_path, &["commit", "-m", manifest.version.as_str()])
 }
 
 fn copy_directory(source: &Path, destination: &Path) -> io::Result<()> {
@@ -346,32 +341,74 @@ fn build_target(
     manifest: &LibraryManifest,
     target: crate::CompilationTarget,
     output_dir: &Path,
-    cargo_target_dir: &Path,
 ) -> io::Result<()> {
-    let rust_target = target.rust_target_triple();
-    let output = Command::new("cargo")
-        .args(["build", "--target", rust_target.as_str()])
-        .arg("--target-dir")
-        .arg(cargo_target_dir)
-        .current_dir(&manifest.native_path)
-        .output()?;
+    let sources = collect_c_sources(&manifest.native_path)?;
+    if sources.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "no C source files found in {}",
+                manifest.native_path.display()
+            ),
+        ));
+    }
 
+    let target_name = target.margarine_target_triple();
+    let object_dir = output_dir.join(".objects").join(&target_name);
+    std::fs::create_dir_all(&object_dir)?;
+    let c_target = target.c_target_triple();
+    let mut objects = Vec::with_capacity(sources.len());
+    for (index, source) in sources.iter().enumerate() {
+        let object = object_dir.join(format!("{index}.o"));
+        let output = Command::new("clang")
+            .args(["-target", c_target.as_str(), "-c"])
+            .arg(source)
+            .arg("-o")
+            .arg(&object)
+            .output()?;
+        if !output.status.success() {
+            return Err(io::Error::other(format!(
+                "clang failed for {}: {}",
+                target_name,
+                command_error(&output)
+            )));
+        }
+        objects.push(object);
+    }
+
+    let target_dir = output_dir.join(&target_name);
+    std::fs::create_dir(&target_dir)?;
+    let artifact = target_dir.join(format!("{}.a", manifest.name));
+    let mut archive = Command::new("llvm-ar");
+    archive.arg("rcs").arg(&artifact).args(&objects);
+    let output = archive.output()?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
-            "cargo build failed for {}: {}",
-            target.llvm_target_triple(),
+            "{} failed for {}: {}",
+            "llvm-ar",
+            target_name,
             command_error(&output)
         )));
     }
 
-    let artifact = find_static_library(&cargo_target_dir.join(&rust_target).join("debug"))?;
-    std::fs::create_dir(output_dir.join(target.llvm_target_triple()))?;
-    std::fs::rename(
-        artifact,
-        output_dir
-            .join(target.llvm_target_triple())
-            .join(&format!("{}.a", manifest.name)),
-    )
+    // The archive contains the object files, so they are no longer needed
+    // once llvm-ar has completed successfully.
+    std::fs::remove_dir_all(&object_dir)?;
+
+    Ok(())
+}
+
+fn collect_c_sources(directory: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut sources = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            sources.extend(collect_c_sources(&path)?);
+        } else if path.extension().is_some_and(|extension| extension == "c") {
+            sources.push(path);
+        }
+    }
+    Ok(sources)
 }
 
 fn command_error(output: &std::process::Output) -> String {
@@ -380,69 +417,6 @@ fn command_error(output: &std::process::Output) -> String {
         String::from_utf8_lossy(&output.stdout).trim().to_owned()
     } else {
         stderr
-    }
-}
-
-fn find_static_library(directory: &Path) -> io::Result<PathBuf> {
-    let mut artifacts = std::fs::read_dir(directory)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "a"))
-        .collect::<Vec<_>>();
-
-    match artifacts.len() {
-        1 => Ok(artifacts.pop().expect("one static library was found")),
-        0 => Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "cargo did not produce a static library in {}",
-                directory.display()
-            ),
-        )),
-        _ => Err(io::Error::other(format!(
-            "cargo produced multiple static libraries in {}",
-            directory.display()
-        ))),
-    }
-}
-
-fn validate_rust_targets(targets: &[crate::CompilationTarget]) -> io::Result<()> {
-    let output = Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("could not query installed Rust targets: {error}"),
-            )
-        })?;
-
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "could not query installed Rust targets: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-
-    let installed_output = String::from_utf8_lossy(&output.stdout);
-    let installed = installed_output
-        .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .collect::<std::collections::HashSet<_>>();
-
-    let missing = targets
-        .iter()
-        .map(|target| target.rust_target_triple())
-        .filter(|target| !installed.contains(target.as_str()))
-        .collect::<Vec<_>>();
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Rust targets are not installed: {}", missing.join(", ")),
-        ))
     }
 }
 
@@ -500,7 +474,7 @@ fn init_temp<P: AsRef<Path>>(path: P, name: &str) -> io::Result<()> {
     {
         let mut native = Table::new();
         native.insert("path".into(), "native".into());
-        native.insert("backend".into(), "rust".into());
+        native.insert("backend".into(), "c".into());
 
         toml["native"] = native.into();
     }
@@ -529,52 +503,9 @@ fn init_temp<P: AsRef<Path>>(path: P, name: &str) -> io::Result<()> {
 
     std::fs::write(path.join("margarine.toml"), toml.to_string())?;
 
-    {
-        let mut toml = Table::new();
-        toml["workspace"]["resolver"] = value("1");
-        toml["workspace"]["members"] = value(Array::new());
-
-        std::fs::write(path.join("Cargo.toml"), toml.to_string())?;
-    }
-
-    let output = Command::new("cargo")
-        .arg("init")
-        .arg("--lib")
-        .arg("native")
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "cargo init failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    std::fs::remove_file(path.join("Cargo.toml"))?;
-
-    {
-        let path = path.join("native").join("Cargo.toml");
-        let cargo = std::fs::read_to_string(&path)?;
-        let mut toml = toml_edit::DocumentMut::from_str(&cargo).unwrap();
-
-        toml.remove("dependencies").unwrap();
-        toml["workspace"] = Table::new().into();
-
-        let mut lib = Table::new();
-
-        let mut array = Array::new();
-        array.push("staticlib");
-
-        lib["crate-type"] = value(array);
-
-        toml.insert("lib".into(), lib.into());
-
-        toml["dependencies"] = Table::new().into();
-        toml["workspace"] = Table::new().into();
-
-        std::fs::write(path, toml.to_string())?;
-    }
+    std::fs::create_dir_all(path.join("native"))?;
+    const DEFAULT_NATIVE: &str = "#include <stdint.h>\n\nuint64_t margarine_add(uint64_t left, uint64_t right) {\n    return left + right;\n}\n";
+    std::fs::write(path.join("native/lib.c"), DEFAULT_NATIVE)?;
 
     const DEFAULT_STR: &str = "\
 fn add(a: int, b: int): int {
