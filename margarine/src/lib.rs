@@ -154,6 +154,13 @@ impl<'me> Compiler<'me> {
         let target_triple = self.string_map.insert(&settings.compilation_target.llvm_target_triple());
         cfg_env.insert(comp_target, target_triple);
 
+        if !self.silent {
+            println!(
+                "{} {}",
+                "target:".green().bold(),
+                settings.compilation_target.margarine_target_triple(),
+            );
+        }
 
         while let Some(entry) = stack.pop() {
             let file_path = self.string_map.get(entry.path);
@@ -848,22 +855,26 @@ impl BuildLock {
 }
 
 
-fn resolve_url(url: &str) -> String {
-    if !url.starts_with("pkg:") {
-        url.to_string()
+fn resolve_url(package: &str) -> String {
+    if !package.starts_with("pkg:") {
+        package.to_string()
     } else {
-        let base =
-        if !cfg!(feature="fuzzer") { std::env::var("MARGARINE_DEFAULT_URL").ok() }
-        else { None };
-
-        let base = base.as_ref().map(|x| x.as_str())
-            .unwrap_or("https://pkg.daymare.net/margarine");
+        let default_base = format!(
+            "https://cdn.daymare.net/margarine/{}/share",
+            env!("CARGO_PKG_VERSION")
+        );
+        let configured_base = if !cfg!(feature = "fuzzer") {
+            std::env::var("MARGARINE_DEFAULT_URL").ok()
+        } else {
+            None
+        };
+        let base = configured_base.as_deref().unwrap_or(&default_base);
 
         let base = base.trim_end_matches('/');
-        let url = url.trim_start_matches('/');
-        let url = &url["pkg:".len()..];
+        let package = package["pkg:".len()..].trim_matches('/');
 
-        format!("{base}/{url}")
+        let resolved = format!("{base}/{package}");
+        resolved
     }
 }
 
@@ -877,8 +888,8 @@ struct Resource {
 
 fn resource_cache_entry(settings: &CompilationSettings, ident: &str) -> Resource {
     let full_hash = sha2::Sha256::digest(ident.as_bytes());
-    let partial_hash = u128::from_be_bytes(full_hash[..16].try_into().unwrap());
-    let string_hash = format!("{partial_hash:x}");
+    // Eight bytes produce the first sixteen characters when hex-encoded.
+    let string_hash = hex::encode(&full_hash[..16]);
 
     let artifacts_dir = PathBuf::from(&settings.cache);
     std::fs::create_dir_all(&artifacts_dir).unwrap();
