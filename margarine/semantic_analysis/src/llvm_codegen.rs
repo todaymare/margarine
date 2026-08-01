@@ -2753,7 +2753,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let value = if field_ty.sym(self.syms).unwrap() == SymbolId::UNIT {
                         *builder.const_unit()
                     } else {
-                        builder.load(val_data_ptr, field_ty_llvm.repr)
+                        let payload = builder.load(val_data_ptr, field_ty_llvm.repr);
+                        self.emit_copy(builder, payload, field_ty)
                     };
                     builder.local_set(local, value);
 
