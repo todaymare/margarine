@@ -360,10 +360,6 @@ pub fn run<'a>(
     }
 
 
-    ctx.emit_bitcode(module, Path::new(&format!("{}.bc", settings.output)))
-        .unwrap_or_else(|error| panic!("failed to emit bitcode: {error}"));
-    ctx.emit_object(module, Path::new(&format!("{}.o", settings.output)))
-        .unwrap_or_else(|error| panic!("failed to emit object file: {error}"));
     module.validate()
         .unwrap_or_else(|error| panic!("generated invalid LLVM module: {error}"));
     module.optimize()
