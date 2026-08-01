@@ -3330,8 +3330,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::AsCast { lhs, .. } => {
+                let lhs_val = self.expr(env, builder, lhs)?;
                 let lsym = self.ty_info.expr(lhs).unwrap().sym(self.syms).unwrap();
-                let lhs = self.expr(env, builder, lhs)?;
                 out_if_err!();
 
 
@@ -3340,14 +3340,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 if lsym.is_int() && ty.is_float(self.syms) {
-                    builder.si_to_fp(lhs.as_integer(), dest.repr)
+                    builder.si_to_fp(lhs_val.as_integer(), dest.repr)
                 } else if lsym.is_float() && ty.is_int(self.syms) {
-                    builder.fp_to_si(lhs.as_fp(), dest.repr.as_integer())
+                    builder.fp_to_si(lhs_val.as_fp(), dest.repr.as_integer())
                 } else if lsym == SymbolId::BOOL && ty.is_int(self.syms) {
-                    let tag = builder.field_load(lhs.as_struct(), 0);
+                    let tag = builder.field_load(lhs_val.as_struct(), 0);
                     builder.int_cast(tag.as_integer(), dest.repr, false)
                 } else if lsym == ty.sym(self.syms).unwrap() {
-                    lhs
+                    lhs_val
                 } else {
                     unreachable!()
                 }
