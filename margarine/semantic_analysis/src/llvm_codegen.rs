@@ -364,6 +364,17 @@ pub fn run<'a>(
         .unwrap_or_else(|error| panic!("generated invalid LLVM module: {error}"));
     module.optimize()
         .unwrap_or_else(|error| panic!("failed to optimize LLVM module: {error}"));
+
+    if matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
+        let fuel_fn_ty = ctx.void().fn_ty(ctx.arena, &[], false);
+        let fuel_fn = module.function("margarineConsumeFuel", fuel_fn_ty);
+
+        fuel_fn.set_linkage(Linkage::External);
+        module.instrument_basic_block_exits(ctx.as_ctx_ref(), fuel_fn, fuel_fn_ty);
+        module.validate()
+            .unwrap_or_else(|error| panic!("generated invalid LLVM module after fuel instrumentation: {error}"));
+    }
+
     ctx.emit_bitcode(module, Path::new(&format!("{}.bc", settings.output)))
         .unwrap_or_else(|error| panic!("failed to emit bitcode: {error}"));
     ctx.emit_object(module, Path::new(&format!("{}.o", settings.output)))

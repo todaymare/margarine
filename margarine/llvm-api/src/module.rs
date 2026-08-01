@@ -1,9 +1,9 @@
-use std::{ffi::{CStr, CString}, ptr::NonNull};
+use std::{ffi::{CStr, CString}, ptr::{null_mut, NonNull}};
 
-use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMPrintModuleToString}, error::{LLVMDisposeErrorMessage, LLVMGetErrorMessage}, target::{LLVMGetModuleDataLayout, LLVMPointerSize}, target_machine::LLVMOpaqueTargetMachine, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMPassBuilderOptionsSetLoopUnrolling, LLVMPassBuilderOptionsSetVerifyEach, LLVMRunPasses}, LLVMModule};
+use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMBuildCall2, LLVMCreateBuilderInContext, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetFirstBasicBlock, LLVMGetFirstFunction, LLVMGetNextBasicBlock, LLVMGetNextFunction, LLVMPositionBuilderBefore, LLVMPrintModuleToString}, error::{LLVMDisposeErrorMessage, LLVMGetErrorMessage}, target::{LLVMGetModuleDataLayout, LLVMPointerSize}, target_machine::LLVMOpaqueTargetMachine, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMPassBuilderOptionsSetLoopUnrolling, LLVMPassBuilderOptionsSetVerifyEach, LLVMRunPasses}, LLVMModule};
 use sti::arena::Arena;
 
-use crate::{info::Message, tys::{func::FunctionType, Type}, values::{func::FunctionPtr, global::GlobalPtr, Value}};
+use crate::{cstr, info::Message, tys::{func::FunctionType, Type}, values::{func::FunctionPtr, global::GlobalPtr, Value}};
 
 #[derive(Clone, Copy)]
 pub struct Module<'ctx> {
@@ -71,6 +71,51 @@ impl<'ctx> Module<'ctx> {
     pub fn ptr_size_in_bytes(&self) -> usize {
         let dt = unsafe { LLVMGetModuleDataLayout(self.ptr.as_ptr()) };
         unsafe { LLVMPointerSize(dt) as usize } 
+    }
+
+
+    /// Inserts a call to `fuel_fn` immediately before the terminator of every
+    /// basic block in every defined function in the module.
+    pub fn instrument_basic_block_exits(
+        &self,
+        ctx: crate::ctx::ContextRef<'ctx>,
+        fuel_fn: FunctionPtr<'ctx>,
+        fuel_fn_ty: FunctionType<'ctx>,
+    ) {
+        let builder = unsafe { LLVMCreateBuilderInContext(ctx.ptr.as_ptr()) };
+        let builder = NonNull::new(builder).expect("failed to create fuel instrumentation builder");
+
+        unsafe {
+            let mut function = LLVMGetFirstFunction(self.ptr.as_ptr());
+            while !function.is_null() {
+                // Declarations have no basic blocks and are skipped naturally.
+                let mut block = LLVMGetFirstBasicBlock(function);
+                while !block.is_null() {
+                    // Keep the next block before inserting into the current one.
+                    let next = LLVMGetNextBasicBlock(block);
+                    let terminator = LLVMGetBasicBlockTerminator(block);
+
+                    if !terminator.is_null() {
+                        LLVMPositionBuilderBefore(builder.as_ptr(), terminator);
+                        let call = LLVMBuildCall2(
+                            builder.as_ptr(),
+                            fuel_fn_ty.llvm_ty().as_ptr(),
+                            fuel_fn.llvm_val().as_ptr(),
+                            null_mut(),
+                            0,
+                            cstr!(""),
+                        );
+                        assert!(!call.is_null(), "failed to build __consume_fuel call");
+                    }
+
+                    block = next;
+                }
+
+                function = LLVMGetNextFunction(function);
+            }
+
+            LLVMDisposeBuilder(builder.as_ptr());
+        }
     }
 
 
