@@ -218,6 +218,10 @@ pub enum Error {
         source: SourceRange,
     },
 
+    CannotMutateCapturedValue {
+        source: SourceRange,
+    },
+
     InOutValueWithoutInOutBinding {
         source: SourceRange,
     },
@@ -671,6 +675,11 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::AssignIsNotLHSValue { source } => {
                 fmt.error("this is not a valid lhs expression")
                     .highlight(*source);
+            },
+
+            Error::CannotMutateCapturedValue { source } => {
+                fmt.error("cannot mutate a captured closure value")
+                    .highlight_with_note(*source, "closure captures are copied values");
             },
 
 

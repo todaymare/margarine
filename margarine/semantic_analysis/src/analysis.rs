@@ -1372,7 +1372,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     self.error(id, Error::ValueUpdateTypeMismatch { lhs: lhs_anal.ty, rhs: rhs_anal.ty, source });
                 }
 
-                if !lhs_anal.is_mut || !self.is_assignable_place(lhs) {
+                if lhs_anal.is_captured && self.is_assignable_place(lhs) {
+                    let range = self.ast.range(lhs);
+                    self.error(id, Error::CannotMutateCapturedValue { source: range });
+                } else if !lhs_anal.is_mut || !self.is_assignable_place(lhs) {
                     let range = self.ast.range(lhs);
                     self.error(id, Error::AssignIsNotLHSValue { source: range });
                 }
@@ -1631,12 +1634,16 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 else { return Err(Error::VariableNotFound { name: ident, source: range }) };
 
                 match variable {
-                    Ok(variable) => {
+                    Ok((variable, is_captured)) => {
                         if gens.is_some() {
                             return Err(Error::GenericLenMismatch { source: range, found: gens.map(|gs| gs.len()).unwrap_or(0), expected: 0 })
                         }
 
-                        return Ok(AnalysisResult::new(variable.ty()))
+                        return Ok(if is_captured {
+                            AnalysisResult::captured(variable.ty())
+                        } else {
+                            AnalysisResult::new(variable.ty())
+                        })
                     },
 
 
@@ -2153,7 +2160,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             self.type_info.exprs[id] = Some(crate::ExprInfo::Errored(e));
                         }
 
-                        return Ok(AnalysisResult::new(ty))
+                        return Ok(AnalysisResult {
+                            ty,
+                            is_mut: expr.is_mut,
+                            is_captured: expr.is_captured,
+                        })
                     },
 
 
@@ -2426,6 +2437,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         self.error(expr, Error::InOutValueWithoutInOutBinding { source });
                     } else if formal_inout && !is_inout {
                         self.error(expr, Error::InOutBindingWithoutInOutValue { source });
+                    } else if is_inout && anal.is_captured && self.is_assignable_place(expr) {
+                        self.error(expr, Error::CannotMutateCapturedValue { source });
                     } else if is_inout && (!anal.is_mut || !self.is_assignable_place(expr)) {
                         self.error(expr, Error::InOutValueIsNotAssignable { source });
                     }
@@ -2624,7 +2637,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let gens = list.ty.gens(&self.syms);
                 let (_, ty) = self.syms.get_gens(gens)[0];
 
-                AnalysisResult::new(ty)
+                AnalysisResult {
+                    ty,
+                    is_mut: list.is_mut,
+                    is_captured: list.is_captured,
+                }
             }
 
 
@@ -2699,7 +2716,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let gens = expr.ty.gens(&self.syms);
                     let gens = self.syms.get_gens(gens);
 
-                    return Ok(AnalysisResult::new(gens[0].1));
+                    return Ok(AnalysisResult {
+                        ty: gens[0].1,
+                        is_mut: expr.is_mut,
+                        is_captured: expr.is_captured,
+                    });
                 }
 
                 
@@ -2732,7 +2753,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             func_err_typ: func_gens[1].1, err_typ: gens[1].1 });
                     }
 
-                    return Ok(AnalysisResult::new(gens[0].1));
+                    return Ok(AnalysisResult {
+                        ty: gens[0].1,
+                        is_mut: expr.is_mut,
+                        is_captured: expr.is_captured,
+                    });
                 }
 
 

@@ -109,10 +109,12 @@ pub enum ExprInfo {
 pub struct AnalysisResult {
     ty    : Type,
     is_mut: bool,
+    is_captured: bool,
 }
 
 impl AnalysisResult {
-    pub fn new(ty: Type) -> Self { Self { ty, is_mut: true } }
+    pub fn new(ty: Type) -> Self { Self { ty, is_mut: true, is_captured: false } }
+    pub fn captured(ty: Type) -> Self { Self { ty, is_mut: true, is_captured: true } }
     pub fn error() -> Self { Self::new(Type::ERROR) }
     pub fn never() -> Self { Self::new(Type::NEVER) }
 }

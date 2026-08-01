@@ -151,7 +151,7 @@ impl<'me> Scope<'me> {
         scope_map: &ScopeMap,
         namespaces: &NamespaceMap,
         symbols: &mut SymbolMap
-    ) -> Option<Result<VariableScope, Result<SymbolId, Error>>> {
+    ) -> Option<Result<(VariableScope, bool), Result<SymbolId, Error>>> {
 
         let requester = self.over(scope_map, |scope| match scope.kind {
             ScopeKind::ImplicitNamespace(ns) => Some(ns),
@@ -159,9 +159,14 @@ impl<'me> Scope<'me> {
         });
 
         let mut fence = false;
+        let mut captured = false;
         self.over(scope_map, |scope| {
             if let ScopeKind::NamespaceFence = scope.kind {
                 fence = true;
+            }
+
+            if matches!(scope.kind, ScopeKind::Closure(_)) {
+                captured = true;
             }
 
 
@@ -179,7 +184,7 @@ impl<'me> Scope<'me> {
                     None
                 });
 
-                return Some(Ok(v))
+                return Some(Ok((v, captured)))
             }
 
 

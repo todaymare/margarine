@@ -849,6 +849,50 @@ mod tests {
             semantic_analysis::errors::Error::AmbiguousTraitMethod { .. }
         )));
     }
+
+    #[test]
+    fn captured_closure_values_cannot_be_mutated() {
+        let result = compile_source(
+            "struct Value { field: int }\n\
+             struct Holder { value: Value }\n\
+             struct Optional { value: Option<int> }\n\
+             fn increment(&value: int) { value += 1; }\n\
+             fn main() {\n\
+                 var direct = 1;\n\
+                 var direct_closure = || { direct = 2; };\n\
+                 var compound = 1;\n\
+                 var compound_closure = || { compound += 1; };\n\
+                 var holder = Holder { value: Value { field: 1 } };\n\
+                 var field_closure = || { holder.value.field = 2; };\n\
+                 var values = [1, 2];\n\
+                 var index_closure = || { increment(&values[0]); };\n\
+                 var optional = Optional { value: some(1) };\n\
+                 var unwrap_closure = || { optional.value! = 2; };\n\
+                 var or_return_closure = || { optional.value? = 2; };\n\
+             }",
+        );
+
+        assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
+            error,
+            semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
+        )).count(), 6);
+    }
+
+    #[test]
+    fn closure_local_values_remain_mutable_and_captures_remain_readable() {
+        let result = compile_source(
+            "fn main() {\n\
+                 var captured = 1;\n\
+                 var read = || { captured };\n\
+                 var local = || { var value = 1; value += 1; value };\n\
+             }",
+        );
+
+        assert!(!result.errors.sema_errors.iter().any(|error| matches!(
+            error,
+            semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
+        )));
+    }
 }
 
 
