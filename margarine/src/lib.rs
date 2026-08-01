@@ -827,6 +827,28 @@ mod tests {
         let result = compile_source("mod a { pub fn exposed() {} } mod b { pub use a::exposed } use b::exposed");
         assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::PrivateSymbol { .. })));
     }
+
+    #[test]
+    fn reimporting_the_same_symbol_is_idempotent() {
+        let result = compile_source("mod a { pub fn exposed() {} } use a::exposed use a::exposed");
+        assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::NameIsAlreadyDefined { .. })));
+    }
+
+    #[test]
+    fn ambiguous_trait_methods_are_reported() {
+        let result = compile_source(
+            "trait First { fn method(self) }\n\
+             trait Second { fn method(self) }\n\
+             struct Value {}\n\
+             impl First for Value { fn method(self) {} }\n\
+             impl Second for Value { fn method(self) {} }\n\
+             fn main() { Value {}.method() }",
+        );
+        assert!(result.errors.sema_errors.iter().any(|error| matches!(
+            error,
+            semantic_analysis::errors::Error::AmbiguousTraitMethod { .. }
+        )));
+    }
 }
 
 

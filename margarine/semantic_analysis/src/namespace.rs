@@ -75,6 +75,15 @@ impl Namespace {
     }
 
     pub fn add_sym(&mut self, source: SourceRange, name: StringIndex, sym: SymbolId, visibility: Visibility) -> Result<(), Error> {
+        // A package can be brought into scope explicitly as well as through a
+        // prelude. Both imports resolve to the same symbol, so treating the
+        // second insertion as a conflicting declaration poisons the namespace
+        // with an error entry. That error can later be reached while the symbol
+        // is still pending, causing semantic analysis to unwrap a non-symbol.
+        if matches!(self.symbols.get(&name), Some(SymbolEntry { result: Ok(existing), .. }) if *existing == sym) {
+            return Ok(());
+        }
+
         let old_sym = self.symbols.insert(name, SymbolEntry { result: Ok(sym), visibility });
         if old_sym.is_some() {
             let id = Error::NameIsAlreadyDefined { source, name };

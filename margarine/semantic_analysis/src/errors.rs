@@ -255,6 +255,11 @@ pub enum Error {
 
     TypeDoesntImplTrait { source: SourceRange, ty: Type, tr: SymbolId },
 
+    AmbiguousTraitMethod {
+        source: SourceRange,
+        name: StringIndex,
+    },
+
     InvalidArgument { source: SourceRange },
 
     Bypass,
@@ -799,6 +804,15 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
 
                 fmt.error("type doesn't implement required bound")
                     .highlight_with_note(*source, &msg)
+            },
+
+            Error::AmbiguousTraitMethod { source, name } => {
+                let name = fmt.string(*name).to_string();
+                fmt.error("ambiguous trait method")
+                    .highlight_with_note(
+                        *source,
+                        &format!("multiple traits provide a method named '{name}' for this value"),
+                    )
             },
 
 

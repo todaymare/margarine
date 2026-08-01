@@ -1530,6 +1530,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let sym_id = self.scopes.get(scope).find_super(&self.scopes)?;
 
                     let mut candidate = None;
+                    let mut ambiguous_trait_method = false;
                     let candidates = self.syms.traits(sym_id).clone();
 
                     self.scopes.get(scope)
@@ -1552,14 +1553,21 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                             if candidate.is_none() {
                                 candidate = Some((trait_id, ft.1, *ty, *generics));
-                                return Some(());
                             } else {
-                                todo!("ambigious");
+                                ambiguous_trait_method = true;
+                                return Some(());
                             }
                         }
 
-                        None
+                        candidate.as_ref().map(|_| ())
                     });
+
+                    if ambiguous_trait_method {
+                        return Some(Err(Err(Error::AmbiguousTraitMethod {
+                            source: range,
+                            name: ident,
+                        })));
+                    }
 
                     // Bounds are available to a generic even when their trait was qualified.
                     if candidate.is_none() {
@@ -2220,6 +2228,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 // try to find traits
                 let mut candidate = None;
+                let mut ambiguous_trait_method = false;
                 let candidates = self.syms.traits(sym_id).clone();
 
                 self.scopes.get(scope)
@@ -2246,14 +2255,21 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         if candidate.is_none() {
                             candidate = Some((trait_id, ft.1, *ty, *generics));
-                            return Some(());
                         } else {
-                            todo!("ambigious");
+                            ambiguous_trait_method = true;
+                            return Some(());
                         }
                     }
 
-                    None
+                    candidate.as_ref().map(|_| ())
                 });
+
+                if ambiguous_trait_method {
+                    return Err(Error::AmbiguousTraitMethod {
+                        source: range,
+                        name: field_name,
+                    });
+                }
 
                 // Bounds are available to a generic even when their trait was qualified.
                 if candidate.is_none() {
