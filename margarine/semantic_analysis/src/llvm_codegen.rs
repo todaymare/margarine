@@ -2414,12 +2414,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let val = self.ast.expr(expr);
         let ty = self.ty_info.exprs[expr];
-        let result_ty = match ty.unwrap_or(crate::ExprInfo::Errored(ErrorId::Bypass)) {
-            crate::ExprInfo::Result { ty } => ty.resolve(&[env.gens], self.syms),
-            crate::ExprInfo::Errored(e) => return Err(e),
+        let result_ty = match ty.unwrap() {
+            crate::ExprInfo::Result { ty } => Ok(ty.resolve(&[env.gens], self.syms)),
+            crate::ExprInfo::Errored(e) => Err(e),
         };
 
-        let is_err = result_ty.is_err(self.syms);
+        let is_err = result_ty.map(|t| t.is_err(self.syms));
 
         let llvm_value = 
         match val {
@@ -3425,7 +3425,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::OrReturn(expr_id) => {
+                println!("hi");
                 let value = self.expr(env, builder, expr_id)?;
+                println!("hey");
                 out_if_err!();
 
                 let some = builder.const_int(self.i32, 0, false);
@@ -3466,9 +3468,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             },
         };
 
-        if is_err {
+        let result_ty = result_ty?;
+        if is_err == Ok(true) {
             return Err(ErrorId::Bypass);
         }
+
 
         Ok((llvm_value, result_ty))
     }

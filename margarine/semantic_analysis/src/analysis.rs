@@ -2699,6 +2699,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let Some(func) = self.scopes.get(scope).find_curr_func(&self.scopes)
                 else { return Err(Error::OutsideOfAFunction { source: range }) };
 
+                if sym == SymbolId::ERR {
+                    return Err(Error::Bypass);
+                }
+
                 if sym == SymbolId::OPTION {
                     let func_sym = func.ret;
                     let opt_sym = {
