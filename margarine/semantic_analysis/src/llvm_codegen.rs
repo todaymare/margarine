@@ -2419,18 +2419,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             crate::ExprInfo::Errored(e) => return Err(e),
         };
 
-        // `err` is the semantic-analysis recovery type, not a value that can be
-        // represented by generated code.  In particular, a match whose arms all
-        // failed to type-check is itself typed as `err`; letting it reach the
-        // function epilogue would make that epilogue return `%err` from the
-        // function's actual return type.  Stop codegen for this expression so
-        // the enclosing function emits its normal error/unreachable path.
-        if result_ty.is_err(self.syms) {
-            return Err(ErrorId::Bypass);
-        }
+        let is_err = result_ty.is_err(self.syms);
 
-
-        Ok((match val {
+        let llvm_value = 
+        match val {
             parser::nodes::expr::Expr::Unit => *builder.const_unit(),
             parser::nodes::expr::Expr::Literal(literal) => {
                 match literal {
@@ -2973,7 +2965,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::CallFunction { lhs, args } => {
-                out_if_err!();
 
                 // Type errors are attached to individual arguments, not necessarily the call.
                 // Check them before materializing the callee, which may instantiate generic code.
@@ -2982,6 +2973,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
                 let (func, func_ty) = self.expr_ex(env, builder, lhs)?;
+                out_if_err!();
+
 
                 let callable_ty = func_ty.resolve(&[env.gens], self.syms);
                 let func_sym = callable_ty.sym(self.syms).unwrap();
@@ -3471,7 +3464,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 payload
             },
-        }, result_ty))
+        };
+
+        if is_err {
+            return Err(ErrorId::Bypass);
+        }
+
+        Ok((llvm_value, result_ty))
     }
 
 
