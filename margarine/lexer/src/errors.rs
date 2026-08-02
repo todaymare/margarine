@@ -21,6 +21,7 @@ pub enum Error {
     InvalidBaseForNumber(SourceRange),
     InvalidExponent(SourceRange),
     InvalidEscape { character: char, position: SourceRange },
+    InvalidString(SourceRange),
 }
 
 
@@ -83,6 +84,11 @@ impl ErrorType<()> for Error {
             Error::InvalidExponent(pos) => {
                 fmt.error("invalid float exponent")
                     .highlight_with_note(*pos, "exponents must be integers")
+            },
+
+            Error::InvalidString(pos) => {
+                fmt.error("invalid utf-8 string")
+                    .highlight(*pos)
             },
 
             Error::InvalidEscape { character, position } => {

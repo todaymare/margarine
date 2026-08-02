@@ -169,6 +169,7 @@ pub enum TokenKind {
     /// '$'
     DollarSign,
     
+    Doc(StringIndex),
     EndOfFile,
 
     Error(LexerError),
@@ -271,14 +272,21 @@ impl Lexer<'_, '_> {
 impl Lexer<'_, '_> {
     fn next_token(&mut self) -> Token {
         self.skip_whitespace();
-        while self.reader.starts_with(b"//") {
+        while self.reader.starts_with(b"//")
+        && !self.reader.starts_with(b"///"){
             self.reader.consume_while(|x| *x != b'\n');
             self.skip_whitespace();
         }
 
 
         let start = self.reader.offset() as u32;
-        let Some(val) = self.reader.next() else { return self.eof() };
+
+        let Some(val) = self.reader.next() 
+        else { return self.eof() };
+
+
+
+
 
         let kind = match val {
             b'(' => TokenKind::LeftParenthesis,
@@ -326,6 +334,50 @@ impl Lexer<'_, '_> {
             }
 
             b'/' => {
+                if self.reader.starts_with(b"//") {
+                    let start = self.reader.offset();
+                    let mut s = sti::string::String::new_in(self.string_map.arena());
+                    self.reader.set_offset(self.reader.offset()-1);
+
+                    while self.reader.starts_with(b"///") {
+                        let start = self.reader.offset();
+                        let (slice, _) = self.reader.consume_while_slice(|x| *x != b'\n');
+                        let Ok(str) = core::str::from_utf8(&slice)
+                        else { 
+                            let end = self.source_offset + self.reader.offset() as u32 - 1;
+                            let source_range = SourceRange::new(self.source_offset + start as u32, end);
+                            let error = self.errors.push(Error::InvalidString(source_range));
+                            let kind = TokenKind::Error(error);
+
+                            return Token {
+                                token_kind: kind,
+                                source_range,
+                            }
+                        };
+
+                        self.skip_whitespace();
+
+                        if !s.is_empty() {
+                            s.push_char('\n');
+                        }
+
+                        s.push(str);
+                    }
+
+
+                    if !s.is_empty() {
+                        // todo(perf): &s is already in StringMap's arena
+                        let s = self.string_map.insert(&s);
+                        let end = self.source_offset + self.reader.offset() as u32 - 1;
+                        let source_range = SourceRange::new(self.source_offset + start as u32, end);
+                        let kind = TokenKind::Doc(s);
+
+                        return Token {
+                            token_kind: kind,
+                            source_range,
+                        }
+                    }
+                }
                 if self.reader.consume_if_eq(&b'=') { TokenKind::DivEquals }
                 else { TokenKind::Slash }
             }
@@ -513,6 +565,7 @@ impl Lexer<'_, '_> {
                         let start = end.saturating_sub(1);
                         let source = SourceRange::new(self.source_offset + start, self.source_offset + end);
                         self.reader = recover;
+
                         return TokenKind::Error(self.errors.push(Error::InvalidEscape {
                             character: value as char,
                             position: source,
@@ -538,7 +591,18 @@ impl Lexer<'_, '_> {
                     for byte in bytes.iter_mut().take(width).skip(1) {
                         *byte = self.reader.next().unwrap();
                     }
-                    string.push_str(std::str::from_utf8(&bytes[..width]).unwrap());
+
+                    let Ok(str) = std::str::from_utf8(&bytes[..width])
+                    else {
+                        let end = self.source_offset + self.reader.offset() as u32 - 1;
+                        let source_range = SourceRange::new(self.source_offset + start as u32, end);
+                        let error = self.errors.push(Error::InvalidString(source_range));
+                        let kind = TokenKind::Error(error);
+
+                        return kind;
+                    };
+
+                    string.push_str(str);
                 },
             }
         }

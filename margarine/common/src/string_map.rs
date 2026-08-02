@@ -78,6 +78,8 @@ impl<'str> StringMap<'str> {
     pub const STR_CONCAT : StringIndex = StringIndex(61);
     pub const STR_SLICE : StringIndex = StringIndex(62);
 
+    pub const DOC : StringIndex = StringIndex(63);
+
  
     #[inline(always)]
     pub fn new(arena: &'str Arena) -> Self {
@@ -159,6 +161,8 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("$list_slice"), Self::LIST_SLICE);
         assert_eq!(s.insert("$str_concat"), Self::STR_CONCAT);
         assert_eq!(s.insert("$str_slice"), Self::STR_SLICE);
+
+        assert_eq!(s.insert("doc"), Self::DOC);
         s
     }
 

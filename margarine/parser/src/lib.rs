@@ -642,12 +642,12 @@ impl<'out> Parser<'_, 'out, '_> {
             }
 
 
-            if !storage.is_empty() && !self.is_in_panic 
+            if !storage.is_empty() && !self.is_in_panic
             && !matches!(storage.last().unwrap(), NodeId::Decl(_))
             && !matches!(self.tokens[self.index-1].kind(), TokenKind::SemiColon | TokenKind::RightBracket) {
                 if let Err(e) = self.expect(TokenKind::SemiColon) {
                     storage.push(NodeId::Err(e));
-                    self.is_in_panic = true;
+                    self.is_in_panic = true
                 } else {
                     storage.push(NodeId::Expr(self.ast.add_expr(Expr::Unit, self.current_range())));
                     self.advance();
@@ -668,7 +668,7 @@ impl<'out> Parser<'_, 'out, '_> {
                 self.is_in_panic = false;
             }
 
-            
+
 
             let statement = self.statement(settings);
 
@@ -848,12 +848,48 @@ impl<'ta> Parser<'_, 'ta, '_> {
             return Ok(Some(node));
         }
 
-        let node = match self.current_kind() {
+        let node = 
+        match self.current_kind() {
             TokenKind::Keyword(Keyword::Var) => self.let_statement()?.into(),
             TokenKind::Keyword(Keyword::For) => self.for_statement()?.into(),
 
             TokenKind::SemiColon => {
                 return Ok(Some(self.ast.add_expr(Expr::Unit, self.current_range()).into()))
+            }
+
+            TokenKind::Doc(s) => {
+
+                let param = 
+                Attribute {
+                    value: AttributeValue::Literal(Literal::String(s)),
+                    range: self.current_range(),
+                    params: &[]
+                };
+
+                let attr = 
+                Attribute {
+                    value: AttributeValue::Identifier(StringMap::DOC),
+                    range: self.current_range(),
+                    params: self.arena.alloc_new([param]),
+                };
+
+                let start = self.current_range().start();
+
+                self.advance();
+
+                let Some(stmt) = self.statement(settings)? 
+                else {
+                    return Ok(None);
+                };
+
+                match stmt {
+                    NodeId::Decl(decl) => self.ast.add_decl(
+                        Decl::Attribute { attr, decl },
+                        SourceRange::new(start, self.current_range().end()),
+                    ).into(),
+
+                    _ => stmt, // silently drop the attr
+                }
             }
 
             TokenKind::At => {

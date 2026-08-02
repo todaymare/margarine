@@ -1,10 +1,14 @@
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}, Once};
-use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Decl, DeclId, FunctionSignature, UseItem, UseItemKind, Visibility}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
+use lexer::Literal;
+use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Attribute, AttributeValue, Decl, DeclId, FunctionSignature, UseItem, UseItemKind, Visibility}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
 use sti::{alloc::GlobalAlloc, key::Key, vec::{KVec, Vec}};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, Generic, GenericKind, SymbolId}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
+    fn validate_doc_attr(&mut self, node: NodeId, attr: Attribute) {
+    }
+
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
         let scope = scope;
         let parent = self.scopes.get(scope).over(&self.scopes, |scope| match scope.kind() { ScopeKind::ImplicitNamespace(ns) => Some(ns), _ => None });
@@ -1144,6 +1148,22 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 self.decl(scope, ns, decl_id);
 
                 match attr_name.map(|name| self.string_map.get(name)) {
+                    Some("doc") => {
+                        let valid = 
+                           attr.params.len() == 1
+                        && matches!(attr.params[0].value, AttributeValue::Literal(Literal::String(_)));
+
+                        if !valid {
+                            let value = attr.params.first().map(|param| param.range).unwrap_or(attr.range);
+                            self.error(n, Error::InvalidValueForAttr {
+                                attr: (attr.range, StringMap::DOC),
+                                value,
+                                expected: "'a string literal'",
+                            });
+                        }
+
+                    },
+
                     Some("test") => {
                         let mut decl_id = decl_id;
                         while let Decl::Attribute { decl, .. } = self.ast.decl(decl_id) {
