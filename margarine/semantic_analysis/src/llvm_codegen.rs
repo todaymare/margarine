@@ -2674,8 +2674,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 builder.ite(&mut (self, env), tag,
                 |builder, (this, env)| {
-                    let Ok(value) = this.expr(env, builder, body)
-                    else { return; };
+                    let value = 
+                    match this.expr(env, builder, body) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            this.error(env, builder, err);
+                            return;
+                        },
+                    };
 
                     if let Some(local) = local {
                         builder.local_set(local, value);
@@ -2683,12 +2689,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 },
 
 
-                |builder, (slf, env)| {
+                |builder, (this, env)| {
                     let Some(body) = else_block
                     else { return; };
 
-                    let Ok(value) = slf.expr(env, builder, body)
-                    else { return; };
+                    let value =
+                    match this.expr(env, builder, body) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            this.error(env, builder, err);
+                            return;
+                        },
+                    };
+
 
                     if let Some(local) = local {
                         builder.local_set(local, value);
@@ -3425,9 +3438,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::OrReturn(expr_id) => {
-                println!("hi");
                 let value = self.expr(env, builder, expr_id)?;
-                println!("hey");
                 out_if_err!();
 
                 let some = builder.const_int(self.i32, 0, false);
