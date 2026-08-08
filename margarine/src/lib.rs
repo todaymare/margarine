@@ -852,30 +852,83 @@ mod tests {
 
     #[test]
     fn captured_closure_values_cannot_be_mutated() {
+        let cases = [
+            (
+                "direct assignment",
+                "fn main() {\n\
+                     var captured = 1;\n\
+                     var closure = || { captured = 2; };\n\
+                 }",
+            ),
+            (
+                "compound assignment",
+                "fn main() {\n\
+                     var captured = 1;\n\
+                     var closure = || { captured += 1; };\n\
+                 }",
+            ),
+            (
+                "nested field assignment",
+                "struct Value { field: int }\n\
+                 struct Holder { value: Value }\n\
+                 fn main() {\n\
+                     var holder = Holder { value: Value { field: 1 } };\n\
+                     var closure = || { holder.value.field = 2; };\n\
+                 }",
+            ),
+            (
+                "mutation through &",
+                "fn increment(&value: int) { value += 1; }\n\
+                 fn main() {\n\
+                     var values = [1, 2];\n\
+                     var closure = || { increment(&values[0]); };\n\
+                 }",
+            ),
+            (
+                "unwrap assignment",
+                "struct Optional { value: Option<int> }\n\
+                 fn main() {\n\
+                     var optional = Optional { value: some(1) };\n\
+                     var closure = || { optional.value! = 2; };\n\
+                 }",
+            ),
+            (
+                "or-return assignment",
+                "struct Optional { value: Option<int> }\n\
+                 fn main() {\n\
+                     var optional = Optional { value: some(1) };\n\
+                     var closure = || { optional.value? = 2; };\n\
+                 }",
+            ),
+        ];
+
+        for (name, source) in cases {
+            let result = compile_source(source);
+            assert_eq!(
+                result.errors.sema_errors.iter().filter(|error| matches!(
+                    error,
+                    semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
+                )).count(),
+                1,
+                "{name}",
+            );
+        }
+    }
+
+    #[test]
+    fn captured_closure_unwrap_assignment_cannot_be_mutated() {
         let result = compile_source(
-            "struct Value { field: int }\n\
-             struct Holder { value: Value }\n\
-             struct Optional { value: Option<int> }\n\
-             fn increment(&value: int) { value += 1; }\n\
+            "struct Optional { value: Option<int> }\n\
              fn main() {\n\
-                 var direct = 1;\n\
-                 var direct_closure = || { direct = 2; };\n\
-                 var compound = 1;\n\
-                 var compound_closure = || { compound += 1; };\n\
-                 var holder = Holder { value: Value { field: 1 } };\n\
-                 var field_closure = || { holder.value.field = 2; };\n\
-                 var values = [1, 2];\n\
-                 var index_closure = || { increment(&values[0]); };\n\
                  var optional = Optional { value: some(1) };\n\
-                 var unwrap_closure = || { optional.value! = 2; };\n\
-                 var or_return_closure = || { optional.value? = 2; };\n\
+                 var closure = || { optional.value! = 2; };\n\
              }",
         );
 
         assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
             error,
             semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
-        )).count(), 6);
+        )).count(), 1);
     }
 
     #[test]

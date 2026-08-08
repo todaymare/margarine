@@ -2709,7 +2709,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let gens = expr.ty.gens(&self.syms);
                 let gens = self.syms.get_gens(gens);
                 
-                AnalysisResult::new(gens[0].1)
+                AnalysisResult {
+                    ty: gens[0].1,
+                    is_mut: expr.is_mut,
+                    is_captured: expr.is_captured,
+                }
             },
 
 
