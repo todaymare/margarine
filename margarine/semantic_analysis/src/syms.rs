@@ -58,4 +58,5 @@ impl<'me> Symbol<'me> {
     pub fn new_ns(name: StringIndex) -> Self {
         Self::new(name, &[], SymbolKind::Namespace)
     }
+
 }

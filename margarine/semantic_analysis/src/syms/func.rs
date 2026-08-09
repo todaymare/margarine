@@ -65,6 +65,7 @@ pub enum FunctionKind {
 
 impl<'me> FunctionTy<'me> {
     pub fn new(args: &'me [FunctionArgument<'me>], ret: Generic<'me>, kind: FunctionKind, decl: Option<DeclId>) -> Self { Self { args, ret, kind, decl, cached: false } }
+
 }
 
 

@@ -6,9 +6,6 @@ use sti::{alloc::GlobalAlloc, key::Key, vec::{KVec, Vec}};
 use crate::{errors::Error, namespace::{Namespace, NamespaceId}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, Generic, GenericKind, SymbolId}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
-    fn validate_doc_attr(&mut self, node: NodeId, attr: Attribute) {
-    }
-
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
         let scope = scope;
         let parent = self.scopes.get(scope).over(&self.scopes, |scope| match scope.kind() { ScopeKind::ImplicitNamespace(ns) => Some(ns), _ => None });
@@ -1424,6 +1421,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     return;
                 };
+
+                if iter_anal.ty.is_err(&mut self.syms) {
+                    return;
+                }
 
                 let func = self.syms.sym_ns(sym);
                 let ns = self.namespaces.get_ns(func);

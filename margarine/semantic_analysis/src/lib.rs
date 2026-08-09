@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
-use namespace::{Namespace, NamespaceMap};
 use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{DeclGeneric, DeclId}, expr::ExprId, stmt::StmtId, NodeId, AST}};
 use scope::{Scope, ScopeId, ScopeMap};
 use sti::{arena::Arena, ext::FromIn, key::Key, vec::{KVec, Vec}};
 use syms::{ty::Type, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
+use namespace::{Namespace, NamespaceId, NamespaceMap};
 
 use crate::{scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId}, Symbol}};
 
@@ -31,6 +31,7 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub startups: Vec<SymbolId>,
     pub tests   : Vec<(SymbolId, bool)>,
     pub link_files: Vec<DeclId>,
+    pub root_namespace: Option<NamespaceId>,
 
     pub errors     : KVec<SemaError, Error>,
     pub error_nodes: KVec<SemaError, NodeId>,
@@ -152,6 +153,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             startups: Vec::new(),
             tests: Vec::new(),
             link_files: Vec::new(),
+            root_namespace: None,
             temp,
             base_scope: ScopeId::MIN,
         };
@@ -820,4 +822,16 @@ impl TyInfo<'_> {
     pub fn decl(&self, decl: DeclId) -> Option<ErrorId> {
         self.decls[decl]
     }
+    pub fn ident(&self, expr: ExprId) -> Option<Option<SymbolId>> {
+        self.idents.get(&expr).copied()
+    }
+
+    pub fn func_call(&self, expr: ExprId) -> Option<(SymbolId, GenListId)> {
+        self.funcs.get(&expr).copied()
+    }
+
+    pub fn trait_func(&self, expr: ExprId) -> Option<SymbolId> {
+        self.trait_funcs.get(&expr).copied()
+    }
+
 }
