@@ -1971,7 +1971,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             
             if self.current_is(TokenKind::LeftParenthesis)
                 || self.peek_is(TokenKind::DoubleColon) {
-                let start = self.current_range().start();
+                let start = self.ast.range(result).start();
                 self.advance();
 
                 let args = self.parse_function_call_args(None)?;
@@ -2607,7 +2607,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 mod tests {
     use super::*;
     use sti::arena::Arena;
-    use common::{source::{FileData, Extension}, string_map::StringMap};
+    use common::{source::{FileData, Extension, SourceRange}, string_map::StringMap};
     use lexer::lex;
 
     #[test]
