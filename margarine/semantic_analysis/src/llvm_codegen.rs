@@ -40,6 +40,7 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     rc_clone_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
     /// fn(ptr): bool
     rc_drop_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
+
     /// fn(ptr): void
     assert_not_null_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
 
@@ -55,6 +56,8 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     /// struct(collection_header, collection_ty, collection_ty)
     collection_concat_payload: StructTy<'ctx>,
 
+    collection_drop_funcs: HashMap<(LLVMType<'ctx>, Option<TypeHash>), (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
+
     // ptr1 is a function ptr
     // ptr2 is the environment ptr
     func_ref: StructTy<'ctx>,
@@ -63,7 +66,6 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
     str_ty: StructTy<'ctx>,
     string_from_utf8_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
-
 
     ctx: ContextRef<'ctx>,
     module: Module<'ctx>,
@@ -273,6 +275,7 @@ pub fn run<'a>(
         let rc_drop_fn = module.function("margarineRcDrop", rc_drop_fn_ty);
         rc_drop_fn.set_linkage(Linkage::External);
 
+
         let assert_not_null_fn_ty = void.fn_ty(ctx.arena, &[*ctx.ptr()], false);
         let assert_not_null_fn = module.function("margarineAssertNotNull", assert_not_null_fn_ty);
         assert_not_null_fn.set_linkage(Linkage::External);
@@ -326,6 +329,7 @@ pub fn run<'a>(
             rc_alloc_fn: (rc_alloc_fn, rc_alloc_fn_ty),
             rc_clone_fn: (rc_clone_fn, rc_clone_fn_ty),
             rc_drop_fn: (rc_drop_fn, rc_drop_fn_ty),
+
             assert_not_null_fn: (assert_not_null_fn, assert_not_null_fn_ty),
             i32: i32_ty,
             i64: ctx.integer(64),
@@ -341,6 +345,7 @@ pub fn run<'a>(
             collection_slice_payload,
             collection_concat_payload,
             str_ty,
+            collection_drop_funcs: HashMap::new(),
         };
 
         conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn, ExternAbi::Direct));
@@ -466,6 +471,28 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
+    fn collection_flat_header_type(&self, elem_ty: LLVMType<'ctx>) -> StructTy<'ctx> {
+        let arr = self.ctx.array(elem_ty, 0);
+        self.ctx.literal_struct(&[*self.collection_flat_payload, *arr], false)
+    }
+
+
+    fn collection_flat_allocation_size(
+        &self, builder: &mut Builder<'ctx>,
+        elem_ty: LLVMType<'ctx>, length: Integer<'ctx>
+    ) -> Integer<'ctx> {
+        let payload_ty = self.collection_flat_header_type(elem_ty);
+        let header_size = payload_ty.size_of(self.module).unwrap();
+        let header_size = builder.const_int(self.usize, header_size as _, false);
+
+        let elem_size = elem_ty.size_of(self.module).unwrap();
+        let elem_size = builder.const_int(self.usize, elem_size as _, false);
+        let payload_size = builder.mul_int(length, elem_size);
+
+        builder.add_int(header_size, payload_size)
+    }
+
+
     /// IMPORTANT: the returned flat buffer is uninitialised
     /// returns:
     /// - collectionTy
@@ -474,17 +501,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         &self, builder: &mut Builder<'ctx>,
         length: Integer<'ctx>, elem_ty: LLVMType<'ctx>,
     ) -> (Struct<'ctx>, Ptr<'ctx>) {
-        let arr = self.ctx.array(elem_ty, 0);
-        let payload_ty = self.ctx.literal_struct(&[*self.collection_flat_payload, *arr], false);
-        let header_size = payload_ty.size_of(self.module).unwrap();
-        let header_size = builder.const_int(self.usize, header_size as _, false);
-
-        let elem_size = elem_ty.size_of(self.module).unwrap();
-        let elem_size = builder.const_int(self.usize, elem_size as _, false);
-        let payload_size = builder.mul_int(length, elem_size);
-
-        let total_size = builder.add_int(header_size, payload_size);
-
+        let payload_ty = self.collection_flat_header_type(elem_ty);
+        let total_size = self.collection_flat_allocation_size(builder, elem_ty, length);
         let buf = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
 
         let data_ptr = builder.field_ptr(buf, payload_ty, 1);
@@ -564,7 +582,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn collection_split_tag(
-        &mut self, builder: &mut Builder<'ctx>, 
+        &self, builder: &mut Builder<'ctx>, 
         ptr: Ptr<'ctx>,
     ) -> (Ptr<'ctx>, Integer<'ctx>) {
         let ptr_as_usize = builder.ptr_to_int(ptr, self.usize);
@@ -577,6 +595,132 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let ptr = builder.int_to_ptr(ptr, self.ctx.ptr());
 
         (ptr, tag)
+    }
+
+
+    fn collection_drop(
+        &mut self, builder: &mut Builder<'ctx>,
+        collection: Struct<'ctx>,
+        elem_repr: LLVMType<'ctx>,
+        elem_ty: Option<Type>,
+    ) {
+        let hash = elem_ty.map(|ty| ty.hash(self.syms));
+        let entry_key = (elem_repr, hash);
+        if let Some(func) = self.collection_drop_funcs.get(&entry_key) {
+            builder.call(func.0, func.1, &[*collection, *builder.ptr_null()]);
+            return;
+        }
+
+
+        let func_ty = self.ctx.void().fn_ty(self.ctx.arena, &[*self.collection_ty, *self.ctx.ptr()], false);
+        let name = elem_ty
+            .map(|s| s.display(self.string_map, self.syms).to_string())
+            .unwrap_or_else(|| elem_repr.name().to_string());
+
+        let func_ptr = self.module.function(&format!("<collection_drop>::{}", name), func_ty);
+
+        self.collection_drop_funcs.insert(entry_key, (func_ptr, func_ty));
+        self.collection_drop(builder, collection, elem_repr, elem_ty);
+
+        let mut builder = func_ptr.builder(self.ctx, func_ty);
+        let builder = &mut builder;
+
+        let collection = builder.arg(0).unwrap();
+        let collection = builder.local_get(collection).as_struct();
+
+        let tagged_ptr = self.collection_tagged_ptr(builder, collection);
+        let (header_ptr, allocation_kind) = self.collection_split_tag(builder, tagged_ptr);
+        let length = self.collection_length(builder, collection);
+
+        builder.switch(allocation_kind, 0..3, |builder, idx| {
+            match idx {
+                COLLECTION_FLAT_TAG => {
+                    let total_size = self.collection_flat_allocation_size(
+                        builder,
+                        elem_repr, 
+                        length
+                    );
+
+                    self.emit_rc_drop(
+                        builder, 
+                        header_ptr, 
+                        total_size, 
+                        |this, builder| 
+                        {
+                            let payload_ty = this.collection_flat_header_type(elem_repr);
+                            let data_ptr = builder.field_ptr(header_ptr, payload_ty, 1);
+
+                            let counter = builder.alloca(*this.usize);
+                            builder.store(counter, *length);
+
+
+                            if let Some(elem_ty) = elem_ty {
+                                let one = this.const_usize(builder, 1);
+                                let zero_val = this.const_usize(builder, 0);
+
+                                builder.loop_indefinitely(|builder, l| {
+                                    let i = builder.load(counter, *this.usize).as_integer();
+                                    let done = builder.cmp_int(i, zero_val, IntCmp::Eq);
+                                    builder.ite(&mut () as &mut (), done,
+                                        |builder, _| { builder.loop_break(l); },
+                                        |builder, _| {
+                                            let i = builder.sub_int(i, one);
+                                            builder.store(counter, *i);
+                                            let ptr = builder.gep(data_ptr, elem_repr, i);
+                                            let elem = builder.load(ptr, elem_repr);
+                                            this.emit_drop(builder, elem, elem_ty);
+                                        },
+                                    );
+                                });
+                            }
+
+                        } 
+                    );
+                }
+
+                COLLECTION_SLICE_TAG => {
+                    let total_size = self.collection_slice_payload.size_of(self.module).unwrap();
+                    let total_size = self.const_usize(builder, total_size);
+
+                    self.emit_rc_drop(
+                        builder, 
+                        header_ptr, 
+                        total_size, 
+                        |this, builder| 
+                        {
+                            let payload = builder.load(header_ptr, *this.collection_slice_payload).as_struct();
+                            let base = builder.field_load(payload, 2).as_struct();
+                            this.collection_drop(builder, base, elem_repr, elem_ty);
+                        } 
+                    );
+                }
+
+
+                COLLECTION_CONCAT_TAG => {
+                    let total_size = self.collection_concat_payload.size_of(self.module).unwrap();
+                    let total_size = self.const_usize(builder, total_size);
+
+                    self.emit_rc_drop(
+                        builder, 
+                        header_ptr, 
+                        total_size, 
+                        |this, builder| 
+                        {
+                            let payload = builder.load(header_ptr, *this.collection_concat_payload).as_struct();
+                            let a = builder.field_load(payload, 1).as_struct();
+                            let b = builder.field_load(payload, 2).as_struct();
+                            this.collection_drop(builder, a, elem_repr, elem_ty);
+                            this.collection_drop(builder, b, elem_repr, elem_ty);
+                        } 
+                    );
+                }
+
+                _ => unreachable!(),
+            }
+        });
+
+        builder.ret_void();
+
     }
 
 
@@ -1746,7 +1890,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let sym_id = ty.sym(self.syms).unwrap();
 
         if sym_id == SymbolId::LIST {
-            self.ty_mappings.insert(hash, TypeMapping { repr: *self.ctx.ptr(), strct: *self.list_ty });
+            self.ty_mappings.insert(hash, TypeMapping { repr: *self.collection_ty, strct: *self.collection_ty });
             return self.ty_mappings[&hash]
         }
 
@@ -3546,13 +3690,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let elem_type = self.syms.get_gens(list_type.gens(self.syms))[0].1;
                 let elem_repr = self.to_llvm_ty(elem_type).repr;
 
-                let buf = {
-                    let buf_size = elem_repr.size_of(self.module).unwrap() * exprs.len();
-                    let buf_size = self.const_usize(builder, buf_size);
-                    let ptr = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*buf_size]);
-                    ptr.as_ptr()
-                };
-
+                let len = builder.const_int(self.usize, exprs.len() as _, false);
+                let (value, buf) = self.collection_flat(builder, len, elem_repr);
 
                 for (i, &value) in llvm_exprs.iter().enumerate() {
                     let index = self.const_usize(builder, i);
@@ -3560,18 +3699,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     builder.store(ptr, value);
                 }
 
-
-                let len = self.const_usize(builder, exprs.len());
-
-                let size = self.const_usize(builder, self.list_ty.size_of(self.module).unwrap());
-
-                let one = self.const_usize(builder, 1);
-                let strct = builder.struct_instance(self.list_ty, [*one, *len, *len, *buf]);
-                let buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]);
-
-                builder.store(buf.as_ptr(), *strct);
-
-                buf
+                *value
             },
 
             parser::nodes::expr::Expr::Unwrap(expr_id) => {
@@ -3791,7 +3919,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
 
         if sym_id == SymbolId::LIST {
-            return builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[value]);
+            let tagged_ptr = self.collection_tagged_ptr(builder, value.as_struct());
+            // we don't care about the tag here.
+            let (ptr, _) = self.collection_split_tag(builder, tagged_ptr);
+            return builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*ptr]);
         }
 
         if sym_id == SymbolId::STR {
@@ -3880,10 +4011,24 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
     }
 
-    fn emit_rc_decrement(&mut self, builder: &mut Builder<'ctx>, ptr: Ptr<'ctx>) -> Bool<'ctx> {
+    /// Decrements the reference count at `ptr` and reports whether it reached zero.
+    ///
+    /// `ptr` must point to the start of an untagged reference-counted allocation.
+    /// This only changes the count; it does not destroy or deallocate the allocation.
+    fn emit_rc_decrement(&self, builder: &mut Builder<'ctx>, ptr: Ptr<'ctx>) -> Bool<'ctx> {
         unsafe { Bool::new(builder.call(self.rc_drop_fn.0, self.rc_drop_fn.1, &[*ptr])) }
     }
 
+    /// Releases one ownership reference and deallocates the allocation when it
+    /// reaches zero.
+    ///
+    /// `ptr` must be the start of an untagged allocation whose first field is
+    /// the runtime reference count. `size_val` must be the exact allocation
+    /// size passed to `margarineDealloc`.
+    ///
+    /// `on_zero` runs only when the count reaches zero. It must destroy owned
+    /// child values or payload elements, but must not deallocate `ptr`; this
+    /// function performs the final deallocation afterward.
     fn emit_rc_drop(
         &mut self,
         builder: &mut Builder<'ctx>,
@@ -3893,6 +4038,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     ) {
         let is_zero = self.emit_rc_decrement(builder, ptr);
         let dealloc_fn = self.dealloc_fn;
+
         builder.ite(&mut (), is_zero,
             |builder, _| {
                 on_zero(self, builder);
@@ -3947,41 +4093,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             let llvm_elem = self.to_llvm_ty(elem_ty);
 
-            let header = builder.load(value.as_ptr(), *self.list_ty).as_struct();
-
-            let header_size_val = self.const_usize(builder, self.list_ty.size_of(self.module).unwrap());
-
-            self.emit_rc_drop(builder, value.as_ptr(), header_size_val, |slf, builder| {
-                let len = builder.field_load(header, 1).as_integer();
-                let cap = builder.field_load(header, 2).as_integer();
-                let data = builder.field_load(header, 3).as_ptr();
-
-                let counter = builder.alloca(*slf.usize);
-                builder.store(counter, *len);
-
-                let one = slf.const_usize(builder, 1);
-                let zero_val = slf.const_usize(builder, 0);
-
-                builder.loop_indefinitely(|builder, l| {
-                    let i = builder.load(counter, *slf.usize).as_integer();
-                    let done = builder.cmp_int(i, zero_val, IntCmp::Eq);
-                    builder.ite(&mut () as &mut (), done,
-                        |builder, _| { builder.loop_break(l); },
-                        |builder, _| {
-                            let i = builder.sub_int(i, one);
-                            builder.store(counter, *i);
-                            let ptr = builder.gep(data, llvm_elem.repr, i);
-                            let elem = builder.load(ptr, llvm_elem.repr);
-                            slf.emit_drop(builder, elem, elem_ty);
-                        },
-                    );
-                });
-
-                let elem_size_val = slf.const_usize(builder, llvm_elem.repr.size_of(slf.module).unwrap());
-                let buf_size = builder.mul_int(cap, elem_size_val);
-                builder.call(slf.dealloc_fn.0, slf.dealloc_fn.1, &[*data, *buf_size]);
-            });
-
+            self.collection_drop(builder, value.as_struct(), llvm_elem.repr, Some(elem_ty));
             return;
         }
 

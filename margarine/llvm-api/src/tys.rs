@@ -19,7 +19,7 @@ use crate::{info::Message, module::Module};
 
 use self::{array::ArrayTy, bool::BoolTy, fp::FPTy, func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Type<'ctx> {
     ptr: NonNull<LLVMType>,
