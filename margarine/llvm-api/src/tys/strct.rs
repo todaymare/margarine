@@ -7,7 +7,7 @@ use crate::{cstr, tys::TypeKind};
 
 use super::Type;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub struct StructTy<'ctx>(Type<'ctx>);
 
 

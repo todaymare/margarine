@@ -1,9 +1,9 @@
 use std::{collections::HashSet, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, vec::KVec};
 
-use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
+use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
 
 
 define_key!(pub Local(u32));
@@ -391,6 +391,30 @@ impl<'ctx> Builder<'ctx> {
     pub fn ptr_bitcast(&self, ptr: Ptr<'ctx>, to: Type<'ctx>) -> Ptr<'ctx> {
         let result = unsafe { LLVMBuildBitCast(self.ptr.as_ptr(), ptr.llvm_val().as_ptr(), to.llvm_ty().as_ptr(), cstr!("ptr_bitcast")) };
         unsafe { Ptr::new(Value::new(NonNull::new(result).unwrap())) }
+    }
+    pub fn ptr_to_int(&self, ptr: Ptr<'ctx>, to: IntegerTy<'ctx>) -> Integer<'ctx> {
+        let value = unsafe {
+            LLVMBuildPtrToInt(
+                self.ptr.as_ptr(),
+                ptr.llvm_val().as_ptr(),
+                to.llvm_ty().as_ptr(),
+                cstr!("ptr_to_int"),
+            )
+        };
+        unsafe { Integer::new(Value::new(NonNull::new(value).unwrap())) }
+    }
+
+
+    pub fn int_to_ptr(&self, value: Integer<'ctx>, to: PtrTy<'ctx>) -> Ptr<'ctx> {
+        let value = unsafe {
+            LLVMBuildIntToPtr(
+                self.ptr.as_ptr(),
+                value.llvm_val().as_ptr(),
+                to.llvm_ty().as_ptr(),
+                cstr!("int_to_ptr"),
+            )
+        };
+        unsafe { Ptr::new(Value::new(NonNull::new(value).unwrap())) }
     }
 
 

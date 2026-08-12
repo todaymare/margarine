@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, hash::Hash, iter::once, path::Path};
+use std::{collections::HashMap, fmt, hash::Hash, path::Path};
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
@@ -44,6 +44,17 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     assert_not_null_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
 
 
+    /// struct(*collection_header, length: usize)
+    collection_ty: StructTy<'ctx>,
+    /// struct(rc: usize)
+    collection_header: StructTy<'ctx>,
+    /// struct(collection_header)
+    collection_flat_payload: StructTy<'ctx>,
+    /// struct(collection_header, offset, collection_ty)
+    collection_slice_payload: StructTy<'ctx>,
+    /// struct(collection_header, collection_ty, collection_ty)
+    collection_concat_payload: StructTy<'ctx>,
+
     // ptr1 is a function ptr
     // ptr2 is the environment ptr
     func_ref: StructTy<'ctx>,
@@ -52,6 +63,7 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
     str_ty: StructTy<'ctx>,
     string_from_utf8_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
+
 
     ctx: ContextRef<'ctx>,
     module: Module<'ctx>,
@@ -268,6 +280,20 @@ pub fn run<'a>(
         let func_ref = ctx.structure("funcRef");
         func_ref.set_fields(&[*ctx.ptr(), *ctx.ptr()], false);
 
+        let collection_ty = ctx.structure("collectionType");
+        collection_ty.set_fields(&[*ctx.ptr(), *usize_ty], false);
+
+        let collection_header = ctx.structure("collectionHeader");
+        collection_header.set_fields(&[*usize_ty], false);
+
+        let collection_flat_payload = ctx.structure("collectionFlatHeader");
+        collection_flat_payload.set_fields(&[*collection_header], false);
+
+        let collection_slice_payload = ctx.structure("collectionSliceHeader");
+        collection_slice_payload.set_fields(&[*collection_header, *usize_ty, *collection_ty], false);
+
+        let collection_concat_payload = ctx.structure("collectionConcatHeader");
+        collection_concat_payload.set_fields(&[*collection_header, *collection_ty, *collection_ty], false);
 
         let list_ty = ctx.structure("listType");
         list_ty.set_fields(&[*usize_ty, *usize_ty, *usize_ty, *ctx.ptr()], false);
@@ -275,9 +301,12 @@ pub fn run<'a>(
         let str_ty = ctx.structure("strType");
         str_ty.set_fields(&[*usize_ty, *usize_ty], false);
 
+
         let string_from_utf8_fn_ty = ptr.fn_ty(ctx.arena, &[*ptr, *usize_ty], false);
         let string_from_utf8_fn = module.function("margarineStringFromUtf8", string_from_utf8_fn_ty);
         string_from_utf8_fn.set_linkage(Linkage::External);
+
+
 
         let mut conv = Conversion {
             string_map,
@@ -305,8 +334,13 @@ pub fn run<'a>(
             func_ref,
             module,
             list_ty,
-            str_ty,
+            collection_header,
             string_from_utf8_fn: (string_from_utf8_fn, string_from_utf8_fn_ty),
+            collection_ty,
+            collection_flat_payload,
+            collection_slice_payload,
+            collection_concat_payload,
+            str_ty,
         };
 
         conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn, ExternAbi::Direct));
@@ -382,6 +416,11 @@ pub fn run<'a>(
 }
 
 
+const COLLECTION_FLAT_TAG : usize = 0;
+const COLLECTION_SLICE_TAG : usize = 1;
+const COLLECTION_CONCAT_TAG : usize = 2;
+
+
 
 impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn const_usize(&self, builder: &Builder<'ctx>, value: usize) -> Integer<'ctx> {
@@ -409,6 +448,137 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn usize_to_i64(&self, builder: &Builder<'ctx>, value: Integer<'ctx>) -> Integer<'ctx> {
         builder.int_cast(value, *self.i64, false).as_integer()
     }
+
+
+    fn collection_length(
+        &self, builder: &mut Builder<'ctx>,
+        collection: Struct<'ctx>,
+    ) -> Integer<'ctx> {
+        builder.field_load(collection, 1).as_integer()
+    }
+
+
+    fn collection_tagged_ptr(
+        &self, builder: &mut Builder<'ctx>,
+        collection: Struct<'ctx>,
+    ) -> Ptr<'ctx> {
+        builder.field_load(collection, 0).as_ptr()
+    }
+
+
+    /// IMPORTANT: the returned flat buffer is uninitialised
+    /// returns:
+    /// - collectionTy
+    /// - ptr to buffer
+    fn collection_flat(
+        &self, builder: &mut Builder<'ctx>,
+        length: Integer<'ctx>, elem_ty: LLVMType<'ctx>,
+    ) -> (Struct<'ctx>, Ptr<'ctx>) {
+        let arr = self.ctx.array(elem_ty, 0);
+        let payload_ty = self.ctx.literal_struct(&[*self.collection_flat_payload, *arr], false);
+        let header_size = payload_ty.size_of(self.module).unwrap();
+        let header_size = builder.const_int(self.usize, header_size as _, false);
+
+        let elem_size = elem_ty.size_of(self.module).unwrap();
+        let elem_size = builder.const_int(self.usize, elem_size as _, false);
+        let payload_size = builder.mul_int(length, elem_size);
+
+        let total_size = builder.add_int(header_size, payload_size);
+
+        let buf = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
+
+        let data_ptr = builder.field_ptr(buf, payload_ty, 1);
+
+        let tag = builder.const_int(self.usize, COLLECTION_FLAT_TAG as _, false);
+        let tagged_ptr = self.collection_with_tag(builder, buf, tag);
+
+        let strct = builder.struct_instance(self.collection_ty, [*tagged_ptr, *length]);
+        (strct, data_ptr)
+    }
+
+
+    /// IMPORTANT: base take ownership
+    fn collection_slice(
+        &self, builder: &mut Builder<'ctx>,
+        base: Struct<'ctx>, offset: Integer<'ctx>, length: Integer<'ctx>,
+    ) -> Struct<'ctx> {
+        assert_eq!(base.ty(), self.collection_ty);
+
+        let total_size = self.collection_slice_payload.size_of(self.module).unwrap();
+        let total_size = builder.const_int(self.usize, total_size as _, false);
+        let buf = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
+
+        let offset_ptr = builder.field_ptr(buf, self.collection_slice_payload, 1);
+        builder.store(offset_ptr, *offset);
+
+        let base_ptr = builder.field_ptr(buf, self.collection_slice_payload, 2);
+        builder.store(base_ptr, *base);
+
+        let tag = builder.const_int(self.usize, COLLECTION_SLICE_TAG as _, false);
+        let tagged_ptr = self.collection_with_tag(builder, buf, tag);
+
+        let strct = builder.struct_instance(self.collection_ty, [*tagged_ptr, *length]);
+        strct
+
+    }
+
+
+    /// IMPORTANT: a & b take ownership
+    fn collection_concat(
+        &self, builder: &mut Builder<'ctx>,
+        a: Struct<'ctx>, b: Struct<'ctx>,
+    ) -> Struct<'ctx> {
+        assert_eq!(a.ty(), self.collection_ty);
+        assert_eq!(b.ty(), self.collection_ty);
+
+        let total_size = self.collection_concat_payload.size_of(self.module).unwrap();
+        let total_size = builder.const_int(self.usize, total_size as _, false);
+        let buf = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
+
+        let left = builder.field_ptr(buf, self.collection_concat_payload, 1);
+        builder.store(left, *a);
+
+        let right = builder.field_ptr(buf, self.collection_concat_payload, 2);
+        builder.store(right, *b);
+
+        let tag = builder.const_int(self.usize, COLLECTION_CONCAT_TAG as _, false);
+        let tagged_ptr = self.collection_with_tag(builder, buf, tag);
+
+        let len_a = self.collection_length(builder, a);
+        let len_b = self.collection_length(builder, b);
+        let length = builder.add_int(len_a, len_b);
+
+        let strct = builder.struct_instance(self.collection_ty, [*tagged_ptr, *length]);
+        strct
+    }
+
+
+    fn collection_with_tag(
+        &self, builder: &mut Builder<'ctx>, 
+        ptr: Ptr<'ctx>, num: Integer<'ctx>
+    ) -> Ptr<'ctx> {
+        let ptr_as_usize = builder.ptr_to_int(ptr, self.usize);
+        let tagged_ptr = builder.or(ptr_as_usize, num);
+        builder.int_to_ptr(tagged_ptr, self.ctx.ptr())
+    }
+
+
+    fn collection_split_tag(
+        &mut self, builder: &mut Builder<'ctx>, 
+        ptr: Ptr<'ctx>,
+    ) -> (Ptr<'ctx>, Integer<'ctx>) {
+        let ptr_as_usize = builder.ptr_to_int(ptr, self.usize);
+        let tag_mask = 0x3;
+        let tag_mask = builder.const_int(self.usize, tag_mask, false);
+        let ptr_mask = builder.int_not(tag_mask);
+
+        let tag = builder.and(ptr_as_usize, tag_mask);
+        let ptr = builder.and(ptr_as_usize, ptr_mask);
+        let ptr = builder.int_to_ptr(ptr, self.ctx.ptr());
+
+        (ptr, tag)
+    }
+
 
 
     fn get_func(&mut self, ty: Type) -> Result<&Function<'ctx>, ErrorId> {
@@ -2440,12 +2610,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         global.set_initialiser(bytes);
 
                         let len_val = self.const_usize(builder, len);
-                        let result = builder.call(
+                        builder.call(
                             self.string_from_utf8_fn.0,
                             self.string_from_utf8_fn.1,
                             &[*global, *len_val],
-                        );
-                        result
+                        )
                     },
 
 
