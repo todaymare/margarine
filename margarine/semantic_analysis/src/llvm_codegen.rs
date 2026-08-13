@@ -276,9 +276,41 @@ pub fn run<'a>(
         let rc_clone_fn = module.function("margarineRcClone", rc_clone_fn_ty);
         rc_clone_fn.set_linkage(Linkage::External);
 
+        {
+            let builder = rc_clone_fn.builder(ctx.as_ctx_ref(), rc_clone_fn_ty);
+            let rc_ptr = builder.arg(0).unwrap();
+            let rc_ptr = builder.local_get(rc_ptr).as_ptr();
+
+            let one = builder.const_int(usize_ty, 1, false);
+            let refcount = builder.load(rc_ptr, *usize_ty).as_integer();
+            let refcount = builder.add_int(refcount, one);
+
+            builder.store(rc_ptr, *refcount);
+            builder.ret(*rc_ptr);
+        }
+
+
+
         let rc_drop_fn_ty = ctx.bool().fn_ty(ctx.arena, &[*ctx.ptr()], false);
         let rc_drop_fn = module.function("margarineRcDrop", rc_drop_fn_ty);
         rc_drop_fn.set_linkage(Linkage::External);
+
+        {
+            let builder = rc_drop_fn.builder(ctx.as_ctx_ref(), rc_drop_fn_ty);
+            let rc_ptr = builder.arg(0).unwrap();
+            let rc_ptr = builder.local_get(rc_ptr).as_ptr();
+
+            let one = builder.const_int(usize_ty, 1, false);
+            let zero = builder.const_int(usize_ty, 0, false);
+
+            let refcount = builder.load(rc_ptr, *usize_ty).as_integer();
+            let refcount = builder.sub_int(refcount, one);
+
+            builder.store(rc_ptr, *refcount);
+
+            let is_rc_zero = builder.cmp_int(refcount, zero, IntCmp::Eq);
+            builder.ret(*is_rc_zero);
+        }
 
 
         let assert_not_null_fn_ty = void.fn_ty(ctx.arena, &[*ctx.ptr()], false);
