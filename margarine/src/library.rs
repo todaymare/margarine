@@ -455,6 +455,10 @@ pub fn init<P: AsRef<Path>>(path: P) -> io::Result<()> {
         return Err(error);
     }
 
+
+    run_git(destination, &["init"])?;
+    std::fs::write(destination.join(".gitignore"), "build")?;
+
     Ok(())
 }
 
