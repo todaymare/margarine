@@ -3230,6 +3230,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         self.emit_copy(builder, payload, field_ty)
                     };
                     builder.local_set(local, value);
+                    self.emit_drop(builder, val, sym);
 
                     env.vars.push((mapping.binding(), local, field_ty, false));
 
