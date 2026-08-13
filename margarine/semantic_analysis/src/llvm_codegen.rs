@@ -787,7 +787,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let hash = elem_ty.map(|ty| ty.hash(self.syms));
         let entry_key = (elem_repr, hash);
         if let Some(func) = self.collection_drop_funcs.get(&entry_key) {
-            builder.call(func.0, func.1, &[*collection, *builder.ptr_null()]);
+            let tagged_ptr = self.collection_tagged_ptr(builder, collection);
+            let (header_ptr, _) = self.collection_split_tag(builder, tagged_ptr);
+
+            let should_drop = self.emit_rc_decrement(builder, header_ptr);
+
+            builder.ite(
+                &mut (),
+                should_drop, 
+                |builder, _| { builder.call(func.0, func.1, &[*collection, *builder.ptr_null()]); }, 
+                |_, _| {}
+            );
+
             return;
         }
 
@@ -812,6 +823,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let (header_ptr, allocation_kind) = self.collection_split_tag(builder, tagged_ptr);
         let length = self.collection_length(builder, collection);
 
+        let total_size_ptr = builder.alloca(*self.usize);
+
         builder.switch(allocation_kind, 0..3, |builder, idx| {
             match idx {
                 COLLECTION_FLAT_TAG => {
@@ -821,84 +834,67 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         length
                     );
 
-                    self.emit_rc_drop(
-                        builder, 
-                        header_ptr, 
-                        total_size, 
-                        |this, builder| 
-                        {
-                            let payload_ty = this.collection_flat_header_type(elem_repr);
-                            let data_ptr = builder.field_ptr(header_ptr, payload_ty, 1);
+                    builder.store(total_size_ptr, *total_size);
 
-                            let counter = builder.alloca(*this.usize);
-                            builder.store(counter, *length);
+                    let payload_ty = self.collection_flat_header_type(elem_repr);
+                    let data_ptr = builder.field_ptr(header_ptr, payload_ty, 1);
+
+                    let counter = builder.alloca(*self.usize);
+                    builder.store(counter, *length);
 
 
-                            if let Some(elem_ty) = elem_ty {
-                                let one = this.const_usize(builder, 1);
-                                let zero_val = this.const_usize(builder, 0);
+                    if let Some(elem_ty) = elem_ty {
+                        let one = self.const_usize(builder, 1);
+                        let zero_val = self.const_usize(builder, 0);
 
-                                builder.loop_indefinitely(|builder, l| {
-                                    let i = builder.load(counter, *this.usize).as_integer();
-                                    let done = builder.cmp_int(i, zero_val, IntCmp::Eq);
-                                    builder.ite(&mut () as &mut (), done,
-                                        |builder, _| { builder.loop_break(l); },
-                                        |builder, _| {
-                                            let i = builder.sub_int(i, one);
-                                            builder.store(counter, *i);
-                                            let ptr = builder.gep(data_ptr, elem_repr, i);
-                                            let elem = builder.load(ptr, elem_repr);
-                                            this.emit_drop(builder, elem, elem_ty);
-                                        },
-                                    );
-                                });
-                            }
-
-                        } 
-                    );
+                        builder.loop_indefinitely(|builder, l| {
+                            let i = builder.load(counter, *self.usize).as_integer();
+                            let done = builder.cmp_int(i, zero_val, IntCmp::Eq);
+                            builder.ite(&mut () as &mut (), done,
+                                |builder, _| { builder.loop_break(l); },
+                                |builder, _| {
+                                    let i = builder.sub_int(i, one);
+                                    builder.store(counter, *i);
+                                    let ptr = builder.gep(data_ptr, elem_repr, i);
+                                    let elem = builder.load(ptr, elem_repr);
+                                    self.emit_drop(builder, elem, elem_ty);
+                                },
+                            );
+                        });
+                    }
                 }
 
                 COLLECTION_SLICE_TAG => {
                     let total_size = self.collection_slice_payload.size_of(self.module).unwrap();
                     let total_size = self.const_usize(builder, total_size);
+                    builder.store(total_size_ptr, *total_size);
 
-                    self.emit_rc_drop(
-                        builder, 
-                        header_ptr, 
-                        total_size, 
-                        |this, builder| 
-                        {
-                            let payload = builder.load(header_ptr, *this.collection_slice_payload).as_struct();
-                            let base = builder.field_load(payload, 2).as_struct();
-                            this.collection_drop(builder, base, elem_repr, elem_ty);
-                        } 
-                    );
+                    let payload = builder.load(header_ptr, *self.collection_slice_payload).as_struct();
+                    let base = builder.field_load(payload, 2).as_struct();
+                    self.collection_drop(builder, base, elem_repr, elem_ty);
                 }
 
 
                 COLLECTION_CONCAT_TAG => {
                     let total_size = self.collection_concat_payload.size_of(self.module).unwrap();
                     let total_size = self.const_usize(builder, total_size);
+                    builder.store(total_size_ptr, *total_size);
 
-                    self.emit_rc_drop(
-                        builder, 
-                        header_ptr, 
-                        total_size, 
-                        |this, builder| 
-                        {
-                            let payload = builder.load(header_ptr, *this.collection_concat_payload).as_struct();
-                            let a = builder.field_load(payload, 1).as_struct();
-                            let b = builder.field_load(payload, 2).as_struct();
-                            this.collection_drop(builder, a, elem_repr, elem_ty);
-                            this.collection_drop(builder, b, elem_repr, elem_ty);
-                        } 
-                    );
+                    let payload = builder.load(header_ptr, *self.collection_concat_payload).as_struct();
+                    let a = builder.field_load(payload, 1).as_struct();
+                    let b = builder.field_load(payload, 2).as_struct();
+                    self.collection_drop(builder, a, elem_repr, elem_ty);
+                    self.collection_drop(builder, b, elem_repr, elem_ty);
                 }
 
                 _ => unreachable!(),
             }
         });
 
+
+        let total_size = builder.load(total_size_ptr, *self.usize);
+
+        builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*header_ptr, total_size]);
         builder.ret_void();
 
     }

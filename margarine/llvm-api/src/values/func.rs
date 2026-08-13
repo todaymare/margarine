@@ -41,6 +41,13 @@ impl<'ctx> FunctionPtr<'ctx> {
     }
 
 
+    pub fn set_cold(self, ctx: ContextRef<'ctx>) {
+        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("cold"), 4) };
+        let attr = unsafe { LLVMCreateEnumAttribute(ctx.ptr.as_ptr(), attr_kind, 0) };
+        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeFunctionIndex, attr) };
+    }
+
+
     /// Marks the result as a fresh allocation that cannot alias existing pointers.
     pub fn set_noalias_return(self, ctx: ContextRef<'ctx>) {
         let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("noalias"), 7) };
