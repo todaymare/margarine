@@ -1198,6 +1198,8 @@ impl<'me> SymbolMap<'me> {
         }
 
 
+        init!(BYTE);
+
         slf
     }
 }

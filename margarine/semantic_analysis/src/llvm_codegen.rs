@@ -361,6 +361,7 @@ pub fn run<'a>(
 
 
             register!(I64, ctx.integer(64));
+            register!(BYTE, ctx.integer(8));
             register!(F64, ctx.f64());
             register!(UNIT, ctx.unit());
         }
@@ -3049,10 +3050,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                               BinaryOperator::BitwiseAnd => *builder.and(l, r),
                               BinaryOperator::BitwiseOr => *builder.or(l, r),
                               BinaryOperator::BitwiseXor => *builder.xor(l, r),
-                              BinaryOperator::Gt => *builder.cmp_int(l, r, IntCmp::SignedGt),
-                              BinaryOperator::Ge => *builder.cmp_int(l, r, IntCmp::SignedGe),
-                              BinaryOperator::Lt => *builder.cmp_int(l, r, IntCmp::SignedLt),
-                              BinaryOperator::Le => *builder.cmp_int(l, r, IntCmp::SignedLe), 
+                              BinaryOperator::Gt => *builder.cmp_int(l, r, if signed { IntCmp::SignedGt } else { IntCmp::UnsignedGt }),
+                              BinaryOperator::Ge => *builder.cmp_int(l, r, if signed { IntCmp::SignedGe } else { IntCmp::UnsignedGe }),
+                              BinaryOperator::Lt => *builder.cmp_int(l, r, if signed { IntCmp::SignedLt } else { IntCmp::UnsignedLt }),
+                              BinaryOperator::Le => *builder.cmp_int(l, r, if signed { IntCmp::SignedLe } else { IntCmp::UnsignedLe }),
 
                               _ => unreachable!(),
                             }
@@ -3819,9 +3820,22 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 if lsym.is_int() && ty.is_float(self.syms) {
-                    builder.si_to_fp(lhs_val.as_integer(), dest.repr)
+                    if lsym.is_sint() {
+                        let value = lhs_val.as_integer();
+                        builder.si_to_fp(value, dest.repr)
+                    } else {
+                        let value = builder.int_cast(lhs_val.as_integer(), *self.i64, false).as_integer();
+                        builder.ui_to_fp(value, dest.repr)
+                    }
                 } else if lsym.is_float() && ty.is_int(self.syms) {
-                    builder.fp_to_si(lhs_val.as_fp(), dest.repr.as_integer())
+                    if ty.sym(self.syms).unwrap() == SymbolId::BYTE {
+                        builder.fp_to_ui(lhs_val.as_fp(), dest.repr.as_integer())
+                    } else {
+                        builder.fp_to_si(lhs_val.as_fp(), dest.repr.as_integer())
+                    }
+
+                } else if lsym.is_int() && ty.is_int(self.syms) {
+                    builder.int_cast(lhs_val.as_integer(), dest.repr, lsym.is_sint())
                 } else if lsym == SymbolId::BOOL && ty.is_int(self.syms) {
                     let tag = builder.field_load(lhs_val.as_struct(), 0);
                     builder.int_cast(tag.as_integer(), dest.repr, false)
@@ -4479,7 +4493,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let gens = self.syms.get_gens(gens);
 
         match sym {
-            SymbolId::I64 => {
+            SymbolId::I64 | SymbolId::BYTE => {
 
                 let a = builder.local_get(accum).as_bool();
                 let b = builder.cmp_int(

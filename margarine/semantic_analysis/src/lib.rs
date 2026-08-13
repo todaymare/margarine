@@ -174,6 +174,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             }
 
                 let _ = add_sym!(I64);
+            let _ = add_sym!(BYTE);
             let _ = add_sym!(F64);
             let _ = add_sym!(BOOL);
             let _ = add_sym!(PTR);

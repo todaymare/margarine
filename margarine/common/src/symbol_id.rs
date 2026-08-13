@@ -38,12 +38,14 @@ impl SymbolId {
     pub const STR_CONCAT     : Self = Self(38);
     pub const STR_SLICE      : Self = Self(39);
     pub const LIST_LEN      : Self = Self(40);
+    pub const BYTE         : Self = Self(41);
 
 
     pub fn supports_arith(self) -> bool {
         matches!(self,
             | Self::I64
             | Self::F64
+            | Self::BYTE
             | Self::ERR
         )
     }
@@ -52,6 +54,7 @@ impl SymbolId {
     pub fn supports_bw(self) -> bool {
         matches!(self,
             | Self::I64
+            | Self::BYTE
             | Self::ERR
         )
     }
@@ -61,6 +64,7 @@ impl SymbolId {
         matches!(self,
             | Self::I64
             | Self::F64
+            | Self::BYTE
             | Self::ERR
         )
     }
@@ -74,6 +78,7 @@ impl SymbolId {
         matches!(self,
             | Self::I64
             | Self::F64
+            | Self::BYTE
             | Self::ERR
         )
     }
@@ -82,6 +87,7 @@ impl SymbolId {
     pub fn is_int(self) -> bool {
         matches!(self,
             | Self::I64
+            | Self::BYTE
             | Self::ERR
         )
     }

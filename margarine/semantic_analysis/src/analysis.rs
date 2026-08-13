@@ -1902,7 +1902,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 match operator {
                     UnaryOperator::Not if sym == SymbolId::BOOL => (),
-                    UnaryOperator::Neg if sym.is_num() => (),
+                    UnaryOperator::Neg if sym.is_num() && sym != SymbolId::BYTE => (),
                     
                     _ => return Err(Error::InvalidUnaryOp { operator, rhs: rhs_anal.ty, source: range })
                 }

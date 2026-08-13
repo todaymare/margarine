@@ -501,4 +501,5 @@ impl Type {
     pub const NEVER: Self = Self::Ty(SymbolId::NEVER, GenListId::EMPTY);
     pub const RANGE: Self = Self::Ty(SymbolId::RANGE, GenListId::EMPTY);
     pub const STR  : Self = Self::Ty(SymbolId::STR  , GenListId::EMPTY);
+    pub const BYTE : Self = Self::Ty(SymbolId::BYTE, GenListId::EMPTY);
 }
