@@ -28,7 +28,7 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     i64: IntegerTy<'ctx>,
     usize: IntegerTy<'ctx>,
 
-    /// fn(message: str): !
+    /// fn(bytes: ptr<byte>, length: int): !
     panic_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
     /// fn(size: usize): ptr
     alloc_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
@@ -65,7 +65,6 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     str_ty: StructTy<'ctx>,
-    string_from_utf8_fn: (FunctionPtr<'ctx>, FunctionType<'ctx>),
 
     ctx: ContextRef<'ctx>,
     module: Module<'ctx>,
@@ -106,7 +105,6 @@ struct Function<'ctx> {
 
     func_ty: FunctionType<'ctx>,
     func_ptr: FunctionPtr<'ctx>,
-    extern_abi: ExternAbi<'ctx>,
 }
 
 
@@ -238,7 +236,14 @@ pub fn run<'a>(
         let void = ctx.void();
 
         let ptr = ctx.ptr();
-        let panic_fn_ty = void.fn_ty(ctx.arena, &[*ptr], false);
+
+        let collection_ty = ctx.structure("collectionType");
+        collection_ty.set_fields(&[*ctx.ptr(), *usize_ty], false);
+
+        let str_ty = ctx.structure("strType");
+        str_ty.set_fields(&[*collection_ty], false);
+
+        let panic_fn_ty = void.fn_ty(ctx.arena, &[*ptr, *ctx.integer(64)], false);
         let panic_fn = module.function("margarinePanic", panic_fn_ty);
         panic_fn.set_linkage(Linkage::External);
         panic_fn.set_noreturn(ctx.as_ctx_ref());
@@ -283,8 +288,6 @@ pub fn run<'a>(
         let func_ref = ctx.structure("funcRef");
         func_ref.set_fields(&[*ctx.ptr(), *ctx.ptr()], false);
 
-        let collection_ty = ctx.structure("collectionType");
-        collection_ty.set_fields(&[*ctx.ptr(), *usize_ty], false);
 
         let collection_header = ctx.structure("collectionHeader");
         collection_header.set_fields(&[*usize_ty], false);
@@ -297,15 +300,6 @@ pub fn run<'a>(
 
         let collection_concat_payload = ctx.structure("collectionConcatHeader");
         collection_concat_payload.set_fields(&[*collection_header, *collection_ty, *collection_ty], false);
-
-
-        let str_ty = ctx.structure("strType");
-        str_ty.set_fields(&[*usize_ty, *usize_ty], false);
-
-
-        let string_from_utf8_fn_ty = ptr.fn_ty(ctx.arena, &[*ptr, *usize_ty], false);
-        let string_from_utf8_fn = module.function("margarineStringFromUtf8", string_from_utf8_fn_ty);
-        string_from_utf8_fn.set_linkage(Linkage::External);
 
 
 
@@ -336,7 +330,6 @@ pub fn run<'a>(
             func_ref,
             module,
             collection_header,
-            string_from_utf8_fn: (string_from_utf8_fn, string_from_utf8_fn_ty),
             collection_ty,
             collection_flat_payload,
             collection_slice_payload,
@@ -345,6 +338,8 @@ pub fn run<'a>(
             collection_drop_funcs: HashMap::new(),
             collection_element_ptr_funcs: HashMap::new(),
         };
+
+        conv.emit_string_copy_fn();
 
         conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn, ExternAbi::Direct));
         conv.externs.insert(conv.string_map.insert("margarinePanic"), (panic_fn_ty, panic_fn, ExternAbi::Direct));
@@ -514,6 +509,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
+
     /// IMPORTANT: base take ownership
     fn collection_slice(
         &self, builder: &mut Builder<'ctx>,
@@ -673,6 +669,54 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         builder.ret(builder.load(result_slot, *this.ctx.ptr()));
         result
     }
+
+
+    /// Copies a rope-backed string into a caller-provided byte buffer.
+    ///
+    /// Native libraries use this helper when they need a temporary
+    /// NUL-terminated representation. The string remains borrowed for the
+    /// duration of the call; no collection ownership is transferred.
+    fn emit_string_copy_fn(&mut self) {
+        let void = self.ctx.void();
+        let func_ty = void.fn_ty(self.ctx.arena, &[*self.collection_ty, *self.ctx.ptr()], false);
+        let func = self.module.function("margarineStringCopy", func_ty);
+        func.set_linkage(Linkage::External);
+
+        let mut builder = func.builder(self.ctx, func_ty);
+        let collection = builder.local_get(builder.arg(0).unwrap()).as_struct();
+        let destination = builder.local_get(builder.arg(1).unwrap()).as_ptr();
+        let length = self.collection_length(&mut builder, collection);
+        let byte_ty = *self.ctx.integer(8);
+        let zero = self.const_usize(&builder, 0);
+        let index_slot = builder.alloca_store(*zero);
+        let one = self.const_usize(&builder, 1);
+
+        builder.loop_indefinitely(|builder, loop_id| {
+            let index = builder.load(index_slot, *self.usize).as_integer();
+            let done = builder.cmp_int(index, length, IntCmp::UnsignedGe);
+            builder.ite(
+                &mut (),
+                done,
+                |builder, _| builder.loop_break(loop_id),
+                |builder, _| {
+                    let element_ptr = self.collection_element_ptr(
+                        builder,
+                        collection,
+                        index,
+                        byte_ty,
+                    );
+                    let element = builder.load(element_ptr, byte_ty);
+                    let destination = builder.gep(destination, byte_ty, index);
+                    builder.store(destination, element);
+                    builder.store(index_slot, *builder.add_int(index, one));
+                },
+            );
+        });
+
+        builder.ret_void();
+    }
+
+
 
 
     fn collection_with_tag(
@@ -868,13 +912,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 .to_ty(gens, self.syms).unwrap()
             ).collect::<Vec<_>>();
 
-        let extern_abi = self.extern_abi(llvm_ret.repr);
+        let external_abi = self.extern_abi(llvm_ret.repr);
         let llvm_args = {
             let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, sym_func.args().len());
-            if matches!(sym_func.kind(), syms::func::FunctionKind::Extern(_))
-            && matches!(extern_abi, ExternAbi::SRet(_)) {
-                vec.push(*self.ctx.ptr());
-            }
             for (arg, ty) in sym_func.args().iter().zip(&args) {
                 if arg.is_inout() {
                     vec.push(*self.ctx.ptr());
@@ -884,7 +924,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             }
 
             vec.push(*self.ctx.ptr());
-
             vec.leak()
         };
 
@@ -897,14 +936,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let (func_ty, func_ptr) =
                 if let Some((func_ty, func_ptr, _)) = self.externs.get(&path) { (*func_ty, *func_ptr) }
                 else {
-                    let external_ret = match extern_abi {
+                    let external_ret =
+                    match external_abi {
                         ExternAbi::Direct => llvm_ret.repr,
                         ExternAbi::SRet(_) => *self.ctx.void(),
                     };
+
                     let mut external_args = Vec::with_capacity(sym_func.args().len() + 1);
-                    if matches!(extern_abi, ExternAbi::SRet(_)) {
+                    if matches!(external_abi, ExternAbi::SRet(_)) {
                         external_args.push(*self.ctx.ptr());
                     }
+
                     for (arg, ty) in sym_func.args().iter().zip(&args) {
                         if arg.is_inout() {
                             external_args.push(*self.ctx.ptr());
@@ -914,13 +956,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     }
 
                     let external_fn_ty = external_ret.fn_ty(
-                        self.ctx.arena, 
+                        self.ctx.arena,
                         &external_args,
                         false,
                     );
                     let external_fn = self.module.function(self.string_map.get(path), external_fn_ty);
                     external_fn.set_linkage(Linkage::External);
-                    if let ExternAbi::SRet(ret) = extern_abi {
+                    if let ExternAbi::SRet(ret) = external_abi {
                         external_fn.set_sret(self.ctx, ret);
                     }
                     if is_never {
@@ -934,37 +976,39 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     self.func_counter += 1;
                     let func_ty = llvm_ret.repr.fn_ty(self.ctx.arena, llvm_args.as_slice(), false);
                     let func_ptr = self.module.function(self.string_map.get(wrapper_name), func_ty);
-                    if let ExternAbi::SRet(ret) = extern_abi {
-                        func_ptr.set_sret(self.ctx, ret);
-                    }
                     if is_never {
                         func_ptr.set_noreturn(self.ctx);
                     }
 
                     let builder = func_ptr.builder(self.ctx, func_ty);
-                    let call_args = (0..external_args.len())
-                        .map(|i| builder.local_get(builder.arg(i).unwrap()))
-                        .collect::<Vec<_>>();
-                    match extern_abi {
-                        ExternAbi::Direct => {
-                            let result = builder.call(external_fn, external_fn_ty, &call_args);
-                            if is_never {
-                                builder.unreachable();
-                            } else {
-                                builder.ret(result);
-                            }
-                        }
-                        ExternAbi::SRet(ret) => {
-                            builder.call_sret(external_fn, external_fn_ty, ret, &call_args);
-                            if is_never {
-                                builder.unreachable();
-                            } else {
-                                builder.ret_void();
-                            }
-                        }
+                    let mut call_args = Vec::with_capacity(args.len());
+                    for i in 0..args.len() {
+                        call_args.push(builder.local_get(builder.arg(i).unwrap()));
                     }
 
-                    self.externs.insert(path, (func_ty, func_ptr, extern_abi));
+                    let result =
+                    match external_abi {
+                        ExternAbi::Direct => {
+                            builder.call(external_fn, external_fn_ty, &call_args)
+                        }
+                        ExternAbi::SRet(ret) => {
+                            let result = builder.alloca(ret);
+                            let mut external_call_args = Vec::with_capacity(call_args.len() + 1);
+                            external_call_args.push(*result);
+                            external_call_args.extend_from_slice(&call_args);
+                            builder.call_sret(external_fn, external_fn_ty, ret, &external_call_args);
+                            builder.load(result, ret)
+                        }
+                    };
+
+                    if is_never {
+                        builder.unreachable();
+                    } else {
+                        builder.ret(result);
+                    }
+
+
+                    self.externs.insert(path, (func_ty, func_ptr, external_abi));
                     (func_ty, func_ptr)
                 };
 
@@ -976,7 +1020,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1007,7 +1050,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1051,8 +1093,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     self.error(&env, &mut builder, e);
                 } else {
                     match result {
-                        Ok(v) => {
-                            if !is_never {
+                        Ok((v, body_ty)) => {
+                            if !is_never && !body_ty.is_never(self.syms) {
                                 self.update_inouts(&env, &mut builder);
                                 self.drop_all_locals(&env, &mut builder);
                                 builder.ret(v);
@@ -1091,7 +1133,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1123,7 +1164,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1157,7 +1197,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1198,7 +1237,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1238,7 +1276,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1286,7 +1323,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1324,7 +1360,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1363,7 +1398,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1400,7 +1434,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1440,7 +1473,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1474,7 +1506,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1510,7 +1541,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1539,7 +1569,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1576,7 +1605,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1606,7 +1634,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     error: None,
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1640,7 +1667,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1675,7 +1701,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1729,104 +1754,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
-            syms::func::FunctionKind::StrConcat => {
-                let func_ty = llvm_ret.repr.fn_ty(self.ctx.arena, &llvm_args, false);
-                let func_ptr = self.module.function(name, func_ty);
-                let func = Function { sym: ty, name: name_idx, kind: FunctionKind::Code, error: None, func_ty, func_ptr, extern_abi: ExternAbi::Direct };
-                assert!(self.funcs.insert(hash, func).is_none());
-
-                let mut builder = func_ptr.builder(self.ctx, func_ty);
-                let left = builder.local_get(builder.arg(0).unwrap());
-                let right = builder.local_get(builder.arg(1).unwrap());
-                let left_ptr = left.as_ptr();
-                let right_ptr = right.as_ptr();
-                let left_header = builder.load(left_ptr, *self.str_ty).as_struct();
-                let right_header = builder.load(right_ptr, *self.str_ty).as_struct();
-                let left_len = builder.field_load(left_header, 1).as_integer();
-                let right_len = builder.field_load(right_header, 1).as_integer();
-                let byte_ty = *self.ctx.integer(8);
-                let one = self.const_usize(&builder, 1);
-
-                let left_data = builder.gep(left_ptr, *self.str_ty, one);
-                let right_data = builder.gep(right_ptr, *self.str_ty, one);
-
-                let (data, len) = self.concat_sequence(&mut builder, left_data, left_len, right_data, right_len, byte_ty, None);
-
-                let fixed_size = self.const_usize(&builder, self.str_ty.size_of(self.module).unwrap());
-                let total_size = builder.add_int(fixed_size, len);
-                let string = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
-                builder.store(string, *builder.struct_instance(self.str_ty, [*one, *len]));
-
-                let dst = builder.gep(string, *self.str_ty, one);
-                self.copy_sequence(&mut builder, data, dst, byte_ty, None, len);
-                builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*data, *len]);
-                self.emit_drop(&mut builder, left, args[0]);
-                self.emit_drop(&mut builder, right, args[1]);
-                builder.ret(*string);
-
-                return Ok(&self.funcs[&hash]);
-            },
 
 
-            syms::func::FunctionKind::StrSlice => {
-                let func_ty = llvm_ret.repr.fn_ty(self.ctx.arena, &llvm_args, false);
-                let func_ptr = self.module.function(name, func_ty);
-                let func = Function { sym: ty, name: name_idx, kind: FunctionKind::Code, error: None, func_ty, func_ptr, extern_abi: ExternAbi::Direct };
-                assert!(self.funcs.insert(hash, func).is_none());
 
-                let mut builder = func_ptr.builder(self.ctx, func_ty);
-                let value = builder.local_get(builder.arg(0).unwrap());
-                let value_ptr = value.as_ptr();
-                let index_i64 = builder.local_get(builder.arg(1).unwrap()).as_integer();
-                let header = builder.load(value_ptr, *self.str_ty).as_struct();
-                let len = builder.field_load(header, 1).as_integer();
-                let zero = builder.const_int(self.i64, 0, false);
-                let negative = builder.cmp_int(index_i64, zero, IntCmp::SignedLt);
-                let len_i64 = self.usize_to_i64(&builder, len);
-                let past_end = builder.cmp_int(index_i64, len_i64, IntCmp::SignedGt);
-                let invalid = unsafe { Bool::new(*builder.or(negative.as_integer(), past_end.as_integer())) };
-                let index = self.int_to_usize(&mut builder, index_i64);
-                let result = builder.alloca(llvm_ret.repr);
-                let option_gens = self.syms.get_gens(ret.gens(self.syms));
-                let pair_ty = option_gens[0].1;
-                let one = self.const_usize(&builder, 1);
-                let data = builder.gep(value_ptr, *self.str_ty, one);
-                let none_tag = *builder.const_int(self.i32, 1, false);
-                let unit = *builder.const_unit();
-                let none = self.create_enum(&mut builder, ret, none_tag, unit);
-                let pair_first = self.string_map.num(0);
-                let pair_second = self.string_map.num(1);
 
-                builder.ite(&mut (), invalid,
-                    |builder, _| {
-                        builder.store(result, none);
-                    },
-                    |builder, _| {
-                        let byte_ty = *self.ctx.integer(8);
-                        let (left_data, right_data, right_len) = self.split_sequence(builder, data, len, index, byte_ty, None);
-                        let fixed_size = self.const_usize(builder, self.str_ty.size_of(self.module).unwrap());
-                        let left = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*builder.add_int(fixed_size, index)]).as_ptr();
-                        let right = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*builder.add_int(fixed_size, right_len)]).as_ptr();
-                        builder.store(left, *builder.struct_instance(self.str_ty, [*one, *index]));
-                        builder.store(right, *builder.struct_instance(self.str_ty, [*one, *right_len]));
-                        self.copy_sequence(builder, left_data, builder.gep(left, *self.str_ty, one), byte_ty, None, index);
-                        self.copy_sequence(builder, right_data, builder.gep(right, *self.str_ty, one), byte_ty, None, right_len);
-                        builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*left_data, *index]);
-                        builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*right_data, *right_len]);
-
-                        let pair = self.create_struct(builder, pair_ty, &[
-                            (pair_first, *left),
-                            (pair_second, *right),
-                        ]);
-                        let some = self.create_enum(builder, ret, *builder.const_int(self.i32, 0, false), *pair);
-                        builder.store(result, some);
-                    },
-                );
-                self.emit_drop(&mut builder, value, args[0]);
-                builder.ret(builder.load(result, llvm_ret.repr));
-
-                return Ok(&self.funcs[&hash]);
-            },
 
 
             syms::func::FunctionKind::Enum { sym: sym_id, index } => {
@@ -1868,7 +1799,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     func_ty,
                     func_ptr,
-                    extern_abi: ExternAbi::Direct,
                 };
 
                 assert!(self.funcs.insert(hash, func).is_none());
@@ -1915,76 +1845,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         builder.unreachable();
     }
 
-    fn copy_sequence(
-        &mut self,
-        builder: &mut Builder<'ctx>,
-        source: Ptr<'ctx>,
-        destination: Ptr<'ctx>,
-        elem_repr: LLVMType<'ctx>,
-        elem_ty: Option<Type>,
-        len: Integer<'ctx>,
-    ) {
-        let counter = builder.alloca(*self.usize);
-        let zero = self.const_usize(builder, 0);
-        let one = self.const_usize(builder, 1);
-        builder.store(counter, *zero);
-        builder.loop_indefinitely(|builder, l| {
-            let i = builder.load(counter, *self.usize).as_integer();
-            let done = builder.cmp_int(i, len, IntCmp::UnsignedGe);
-            builder.ite(&mut (), done,
-                |builder, _| builder.loop_break(l),
-                |builder, _| {
-                    let value = builder.load(builder.gep(source, elem_repr, i), elem_repr);
-                    let value = elem_ty.map_or(value, |ty| self.emit_copy(builder, value, ty));
-                    builder.store(builder.gep(destination, elem_repr, i), value);
-                    builder.store(counter, *builder.add_int(i, one));
-                },
-            );
-        });
-    }
-
-
-    fn concat_sequence(
-        &mut self,
-        builder: &mut Builder<'ctx>,
-        left_data: Ptr<'ctx>,
-        left_len: Integer<'ctx>,
-        right_data: Ptr<'ctx>,
-        right_len: Integer<'ctx>,
-        elem_repr: LLVMType<'ctx>,
-        elem_ty: Option<Type>,
-    ) -> (Ptr<'ctx>, Integer<'ctx>) {
-        let len = builder.add_int(left_len, right_len);
-        let elem_size = self.const_usize(builder, elem_repr.size_of(self.module).unwrap());
-        let size = builder.mul_int(len, elem_size);
-        let data = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]).as_ptr();
-        self.copy_sequence(builder, left_data, data, elem_repr, elem_ty, left_len);
-        let right_dst = builder.gep(data, elem_repr, left_len);
-        self.copy_sequence(builder, right_data, right_dst, elem_repr, elem_ty, right_len);
-        (data, len)
-    }
-
-
-    fn split_sequence(
-        &mut self,
-        builder: &mut Builder<'ctx>,
-        data: Ptr<'ctx>,
-        len: Integer<'ctx>,
-        index: Integer<'ctx>,
-        elem_repr: LLVMType<'ctx>,
-        elem_ty: Option<Type>,
-    ) -> (Ptr<'ctx>, Ptr<'ctx>, Integer<'ctx>) {
-        let right_len = builder.sub_int(len, index);
-        let elem_size = self.const_usize(builder, elem_repr.size_of(self.module).unwrap());
-        let left_size = builder.mul_int(index, elem_size);
-        let right_size = builder.mul_int(right_len, elem_size);
-        let left_data = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*left_size]).as_ptr();
-        let right_data = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*right_size]).as_ptr();
-        self.copy_sequence(builder, data, left_data, elem_repr, elem_ty, index);
-        let right_source = builder.gep(data, elem_repr, index);
-        self.copy_sequence(builder, right_source, right_data, elem_repr, elem_ty, right_len);
-        (left_data, right_data, right_len)
-    }
 
 
     fn to_llvm_ty(&mut self, ty: Type) -> TypeMapping<'ctx> {
@@ -2002,7 +1862,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
 
         if sym_id == SymbolId::STR {
-            self.ty_mappings.insert(hash, TypeMapping { repr: *self.ctx.ptr(), strct: *self.str_ty });
+            self.ty_mappings.insert(hash, TypeMapping { repr: *self.str_ty, strct: *self.str_ty });
             return self.ty_mappings[&hash]
         }
 
@@ -2021,17 +1881,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let ret = function_ty.ret().to_ty(gens, self.syms).unwrap();
 
                 let ret = self.to_llvm_ty(ret).repr;
-                let extern_abi = if matches!(function_ty.kind(), syms::func::FunctionKind::Extern(_)) {
-                    self.extern_abi(ret)
-                } else {
-                    ExternAbi::Direct
-                };
-
                 let llvm_args = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, function_ty.args().len());
-                    if matches!(extern_abi, ExternAbi::SRet(_)) {
-                        vec.push(*self.ctx.ptr());
-                    }
                     for i in function_ty.args().iter() {
                         let arg = i.symbol().to_ty(gens, self.syms).unwrap();
                         if i.is_inout() {
@@ -2042,15 +1893,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     }
 
                     vec.push(*self.ctx.ptr());
-
                     vec.leak()
                 };
 
-
-                let ret = match extern_abi {
-                    ExternAbi::Direct => ret,
-                    ExternAbi::SRet(_) => *self.ctx.void(),
-                };
                 let strct = ret.fn_ty(self.ctx.arena, llvm_args, false);
                 let mapping = TypeMapping { repr: *self.func_ref, strct: *strct };
                 self.ty_mappings.insert(hash, mapping);
@@ -2144,7 +1989,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     fn block(
         &mut self, env: &mut Env<'_, 'ctx>,
         builder: &mut Builder<'ctx>, block: &[NodeId]
-    ) -> Result<Value<'ctx>, ErrorId> {
+    ) -> Result<(Value<'ctx>, Type), ErrorId> {
         if let Some(NodeId::Err(error)) = block.iter().find(|node| matches!(node, NodeId::Err(_))) {
             return Err(*error);
         }
@@ -2182,8 +2027,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         self.drop_locals(env, builder, len);
         env.vars.truncate(len);
         match has_ret {
-            Some((value, _)) => Ok(value),
-            None => Ok(*builder.const_unit()),
+            Some((value, ty)) => Ok((value, ty)),
+            None => Ok((*builder.const_unit(), Type::UNIT)),
         }
     }
 
@@ -2339,74 +2184,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    fn collection_flatten(
-        &mut self,
-        builder: &mut Builder<'ctx>,
-        collection: Struct<'ctx>,
-        elem_repr: LLVMType<'ctx>,
-        elem_ty: Option<Type>,
-    ) -> Struct<'ctx> {
-        assert_eq!(collection.ty(), self.collection_ty);
 
-        let length = self.collection_length(builder, collection);
-        let tagged_ptr = self.collection_tagged_ptr(builder, collection);
-        let (_, allocation_kind) = self.collection_split_tag(builder, tagged_ptr);
 
-        let flat_tag = self.const_usize(builder, COLLECTION_FLAT_TAG);
-        let is_not_flat = builder.cmp_int(allocation_kind, flat_tag, IntCmp::Ne);
-
-        let result_slot = builder.alloca_store(*collection);
-
-        builder.ite(
-            &mut (), 
-            is_not_flat, 
-            |builder, _| {
-                let (new_collection, new_data_ptr) = self.collection_flat(builder, length, elem_repr);
-
-                builder.store(result_slot, *new_collection);
-
-                let zero = self.const_usize(builder, 0);
-                let one = self.const_usize(builder, 1);
-
-                let counter = builder.alloca(*self.usize);
-                builder.store(counter, *zero);
-
-                builder.loop_indefinitely(|builder, loop_id| {
-                    let i = builder.load(counter, *self.usize).as_integer();
-                    let done = builder.cmp_int(i, length, IntCmp::UnsignedGe);
-
-                    builder.ite(
-                        &mut (),
-                        done,
-                        |builder, _| builder.loop_break(loop_id),
-                        |builder, _| {
-                            let old_ptr = self.collection_element_ptr(
-                                builder,
-                                collection,
-                                i,
-                                elem_repr,
-                            );
-
-                            let old_elem = builder.load(old_ptr, elem_repr);
-                            let new_elem = 
-                            match elem_ty {
-                                Some(elem_ty) => self.emit_copy(builder, old_elem, elem_ty),
-                                None => old_elem,
-                            };
-
-                            builder.store(builder.gep(new_data_ptr, elem_repr, i), new_elem);
-                            builder.store(counter, *builder.add_int(i, one));
-                        },
-                    );
-                });
-
-            }, 
-
-            |_, _| {}
-        );
-
-        builder.load(result_slot, *self.collection_ty).as_struct()
-    }
 
 
     fn emit_panic(&mut self, builder: &mut Builder<'ctx>, message: &str) {
@@ -2414,14 +2193,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let bytes = *self.ctx.const_str(message);
         let string_data = self.module.add_global(*array_ty, "panic_message");
         string_data.set_initialiser(bytes);
-        let len = self.const_usize(builder, message.len());
-        let string = builder.call(
-            self.string_from_utf8_fn.0,
-            self.string_from_utf8_fn.1,
-            &[*string_data, *len],
-        );
+        let len = builder.const_int(self.i64, message.len() as i64, false);
 
-        builder.call(self.panic_fn.0, self.panic_fn.1, &[string]);
+        builder.call(self.panic_fn.0, self.panic_fn.1, &[*string_data, *len]);
     }
 
 
@@ -2902,19 +2676,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     lexer::Literal::String(string_index) => {
                         let string = self.string_map.get(string_index);
-                        let len = string.len();
+                        let len = self.const_usize(builder, string.len());
 
-                        let byte_arr_ty = self.ctx.array(*self.ctx.integer(8), len);
+                        let byte_ty = self.ctx.integer(8);
+                        let byte_arr_ty = self.ctx.array(*self.ctx.integer(8), string.len());
                         let bytes = *self.ctx.const_str(string);
                         let global = self.module.add_global(*byte_arr_ty, "str_literal");
                         global.set_initialiser(bytes);
-
-                        let len_val = self.const_usize(builder, len);
-                        builder.call(
-                            self.string_from_utf8_fn.0,
-                            self.string_from_utf8_fn.1,
-                            &[*global, *len_val],
-                        )
+                        let bytes = builder.load(global.as_ptr(), *byte_arr_ty);
+ 
+                        let (collection, data) = self.collection_flat(builder, len, *byte_ty);
+                        builder.store(data, bytes);
+                        *builder.struct_instance(self.str_ty, [*collection])
                     },
 
 
@@ -3187,7 +2960,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::Match { value, mappings } => {
-                let val = self.expr(env, builder, value)?;
+                let match_value = self.expr(env, builder, value)?;
                 let ty = out_if_err!().resolve(&[env.gens], self.syms);
 
                 let sym = self.ty_info.expr(value).unwrap();
@@ -3200,11 +2973,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let SymbolKind::Container(cont) = sym_data.kind()
                 else { unreachable!() };
 
-                let value_ty = val.as_struct();
+                let value_ty = match_value.as_struct();
                 let value_tag = builder.field_load(value_ty, 0).as_integer();
 
                 let enum_llvm_ty = self.to_llvm_ty(sym);
-                let val_alloca = builder.alloca_store(val);
+                let val_alloca = builder.alloca_store(match_value);
                 let val_data_ptr = builder.field_ptr(val_alloca, enum_llvm_ty.strct.as_struct(), 1);
 
                 let iter = cont.fields().iter().map(|sf| {
@@ -3224,14 +2997,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let field_ty_llvm = self.to_llvm_ty(field_ty);
 
                     let local = builder.local(field_ty_llvm.repr);
-                    let value = if field_ty.sym(self.syms).unwrap() == SymbolId::UNIT {
+                    let binding = 
+                    if field_ty.sym(self.syms).unwrap() == SymbolId::UNIT {
                         *builder.const_unit()
                     } else {
                         let payload = builder.load(val_data_ptr, field_ty_llvm.repr);
                         self.emit_copy(builder, payload, field_ty)
                     };
-                    builder.local_set(local, value);
-                    self.emit_drop(builder, val, sym);
+
+                    builder.local_set(local, binding);
+
+                    let match_body_is_never = self.ty_info.expr(mapping.expr())
+                        .unwrap()
+                        .is_never(self.syms);
 
                     env.vars.push((mapping.binding(), local, field_ty, false));
 
@@ -3247,9 +3025,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     };
 
                     debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local, field_ty, false));
-                    let value = builder.local_get(local);
-                    self.emit_drop(builder, value, field_ty);
-                    builder.local_set(ret_local, ret_val);
+                    if !match_body_is_never {
+                        let binding = builder.local_get(local);
+                        self.emit_drop(builder, binding, field_ty);
+                        self.emit_drop(builder, match_value, sym);
+                        builder.local_set(ret_local, ret_val);
+                    }
                 });
 
                 if ty.is_never(self.syms) { *builder.const_unit() }
@@ -3294,7 +3075,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::Block { block } => {
-                self.block(env, builder, &*block)?
+                self.block(env, builder, &*block)?.0
             },
 
 
@@ -3510,21 +3291,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 assert!(callable_ty.is_resolved(self.syms));
                 let is_extern = matches!(function.kind(), syms::func::FunctionKind::Extern(_));
-                let extern_abi =
-                if matches!(function.kind(), syms::func::FunctionKind::Closure(_)) {
-                    // Closure expressions materialize their own direct-ABI function above.
-                    ExternAbi::Direct
-                } else {
-                    self.get_func(callable_ty)?.extern_abi
-                };
-
                 let func_ty = self.to_llvm_ty(callable_ty);
 
                 let func_ptr = builder.field_load(func.as_struct(), 0);
                 let capture_ptr = builder.field_load(func.as_struct(), 1);
 
                 llvm_args.push(capture_ptr);
-                let result = self.call_function(builder, extern_abi, func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args);
+                let result = builder.call(func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args);
 
                 for (ptr, expr, ty) in inouts {
                     let value = builder.load(ptr, self.to_llvm_ty(ty).repr);
@@ -3653,7 +3426,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 builder.store(buf, *captures);
 
 
-                let closure_name = match self.current_function_name {
+                let closure_name =
+                match self.current_function_name {
                     Some(parent) => format!("{}.closure.{}", self.string_map.get(parent), self.func_counter),
                     None => format!("<closure>.{}", self.func_counter),
                 };
@@ -3671,7 +3445,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         error: None,
                         func_ty: llvm_func_ty,
                         func_ptr,
-                        extern_abi: ExternAbi::Direct,
                     };
 
 
@@ -4099,9 +3872,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             let length = self.collection_length(builder, collection);
             return *builder.struct_instance(self.collection_ty, [*tagged_ptr, *length]);
         }
-        if sym_id == SymbolId::STR {
-            return builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[value]);
-        }
 
         if sym_id == SymbolId::UNIT {
             return value;
@@ -4271,16 +4041,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             return;
         }
 
-        if sym_id == SymbolId::STR {
-            let ptr = value.as_ptr();
-            let strct = builder.load(ptr, *self.str_ty).as_struct();
-            let len = builder.field_load(strct, 1).as_integer();
-            let fixed = self.const_usize(builder, self.str_ty.size_of(self.module).unwrap());
-            let total_size = builder.add_int(fixed, len);
-
-            self.emit_rc_drop(builder, ptr, total_size, |_, _| {});
-            return;
-        }
 
         if sym_id == SymbolId::UNIT {
             return;
@@ -4393,9 +4153,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             }
             self.syms.add_gens(gens.leak())
         };
-        let (extern_abi, func_ptr, func_ty) = {
+        let (func_ptr, func_ty) = {
             let func = self.get_func(Type::Ty(func_sym, gens)).ok()?;
-            (func.extern_abi, func.func_ptr, func.func_ty)
+            (func.func_ptr, func.func_ty)
         };
 
         let null = builder.ptr_null();
@@ -4405,7 +4165,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         before_call(self, builder);
 
-        Some(self.call_function(builder, extern_abi, func_ptr, func_ty, &call_args))
+        Some(builder.call(func_ptr, func_ty, &call_args))
     }
 
 
@@ -4419,30 +4179,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             ExternAbi::Direct
         }
     }
-
-
-    fn call_function(
-        &mut self,
-        builder: &mut Builder<'ctx>,
-        extern_abi: ExternAbi<'ctx>,
-        func_ptr: FunctionPtr<'ctx>,
-        func_ty: FunctionType<'ctx>,
-        args: &[Value<'ctx>],
-    ) -> Value<'ctx> {
-        match extern_abi {
-            ExternAbi::Direct => builder.call(func_ptr, func_ty, args),
-            ExternAbi::SRet(ret) => {
-                let result = builder.alloca(ret);
-                let mut call_args = Vec::with_capacity(args.len() + 1);
-                call_args.push(*result);
-                call_args.extend_from_slice(args);
-                builder.call_sret(func_ptr, func_ty, ret, &call_args);
-                builder.load(result, ret)
-            },
-        }
-    }
-
-
     fn drop_locals(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>, start: usize) {
         for i in (start..env.vars.len()).rev() {
             let (_, local, ty, _) = env.vars[i];

@@ -54,8 +54,6 @@ pub enum FunctionKind {
     ListConcat,
     ListSlice,
     ListLen,
-    StrConcat,
-    StrSlice,
 
     Enum {
         sym: SymbolId,

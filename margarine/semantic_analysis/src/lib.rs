@@ -201,8 +201,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let _ = add_sym!(PTR_WRITE_UNINIT);
             let _ = add_sym!(LIST_CONCAT);
             let _ = add_sym!(LIST_SLICE);
-            let _ = add_sym!(STR_CONCAT);
-            let _ = add_sym!(STR_SLICE);
             let _ = add_sym!(LIST_LEN);
 
             {

@@ -485,13 +485,26 @@ impl<'me> SymbolMap<'me> {
         }
 
 
-        // str 
+        // str is a nominal wrapper around the byte collection. The
+        // compiler still seeds this type before loading the standard library
+        // so literals and runtime boundaries can use it during bootstrap.
         {
             let pending = slf.pending(ns_map, None, StringMap::STR, 0);
             assert_eq!(pending, SymbolId::STR);
 
-            let sym = Symbol::new(StringMap::STR, &[], SymbolKind::Opaque);
-            slf.add_sym(pending, sym);
+            let byte = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::BYTE, &[]),
+                None,
+            );
+            let bytes = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST, arena.alloc_new([byte])),
+                None,
+            );
+            let fields = arena.alloc_new([(StringMap::VALUE, bytes)]);
+            let kind = SymbolKind::Container(Container::new(fields, ContainerKind::Struct));
+            slf.add_sym(pending, Symbol::new(StringMap::STR, &[], kind));
         }
 
 
@@ -1123,51 +1136,6 @@ impl<'me> SymbolMap<'me> {
         }
 
 
-        // $str_concat(left: str, right: str): str
-        {
-            let pending = slf.pending(ns_map, None, StringMap::STR_CONCAT, 0);
-            assert_eq!(pending, SymbolId::STR_CONCAT);
-            let str_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::STR, &[]), None);
-            let args = [
-                FunctionArgument::new(StringMap::VALUE, str_ty),
-                FunctionArgument::new(StringMap::VALUE, str_ty),
-            ];
-            let sym = Symbol::new(
-                StringMap::STR_CONCAT,
-                &[],
-                SymbolKind::Function(FunctionTy::new(arena.alloc_new(args), str_ty, FunctionKind::StrConcat, None)),
-            );
-            slf.add_sym(pending, sym);
-        }
-
-
-        // $str_slice(value: str, idx: int): Option<(str, str)>
-        {
-            let pending = slf.pending(ns_map, None, StringMap::STR_SLICE, 0);
-            assert_eq!(pending, SymbolId::STR_SLICE);
-            let str_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::STR, &[]), None);
-            let int_ty = Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None);
-            let pair_ty = Generic::new(
-                SourceRange::ZERO,
-                GenericKind::Sym(SymbolId::LIST_SLICE_PAIR, arena.alloc_new([str_ty, str_ty])),
-                None,
-            );
-            let ret = Generic::new(
-                SourceRange::ZERO,
-                GenericKind::Sym(SymbolId::OPTION, arena.alloc_new([pair_ty])),
-                None,
-            );
-            let args = [
-                FunctionArgument::new(StringMap::VALUE, str_ty),
-                FunctionArgument::new(StringMap::VALUE, int_ty),
-            ];
-            let sym = Symbol::new(
-                StringMap::STR_SLICE,
-                &[],
-                SymbolKind::Function(FunctionTy::new(arena.alloc_new(args), ret, FunctionKind::StrSlice, None)),
-            );
-            slf.add_sym(pending, sym);
-        }
         
         // $list_len<T>(list: [T]): int
         {

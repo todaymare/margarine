@@ -35,10 +35,8 @@ impl SymbolId {
     pub const LIST_CONCAT    : Self = Self(35);
     pub const LIST_SLICE_PAIR: Self = Self(36);
     pub const LIST_SLICE     : Self = Self(37);
-    pub const STR_CONCAT     : Self = Self(38);
-    pub const STR_SLICE      : Self = Self(39);
-    pub const LIST_LEN      : Self = Self(40);
-    pub const BYTE         : Self = Self(41);
+    pub const LIST_LEN      : Self = Self(38);
+    pub const BYTE         : Self = Self(39);
 
 
     pub fn supports_arith(self) -> bool {
