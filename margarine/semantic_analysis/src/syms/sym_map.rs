@@ -1168,6 +1168,34 @@ impl<'me> SymbolMap<'me> {
             );
             slf.add_sym(pending, sym);
         }
+        
+        // $list_len<T>(list: [T]): int
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let pending = slf.pending(ns_map, None, StringMap::LIST_LEN, 1);
+            assert_eq!(pending, SymbolId::LIST_LEN);
+
+            let t_gen = Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None);
+            let list_ty = Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST, arena.alloc_new([t_gen])),
+                None,
+            );
+            let args = [
+                FunctionArgument::new(StringMap::VALUE, list_ty),
+            ];
+            let sym = Symbol::new(
+                StringMap::LIST_LEN,
+                arena.alloc_new([t]),
+                SymbolKind::Function(FunctionTy::new(
+                    arena.alloc_new(args),
+                    Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[]), None),
+                    FunctionKind::ListLen,
+                    None,
+                )),
+            );
+            slf.add_sym(pending, sym);
+        }
 
 
         slf

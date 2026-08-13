@@ -37,6 +37,7 @@ impl SymbolId {
     pub const LIST_SLICE     : Self = Self(37);
     pub const STR_CONCAT     : Self = Self(38);
     pub const STR_SLICE      : Self = Self(39);
+    pub const LIST_LEN      : Self = Self(40);
 
 
     pub fn supports_arith(self) -> bool {

@@ -53,6 +53,7 @@ pub enum FunctionKind {
 
     ListConcat,
     ListSlice,
+    ListLen,
     StrConcat,
     StrSlice,
 
