@@ -3006,6 +3006,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     };
 
                     builder.local_set(local, binding);
+                    self.emit_drop(builder, match_value, sym);
 
                     let match_body_is_never = self.ty_info.expr(mapping.expr())
                         .unwrap()
@@ -3024,11 +3025,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         },
                     };
 
-                    debug_assert_eq!(env.vars.pop().unwrap(), (mapping.binding(), local, field_ty, false));
+                    let binding = env.vars.pop().unwrap();
+                    debug_assert_eq!(binding, (mapping.binding(), local, field_ty, false));
                     if !match_body_is_never {
                         let binding = builder.local_get(local);
                         self.emit_drop(builder, binding, field_ty);
-                        self.emit_drop(builder, match_value, sym);
                         builder.local_set(ret_local, ret_val);
                     }
                 });
