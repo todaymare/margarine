@@ -283,6 +283,16 @@ pub fn run<'a>(
 
             let one = builder.const_int(usize_ty, 1, false);
             let refcount = builder.load(rc_ptr, *usize_ty).as_integer();
+
+            let max = builder.const_all_ones(usize_ty);
+            // we can assume this bcs its impossible to have 
+            // 2^size references without those values also existing in memory
+            // which can not fit in a 2^size addressspace
+            let is_lt_max = builder.cmp_int(refcount, max, IntCmp::UnsignedLt);
+            let is_ge_one = builder.cmp_int(refcount, one, IntCmp::UnsignedGe);
+            builder.assume(is_lt_max);
+            builder.assume(is_ge_one);
+
             let refcount = builder.add_int(refcount, one);
 
             builder.store(rc_ptr, *refcount);
@@ -792,6 +802,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             let should_drop = self.emit_rc_decrement(builder, header_ptr);
 
+            builder.expect(should_drop, false);
             builder.ite(
                 &mut (),
                 should_drop, 
@@ -4012,6 +4023,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let is_zero = self.emit_rc_decrement(builder, ptr);
         let dealloc_fn = self.dealloc_fn;
 
+        builder.expect(is_zero, false);
         builder.ite(&mut (), is_zero,
             |builder, _| {
                 on_zero(self, builder);

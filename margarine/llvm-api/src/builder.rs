@@ -1,6 +1,6 @@
 use std::{collections::HashSet, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFPToUI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetInsertBlock, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIsATerminatorInst, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFPToUI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstAllOnes, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetGlobalParent, LLVMGetInsertBlock, LLVMGetIntrinsicDeclaration, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIntrinsicGetType, LLVMIsATerminatorInst, LLVMLookupIntrinsicID, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMModule, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, vec::KVec};
 
 use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
@@ -21,6 +21,7 @@ pub struct Builder<'ctx> {
     ptr: NonNull<LLVMBuilder>,
     phantom: PhantomData<&'ctx ()>,
     ctx: ContextRef<'ctx>,
+    module: NonNull<LLVMModule>,
     
     // API
     func   : FunctionPtr<'ctx>,
@@ -37,14 +38,15 @@ impl<'ctx> Builder<'ctx> {
         let bb = unsafe { LLVMGetFirstBasicBlock(func.llvm_val().as_ptr()) };
         assert!(bb.is_null(), "this function already has a builder");
 
+        let module = NonNull::new(unsafe { LLVMGetGlobalParent(func.llvm_val().as_ptr()) })
+            .expect("function is not attached to a module");
         let prelude = unsafe { LLVMAppendBasicBlockInContext(ctx.ptr.as_ptr(), func.llvm_val().as_ptr(), cstr!("prelude")) };
         let prelude = NonNull::new(prelude).expect("failed to initialise the prelude basic-block");
-
         let entry = unsafe { LLVMAppendBasicBlockInContext(ctx.ptr.as_ptr(), func.llvm_val().as_ptr(), cstr!("entry")) };
         let entry = NonNull::new(entry).unwrap();
         
         unsafe { LLVMPositionBuilderAtEnd(ptr.as_ptr(), entry.as_ptr()) };
-
+        
         let mut builder = Builder {
             ptr,
             phantom: PhantomData,
@@ -55,6 +57,7 @@ impl<'ctx> Builder<'ctx> {
             entry,
             argc: ty.argument_count(),
             ctx,
+            module,
             arena: Arena::new(),
         };
 
@@ -357,6 +360,11 @@ impl<'ctx> Builder<'ctx> {
         Value::new(NonNull::new(value).unwrap())
     }
 
+    pub fn const_all_ones(&self, ty: IntegerTy<'ctx>) -> Integer<'ctx> {
+        let value = unsafe { LLVMConstAllOnes(ty.llvm_ty().as_ptr()) };
+        unsafe { Integer::new(Value::new(NonNull::new(value).unwrap())) }
+    }
+
 
     pub fn struct_instance(
         &self, 
@@ -543,7 +551,92 @@ impl<'ctx> Builder<'ctx> {
 
 
     pub fn bool_and(&self, lhs: Bool<'ctx>, rhs: Bool<'ctx>) -> Bool<'ctx> {
+
         unsafe { Bool::new(*self.and(lhs.as_integer(), rhs.as_integer())) }
+    }
+
+    /// Returns `condition` with LLVM's expected branch value attached.
+    ///
+    /// `expected` is the value LLVM should assume is most likely at runtime.
+    pub fn expect(&self, condition: Bool<'ctx>, expected: bool) -> Bool<'ctx> {
+        let bool_ty = self.ctx.bool();
+        let bool_ty_ptr = unsafe { bool_ty.llvm_ty().as_ptr() };
+        let mut intrinsic_param_types = [bool_ty_ptr];
+        let intrinsic_id = unsafe { LLVMLookupIntrinsicID(cstr!("llvm.expect"), 11) };
+        assert_ne!(intrinsic_id, 0, "LLVM does not provide llvm.expect");
+
+        let intrinsic = unsafe {
+            LLVMGetIntrinsicDeclaration(
+                self.module.as_ptr(),
+                intrinsic_id,
+                intrinsic_param_types.as_mut_ptr(),
+                intrinsic_param_types.len(),
+            )
+        };
+        let intrinsic = NonNull::new(intrinsic).expect("failed to declare llvm.expect");
+        let intrinsic_ty = unsafe {
+            LLVMIntrinsicGetType(
+                self.ctx.ptr.as_ptr(),
+                intrinsic_id,
+                intrinsic_param_types.as_mut_ptr(),
+                intrinsic_param_types.len(),
+            )
+        };
+        let intrinsic_ty = NonNull::new(intrinsic_ty).expect("failed to get llvm.expect type").as_ptr();
+        let expected = self.const_bool(expected);
+        let condition = unsafe { condition.llvm_val().as_ptr() };
+        let expected = unsafe { expected.llvm_val().as_ptr() };
+        let mut args = [condition, expected];
+        let value = unsafe {
+            LLVMBuildCall2(
+                self.ptr.as_ptr(),
+                intrinsic_ty,
+                intrinsic.as_ptr(),
+                args.as_mut_ptr(),
+                args.len() as u32,
+                cstr!("expect"),
+            )
+        };
+
+        unsafe { Bool::new(Value::new(NonNull::new(value).unwrap())) }
+    }
+
+    /// Tells LLVM that `condition` is always true.
+    pub fn assume(&self, condition: Bool<'ctx>) {
+        let intrinsic_id = unsafe { LLVMLookupIntrinsicID(cstr!("llvm.assume"), 11) };
+        assert_ne!(intrinsic_id, 0, "LLVM does not provide llvm.assume");
+
+        let intrinsic = unsafe {
+            LLVMGetIntrinsicDeclaration(
+                self.module.as_ptr(),
+                intrinsic_id,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        let intrinsic = NonNull::new(intrinsic).expect("failed to declare llvm.assume");
+        let intrinsic_ty = unsafe {
+            LLVMIntrinsicGetType(
+                self.ctx.ptr.as_ptr(),
+                intrinsic_id,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        let intrinsic_ty = NonNull::new(intrinsic_ty).expect("failed to get llvm.assume type");
+        let condition = unsafe { condition.llvm_val().as_ptr() };
+        let mut args = [condition];
+
+        unsafe {
+            LLVMBuildCall2(
+                self.ptr.as_ptr(),
+                intrinsic_ty.as_ptr(),
+                intrinsic.as_ptr(),
+                args.as_mut_ptr(),
+                args.len() as u32,
+                c"".as_ptr().cast(),
+            );
+        }
     }
 
 
@@ -770,3 +863,4 @@ impl<'ctx> Drop for Builder<'ctx> {
         unsafe { LLVMDisposeBuilder(self.ptr.as_ptr()) };
     }
 }
+
