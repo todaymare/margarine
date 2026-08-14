@@ -314,6 +314,11 @@ pub fn run<'a>(
             let zero = builder.const_int(usize_ty, 0, false);
 
             let refcount = builder.load(rc_ptr, *usize_ty).as_integer();
+
+            // if this is false, then it'd lead to a double-free
+            let is_ge_one = builder.cmp_int(refcount, one, IntCmp::UnsignedGe);
+            builder.assume(is_ge_one);
+
             let refcount = builder.sub_int(refcount, one);
 
             builder.store(rc_ptr, *refcount);
@@ -457,9 +462,10 @@ pub fn run<'a>(
 }
 
 
-const COLLECTION_FLAT_TAG : usize = 0;
-const COLLECTION_SLICE_TAG : usize = 1;
-const COLLECTION_CONCAT_TAG : usize = 2;
+const COLLECTION_FLAT_TAG : usize = 0b00;
+const COLLECTION_SLICE_TAG : usize = 0b01;
+const COLLECTION_CONCAT_TAG : usize = 0b10;
+const COLLECTION_UNUSED_TAG : usize = 0b11;
 
 
 
@@ -659,7 +665,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             let index = builder.load(index_slot, *this.usize).as_integer();
             let (header_ptr, allocation_kind) = this.collection_split_tag(builder, tagged_ptr);
 
-            builder.switch(allocation_kind, 0..3, |builder, allocation_kind| {
+            builder.switch(allocation_kind, 0..4, |builder, allocation_kind| {
                 match allocation_kind {
                     COLLECTION_FLAT_TAG => {
                         let data_ptr = builder.field_ptr(header_ptr, payload_ty, 1);
@@ -702,6 +708,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         );
                         builder.loop_continue(loop_id);
                     }
+
+                    COLLECTION_UNUSED_TAG => builder.unreachable(),
 
                     _ => unreachable!(),
                 }
@@ -778,11 +786,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let ptr_as_usize = builder.ptr_to_int(ptr, self.usize);
         let tag_mask = 0x3;
         let tag_mask = builder.const_int(self.usize, tag_mask, false);
-        let ptr_mask = builder.int_not(tag_mask);
-
         let tag = builder.and(ptr_as_usize, tag_mask);
-        let ptr = builder.and(ptr_as_usize, ptr_mask);
-        let ptr = builder.int_to_ptr(ptr, self.ctx.ptr());
+
+        let ptr_mask = builder.int_not(tag_mask);
+        let ptr = builder.ptr_mask(ptr, ptr_mask);
+
+        let align = self.usize.align_of(self.module).unwrap();
+        let align = self.const_usize(builder, align);
+
+        builder.assume_bundles(&[
+            ("align", &[*ptr, *align]),
+            ("nonnull", &[*ptr]),
+            ("dereferenceable", &[*ptr, *align]),
+        ]);
 
         (ptr, tag)
     }
@@ -836,7 +852,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let total_size_ptr = builder.alloca(*self.usize);
 
-        builder.switch(allocation_kind, 0..3, |builder, idx| {
+        builder.switch(allocation_kind, 0..4, |builder, idx| {
             match idx {
                 COLLECTION_FLAT_TAG => {
                     let total_size = self.collection_flat_allocation_size(
@@ -897,6 +913,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     self.collection_drop(builder, a, elem_repr, elem_ty);
                     self.collection_drop(builder, b, elem_repr, elem_ty);
                 }
+
+
+                COLLECTION_UNUSED_TAG => builder.unreachable(),
 
                 _ => unreachable!(),
             }

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFPToUI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstAllOnes, LLVMConstNull, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetGlobalParent, LLVMGetInsertBlock, LLVMGetIntrinsicDeclaration, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIntrinsicGetType, LLVMIsATerminatorInst, LLVMLookupIntrinsicID, LLVMPositionBuilderAtEnd}, prelude::LLVMBasicBlockRef, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMModule, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCallWithOperandBundles, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFPToUI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstAllOnes, LLVMConstNull, LLVMCreateOperandBundle, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMDisposeOperandBundle, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetGlobalParent, LLVMGetInsertBlock, LLVMGetIntrinsicDeclaration, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIntrinsicGetType, LLVMIsATerminatorInst, LLVMLookupIntrinsicID, LLVMPositionBuilderAtEnd}, prelude::{LLVMBasicBlockRef, LLVMOperandBundleRef}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMModule, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, vec::KVec};
 
 use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
@@ -425,6 +425,51 @@ impl<'ctx> Builder<'ctx> {
         unsafe { Ptr::new(Value::new(NonNull::new(value).unwrap())) }
     }
 
+    /// Masks pointer bits while preserving the pointer's underlying object.
+    pub fn ptr_mask(&self, ptr: Ptr<'ctx>, mask: Integer<'ctx>) -> Ptr<'ctx> {
+        let mut overloads = [
+            unsafe { ptr.ty().llvm_ty().as_ptr() },
+            unsafe { mask.ty().llvm_ty().as_ptr() },
+        ];
+        let intrinsic_id = unsafe { LLVMLookupIntrinsicID(cstr!("llvm.ptrmask"), 12) };
+        assert_ne!(intrinsic_id, 0, "LLVM does not provide llvm.ptrmask");
+
+        let intrinsic = unsafe {
+            LLVMGetIntrinsicDeclaration(
+                self.module.as_ptr(),
+                intrinsic_id,
+                overloads.as_mut_ptr(),
+                overloads.len(),
+            )
+        };
+        let intrinsic = NonNull::new(intrinsic).expect("failed to declare llvm.ptrmask");
+        let intrinsic_ty = unsafe {
+            LLVMIntrinsicGetType(
+                self.ctx.ptr.as_ptr(),
+                intrinsic_id,
+                overloads.as_mut_ptr(),
+                overloads.len(),
+            )
+        };
+        let intrinsic_ty = NonNull::new(intrinsic_ty).expect("failed to get llvm.ptrmask type");
+        let mut args = [
+            unsafe { ptr.llvm_val().as_ptr() },
+            unsafe { mask.llvm_val().as_ptr() },
+        ];
+        let value = unsafe {
+            LLVMBuildCall2(
+                self.ptr.as_ptr(),
+                intrinsic_ty.as_ptr(),
+                intrinsic.as_ptr(),
+                args.as_mut_ptr(),
+                args.len() as u32,
+                cstr!("ptrmask"),
+            )
+        };
+
+        unsafe { Ptr::new(Value::new(NonNull::new(value).unwrap())) }
+    }
+
 
     pub fn add_int(&self, lhs: Integer<'ctx>, rhs: Integer<'ctx>) -> Integer<'ctx> {
         unsafe { Integer::new(self.internal_call(LLVMBuildAdd, lhs, rhs, cstr!("addi"))) }
@@ -636,6 +681,77 @@ impl<'ctx> Builder<'ctx> {
                 args.len() as u32,
                 c"".as_ptr().cast(),
             );
+        }
+    }
+
+    /// Emits `llvm.assume(i1 true)` with tagged operand bundles.
+    ///
+    /// Each bundle is `(tag, values)`, for example:
+    /// `("nonnull", &[ptr_value])`.
+    pub fn assume_bundles(&self, bundles: &[(&str, &[Value<'ctx>])]) {
+        let intrinsic_id = unsafe { LLVMLookupIntrinsicID(cstr!("llvm.assume"), 11) };
+        assert_ne!(intrinsic_id, 0, "LLVM does not provide llvm.assume");
+
+        let intrinsic = unsafe {
+            LLVMGetIntrinsicDeclaration(
+                self.module.as_ptr(),
+                intrinsic_id,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        let intrinsic = NonNull::new(intrinsic).expect("failed to declare llvm.assume");
+        let intrinsic_ty = unsafe {
+            LLVMIntrinsicGetType(
+                self.ctx.ptr.as_ptr(),
+                intrinsic_id,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        let intrinsic_ty = NonNull::new(intrinsic_ty).expect("failed to get llvm.assume type");
+
+        let mut raw_bundles = Vec::<LLVMOperandBundleRef>::with_capacity(bundles.len());
+        for (tag, values) in bundles {
+            assert!(!tag.as_bytes().contains(&0), "operand bundle tag contains a null byte");
+
+            let mut raw_values = values
+                .iter()
+                .map(|value| unsafe { value.llvm_val().as_ptr() })
+                .collect::<Vec<_>>();
+            let bundle = unsafe {
+                LLVMCreateOperandBundle(
+                    tag.as_ptr().cast(),
+                    tag.len(),
+                    raw_values.as_mut_ptr(),
+                    raw_values.len() as u32,
+                )
+            };
+            raw_bundles.push(
+                NonNull::new(bundle)
+                    .expect("failed to create LLVM operand bundle")
+                    .as_ptr(),
+            );
+        }
+
+        let condition = self.const_bool(true);
+        let condition = unsafe { condition.llvm_val().as_ptr() };
+        let mut args = [condition];
+        unsafe {
+            LLVMBuildCallWithOperandBundles(
+                self.ptr.as_ptr(),
+                intrinsic_ty.as_ptr(),
+                intrinsic.as_ptr(),
+                args.as_mut_ptr(),
+                args.len() as u32,
+                raw_bundles.as_mut_ptr(),
+                raw_bundles.len() as u32,
+                c"".as_ptr().cast(),
+            );
+
+            for bundle in raw_bundles {
+                LLVMDisposeOperandBundle(bundle);
+            }
         }
     }
 

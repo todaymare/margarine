@@ -40,6 +40,13 @@ impl<'ctx> FunctionPtr<'ctx> {
         unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeFunctionIndex, attr) };
     }
 
+    /// Requests that LLVM inline this function at every eligible call site.
+    pub fn set_inline(self, ctx: ContextRef<'ctx>) {
+        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("alwaysinline"), 11) };
+        let attr = unsafe { LLVMCreateEnumAttribute(ctx.ptr.as_ptr(), attr_kind, 0) };
+        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), LLVMAttributeFunctionIndex, attr) };
+    }
+
 
     pub fn set_cold(self, ctx: ContextRef<'ctx>) {
         let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("cold"), 4) };
