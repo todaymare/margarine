@@ -1250,7 +1250,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 assert!(self.funcs.insert(hash, func).is_none());
 
-                let builder = func_ptr.builder(self.ctx, func_ty);
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
 
                 let elem_ty = gens[0].1;
                 let llvm_elem = self.to_llvm_ty(elem_ty);
@@ -1260,6 +1260,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let arg = builder.arg(0).unwrap();
                 let arg = builder.local_get(arg);
+                let arg = self.emit_copy(&mut builder, arg, elem_ty);
 
                 let one = self.const_usize(&builder, 1);
                 builder.store(ptr, *builder.struct_instance(rc_ty, [*one, arg]));
@@ -1301,7 +1302,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let rc = builder.load(arg.as_ptr(), *rc_ty).as_struct();
                 let result = builder.field_load(rc, 1);
                 let result = self.emit_copy(&mut builder, result, elem_ty);
-                self.emit_drop(&mut builder, arg, args[0]);
 
                 builder.ret(result);
 
@@ -1342,13 +1342,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let rc_ty = self.ctx.literal_struct(&[*self.usize, llvm_elem.repr], false);
                 let data_ptr = builder.field_ptr(rc_arg.as_ptr(), rc_ty, 1);
                 let old_val = builder.load(data_ptr, llvm_elem.repr);
+                let val_arg = self.emit_copy(&mut builder, val_arg, elem_ty);
                 builder.store(data_ptr, val_arg);
 
                 // Drop the ownership Rc previously had over old_val.
                 self.emit_drop(&mut builder, old_val, args[1]);
-
-                // Drop our Rc<T> argument.
-                self.emit_drop(&mut builder, rc_arg, args[0]);
 
                 builder.ret(*builder.const_unit());
 
@@ -1526,13 +1524,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 assert!(self.funcs.insert(hash, func).is_none());
 
-                let builder = func_ptr.builder(self.ctx, func_ty);
-
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+                let elem_ty = gens[0].1;
                 let ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
                 builder.call(self.assert_not_null_fn.0, self.assert_not_null_fn.1, &[*ptr]);
                 let val = builder.local_get(builder.arg(1).unwrap());
-
+                let val = self.emit_copy(&mut builder, val, elem_ty);
                 builder.store(ptr, val);
+
                 builder.ret(*builder.const_unit());
 
                 return Ok(&self.funcs[&hash]);
@@ -1692,7 +1691,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let list = list_value.as_struct();
                 let len = self.collection_length(&mut builder, list);
                 let len = self.usize_to_i64(&builder, len);
-                self.emit_drop(&mut builder, list_value, args[0]);
                 builder.ret(*len);
 
                 return Ok(&self.funcs[&hash]);
@@ -1723,7 +1721,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let mut builder = func_ptr.builder(self.ctx, func_ty);
 
                 let left = builder.local_get(builder.arg(0).unwrap());
+                let left = self.emit_copy(&mut builder, left, args[0]);
                 let right = builder.local_get(builder.arg(1).unwrap());
+                let right = self.emit_copy(&mut builder, right, args[1]);
                 let result = self.collection_concat(&mut builder, left.as_struct(), right.as_struct());
 
                 builder.ret(*result);
@@ -1795,7 +1795,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         builder.store(result, some);
                     },
                 );
-                self.emit_drop(&mut builder, *list_value, args[0]);
 
                 builder.ret(builder.load(result, llvm_ret.repr));
 
@@ -1863,6 +1862,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let kind = builder.const_int(self.i32, index as _, false);
                     let value = builder.arg(0).unwrap();
                     let value = builder.local_get(value);
+                    let value = self.emit_copy(&mut builder, value, arg_ty);
                     self.create_enum(&mut builder, ret, *kind, value)
                 };
 
@@ -3298,49 +3298,41 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let SymbolKind::Function(function) = self.syms.sym(func_sym).kind()
                 else { unreachable!() };
 
-                let mut inouts = Vec::new();
+                let mut value_args = Vec::new();
                 let mut llvm_args = sti::vec::Vec::with_cap_in(self.ctx.arena, args.len() + 1);
-                let mut borrowed_args = Vec::new();
 
                 let mut formal_index = 0;
+                let accessor = 
                 if let Expr::AccessField { val, .. } = self.ast.expr(lhs) {
-                    let value = env.info[&lhs];
-                    let ty = self.ty_info.expr(val).unwrap().resolve(&[env.gens], self.syms);
-                    if function.args().first().is_some_and(|arg| arg.is_inout()) {
-                        let ptr = builder.alloca_store(value);
+                    Some(val)
+                } else { 
+                    None 
+                };
 
-                        inouts.push((ptr, val, ty));
-                        llvm_args.push(*ptr);
+                let args_iter = accessor.into_iter()
+                    .chain(args.iter().map(|a| a.expr));
+
+                for arg_expr in args_iter {
+                    let value = self.expr(env, builder, arg_expr)?;
+                    let ty = self.ty_info.expr(arg_expr).unwrap();
+                    let ty = ty.resolve(&[env.gens], self.syms);
+
+                    let is_inout = function.args()[formal_index].is_inout();
+                    let value = 
+                    if is_inout {
+                        *builder.alloca_store(value)
                     } else {
-                        llvm_args.push(value);
-                        borrowed_args.push((value, ty));
-                    }
-                    formal_index = 1;
-                }
+                        value
+                    };
 
-                for arg in args {
-                    let value = self.expr(env, builder, arg.expr)?;
-                    if function.args()[formal_index].is_inout() {
-                        let ty = self.ty_info.expr(arg.expr).unwrap();
-                        let ty = ty.resolve(&[env.gens], self.syms);
-
-                        let ptr = builder.alloca_store(value);
-
-                        inouts.push((ptr, arg.expr, ty));
-                        llvm_args.push(*ptr);
-                    } else {
-                        let ty = self.ty_info.expr(arg.expr).unwrap();
-                        let ty = ty.resolve(&[env.gens], self.syms);
-
-                        borrowed_args.push((value, ty));
-                        llvm_args.push(value);
-                    }
+                    llvm_args.push(value);
+                    value_args.push((value, arg_expr, ty, is_inout));
                     formal_index += 1;
                 }
 
 
                 assert!(callable_ty.is_resolved(self.syms));
-                let is_extern = matches!(function.kind(), syms::func::FunctionKind::Extern(_));
+
                 let func_ty = self.to_llvm_ty(callable_ty);
 
                 let func_ptr = builder.field_load(func.as_struct(), 0);
@@ -3349,18 +3341,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 llvm_args.push(capture_ptr);
                 let result = builder.call(func_ptr.as_func(), func_ty.strct.as_func(), &llvm_args);
 
-                for (ptr, expr, ty) in inouts {
-                    let value = builder.load(ptr, self.to_llvm_ty(ty).repr);
+                for (value, expr, ty, is_inout) in value_args {
+                    let value =
+                    if is_inout { builder.load(value.as_ptr(), self.to_llvm_ty(ty).repr) }
+                    else { value };
 
-                    if self.is_inout_place(expr) {
+                    if is_inout && self.is_inout_place(expr) {
                         self.assign(env, builder, expr, value);
                     } else {
-                        self.emit_drop(builder, value, ty);
-                    }
-                }
-
-                if is_extern {
-                    for (value, ty) in borrowed_args {
                         self.emit_drop(builder, value, ty);
                     }
                 }
@@ -4230,10 +4218,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             ExternAbi::Direct
         }
     }
+
+
     fn drop_locals(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>, start: usize) {
         for i in (start..env.vars.len()).rev() {
-            let (_, local, ty, _) = env.vars[i];
-            if env.inouts.iter().any(|(_, inout)| *inout == local) { continue }
+            let (_, local, ty, is_param) = env.vars[i];
+
+            if is_param
+            || env.inouts.iter().any(|(_, inout)| *inout == local) {
+                continue;
+            }
+
             let value = builder.local_get(local);
             self.emit_drop(builder, value, ty);
         }
@@ -4276,8 +4271,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         assert!(ty.is_resolved(self.syms));
 
         let sym = ty.sym(self.syms).unwrap();
-        let gens = ty.gens(self.syms);
-        let gens = self.syms.get_gens(gens);
 
         match sym {
             SymbolId::I64 | SymbolId::BYTE => {
