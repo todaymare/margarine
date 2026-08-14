@@ -55,6 +55,9 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     collection_slice_payload: StructTy<'ctx>,
     /// struct(collection_header, collection_ty, collection_ty)
     collection_concat_payload: StructTy<'ctx>,
+    /// Sibling TBAA tags for header payload vs collection elements.
+    tbaa_header: Value<'ctx>,
+    tbaa_element: Value<'ctx>,
 
     collection_drop_funcs: HashMap<(LLVMType<'ctx>, Option<TypeHash>), (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
     collection_element_ptr_funcs: HashMap<LLVMType<'ctx>, (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
@@ -241,6 +244,14 @@ pub fn run<'a>(
         let collection_ty = ctx.structure("collectionType");
         collection_ty.set_fields(&[*ctx.ptr(), *usize_ty], false);
 
+
+        // Sibling TBAA: RC word, header payload, and collection elements
+        // do not alias even when they share one allocation.
+        let tbaa_root = ctx.tbaa_root("margarine");
+        let tbaa_refcount = ctx.tbaa_tag(ctx.tbaa_type("runtime.refcount", tbaa_root));
+        let tbaa_header = ctx.tbaa_tag(ctx.tbaa_type("collection.header", tbaa_root));
+        let tbaa_element = ctx.tbaa_tag(ctx.tbaa_type("collection.element", tbaa_root));
+
         let str_ty = ctx.structure("strType");
         str_ty.set_fields(&[*collection_ty], false);
 
@@ -283,7 +294,7 @@ pub fn run<'a>(
             let rc_ptr = builder.local_get(rc_ptr).as_ptr();
 
             let one = builder.const_int(usize_ty, 1, false);
-            let refcount = builder.load(rc_ptr, *usize_ty).as_integer();
+            let refcount = builder.load_tbaa(rc_ptr, *usize_ty, tbaa_refcount).as_integer();
 
             let max = builder.const_all_ones(usize_ty);
             // we can assume this bcs its impossible to have 
@@ -296,7 +307,7 @@ pub fn run<'a>(
 
             let refcount = builder.add_int(refcount, one);
 
-            builder.store(rc_ptr, *refcount);
+            builder.store_tbaa(rc_ptr, *refcount, tbaa_refcount);
             builder.ret(*rc_ptr);
         }
 
@@ -314,7 +325,7 @@ pub fn run<'a>(
             let one = builder.const_int(usize_ty, 1, false);
             let zero = builder.const_int(usize_ty, 0, false);
 
-            let refcount = builder.load(rc_ptr, *usize_ty).as_integer();
+            let refcount = builder.load_tbaa(rc_ptr, *usize_ty, tbaa_refcount).as_integer();
 
             // if this is false, then it'd lead to a double-free
             let is_ge_one = builder.cmp_int(refcount, one, IntCmp::UnsignedGe);
@@ -322,7 +333,7 @@ pub fn run<'a>(
 
             let refcount = builder.sub_int(refcount, one);
 
-            builder.store(rc_ptr, *refcount);
+            builder.store_tbaa(rc_ptr, *refcount, tbaa_refcount);
 
             let is_rc_zero = builder.cmp_int(refcount, zero, IntCmp::Eq);
             builder.ret(*is_rc_zero);
@@ -382,6 +393,8 @@ pub fn run<'a>(
             collection_flat_payload,
             collection_slice_payload,
             collection_concat_payload,
+            tbaa_header,
+            tbaa_element,
             str_ty,
             collection_drop_funcs: HashMap::new(),
             collection_element_ptr_funcs: HashMap::new(),
@@ -572,10 +585,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let buf = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
 
         let offset_ptr = builder.field_ptr(buf, self.collection_slice_payload, 1);
-        builder.store(offset_ptr, *offset);
+        builder.store_tbaa(offset_ptr, *offset, self.tbaa_header);
 
         let base_ptr = builder.field_ptr(buf, self.collection_slice_payload, 2);
-        builder.store(base_ptr, *base);
+        builder.store_tbaa(base_ptr, *base, self.tbaa_header);
 
         let tag = builder.const_int(self.usize, COLLECTION_SLICE_TAG as _, false);
         let tagged_ptr = self.collection_with_tag(builder, buf, tag);
@@ -599,10 +612,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let buf = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
 
         let left = builder.field_ptr(buf, self.collection_concat_payload, 1);
-        builder.store(left, *a);
+        builder.store_tbaa(left, *a, self.tbaa_header);
 
         let right = builder.field_ptr(buf, self.collection_concat_payload, 2);
-        builder.store(right, *b);
+        builder.store_tbaa(right, *b, self.tbaa_header);
 
         let tag = builder.const_int(self.usize, COLLECTION_CONCAT_TAG as _, false);
         let tagged_ptr = self.collection_with_tag(builder, buf, tag);
@@ -638,11 +651,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             &[*self.collection_ty, *self.usize],
             false,
         );
-        let accessor_id = self.collection_element_ptr_funcs.len();
+
         let func_ptr = self.module.function(
-            &format!("<collection_element_ptr>::{accessor_id}::{}", elem_repr.name()),
+            &format!("<collection_element_ptr>::{}", elem_repr.name()),
             func_ty,
         );
+
         func_ptr.set_linkage(Linkage::Internal);
         self.collection_element_ptr_funcs.insert(elem_repr, (func_ptr, func_ty));
 
@@ -658,10 +672,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let collection_slot = builder.alloca(*this.collection_ty);
         let index_slot = builder.alloca(*this.usize);
         let result_slot = builder.alloca(*this.ctx.ptr());
-        let is_root_slot = builder.alloca_store(*builder.const_bool(false));
 
-        let root_header = self.collection_tagged_ptr(builder, collection);
-        let (root_header, _) = self.collection_split_tag(builder, root_header);
 
         builder.store(collection_slot, *collection);
         builder.store(index_slot, *index);
@@ -674,20 +685,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             let (header_ptr, allocation_kind) = this.collection_split_tag(builder, tagged_ptr);
 
-            let is_not_root = builder.load(is_root_slot, *self.ctx.bool()).as_bool();
-            builder.ite(
-                &mut (), 
-                is_not_root,
-                |builder, _| {
-                    builder.assume_bundles(&[
-                        ("separate_storage", &[*header_ptr, *root_header])
-                    ]);
-                }, 
-                |_, _| {}, 
-            );
-
-            builder.store(is_root_slot, *builder.const_bool(true));
-
             builder.assume(builder.cmp_int(index, length, IntCmp::UnsignedLt));
 
             builder.switch(allocation_kind, 0..4, |builder, allocation_kind| {
@@ -695,27 +692,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     COLLECTION_FLAT_TAG => {
                         let payload_ty = this.collection_flat_header_type(elem_repr);
                         let data_ptr = builder.field_ptr(header_ptr, payload_ty, 1);
-
-                        builder.assume_bundles(&[
-                            ("separate_storage", &[*data_ptr, *root_header])
-                        ]);
-
                         let element_ptr = builder.gep_inbounds(data_ptr, elem_repr, index);
-
-                        builder.assume_bundles(&[
-                            ("separate_storage", &[*element_ptr, *root_header])
-                        ]);
-
-
-
                         builder.store(result_slot, *element_ptr);
                         builder.loop_break(loop_id);
                     }
 
                     COLLECTION_SLICE_TAG => {
                         let ty = this.collection_slice_payload;
-                        let offset = builder.field_ptr_load(header_ptr, ty, 1).as_integer();
-                        let base = builder.field_ptr_load(header_ptr, ty, 2).as_struct();
+                        let offset = builder.field_ptr_load_tbaa(header_ptr, ty, 1, this.tbaa_header).as_integer();
+                        let base = builder.field_ptr_load_tbaa(header_ptr, ty, 2, this.tbaa_header).as_struct();
 
                         let base_index = builder.add_int_nuw(index, offset);
                         let base_length = this.collection_length(builder, base);
@@ -731,8 +716,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     COLLECTION_CONCAT_TAG => {
                         let ty = this.collection_concat_payload;
-                        let left = builder.field_ptr_load(header_ptr, ty, 1).as_struct();
-                        let right = builder.field_ptr_load(header_ptr, ty, 2).as_struct();
+                        let left = builder.field_ptr_load_tbaa(header_ptr, ty, 1, this.tbaa_header).as_struct();
+                        let right = builder.field_ptr_load_tbaa(header_ptr, ty, 2, this.tbaa_header).as_struct();
 
                         let left_len = this.collection_length(builder, left);
                         let in_left = builder.cmp_int(index, left_len, IntCmp::UnsignedLt);
@@ -801,7 +786,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         index,
                         byte_ty,
                     );
-                    let element = builder.load(element_ptr, byte_ty);
+                    let element = builder.load_tbaa(element_ptr, byte_ty, self.tbaa_element);
                     let destination = builder.gep(destination, byte_ty, index);
                     builder.store(destination, element);
                     builder.store(index_slot, *builder.add_int(index, one));
@@ -932,7 +917,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                     let i = builder.sub_int(i, one);
                                     builder.store(counter, *i);
                                     let ptr = builder.gep(data_ptr, elem_repr, i);
-                                    let elem = builder.load(ptr, elem_repr);
+                                    let elem = builder.load_tbaa(ptr, elem_repr, self.tbaa_element);
                                     self.emit_drop(env, builder, elem, elem_ty);
                                 },
                             );
@@ -945,8 +930,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let total_size = self.const_usize(builder, total_size);
                     builder.store(total_size_ptr, *total_size);
 
-                    let payload = builder.load(header_ptr, *self.collection_slice_payload).as_struct();
-                    let base = builder.field_load(payload, 2).as_struct();
+                    let base = builder.field_ptr_load_tbaa(header_ptr, self.collection_slice_payload, 2, self.tbaa_header).as_struct();
                     self.collection_drop(env, builder, base, elem_repr, elem_ty);
                 }
 
@@ -956,9 +940,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let total_size = self.const_usize(builder, total_size);
                     builder.store(total_size_ptr, *total_size);
 
-                    let payload = builder.load(header_ptr, *self.collection_concat_payload).as_struct();
-                    let a = builder.field_load(payload, 1).as_struct();
-                    let b = builder.field_load(payload, 2).as_struct();
+                    let a = builder.field_ptr_load_tbaa(header_ptr, self.collection_concat_payload, 1, self.tbaa_header).as_struct();
+                    let b = builder.field_ptr_load_tbaa(header_ptr, self.collection_concat_payload, 2, self.tbaa_header).as_struct();
                     self.collection_drop(env, builder, a, elem_repr, elem_ty);
                     self.collection_drop(env, builder, b, elem_repr, elem_ty);
                 }
@@ -2399,10 +2382,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     llvm_ty.repr,
                 );
 
-                let old_value = builder.load(old_entry, llvm_ty.repr);
+                let old_value = builder.load_tbaa(old_entry, llvm_ty.repr, self.tbaa_element);
 
                 let old_value = self.emit_copy(builder, old_value, elem_ty);
-                builder.store(this_data, old_value);
+                builder.store_tbaa(this_data, old_value, self.tbaa_element);
 
                 let a_base = self.emit_copy(builder, *collection, list_ty).as_struct();
                 let a = self.collection_slice(builder, a_base, zero, index_val);
@@ -2797,7 +2780,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         let bytes = builder.load(global.as_ptr(), *byte_arr_ty);
  
                         let (collection, data) = self.collection_flat(builder, len, *byte_ty);
-                        builder.store(data, bytes);
+                        builder.store_tbaa(data, bytes, self.tbaa_element);
                         *builder.struct_instance(self.str_ty, [*collection])
                     },
 
@@ -3152,7 +3135,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             parser::nodes::expr::Expr::IndexList { list, index } => {
                 let list_ty = self.ty_info.expr(list).unwrap().resolve(&[env.gens], self.syms);
-                let (list_value, list_is_temporary) = match self.ast.expr(list) {
+                let (list_value, list_is_temporary) = 
+                match self.ast.expr(list) {
                     parser::nodes::expr::Expr::Identifier(name, _) => {
                         let local = env.find_var(name).unwrap();
                         (builder.local_get(local), false)
@@ -3177,7 +3161,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     index,
                     elem_llvm.repr,
                 );
-                let value = builder.load(element_ptr, elem_llvm.repr);
+                let value = builder.load_tbaa(element_ptr, elem_llvm.repr, self.tbaa_element);
                 let value = self.emit_copy(builder, value, elem_ty);
                 if list_is_temporary {
                     self.emit_drop(env, builder, list_value, list_ty);
@@ -3734,7 +3718,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 for (i, &value) in llvm_exprs.iter().enumerate() {
                     let index = self.const_usize(builder, i);
                     let ptr = builder.gep(buf, elem_repr, index);
-                    builder.store(ptr, value);
+                    builder.store_tbaa(ptr, value, self.tbaa_element);
                 }
 
                 *value

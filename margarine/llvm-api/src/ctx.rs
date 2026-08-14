@@ -1,6 +1,6 @@
 use std::{ffi::{CStr, CString}, ops::Deref, path::Path, ptr::{null_mut, NonNull}};
 
-use llvm_sys::{bit_writer::LLVMWriteBitcodeToFile, core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDisposeMessage, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMSetTarget, LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMVoidTypeInContext}, target::{LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCodeGenFileType, LLVMCreateTargetDataLayout, LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMGetTargetMachineTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineEmitToFile}, LLVMContext};
+use llvm_sys::{bit_writer::LLVMWriteBitcodeToFile, core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDisposeMessage, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMMDNodeInContext2, LLVMMDStringInContext2, LLVMMetadataAsValue, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMSetTarget, LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMValueAsMetadata, LLVMVoidTypeInContext}, prelude::LLVMMetadataRef, target::{LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCodeGenFileType, LLVMCreateTargetDataLayout, LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMGetTargetMachineTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineEmitToFile}, LLVMContext};
 use sti::{arena::Arena, format_in};
 
 use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{array::Array, bool::Bool, fp::FP, int::Integer, strct::Struct, string::StringValue, unit::Unit, Value}};
@@ -344,6 +344,56 @@ impl<'me> ContextImpl<'me> {
                     fields.as_ptr().cast_mut().cast(), fields.len() as u32) };
 
         unsafe { Struct::new(Value::new(NonNull::new(ptr).unwrap())) }
+    }
+
+
+    fn md_string(&self, name: &str) -> LLVMMetadataRef {
+        unsafe {
+            LLVMMDStringInContext2(
+                self.ptr.as_ptr(),
+                name.as_ptr().cast(),
+                name.len(),
+            )
+        }
+    }
+
+
+    fn md_node(&self, operands: &[LLVMMetadataRef]) -> LLVMMetadataRef {
+        let mut operands = operands.to_vec();
+        unsafe {
+            LLVMMDNodeInContext2(
+                self.ptr.as_ptr(),
+                operands.as_mut_ptr(),
+                operands.len(),
+            )
+        }
+    }
+
+
+    fn md_i64(&self, value: i64) -> LLVMMetadataRef {
+        let ty = unsafe { LLVMIntTypeInContext(self.ptr.as_ptr(), 64) };
+        let value = unsafe { LLVMConstInt(ty, value as u64, 0) };
+        unsafe { LLVMValueAsMetadata(value) }
+    }
+
+
+    /// Scalar TBAA identity node: `{!"name"}`.
+    pub fn tbaa_root(&self, name: &str) -> LLVMMetadataRef {
+        self.md_node(&[self.md_string(name)])
+    }
+
+
+    /// Scalar TBAA type node: `{!"name", parent, i64 0}`.
+    pub fn tbaa_type(&self, name: &str, parent: LLVMMetadataRef) -> LLVMMetadataRef {
+        self.md_node(&[self.md_string(name), parent, self.md_i64(0)])
+    }
+
+
+    /// Access tag `{ty, ty, i64 0}` for `!tbaa` on a load or store.
+    pub fn tbaa_tag(&self, access_ty: LLVMMetadataRef) -> Value<'me> {
+        let node = self.md_node(&[access_ty, access_ty, self.md_i64(0)]);
+        let value = unsafe { LLVMMetadataAsValue(self.ptr.as_ptr(), node) };
+        Value::new(NonNull::new(value).expect("failed to wrap TBAA metadata"))
     }
 }
 

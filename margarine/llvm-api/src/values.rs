@@ -12,7 +12,7 @@ pub mod global;
 
 use std::{marker::PhantomData, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMPrintValueToString, LLVMTypeOf}, LLVMValue};
+use llvm_sys::{core::{LLVMGetMDKindIDInContext, LLVMPrintValueToString, LLVMSetMetadata, LLVMTypeOf}, LLVMValue};
 
 use crate::{info::Message, tys::{Type, TypeKind}};
 
@@ -45,6 +45,15 @@ impl<'ctx> Value<'ctx> {
 
 
     pub unsafe fn llvm_val(self) -> NonNull<LLVMValue> { self.ptr }
+
+    pub fn set_tbaa(self, ctx: crate::ctx::ContextRef<'ctx>, tag: Value<'ctx>) {
+        let kind = unsafe {
+            LLVMGetMDKindIDInContext(ctx.ptr.as_ptr(), "tbaa".as_ptr().cast(), 4)
+        };
+        unsafe {
+            LLVMSetMetadata(self.ptr.as_ptr(), kind, tag.llvm_val().as_ptr());
+        }
+    }
 
 
     pub fn as_integer(self) -> Integer<'ctx> {

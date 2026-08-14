@@ -126,7 +126,16 @@ impl<'ctx> Module<'ctx> {
                 "invalid MARGARINE_OPT_LEVEL '{level}'; expected O0, O1, O2, or O3"
             ));
         }
-        let pipeline = CString::new(format!("default<{level}>"))
+        // TBAA lets DSE cancel balanced RC clone/drop around borrowed walks,
+        // but that pair often survives the first default pipeline. A second
+        // instcombine/gvn/dse run finishes the same-value store.
+        let pipeline = 
+        if level == "O0" {
+            format!("default<{level}>")
+        } else {
+            format!("default<{level}>,function(instcombine,gvn,dse)")
+        };
+        let pipeline = CString::new(pipeline)
             .expect("optimization pipeline cannot contain a null byte");
 
         let options = unsafe { LLVMCreatePassBuilderOptions() };

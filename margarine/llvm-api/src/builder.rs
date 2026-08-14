@@ -271,12 +271,25 @@ impl<'ctx> Builder<'ctx> {
         unsafe { LLVMBuildStore(self.ptr.as_ptr(), val.llvm_val().as_ptr(), ptr.llvm_val().as_ptr()) };
     }
 
+    pub fn store_tbaa(&self, ptr: Ptr<'ctx>, val: Value<'ctx>, tag: Value<'ctx>) {
+        let store = unsafe {
+            LLVMBuildStore(self.ptr.as_ptr(), val.llvm_val().as_ptr(), ptr.llvm_val().as_ptr())
+        };
+        Value::new(NonNull::new(store).expect("failed to build store")).set_tbaa(self.ctx, tag);
+    }
+
 
     pub fn load(&self, ptr: Ptr<'ctx>, ty: Type<'ctx>) -> Value<'ctx> {
         let ptr = unsafe { LLVMBuildLoad2(self.ptr.as_ptr(), ty.llvm_ty().as_ptr(),
                                 ptr.llvm_val().as_ptr(), cstr!("load")) };
 
         Value::new(NonNull::new(ptr).unwrap())
+    }
+
+    pub fn load_tbaa(&self, ptr: Ptr<'ctx>, ty: Type<'ctx>, tag: Value<'ctx>) -> Value<'ctx> {
+        let value = self.load(ptr, ty);
+        value.set_tbaa(self.ctx, tag);
+        value
     }
 
 
@@ -875,6 +888,17 @@ impl<'ctx> Builder<'ctx> {
     pub fn field_ptr_load(&self, lhs: Ptr<'ctx>, ty: StructTy<'ctx>, index: usize) -> Value<'ctx> {
         let field_ptr = self.field_ptr(lhs, ty, index);
         self.load(field_ptr, ty.fields(&self.arena)[index as u32])
+    }
+
+    pub fn field_ptr_load_tbaa(
+        &self,
+        lhs: Ptr<'ctx>,
+        ty: StructTy<'ctx>,
+        index: usize,
+        tag: Value<'ctx>,
+    ) -> Value<'ctx> {
+        let field_ptr = self.field_ptr(lhs, ty, index);
+        self.load_tbaa(field_ptr, ty.fields(&self.arena)[index as u32], tag)
     }
 
 
