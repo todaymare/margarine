@@ -1,6 +1,6 @@
 use std::{collections::HashSet, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCallWithOperandBundles, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFPToUI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSelect, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstAllOnes, LLVMConstNull, LLVMCreateOperandBundle, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMDisposeOperandBundle, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetGlobalParent, LLVMGetInsertBlock, LLVMGetIntrinsicDeclaration, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIntrinsicGetType, LLVMIsATerminatorInst, LLVMLookupIntrinsicID, LLVMPositionBuilderAtEnd}, prelude::{LLVMBasicBlockRef, LLVMOperandBundleRef}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMModule, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCallWithOperandBundles, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFPToUI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNUWAdd, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstAllOnes, LLVMConstNull, LLVMCreateOperandBundle, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMDisposeOperandBundle, LLVMGetBasicBlockTerminator, LLVMGetEntryBasicBlock, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetGlobalParent, LLVMGetInsertBlock, LLVMGetIntrinsicDeclaration, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIntrinsicGetType, LLVMIsATerminatorInst, LLVMLookupIntrinsicID, LLVMPositionBuilderAtEnd}, prelude::{LLVMBasicBlockRef, LLVMOperandBundleRef}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMModule, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, vec::KVec};
 
 use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
@@ -471,6 +471,11 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
+    pub fn add_int_nuw(&self, lhs: Integer<'ctx>, rhs: Integer<'ctx>) -> Integer<'ctx> {
+        unsafe { Integer::new(self.internal_call(LLVMBuildNUWAdd, lhs, rhs, cstr!("addinuw"))) }
+    }
+
+
     pub fn add_int(&self, lhs: Integer<'ctx>, rhs: Integer<'ctx>) -> Integer<'ctx> {
         unsafe { Integer::new(self.internal_call(LLVMBuildAdd, lhs, rhs, cstr!("addi"))) }
     }
@@ -867,6 +872,12 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
+    pub fn field_ptr_load(&self, lhs: Ptr<'ctx>, ty: StructTy<'ctx>, index: usize) -> Value<'ctx> {
+        let field_ptr = self.field_ptr(lhs, ty, index);
+        self.load(field_ptr, ty.fields(&self.arena)[index as u32])
+    }
+
+
     pub fn field_ptr(&self, lhs: Ptr<'ctx>, ty: StructTy<'ctx>, index: usize) -> Ptr<'ctx> {
         let ptr = unsafe { LLVMBuildStructGEP2(self.ptr.as_ptr(),
                                                ty.llvm_ty().as_ptr(),
@@ -888,6 +899,17 @@ impl<'ctx> Builder<'ctx> {
 
         unsafe { Ptr::new(Value::new(NonNull::new(ptr).unwrap())) }
     }
+    pub fn gep_inbounds(&self, lhs: Ptr<'ctx>, ty: Type<'ctx>, index: Integer<'ctx>) -> Ptr<'ctx> {
+        let ptr = unsafe { LLVMBuildInBoundsGEP2(self.ptr.as_ptr(),
+                                                 ty.llvm_ty().as_ptr(),
+                                                 lhs.llvm_val().as_ptr(),
+                                                 &mut index.llvm_val().as_ptr(),
+                                                 1,
+                                                 cstr!("gep_inbounds")) };
+
+        unsafe { Ptr::new(Value::new(NonNull::new(ptr).unwrap())) }
+    }
+
 
     pub fn ptr_is_null(&self, ptr: Ptr<'ctx>) -> Bool<'ctx> {
         let value = unsafe { LLVMBuildIsNull(self.ptr.as_ptr(), ptr.llvm_val().as_ptr(), cstr!("isnull")) };

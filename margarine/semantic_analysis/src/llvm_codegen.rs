@@ -510,7 +510,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         &self, builder: &mut Builder<'ctx>,
         collection: Struct<'ctx>,
     ) -> Ptr<'ctx> {
-        builder.field_load(collection, 0).as_ptr()
+        let ptr = builder.field_load(collection, 0).as_ptr();
+        ptr
     }
 
 
@@ -653,57 +654,101 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let collection = builder.local_get(builder.arg(0).unwrap()).as_struct();
         let index = builder.local_get(builder.arg(1).unwrap()).as_integer();
-        let tagged_ptr_slot = builder.alloca(*this.ctx.ptr());
+
+        let collection_slot = builder.alloca(*this.collection_ty);
         let index_slot = builder.alloca(*this.usize);
         let result_slot = builder.alloca(*this.ctx.ptr());
-        let payload_ty = this.collection_flat_header_type(elem_repr);
-        let tagged_ptr = this.collection_tagged_ptr(builder, collection);
-        builder.store(tagged_ptr_slot, *tagged_ptr);
+        let is_root_slot = builder.alloca_store(*builder.const_bool(false));
+
+        let root_header = self.collection_tagged_ptr(builder, collection);
+        let (root_header, _) = self.collection_split_tag(builder, root_header);
+
+        builder.store(collection_slot, *collection);
         builder.store(index_slot, *index);
 
         builder.loop_indefinitely(|builder, loop_id| {
-            let tagged_ptr = builder.load(tagged_ptr_slot, *this.ctx.ptr()).as_ptr();
+            let collection = builder.load(collection_slot, *this.collection_ty).as_struct();
+            let tagged_ptr = self.collection_tagged_ptr(builder, collection);
+            let length = self.collection_length(builder, collection);
             let index = builder.load(index_slot, *this.usize).as_integer();
+
             let (header_ptr, allocation_kind) = this.collection_split_tag(builder, tagged_ptr);
+
+            let is_not_root = builder.load(is_root_slot, *self.ctx.bool()).as_bool();
+            builder.ite(
+                &mut (), 
+                is_not_root,
+                |builder, _| {
+                    builder.assume_bundles(&[
+                        ("separate_storage", &[*header_ptr, *root_header])
+                    ]);
+                }, 
+                |_, _| {}, 
+            );
+
+            builder.store(is_root_slot, *builder.const_bool(true));
+
+            builder.assume(builder.cmp_int(index, length, IntCmp::UnsignedLt));
 
             builder.switch(allocation_kind, 0..4, |builder, allocation_kind| {
                 match allocation_kind {
                     COLLECTION_FLAT_TAG => {
+                        let payload_ty = this.collection_flat_header_type(elem_repr);
                         let data_ptr = builder.field_ptr(header_ptr, payload_ty, 1);
-                        let element_ptr = builder.gep(data_ptr, elem_repr, index);
+
+                        builder.assume_bundles(&[
+                            ("separate_storage", &[*data_ptr, *root_header])
+                        ]);
+
+                        let element_ptr = builder.gep_inbounds(data_ptr, elem_repr, index);
+
+                        builder.assume_bundles(&[
+                            ("separate_storage", &[*element_ptr, *root_header])
+                        ]);
+
+
+
                         builder.store(result_slot, *element_ptr);
                         builder.loop_break(loop_id);
                     }
 
                     COLLECTION_SLICE_TAG => {
-                        let payload = builder.load(header_ptr, *this.collection_slice_payload).as_struct();
-                        let offset = builder.field_load(payload, 1).as_integer();
-                        let base = builder.field_load(payload, 2).as_struct();
-                        let base_tagged_ptr = this.collection_tagged_ptr(builder, base);
-                        let base_index = builder.add_int(index, offset);
-                        builder.store(tagged_ptr_slot, *base_tagged_ptr);
+                        let ty = this.collection_slice_payload;
+                        let offset = builder.field_ptr_load(header_ptr, ty, 1).as_integer();
+                        let base = builder.field_ptr_load(header_ptr, ty, 2).as_struct();
+
+                        let base_index = builder.add_int_nuw(index, offset);
+                        let base_length = this.collection_length(builder, base);
+
+                        builder.assume(builder.cmp_int(base_index, base_length, IntCmp::UnsignedLt));
+                        builder.assume(builder.cmp_int(offset, base_length, IntCmp::UnsignedLt));
+                        builder.assume(builder.cmp_int(index, base_length, IntCmp::UnsignedLt));
+
+                        builder.store(collection_slot, *base);
                         builder.store(index_slot, *base_index);
                         builder.loop_continue(loop_id);
                     }
 
                     COLLECTION_CONCAT_TAG => {
-                        let payload = builder.load(header_ptr, *this.collection_concat_payload).as_struct();
-                        let left = builder.field_load(payload, 1).as_struct();
-                        let right = builder.field_load(payload, 2).as_struct();
+                        let ty = this.collection_concat_payload;
+                        let left = builder.field_ptr_load(header_ptr, ty, 1).as_struct();
+                        let right = builder.field_ptr_load(header_ptr, ty, 2).as_struct();
+
                         let left_len = this.collection_length(builder, left);
                         let in_left = builder.cmp_int(index, left_len, IntCmp::UnsignedLt);
-                        let left_tagged_ptr = this.collection_tagged_ptr(builder, left);
-                        let right_tagged_ptr = this.collection_tagged_ptr(builder, right);
 
                         builder.ite(
                             &mut (),
                             in_left,
                             |builder, _| {
-                                builder.store(tagged_ptr_slot, *left_tagged_ptr);
+                                builder.store(collection_slot, *left);
                             },
                             |builder, _| {
                                 let right_index = builder.sub_int(index, left_len);
-                                builder.store(tagged_ptr_slot, *right_tagged_ptr);
+                                let right_len = this.collection_length(builder, right);
+                                builder.assume(builder.cmp_int(right_index, right_len, IntCmp::UnsignedLt));
+
+                                builder.store(collection_slot, *right);
                                 builder.store(index_slot, *right_index);
                             },
                         );
@@ -791,6 +836,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let ptr_mask = builder.int_not(tag_mask);
         let ptr = builder.ptr_mask(ptr, ptr_mask);
+
+        let align = self.collection_header.align_of(self.module).unwrap();
+        let align = self.const_usize(builder, align);
+
+        builder.assume_bundles(&[
+            ("align", &[*ptr, *align]),
+            ("nonnull", &[*ptr]),
+            ("dereferenceable", &[*ptr, *align]),
+        ]);
+
 
         (ptr, tag)
     }
@@ -3305,34 +3360,34 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let SymbolKind::Function(function) = self.syms.sym(func_sym).kind()
                 else { unreachable!() };
 
-                let mut value_args = Vec::new();
 
-                let mut formal_index = 0;
                 let accessor = 
                 if let Expr::AccessField { val, .. } = self.ast.expr(lhs) {
-                    Some(val)
+                    Some(Ok((env.info[&lhs], val)))
                 } else { 
                     None 
                 };
 
                 let args_iter = accessor.into_iter()
-                    .chain(args.iter().map(|a| a.expr));
+                    .chain(args.iter().map(|a| Ok((self.expr(env, builder, a.expr)?, a.expr))))
+                    .collect::<Vec<_>>();
 
-                for arg_expr in args_iter {
-                    let value = self.expr(env, builder, arg_expr)?;
-                    let ty = self.ty_info.expr(arg_expr).unwrap();
+                let mut value_args = Vec::new();
+                for (index, arg_expr) in args_iter.into_iter().enumerate() {
+                    let (value, expr) = arg_expr?;
+
+                    let ty = self.ty_info.expr(expr).unwrap();
                     let ty = ty.resolve(&[env.gens], self.syms);
 
-                    let is_inout = function.args()[formal_index].is_inout();
-                    let value = 
+                    let is_inout = function.args()[index].is_inout();
+                    let (value, inout) = 
                     if is_inout {
-                        *builder.alloca_store(value)
+                        (*builder.alloca_store(value), Some(expr))
                     } else {
-                        value
+                        (value, None)
                     };
 
-                    value_args.push((value, ty, if is_inout { Some(arg_expr) } else { None }));
-                    formal_index += 1;
+                    value_args.push((value, ty, inout));
                 }
 
 
