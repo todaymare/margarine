@@ -791,15 +791,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let ptr_mask = builder.int_not(tag_mask);
         let ptr = builder.ptr_mask(ptr, ptr_mask);
 
-        let align = self.usize.align_of(self.module).unwrap();
-        let align = self.const_usize(builder, align);
-
-        builder.assume_bundles(&[
-            ("align", &[*ptr, *align]),
-            ("nonnull", &[*ptr]),
-            ("dereferenceable", &[*ptr, *align]),
-        ]);
-
         (ptr, tag)
     }
 
