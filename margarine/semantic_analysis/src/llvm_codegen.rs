@@ -573,12 +573,60 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
 
-    /// IMPORTANT: base take ownership
+    /// IMPORTANT: base take ownership.
+    ///
+    /// Slicing a slice applies the extra offset to that slice's non-slice
+    /// base. The intermediate slice is released through `collection_drop`
+    /// after cloning the grandbase. Because every slice goes through this
+    /// function, a slice base is never itself a slice.
     fn collection_slice(
-        &self, builder: &mut Builder<'ctx>,
-        base: Struct<'ctx>, offset: Integer<'ctx>, length: Integer<'ctx>,
+        &mut self,
+        env: &mut Env<'_, 'ctx>,
+        builder: &mut Builder<'ctx>,
+        base: Struct<'ctx>,
+        offset: Integer<'ctx>,
+        length: Integer<'ctx>,
+        elem_repr: LLVMType<'ctx>,
+        elem_ty: Option<Type>,
     ) -> Struct<'ctx> {
         assert_eq!(base.ty(), self.collection_ty);
+
+        let tagged_ptr = self.collection_tagged_ptr(builder, base);
+        let (header_ptr, tag) = self.collection_split_tag(builder, tagged_ptr);
+        let is_slice = builder.cmp_int(
+            tag,
+            self.const_usize(builder, COLLECTION_SLICE_TAG),
+            IntCmp::Eq,
+        );
+
+        let base_slot = builder.alloca_store(*base);
+        let offset_slot = builder.alloca_store(*offset);
+
+        builder.ite(
+            &mut (),
+            is_slice,
+            |builder, _| {
+                let ty = self.collection_slice_payload;
+                let parent_offset = builder
+                    .field_ptr_load_tbaa(header_ptr, ty, 1, self.tbaa_header)
+                    .as_integer();
+                let grandbase = builder
+                    .field_ptr_load_tbaa(header_ptr, ty, 2, self.tbaa_header)
+                    .as_struct();
+                let current_offset = builder.load(offset_slot, *self.usize).as_integer();
+                builder.store(offset_slot, *builder.add_int_nuw(current_offset, parent_offset));
+
+                let grand_tagged = self.collection_tagged_ptr(builder, grandbase);
+                let (grand_ptr, _) = self.collection_split_tag(builder, grand_tagged);
+                builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*grand_ptr]);
+                builder.store(base_slot, *grandbase);
+                self.collection_drop(env, builder, base, elem_repr, elem_ty);
+            },
+            |_, _| {},
+        );
+
+        let base = builder.load(base_slot, *self.collection_ty).as_struct();
+        let offset = builder.load(offset_slot, *self.usize).as_integer();
 
         let total_size = self.collection_slice_payload.size_of(self.module).unwrap();
         let total_size = builder.const_int(self.usize, total_size as _, false);
@@ -593,9 +641,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let tag = builder.const_int(self.usize, COLLECTION_SLICE_TAG as _, false);
         let tagged_ptr = self.collection_with_tag(builder, buf, tag);
 
-        let strct = builder.struct_instance(self.collection_ty, [*tagged_ptr, *length]);
-        strct
-
+        builder.struct_instance(self.collection_ty, [*tagged_ptr, *length])
     }
 
 
@@ -1829,8 +1875,27 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         let right_len = builder.sub_int(list_len, index);
                         let left_base = self.emit_copy(builder, *list_value, args[0]).as_struct();
                         let right_base = self.emit_copy(builder, *list_value, args[0]).as_struct();
-                        let left = self.collection_slice(builder, left_base, zero, index);
-                        let right = self.collection_slice(builder, right_base, index, right_len);
+                        let elem_ty = gens[0].1;
+                        let llvm_elem = self.to_llvm_ty(elem_ty);
+                        let mut env = Env::default();
+                        let left = self.collection_slice(
+                            &mut env,
+                            builder,
+                            left_base,
+                            zero,
+                            index,
+                            llvm_elem.repr,
+                            Some(elem_ty),
+                        );
+                        let right = self.collection_slice(
+                            &mut env,
+                            builder,
+                            right_base,
+                            index,
+                            right_len,
+                            llvm_elem.repr,
+                            Some(elem_ty),
+                        );
 
                         let pair = self.create_struct(builder, pair_ty, &[
                             (pair_first, *left),
@@ -2388,7 +2453,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 builder.store_tbaa(this_data, old_value, self.tbaa_element);
 
                 let a_base = self.emit_copy(builder, *collection, list_ty).as_struct();
-                let a = self.collection_slice(builder, a_base, zero, index_val);
+                let a = self.collection_slice(
+                    env,
+                    builder,
+                    a_base,
+                    zero,
+                    index_val,
+                    llvm_ty.repr,
+                    Some(elem_ty),
+                );
                 let concat = self.collection_concat(builder, a, this);
 
                 let rest = builder.add_int(index_val, one);
@@ -2402,7 +2475,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     |builder, _| {
                         let rest_len = builder.sub_int(length, rest);
                         let b_base = self.emit_copy(builder, *collection, list_ty).as_struct();
-                        let b = self.collection_slice(builder, b_base, rest, rest_len);
+                        let b = self.collection_slice(
+                            env,
+                            builder,
+                            b_base,
+                            rest,
+                            rest_len,
+                            llvm_ty.repr,
+                            Some(elem_ty),
+                        );
                         let concat = self.collection_concat(builder, concat, b);
                         builder.store(list_slot, *concat);
                     }, 
