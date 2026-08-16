@@ -37,7 +37,7 @@ fn cow_rc_list() {
 fn list_concat_appends_and_preserves_source() {
     var a = [1, 2];
     var b = [3, 4];
-    a.concat(b);
+    a = a.concat(b);
 
     assert(a.len() == 4, "concat: combined length");
     assert(a[0] == 1 && a[1] == 2 && a[2] == 3 && a[3] == 4, "concat: preserves order");
@@ -51,7 +51,7 @@ fn list_concat_appends_and_preserves_source() {
 fn list_concat_detaches_shared_destination() {
     var a = [1, 2];
     var b = a;
-    b.concat([3]);
+    b = b.concat([3]);
 
     assert(a.len() == 2 && a[0] == 1 && a[1] == 2, "concat: original unchanged");
     assert(b.len() == 3 && b[2] == 3, "concat: copy appended");
@@ -60,7 +60,7 @@ fn list_concat_detaches_shared_destination() {
 @test
 fn list_concat_self() {
     var a = [1, 2];
-    a.concat(a);
+    a = a.concat(a);
 
     assert(a.len() == 4, "concat self: combined length");
     assert(a[0] == 1 && a[1] == 2 && a[2] == 1 && a[3] == 2, "concat self: preserves order");
@@ -70,7 +70,7 @@ fn list_concat_self() {
 fn list_concat_rc_elements() {
     var a = [$rc(5)];
     var b = [$rc(10)];
-    a.concat(b);
+    a = a.concat(b);
 
     assert($rc_get(a[0]) == 5 && $rc_get(a[1]) == 10, "concat: copies rc elements");
     assert($rc_get(b[0]) == 10, "concat: preserves rc source");
