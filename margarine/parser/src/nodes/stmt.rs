@@ -1,4 +1,3 @@
-use common::{source::SourceRange, string_map::StringIndex};
 use sti::define_key;
 
 use crate::{nodes::{decl::Attribute, NodeId, Pattern}, Block, DataType};

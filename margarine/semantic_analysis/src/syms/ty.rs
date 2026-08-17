@@ -1,7 +1,6 @@
 use std::hash::{Hash, Hasher};
 
 use common::string_map::{StringIndex, StringMap};
-use parser::nodes::decl::DeclGeneric;
 use sti::{hash::fxhash::FxHasher32, ext::FromIn};
 
 use crate::{errors::Error, syms::{containers::ContainerKind, func::FunctionKind, sym_map::BoundedGeneric, SymbolKind}};

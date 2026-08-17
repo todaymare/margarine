@@ -144,7 +144,7 @@ impl AST<'_> {
             );
 
             match stmt {
-                Stmt::Variable { pat, hint, rhs } => {
+                Stmt::Variable { rhs, .. } => {
                     sti::write!(&mut s, "{id} -> {rhs};");
                 },
 
@@ -155,7 +155,7 @@ impl AST<'_> {
                 },
 
 
-                Stmt::ForLoop { binding, expr, body } => {
+                Stmt::ForLoop { expr, .. } => {
                     sti::write!(&mut s, "{id} -> {expr};");
                 },
 

@@ -58,6 +58,7 @@ pub struct Files {
 }
 
 
+#[allow(unused)]
 pub struct CompilationResult<'a> {
     file_offsets: Vec<(StringIndex, u32)>,
     pub errors: CompilationErrors,
@@ -1002,6 +1003,7 @@ impl BuildLock {
         fs::write("build.lock", content)
     }
 
+    #[allow(unused)]
     fn get(&self, alias: &str) -> Option<String> {
         self.packages.get(alias).cloned()
     }
@@ -1037,7 +1039,6 @@ fn resolve_url(package: &str) -> String {
 
 
 struct Resource {
-    full_hash: [u8; 32],
     partial_string_hash: String,
     path: PathBuf,
 }
@@ -1053,7 +1054,6 @@ fn resource_cache_entry(settings: &CompilationSettings, ident: &str) -> Resource
 
     let local_path = artifacts_dir.join(&string_hash);
     Resource {
-        full_hash: full_hash[..].try_into().unwrap(),
         partial_string_hash: string_hash,
         path: local_path,
     }

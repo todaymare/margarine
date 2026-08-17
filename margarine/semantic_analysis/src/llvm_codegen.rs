@@ -2,11 +2,11 @@ use std::{collections::HashMap, fmt, hash::Hash, path::Path};
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
-use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, union::UnionTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{AllocKind, FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
-use parser::nodes::{decl::{DeclGeneric, Decl}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
-use sti::{arena::Arena, ext::FromIn, hash::fxhash::{FxHasher32, FxHasher64}, static_assert};
+use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{AllocKind, FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
+use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
+use sti::{arena::Arena, ext::FromIn, hash::fxhash::FxHasher64};
 
-use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind, TraitImplementation}, AnalysisResult, TyChecker, TyInfo};
+use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind, TraitImplementation}, TyInfo};
 
 pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     string_map: &'me mut StringMap<'str>,
@@ -75,12 +75,6 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 }
 
 
-#[derive(Clone, Copy, Debug)]
-struct FuncIndex(u32);
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-struct BlockIndex(u32);
-
-
 #[derive(Debug, Clone, Copy)]
 struct TypeMapping<'ctx> {
     /// for primitives: the native representation
@@ -92,12 +86,11 @@ struct TypeMapping<'ctx> {
     /// this is either a native representation for stuff like primitives
     /// or the struct type for user types
     strct: LLVMType<'ctx>
-
-
 }
 
 
 #[derive(Debug)]
+#[allow(unused)]
 struct Function<'ctx> {
     sym: Type,
 
@@ -114,7 +107,7 @@ struct Function<'ctx> {
 #[derive(Debug)]
 enum FunctionKind {
     Code,
-    Extern(StringIndex),
+    Extern,
 }
 
 
@@ -1151,7 +1144,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let func = Function {
                     sym: ty,
                     name: self.string_map.insert(self.string_map.get(path)),
-                    kind: FunctionKind::Extern(path),
+                    kind: FunctionKind::Extern,
                     error: self.ty_info.decl(sym_func.decl().unwrap()),
 
                     func_ty,
@@ -2933,7 +2926,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     // need to allocate anything
                     let null = builder.ptr_null();
                     let ptr = func.func_ptr;
-                    let func_ty = func.func_ty;
                     let ty = self.func_ref;
                     let func_ref = builder.struct_instance(
                         ty,
@@ -3497,7 +3489,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
-            parser::nodes::expr::Expr::Closure { args, body } => {
+            parser::nodes::expr::Expr::Closure { body, .. } => {
                 let ty = out_if_err!();
 
                 let closure = ty.sym(self.syms).unwrap();
@@ -4566,10 +4558,4 @@ impl Env<'_, '_> {
     pub fn find_var_ty(&self, name: StringIndex) -> Option<Type> {
         self.vars.iter().rev().find(|x| x.0 == name).map(|x| x.2)
     }
-
-
-    pub fn is_var_param(&self, name: StringIndex) -> bool {
-        self.vars.iter().rev().find(|x| x.0 == name).map(|x| x.3).unwrap_or(false)
-    }
-
 }

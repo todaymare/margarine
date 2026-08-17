@@ -1,9 +1,7 @@
 use common::{source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
-use errors::ErrorId;
-use parser::nodes::decl::DeclGeneric;
-use sti::{define_key, key::Key, vec::KVec};
+use sti::{define_key, vec::KVec};
 
-use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap, SymbolGetResult}, syms::{sym_map::{BoundedGeneric, ClosureId, Generic, SymbolId, SymbolMap}, ty::Type, Symbol, SymbolKind}};
+use crate::{namespace::{NamespaceId, NamespaceMap, SymbolGetResult}, syms::{sym_map::{BoundedGeneric, ClosureId, Generic, SymbolId, SymbolMap}, ty::Type}};
 
 define_key!(pub ScopeId(u32));
 

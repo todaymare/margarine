@@ -9,7 +9,7 @@ use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
 use nodes::{decl::{Attribute, AttributeValue, Decl, DeclId, EnumMapping, ExternFunction, FunctionArgument, FunctionSignature, UseItem, UseItemKind, Visibility}, expr::{Block, CallArgument, Expr, MatchMapping, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, AST};
-use sti::{alloc::Alloc, arena::Arena, vec::{KVec, Vec}};
+use sti::{arena::Arena, vec::{KVec, Vec}};
 
 use crate::nodes::{decl::DeclGeneric, expr::{BinaryOperator, ExprId}, Pattern};
 
@@ -2618,7 +2618,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 mod tests {
     use super::*;
     use sti::arena::Arena;
-    use common::{source::{FileData, Extension, SourceRange}, string_map::StringMap};
+    use common::{source::{FileData, Extension}, string_map::StringMap};
     use lexer::lex;
 
     #[test]

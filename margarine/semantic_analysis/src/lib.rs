@@ -494,7 +494,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             },
 
 
-            DataTypeKind::CustomType(name, generics_list) => {
+            DataTypeKind::CustomType(name, _) => {
                 let scope = self.scopes.get(scope_id);
                 if let Some(sym) = scope.find_gen(name, &self.scopes) {
                     let sym = sym.sym(&mut self.syms)
@@ -508,10 +508,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             },
 
 
-            DataTypeKind::List(ty) => {
-                let ty = self.dt_to_ty(scope_id, id, *ty)?;
-
-                let gens = self.syms.add_gens(self.output.alloc_new([(BoundedGeneric::T, ty)]));
+            DataTypeKind::List(_) => {
                 Ok(SymbolId::LIST)
             },
 

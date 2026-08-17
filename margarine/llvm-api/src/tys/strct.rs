@@ -1,9 +1,9 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::core::{LLVMAddAttributeAtIndex, LLVMCountStructElementTypes, LLVMCreateEnumAttribute, LLVMGetEnumAttributeKindForName, LLVMGetStructElementTypes, LLVMIsOpaqueStruct, LLVMStructSetBody};
+use llvm_sys::core::{LLVMCountStructElementTypes, LLVMGetStructElementTypes, LLVMIsOpaqueStruct, LLVMStructSetBody};
 use sti::arena::Arena;
 
-use crate::{cstr, tys::TypeKind};
+use crate::tys::TypeKind;
 
 use super::Type;
 

@@ -190,7 +190,7 @@ impl ErrorType<()> for Error {
                     .highlight_with_note(*source, &msg);
             }
 
-            Error::HashMismatch { source_hash, source_extern, expected, actual } => {
+            Error::HashMismatch { source_hash, source_extern, actual, .. } => {
                 let note = format!(
                     "but downloaded resource has '{}'",
                     fmt.string(*actual),

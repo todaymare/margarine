@@ -3,9 +3,8 @@ pub mod ty;
 pub mod func;
 pub mod sym_map;
 
-use common::{string_map::StringIndex, symbol_id::SymbolId, ImmutableData};
+use common::{string_map::StringIndex, ImmutableData};
 use errors::ErrorId;
-use parser::nodes::decl::DeclGeneric;
 use crate::{namespace::NamespaceId, syms::sym_map::{BoundedGeneric, Generic}};
 
 use self::{containers::Container, func::FunctionTy};

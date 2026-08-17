@@ -1,7 +1,7 @@
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}, Once};
 use lexer::Literal;
 use errors::ErrorId;
-use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{Attribute, AttributeValue, Decl, DeclId, FunctionSignature, UseItem, UseItemKind, Visibility}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
+use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{AttributeValue, Decl, DeclId, FunctionSignature, UseItem, UseItemKind, Visibility}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
 use sti::{alloc::GlobalAlloc, key::Key, vec::{KVec, Vec}};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId, SymbolGetResult}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, Generic, GenericKind, SymbolId}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
@@ -274,7 +274,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     self.collect_impls(path, scope, ns, &body);
                 }
 
-                Decl::ImplTrait { trait_name, data_type, gens, body, header } => {
+                Decl::ImplTrait { trait_name, data_type, gens, .. } => {
                     let gens = match self.resolve_generics(scope, n, gens) {
                         Ok(v) => v,
                         Err(v) => {
@@ -325,7 +325,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
 
-                Decl::Attribute { attr, decl } => {
+                Decl::Attribute { decl, .. } => {
                     self.collect_impls(path, scope, ns_id, &[decl.into()]);
                 },
 
@@ -379,7 +379,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
 
-                Decl::Attribute { attr, decl } => {
+                Decl::Attribute { decl, .. } => {
                     self.collect_uses(scope_id, ns_id, &[decl.into()]);
                 },
 
@@ -450,17 +450,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         };
     }
 
-    fn use_error(error: ErrorId, source: SourceRange) -> ErrorId {
-        error
-    }
-
-
-    fn is_recursive(&mut self, ty: SymbolId) -> bool {
-
-
-        false
-    }
-
 
     // `Self::compute_types` must be ran before this
     pub fn validate_types(&mut self, path: StringIndex, scope: ScopeId,
@@ -472,7 +461,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             let decl = self.ast.decl(*id);
             match decl {
-                Decl::Alias { name, gens, data_type, .. } => {
+                Decl::Alias { name, .. } => {
                     let Some(Ok(tsi)) = self.namespaces.get_ns(ns).get_sym(name)
                     else { continue };
 
@@ -537,7 +526,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
 
-                Decl::Attribute { attr, decl } => {
+                Decl::Attribute { decl, .. } => {
                     self.validate_types(path, scope, ns, &[decl.into()], impl_block);
                 },
 
@@ -946,7 +935,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     self.compute_types(path, scope, ns, &body, Some((sym, gens, None)));
                 }
 
-                Decl::Attribute { attr, decl } => {
+                Decl::Attribute { decl, .. } => {
                     self.compute_types(path, scope, ns, &[decl.into()], impl_block);
                 },
 
@@ -996,7 +985,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             Decl::Error(_) => unreachable!(),
 
 
-            Decl::Trait { functions, .. } => (),
+            Decl::Trait { .. } => (),
 
             
             Decl::Function { sig, body, .. } => {
@@ -2452,7 +2441,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
 
-                let sym = ();
                 let Some((t, func, g, generics)) = candidate
                 else { return Err(self.error(id, e)); };
                 let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.len());

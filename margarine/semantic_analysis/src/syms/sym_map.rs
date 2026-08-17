@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use common::{copy_slice_in, source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
 use errors::{ErrorId, SemaError};
 use parser::nodes::{decl::{DeclId, Visibility}, NodeId};
-use sti::{arena::Arena, define_key, ext::FromIn, key::Key, vec::KVec};
+use sti::{arena::Arena, define_key, ext::FromIn, vec::KVec};
 
 use crate::{errors::Error, namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind, Trait, TraitImplementation, TraitSynthesis}};
 
