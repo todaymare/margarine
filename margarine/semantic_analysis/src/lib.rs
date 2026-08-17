@@ -9,7 +9,7 @@ use sti::{arena::Arena, ext::FromIn, key::Key, vec::{KVec, Vec}};
 use syms::{ty::Type, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 use namespace::{Namespace, NamespaceId, NamespaceMap};
 
-use crate::{scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId}, Symbol}};
+use crate::{namespace::SymbolGetResult, scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId}, Symbol}};
 
 pub mod scope;
 pub mod namespace;
@@ -129,13 +129,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                string_map: &'me mut StringMap<'str>) -> Self {
 
         let mut ns = NamespaceMap::new();
+        let mut errors = KVec::new();
         let mut analyzer = TyChecker {
             output: out,
             scopes: ScopeMap::new(),
-            syms: SymbolMap::new(out, &mut ns, string_map),
+            syms: SymbolMap::new(out, &mut ns, string_map, &mut errors),
             string_map,
             namespaces: ns,
-            errors: KVec::new(),
+            errors,
             error_nodes: KVec::new(),
             silent_ranges: std::vec::Vec::new(),
             control_flow: ControlFlowState::default(),
@@ -169,11 +170,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             macro_rules! add_sym {
                 ($n: ident) => {
-                    namespace.add_sym(SourceRange::ZERO, StringMap::$n, SymbolId::$n, parser::nodes::decl::Visibility::Public)
+                    namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::$n, SymbolId::$n, parser::nodes::decl::Visibility::Public)
                 };
             }
 
-                let _ = add_sym!(I64);
+            let _ = add_sym!(I64);
             let _ = add_sym!(BYTE);
             let _ = add_sym!(F64);
             let _ = add_sym!(BOOL);
@@ -205,14 +206,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
-                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
-                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                let _ = namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                let _ = namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
             }
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::RESULT));
-                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
-                let _ = namespace.add_sym(SourceRange::ZERO, StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                let _ = namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                let _ = namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
             }
 
             analyzer.namespaces.push(namespace, None)
@@ -224,9 +225,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         let empty = analyzer.string_map.insert("");
         analyzer.block(empty, scope, block);
 
-        for v in analyzer.syms.vars().iter() {
-            if !v.is_concrete(&analyzer.syms)
-            && v.is_root(&analyzer.syms) {
+        let vars = analyzer.syms.vars().iter().copied().collect::<std::vec::Vec<_>>();
+        for v in vars.iter() {
+            if !v.is_concrete(&mut analyzer.syms)
+            && v.is_root(&mut analyzer.syms) {
                 let error = Error::UnableToInfer(v.range(), v.name());
                 Self::error_ex(
                     &mut analyzer.errors,
@@ -244,6 +246,18 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
     fn error(&mut self, node: impl Into<NodeId>, error: Error) -> ErrorId {
         Self::error_ex(&mut self.errors, &mut self.error_nodes, &mut self.type_info, node, error)
+    }
+
+
+    fn set_error(&mut self, node: impl Into<NodeId>, error: ErrorId) {
+        let node = node.into();
+        self.error_nodes.push(node);
+        match node {
+            NodeId::Expr(id) => self.type_info.exprs[id] = Some(ExprInfo::Errored(error)),
+            NodeId::Decl(id) => self.type_info.set_decl(id, error),
+            NodeId::Stmt(id) => self.type_info.set_stmt(id, error),
+            NodeId::Err(_) => (),
+        };
     }
 
 
@@ -279,21 +293,53 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
     }
     
 
-    fn dt_to_gen(&mut self, scope: Scope<'out>, dt: DataType,
-                 gens: &[BoundedGeneric<'out>]) -> Result<Generic<'out>, Error> {
+    fn dt_to_gen(
+        &mut self, scope: Scope<'out>, 
+        dt: DataType, gens: &[BoundedGeneric<'out>]
+    ) -> Result<Generic<'out>, ErrorId> {
+
         let mut used_gens = sti::vec::Vec::from_value(gens.len(), false);
         let res = self.dt_to_gen_ex(scope, dt, gens, &mut used_gens);
         res
+    }
 
+
+    fn convert_symbol_get_result(
+        &mut self, 
+        name: StringIndex,
+        source: SourceRange,
+        result: SymbolGetResult,
+    ) -> Result<SymbolId, ErrorId> {
+        match result {
+            SymbolGetResult::Symbol(sym) => Ok(sym),
+
+            SymbolGetResult::Errored(err) => {
+                Err(err)
+            },
+
+            SymbolGetResult::Private => {
+                Err(self.errors.push(Error::PrivateSymbol { 
+                    source,
+                    name, 
+                }).into())
+            },
+
+            SymbolGetResult::Undefined => {
+                return Err(self.errors.push(Error::NamespaceNotFound { 
+                    source, 
+                    namespace: name,
+                }).into())
+            },
+        }
     }
 
     fn dt_to_gen_ex(&mut self, scope: Scope<'out>, dt: DataType,
-                 gens: &[BoundedGeneric<'out>], used_gens: &mut [bool]) -> Result<Generic<'out>, Error> {
+                 gens: &[BoundedGeneric<'out>], used_gens: &mut [bool]) -> Result<Generic<'out>, ErrorId> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::UNIT, &[]), None)),
 
 
-            DataTypeKind::Hole => Err(Error::CantUseHoleHere { source: dt.range() }),
+            DataTypeKind::Hole => Err(self.errors.push(Error::CantUseHoleHere { source: dt.range() }).into()),
 
 
             DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]), None)),
@@ -371,21 +417,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     &mut self.syms, &self.namespaces
                 );
 
-                let Some(ns) = ns
-                else { 
-                    return Err(Error::NamespaceNotFound { 
-                        source: ty.range(), 
-                        namespace: ns_name,
-                    }) 
-                };
-
-                let Ok(ns) = ns
-                else {
-                    return Err(Error::Bypass);
-                };
-
+                let ns = self.convert_symbol_get_result(ns_name, ty.range(), ns)?;
                 let ns = self.syms.sym_ns(ns);
-
 
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
                 self.dt_to_gen_ex(scope, *ty, gens, used_gens)
@@ -407,16 +440,17 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     )
                 }
 
-                let Some(base) = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
-                else { return Err(Error::UnknownType(name, dt.range())) };
+                let base = scope.find_sym(
+                    name, &self.scopes, 
+                    &mut self.syms, &self.namespaces
+                );
 
-                let base = base?;
-
+                let base = self.convert_symbol_get_result(name, dt.range(), base)?;
                 let genc = self.syms.sym_gens_size(base);
 
                 if genc != generics.len() {
-                    return Err(Error::GenericLenMismatch {
-                        source: dt.range(), found: generics.len(), expected: genc });
+                    return Err(self.errors.push(Error::GenericLenMismatch {
+                        source: dt.range(), found: generics.len(), expected: genc }).into());
                 }
 
                 let generics = {
@@ -436,11 +470,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
     fn dt_to_sym(&mut self, scope_id: ScopeId, id: impl Into<NodeId> + Copy,
-                dt: DataType) -> Result<SymbolId, Error> {
+                dt: DataType) -> Result<SymbolId, ErrorId> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(SymbolId::UNIT),
             DataTypeKind::Never => Ok(SymbolId::NEVER),
-            DataTypeKind::Hole => Err(Error::CantUseHoleHere { source: dt.range() }),
+            DataTypeKind::Hole => Err(self.errors.push(Error::CantUseHoleHere { source: dt.range() }).into()),
 
 
             DataTypeKind::Within(ns_name, ty) => {
@@ -451,19 +485,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     &mut self.syms, &self.namespaces
                 );
 
-                let Some(ns) = ns
-                else { 
-                    return Err(Error::NamespaceNotFound { 
-                        source: ty.range(), 
-                        namespace: ns_name,
-                    }) 
-                };
-
-                let Ok(ns) = ns
-                else {
-                    return Err(Error::Bypass);
-                };
-
+                let ns = self.convert_symbol_get_result(ns_name, dt.range(), ns)?;
                 let ns = self.syms.sym_ns(ns);
 
                 let scope = Scope::new(scope_id, ScopeKind::ImplicitNamespace(ns));
@@ -475,19 +497,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             DataTypeKind::CustomType(name, generics_list) => {
                 let scope = self.scopes.get(scope_id);
                 if let Some(sym) = scope.find_gen(name, &self.scopes) {
-                    // @info: i got no idea why i had this error
-                    // i have a feeling it might fuck me up later
-                    //
-                    // it did fuck me over
-                    //return Err(Error::GenericOnGeneric { source: dt.range() });
-                    return Ok(sym.sym(&self.syms)?)
+                    let sym = sym.sym(&mut self.syms)
+                        .map_err(|e| ErrorId::Sema(self.errors.push(e)))?;
+                    return Ok(sym)
                 }
 
-
-                let Some(base) = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
-                else { return Err(Error::UnknownType(name, dt.range())) };
-
-                let base = base?;
+                let result = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces);
+                let base = self.convert_symbol_get_result(name, dt.range(), result)?;
                 Ok(base)
             },
 
@@ -541,7 +557,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
     fn dt_to_ty(&mut self, scope_id: ScopeId, id: impl Into<NodeId> + Copy,
-                dt: DataType) -> Result<Type, Error> {
+                dt: DataType) -> Result<Type, ErrorId> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Type::UNIT),
             DataTypeKind::Never => Ok(Type::NEVER),
@@ -551,24 +567,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             DataTypeKind::Within(ns_name, ty) => {
                 let scope = self.scopes.get(scope_id);
 
-                let ns = scope.find_sym(
-                    ns_name, &self.scopes, 
-                    &mut self.syms, &self.namespaces
-                );
-
-                let Some(ns) = ns
-                else { 
-                    return Err(Error::NamespaceNotFound { 
-                        source: ty.range(), 
-                        namespace: ns_name,
-                    }) 
-                };
-
-                let Ok(ns) = ns
-                else {
-                    return Err(Error::Bypass);
-                };
-
+                let result = scope.find_sym(ns_name, &self.scopes, &mut self.syms, &self.namespaces);
+                let ns = self.convert_symbol_get_result(ns_name, ty.range(), result)?;
                 let ns = self.syms.sym_ns(ns);
 
                 let scope = Scope::new(scope_id, ScopeKind::ImplicitNamespace(ns));
@@ -580,20 +580,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             DataTypeKind::CustomType(name, generics_list) => {
                 let scope = self.scopes.get(scope_id);
                 if let Some(sym) = scope.find_gen(name, &self.scopes) {
-                    // @info: i got no idea why i had this error
-                    // i have a feeling it might fuck me up later
-                    //
-                    // it did fuck me over
-                    //return Err(Error::GenericOnGeneric { source: dt.range() });
                     return Ok(sym)
                 }
 
-
-                let Some(base) = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces)
-                else { return Err(Error::UnknownType(name, dt.range())) };
-
-                let base = base?;
-
+                let result = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces);
+                let base = self.convert_symbol_get_result(name, dt.range(), result)?;
                 let base_sym = self.syms.sym(base);
 
                 let pool = self.output;
@@ -602,16 +593,15 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     for g in base_sym.generics() {
                         generics.push(self.syms.new_var(id, g.name(), dt.range()));
                     }
-
                 } else {
                     for g in generics_list {
                         generics.push(self.dt_to_ty(scope_id, id, *g)?);
                     }
 
                     if generics.len() != base_sym.generics().len() {
-                        return Err(Error::GenericLenMismatch {
+                        return Err(self.errors.push(Error::GenericLenMismatch {
                             source: dt.range(), found: generics.len(),
-                            expected: base_sym.generics().len() });
+                            expected: base_sym.generics().len() }).into());
                     }
                 };
 
@@ -679,7 +669,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         scope_id: ScopeId, 
         id: NodeId, 
         generics: &[DeclGeneric<'ast>]
-    ) -> Result<&'out [BoundedGeneric<'out>], Error> {
+    ) -> Result<&'out [BoundedGeneric<'out>], ErrorId> {
 
         let mut gens = sti::vec::Vec::with_cap_in(self.output, generics.len());
 
@@ -691,7 +681,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
     }
 
 
-    fn resolve_generic(&mut self, scope_id: ScopeId, id: NodeId, generic: DeclGeneric<'ast>) -> Result<BoundedGeneric<'out>, Error> {
+    fn resolve_generic(
+        &mut self, scope_id: ScopeId, 
+        id: NodeId, generic: DeclGeneric<'ast>
+    ) -> Result<BoundedGeneric<'out>, ErrorId> {
+
         let mut bounds = sti::vec::Vec::with_cap_in(self.output, generic.bounds().len());
 
         for bound in generic.bounds() {
@@ -773,7 +767,7 @@ impl TyInfo<'_> {
     
     pub fn set_expr(&mut self, expr: ExprId, info: AnalysisResult) {
         let val = &mut self.exprs[expr];
-        if val.is_none() || !matches!(info.ty, Type::Ty(SymbolId::ERR, GenListId::EMPTY)) {
+        if val.is_none() || !matches!(info.ty, Type::Ty(SymbolId::ERROR, GenListId::EMPTY)) {
             *val = Some(ExprInfo::Result { ty: info.ty })
         }
     }

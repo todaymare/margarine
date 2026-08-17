@@ -80,6 +80,7 @@ impl<'str> StringMap<'str> {
     pub const LIST_LEN : StringIndex = StringIndex(62);
 
     pub const BYTE : StringIndex = StringIndex(63);
+    pub const ERROR : StringIndex = StringIndex(64);
  
     #[inline(always)]
     pub fn new(arena: &'str Arena) -> Self {
@@ -162,6 +163,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("doc"), Self::DOC);
         assert_eq!(s.insert("$list_len"), Self::LIST_LEN);
         assert_eq!(s.insert("byte"), Self::BYTE);
+        assert_eq!(s.insert("{error}"), Self::ERROR);
         s
     }
 

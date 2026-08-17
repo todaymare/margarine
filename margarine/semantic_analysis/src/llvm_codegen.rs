@@ -1013,7 +1013,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         assert!(ty.is_resolved(&mut self.syms));
 
         let sym_id = ty.sym(self.syms).unwrap();
-        let gens_id = ty.gens(&self.syms);
+        let gens_id = ty.gens(self.syms);
 
         let hash = ty.hash(&self.syms);
 
@@ -1856,7 +1856,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let invalid = unsafe { Bool::new(*builder.or(negative.as_integer(), past_end.as_integer())) };
                 let result = builder.alloca(llvm_ret.repr);
 
-                let option_gens = self.syms.get_gens(ret.gens(self.syms));
+                let ret_gens = ret.gens(self.syms);
+                let option_gens = self.syms.get_gens(ret_gens);
                 let pair_ty = option_gens[0].1;
                 let zero = self.const_usize(&builder, 0);
                 let none_tag = *builder.const_int(self.i32, 1, false);
@@ -2025,6 +2026,20 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             return self.ty_mappings[&hash]
         }
 
+        let def =
+        match sym_id {
+            SymbolId::UNIT => Some(*self.ctx.unit()),
+            SymbolId::I64 => Some(*self.i64),
+            SymbolId::F64 => Some(*self.ctx.f64()),
+            _ => None,
+        };
+
+        if let Some(def) = def {
+            self.ty_mappings.insert(hash, TypeMapping { repr: def, strct: def });
+            return self.ty_mappings[&hash]
+        }
+
+
         let sym = self.syms.sym(sym_id);
 
         let gens = ty.gens(self.syms);
@@ -2135,6 +2150,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
+            SymbolKind::Alias(_) => unreachable!(),
             SymbolKind::Namespace => unreachable!(),
             SymbolKind::Trait(_) => unreachable!(),
         };
@@ -2252,7 +2268,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let Ok(sym) = ns.get_sym(StringMap::ITER_NEXT_FUNC).unwrap()
                     else { unreachable!() };
 
-                    let func = Type::Ty(sym, iter_sym.gens(&self.syms));
+                    let func = Type::Ty(sym, iter_sym.gens(self.syms));
                     let func = func.resolve(&[], self.syms);
 
                     let ret_ty = self.syms.sym(sym);
@@ -2277,7 +2293,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     (iter_value, None)
                 };
 
-                let iter_fn_binding_value_ty = iter_fn_ret_ty.gens(&self.syms);
+                let iter_fn_binding_value_ty = iter_fn_ret_ty.gens(self.syms);
                 let iter_fn_binding_value_ty = self.syms.get_gens(iter_fn_binding_value_ty)[0].1;
                 let iter_fn_binding_value_ty_sym = iter_fn_binding_value_ty.resolve(&[env.gens], self.syms);
                 let iter_fn_binding_value_ty_llvm = self.to_llvm_ty(iter_fn_binding_value_ty_sym);
@@ -3307,7 +3323,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             let index = builder.const_int(self.i32, i as _, false);
                             let cond = builder.cmp_int(tag, index, IntCmp::Eq);
 
-                            let gens_list = self.syms.get_gens(val.gens(self.syms));
+                            let val_gens = val.gens(self.syms);
+                            let gens_list = self.syms.get_gens(val_gens);
                             let field_gen = cont.fields()[i].1;
                             let field_ty = field_gen.to_ty(gens_list, self.syms).unwrap();
                             let field_llvm = self.to_llvm_ty(field_ty);
@@ -3346,7 +3363,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
 
 
-                let val_gens = self.syms.get_gens(val.gens(self.syms));
+                let val_gens = val.gens(self.syms);
+                let val_gens = self.syms.get_gens(val_gens);
 
                 let ns = 
                 if let Some(tr) = self.ty_info.trait_funcs.get(&expr) {
@@ -3370,7 +3388,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         // Tuple symbols bind slots as 0, 1, ... while an implementation may
                         // name them T0, T1, .... Match the implementation arguments by position.
                         let implementation_gens = self.syms.sym(sym).generics();
-                        let receiver_gens = self.syms.get_gens(val.gens(self.syms));
+                        let receiver_type_gens = val.gens(self.syms);
+                        let receiver_gens = self.syms.get_gens(receiver_type_gens);
                         assert_eq!(implementation_gens.len(), receiver_gens.len());
                         let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), implementation_gens.len());
                         for (implementation_gen, (_, receiver_ty)) in implementation_gens.iter().zip(receiver_gens) {
@@ -3428,7 +3447,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let accessor = 
                 if let Expr::AccessField { val, .. } = self.ast.expr(lhs) {
-                    Some(Ok((env.info[&lhs], val)))
+                    Some(Ok::<(Value<'_>, ExprId), ErrorId>((env.info[&lhs], val)))
                 } else { 
                     None 
                 };
@@ -3491,7 +3510,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let outer_gens = env.gens;
                 let ty = ty.resolve(&[outer_gens], self.syms);
-                let closure_gens = self.syms.get_gens(ty.gens(&self.syms));
+                let closure_type_gens = ty.gens(self.syms);
+                let closure_gens = self.syms.get_gens(closure_type_gens);
                 let llvm_ty = self.to_llvm_ty(ty);
 
                 let mut combined_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), closure_gens.len() + outer_gens.len());
@@ -3790,7 +3810,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let list_type = out_if_err!();
                 let list_type = list_type.resolve(&[env.gens], self.syms);
 
-                let elem_type = self.syms.get_gens(list_type.gens(self.syms))[0].1;
+                let list_type_gens = list_type.gens(self.syms);
+                let elem_type = self.syms.get_gens(list_type_gens)[0].1;
                 let elem_repr = self.to_llvm_ty(elem_type).repr;
 
                 let len = builder.const_int(self.usize, exprs.len() as _, false);
@@ -3912,7 +3933,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let sym_data = self.syms.sym(sym_id);
                 let SymbolKind::Container(cont) = sym_data.kind()
                 else { unreachable!() };
-                let gens = self.syms.get_gens(ty.gens(self.syms));
+                let item_type_gens = ty.gens(self.syms);
+                let gens = self.syms.get_gens(item_type_gens);
 
                 for (i, &item) in items.iter().enumerate() {
                     let field = builder.field_load(value, i);
@@ -4013,7 +4035,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn emit_copy(&mut self, builder: &mut Builder<'ctx>, value: Value<'ctx>, ty: Type) -> Value<'ctx> {
-        let Ok(sym_id) = ty.sym(&self.syms) else {
+        let Ok(sym_id) = ty.sym(self.syms) else {
             return value;
         };
 
@@ -4056,7 +4078,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             return value;
         }
 
-        let cont_gens = self.syms.get_gens(ty.gens(&self.syms));
+        let container_type_gens = ty.gens(self.syms);
+        let cont_gens = self.syms.get_gens(container_type_gens);
         let llvm_ty = self.to_llvm_ty(ty);
 
         match cont.kind() {
@@ -4083,7 +4106,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 for (i, (_, field_gen)) in cont.fields().iter().enumerate() {
                     let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
                     let field_ty = field_ty.resolve(&[], self.syms);
-                    if field_ty.sym(&self.syms) == Ok(SymbolId::UNIT) {
+                    if field_ty.sym(self.syms) == Ok(SymbolId::UNIT) {
                         continue;
                     }
                     let field_llvm = self.to_llvm_ty(field_ty);
@@ -4160,11 +4183,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         assert!(ty.is_resolved(self.syms));
 
-        let Ok(sym_id) = ty.sym(&self.syms) 
+        let Ok(sym_id) = ty.sym(self.syms)
         else { return; };
 
         if sym_id == SymbolId::RC {
-            let gens_id = ty.gens(&self.syms);
+            let gens_id = ty.gens(self.syms);
             let gens = self.syms.get_gens(gens_id);
             let elem_ty = gens[0].1;
             let elem_ty = elem_ty.instantiate(self.syms, 0);
@@ -4203,7 +4226,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
 
         if sym_id == SymbolId::LIST {
-            let gens_id = ty.gens(&self.syms);
+            let gens_id = ty.gens(self.syms);
             let gens = self.syms.get_gens(gens_id);
             let elem_ty = gens[0].1;
             let elem_ty = elem_ty.instantiate(self.syms, 0);
@@ -4247,7 +4270,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             return;
         }
 
-        let cont_gens = self.syms.get_gens(ty.gens(&self.syms));
+        let container_type_gens = ty.gens(self.syms);
+        let cont_gens = self.syms.get_gens(container_type_gens);
         let llvm_ty = self.to_llvm_ty(ty);
 
         match cont.kind() {
@@ -4272,7 +4296,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 for (i, (_, field_gen)) in cont.fields().iter().enumerate() {
                     let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
                     let field_ty = field_ty.resolve(&[], self.syms);
-                    if field_ty.sym(&self.syms) == Ok(SymbolId::UNIT) {
+                    if field_ty.sym(self.syms) == Ok(SymbolId::UNIT) {
                         continue;
                     }
                     let field_llvm = self.to_llvm_ty(field_ty);
@@ -4310,7 +4334,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         };
 
         let func_sym = self.ns.get_ns(ns).get_sym(func_name).unwrap().ok()?;
-        let actual_gens: Vec<_> = self.syms.get_gens(ty.gens(self.syms))
+        let actual_type_gens = ty.gens(self.syms);
+        let actual_gens: Vec<_> = self.syms.get_gens(actual_type_gens)
             .iter()
             .map(|(_, ty)| *ty)
             .collect();

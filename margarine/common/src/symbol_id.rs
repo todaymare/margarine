@@ -7,7 +7,7 @@ impl SymbolId {
     pub const I64    : Self = Self(1);
     pub const F64    : Self = Self(2);
     pub const BOOL   : Self = Self(3);
-    pub const ERR    : Self = Self(6);
+    pub const ERROR    : Self = Self(6);
     pub const NEVER  : Self = Self(7);
     pub const PTR    : Self = Self(8);
     pub const RANGE  : Self = Self(9);
@@ -44,7 +44,7 @@ impl SymbolId {
             | Self::I64
             | Self::F64
             | Self::BYTE
-            | Self::ERR
+            | Self::ERROR
         )
     }
 
@@ -53,7 +53,7 @@ impl SymbolId {
         matches!(self,
             | Self::I64
             | Self::BYTE
-            | Self::ERR
+            | Self::ERROR
         )
     }
 
@@ -63,7 +63,7 @@ impl SymbolId {
             | Self::I64
             | Self::F64
             | Self::BYTE
-            | Self::ERR
+            | Self::ERROR
         )
     }
 
@@ -77,7 +77,7 @@ impl SymbolId {
             | Self::I64
             | Self::F64
             | Self::BYTE
-            | Self::ERR
+            | Self::ERROR
         )
     }
 
@@ -86,14 +86,14 @@ impl SymbolId {
         matches!(self,
             | Self::I64
             | Self::BYTE
-            | Self::ERR
+            | Self::ERROR
         )
     }
 
     pub fn is_sint(self) -> bool {
         matches!(self,
             | Self::I64
-            | Self::ERR
+            | Self::ERROR
         )
     }
 
@@ -101,7 +101,7 @@ impl SymbolId {
     pub fn is_float(self) -> bool {
         matches!(self,
             | Self::F64
-            | Self::ERR
+            | Self::ERROR
         )
     }
 }

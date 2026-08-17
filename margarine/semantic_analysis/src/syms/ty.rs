@@ -24,7 +24,8 @@ impl Type {
     pub fn resolve(self, env_gens: &[&[(BoundedGeneric<'_>, Type)]], map: &mut SymbolMap) -> Type {
         let ty = self.instantiate(map, 0);
 
-        let func_gens = map.get_gens(ty.gens(map));
+        let gens = ty.gens(map);
+        let func_gens = map.get_gens(gens);
 
         let mut new_gens = sti::vec::Vec::with_cap_in(map.arena(), func_gens.len());
         for (name, sym) in func_gens {
@@ -204,12 +205,12 @@ impl Type {
         let b = oth.instantiate_shallow(map);
         match (a, b) {
             (Type::Ty(symida, gena), Type::Ty(symidb, genb)) => {
-                if [SymbolId::ERR, SymbolId::NEVER].contains(&symida) {
+                if [SymbolId::ERROR, SymbolId::NEVER].contains(&symida) {
                     b.propagate_taint(map, a);
                     return true;
                 }
 
-                if [SymbolId::ERR, SymbolId::NEVER].contains(&symidb) {
+                if [SymbolId::ERROR, SymbolId::NEVER].contains(&symidb) {
                     a.propagate_taint(map, b);
                     return true;
                 }
@@ -327,7 +328,7 @@ impl Type {
 
 
     pub fn is_err(self, map: &mut SymbolMap) -> bool {
-        if let Ok(sym) = self.sym(map) { sym == SymbolId::ERR }
+        if let Ok(sym) = self.sym(map) { sym == SymbolId::ERROR }
         else { false }
     }
 
@@ -344,7 +345,7 @@ impl Type {
 
 
 
-    pub fn sym(self, map: &SymbolMap) -> Result<SymbolId, Error> {
+    pub fn sym(self, map: &mut SymbolMap) -> Result<SymbolId, Error> {
         match self.instantiate_shallow(map) {
             Type::Ty(sym, _) => Ok(sym),
             Type::Var(id) => {
@@ -355,7 +356,7 @@ impl Type {
     }
 
 
-    pub fn gens<'a>(self, map: &SymbolMap<'a>) -> GenListId {
+    pub fn gens<'a>(self, map: &mut SymbolMap<'a>) -> GenListId {
         match self.instantiate_shallow(map) {
             Type::Ty(_, v) => v,
             Type::Var(_) => GenListId::EMPTY,
@@ -384,9 +385,17 @@ impl Type {
     }
 
 
-    pub fn instantiate_shallow(self, map: &SymbolMap) -> Type {
+    pub fn instantiate_shallow(self, map: &mut SymbolMap) -> Type {
         match self {
-            Type::Ty(_, _) => self,
+            Type::Ty(sym, gens) => {
+                let gens = map.get_gens(gens);
+                if let SymbolKind::Alias(alias) = map.sym(sym).kind() {
+                    let ty = alias.to_ty(gens, map).unwrap();
+                    return ty.instantiate_shallow(map)
+                }
+
+                self
+            },
 
             Type::Var(v) => {
                 match map.vars()[v].sub() {
@@ -497,7 +506,7 @@ impl Type {
     pub const I64  : Self = Self::Ty(SymbolId::I64  , GenListId::EMPTY);
     pub const F64  : Self = Self::Ty(SymbolId::F64  , GenListId::EMPTY);
     pub const BOOL : Self = Self::Ty(SymbolId::BOOL , GenListId::EMPTY);
-    pub const ERROR: Self = Self::Ty(SymbolId::ERR, GenListId::EMPTY);
+    pub const ERROR: Self = Self::Ty(SymbolId::ERROR, GenListId::EMPTY);
     pub const NEVER: Self = Self::Ty(SymbolId::NEVER, GenListId::EMPTY);
     pub const RANGE: Self = Self::Ty(SymbolId::RANGE, GenListId::EMPTY);
     pub const STR  : Self = Self::Ty(SymbolId::STR  , GenListId::EMPTY);

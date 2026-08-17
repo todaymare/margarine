@@ -976,25 +976,33 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::Keyword(Keyword::Extern) => self.extern_declaration(settings, visibility),
             TokenKind::Keyword(Keyword::Enum) => self.enum_declaration(visibility),
             TokenKind::Keyword(Keyword::Use) => self.using_declaration(visibility),
-            TokenKind::Keyword(Keyword::Type) => self.opaque_type_declaration(visibility),
+            TokenKind::Keyword(Keyword::Type) => self.alias_declaration(visibility),
             TokenKind::Keyword(Keyword::Impl) if visibility == Visibility::Private => self.impl_declaration(),
             TokenKind::Keyword(Keyword::Import) if visibility == Visibility::Private => self.import_declaration(),
             _ => return None,
         })
     }
 
-    fn opaque_type_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
+    fn alias_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
         let start = self.current_range().start();
         self.advance();
         let name = self.expect_identifier()?;
-        let gens = if self.peek_is(TokenKind::LeftAngle) {
+        let gens = 
+        if self.peek_is(TokenKind::LeftAngle) {
             self.advance();
             let result = self.generic_decl()?;
             self.index -= 1;
             result
         } else { &[] };
+
+        self.advance();
+        self.expect(TokenKind::Equals)?;
+
+        self.advance();
+        let data_type = self.expect_type()?;
+
         let range = SourceRange::new(start, self.current_range().end());
-        Ok(self.ast.add_decl(Decl::OpaqueType { visibility, name, header: range, gens }, range))
+        Ok(self.ast.add_decl(Decl::Alias { visibility, name, header: range, gens, data_type }, range))
     }
 
     fn struct_declaration(&mut self, visibility: Visibility) -> DeclResult<'ta> {
@@ -1531,7 +1539,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let start = self.current_range().start();
         let ident = self.expect_identifier()?;
 
-        let mut func = || {
+        let mut func = || -> Result<_, ErrorId> {
             if self.peek_is(TokenKind::DoubleColon) {
                 self.advance();
 
@@ -1539,10 +1547,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     self.advance();
                     self.advance();
 
-                    let list = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma), 
-                                        |parser, _| {
-                                            parser.parse_use_item()
-                                        })?;
+                    let list = self.list(
+                        TokenKind::RightParenthesis, 
+                        Some(TokenKind::Comma), 
+                        |parser, _| {
+                            parser.parse_use_item()
+                        }
+                    )?;
 
                     return Ok(UseItemKind::List { list })
                 }

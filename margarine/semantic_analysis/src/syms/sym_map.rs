@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use common::{copy_slice_in, source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
-use errors::ErrorId;
+use errors::{ErrorId, SemaError};
 use parser::nodes::{decl::{DeclId, Visibility}, NodeId};
 use sti::{arena::Arena, define_key, ext::FromIn, key::Key, vec::KVec};
 
@@ -96,7 +96,7 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn trait_implementation(&self, ty: Type, trait_id: SymbolId) -> Option<TraitImplementation<'me>> {
+    pub fn trait_implementation(&mut self, ty: Type, trait_id: SymbolId) -> Option<TraitImplementation<'me>> {
         let sym = ty.sym(self).ok()?;
         if let Some(&(ns, ty, gens)) = self.syms[sym].2.get(&trait_id) {
             return Some(TraitImplementation::Explicit(ns, ty, gens));
@@ -180,8 +180,9 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn add_enum(&mut self, id: SymbolId, ns_map: &mut NamespaceMap,
-                    string_map: &mut StringMap, range: SourceRange,
+    pub fn add_enum(&mut self, ns_map: &mut NamespaceMap,
+                    string_map: &mut StringMap, errs: &mut KVec<SemaError, Error>,
+                    id: SymbolId, range: SourceRange,
                     name: StringIndex, mappings: &'me [(StringIndex, Generic<'me>)],
                     generics: &'me [BoundedGeneric<'me>], decl: Option<DeclId>) {
 
@@ -216,7 +217,7 @@ impl<'me> SymbolMap<'me> {
 
             let ns = ns_map.get_ns_mut(ns);
 
-            ns.add_sym(range, mapping_name, id, Visibility::Private).unwrap();
+            ns.add_sym(errs, range, mapping_name, id, Visibility::Private).unwrap();
         }
     }
 
@@ -390,7 +391,11 @@ impl<'me> Generic<'me> {
 
 
 impl<'me> SymbolMap<'me> {
-    pub fn new(arena: &'me Arena, ns_map: &mut NamespaceMap, string_map: &mut StringMap) -> Self {
+    pub fn new(
+        arena: &'me Arena, ns_map: &mut NamespaceMap, 
+        string_map: &mut StringMap, errs: &mut KVec<SemaError, Error>
+    ) -> Self {
+
         let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new(), closures: KVec::new(), };
 
         assert_eq!(slf.gens.push(&[]), GenListId::EMPTY);
@@ -417,11 +422,11 @@ impl<'me> SymbolMap<'me> {
                 (StringMap::TRUE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None)),
             ];
 
-            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO,
+            slf.add_enum(ns_map, string_map, errs, pending, SourceRange::ZERO,
                          StringMap::BOOL, slf.arena.alloc_new(fields), &[], None);
         }
 
-        init!(ERR);
+        init!(ERROR);
         init!(NEVER);
 
         // ptr<T> — opaque raw pointer
@@ -460,7 +465,7 @@ impl<'me> SymbolMap<'me> {
 
             let gens = slf.arena.alloc_new([t]);
 
-            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
+            slf.add_enum(ns_map, string_map, errs, pending, SourceRange::ZERO, 
                          StringMap::OPTION, slf.arena.alloc_new(fields), gens, None);
         }
 
@@ -479,7 +484,7 @@ impl<'me> SymbolMap<'me> {
 
             let gens = slf.arena.alloc_new([t, a]);
 
-            slf.add_enum(pending, ns_map, string_map, SourceRange::ZERO, 
+            slf.add_enum(ns_map, string_map, errs, pending, SourceRange::ZERO, 
                          StringMap::RESULT, slf.arena.alloc_new(fields), gens, None);
 
         }
@@ -1192,7 +1197,7 @@ impl VarId {
 
 
 impl Var {
-    pub fn is_concrete(&self, map: &SymbolMap) -> bool {
+    pub fn is_concrete(&self, map: &mut SymbolMap) -> bool {
         let VarSub::Concrete(ty) = self.sub
         else { return false };
 
@@ -1200,7 +1205,7 @@ impl Var {
     }
 
 
-    pub fn is_root(&self, map: &SymbolMap) -> bool {
+    pub fn is_root(&self, map: &mut SymbolMap) -> bool {
         let VarSub::Concrete(ty) = self.sub
         else { return true };
 
@@ -1224,7 +1229,7 @@ impl GenListId {
 
 
 impl<'me> GenericKind<'me> {
-    pub const ERROR : Self = Self::Sym(SymbolId::ERR, &[]);
+    pub const ERROR : Self = Self::Sym(SymbolId::ERROR, &[]);
 }
 
 

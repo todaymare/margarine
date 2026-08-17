@@ -114,11 +114,12 @@ pub enum Decl<'a> {
         functions: &'a [FunctionSignature<'a>],
     },
 
-    OpaqueType {
+    Alias {
         visibility: Visibility,
         name: StringIndex,
         header: SourceRange,
         gens: &'a [DeclGeneric<'a>],
+        data_type: DataType<'a>,
     },
 
     Attribute {

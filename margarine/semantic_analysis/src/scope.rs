@@ -1,8 +1,9 @@
 use common::{source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
+use errors::ErrorId;
 use parser::nodes::decl::DeclGeneric;
 use sti::{define_key, key::Key, vec::KVec};
 
-use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap}, syms::{sym_map::{BoundedGeneric, ClosureId, Generic, SymbolId, SymbolMap}, ty::Type, SymbolKind}};
+use crate::{errors::Error, namespace::{NamespaceId, NamespaceMap, SymbolGetResult}, syms::{sym_map::{BoundedGeneric, ClosureId, Generic, SymbolId, SymbolMap}, ty::Type, Symbol, SymbolKind}};
 
 define_key!(pub ScopeId(u32));
 
@@ -77,15 +78,28 @@ impl<'me> Scope<'me> {
     }
 
 
-    pub fn find_sym(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap) -> Option<Result<SymbolId, Error>> {
-        let requester = self.over(scope_map, |scope| match scope.kind {
-            ScopeKind::ImplicitNamespace(ns) => Some(ns),
-            _ => None,
-        })?;
+    pub fn find_sym(
+        self, name: StringIndex, scope_map: &ScopeMap, 
+        symbols: &mut SymbolMap, namespaces: &NamespaceMap
+    ) -> SymbolGetResult {
+
+        let Some(requester) = 
+        self.over(
+            scope_map, 
+            |scope| match scope.kind {
+                ScopeKind::ImplicitNamespace(ns) => Some(ns),
+                _ => None,
+            }
+        )
+        else { return SymbolGetResult::Undefined };
+
         self.find_sym_from(name, scope_map, symbols, namespaces, requester)
     }
 
-    pub fn find_sym_from(self, name: StringIndex, scope_map: &ScopeMap, symbols: &mut SymbolMap, namespaces: &NamespaceMap, requester: NamespaceId) -> Option<Result<SymbolId, Error>> {
+    pub fn find_sym_from(
+        self, name: StringIndex, scope_map: &ScopeMap, 
+        symbols: &mut SymbolMap, namespaces: &NamespaceMap, 
+        requester: NamespaceId) -> SymbolGetResult {
         let mut fence = false;
         let r = self.over(scope_map, |scope| {
             if let ScopeKind::NamespaceFence = scope.kind {
@@ -94,8 +108,10 @@ impl<'me> Scope<'me> {
 
 
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
-                if let Some(ty) = namespaces.get_sym(ns, requester, name) {
-                    return Some(ty)
+                let result = namespaces.get_sym(ns, requester, name);
+
+                if result != SymbolGetResult::Undefined {
+                    return Some(result)
                 }
             }
 
@@ -103,22 +119,22 @@ impl<'me> Scope<'me> {
             if let ScopeKind::AliasDecl(ident, ty) = scope.kind {
                 if name == ident 
                 && let Some(sym) = ty.sym() {
-                    return Some(Ok(sym))
+                    return Some(SymbolGetResult::Symbol(sym))
                 }
             }
 
 
             if let ScopeKind::Generics(generics_scope) = scope.kind {
                 if let Some(ty) = generics_scope.generics.iter().find(|x| x.0.name() == name) {
-                    return Some(Ok(ty.1.sym(symbols).expect("please work")))
+                    return Some(SymbolGetResult::Symbol(ty.1.sym(symbols).expect("please work")))
                 }
             }
 
             None
         });
 
-        if fence { None }
-        else { r }
+        if fence { SymbolGetResult::Undefined }
+        else { r.unwrap_or(SymbolGetResult::Undefined) }
     }
 
 
@@ -151,15 +167,19 @@ impl<'me> Scope<'me> {
         scope_map: &ScopeMap,
         namespaces: &NamespaceMap,
         symbols: &mut SymbolMap
-    ) -> Option<Result<(VariableScope, bool), Result<SymbolId, Error>>> {
+    ) -> Result<(VariableScope, bool), SymbolGetResult> {
 
-        let requester = self.over(scope_map, |scope| match scope.kind {
+        let requester = 
+        self.over(scope_map, 
+        |scope| match scope.kind {
             ScopeKind::ImplicitNamespace(ns) => Some(ns),
             _ => None,
         });
 
         let mut fence = false;
         let mut captured = false;
+
+        let result =
         self.over(scope_map, |scope| {
             if let ScopeKind::NamespaceFence = scope.kind {
                 fence = true;
@@ -190,7 +210,7 @@ impl<'me> Scope<'me> {
 
             if let ScopeKind::Generics(generics_scope) = scope.kind {
                 if let Some(ty) = generics_scope.generics.iter().find(|x| x.0.name() == name) {
-                    return Some(Err(Ok(ty.1.sym(symbols).expect("please work"))))
+                    return Some(Err(SymbolGetResult::Symbol(ty.1.sym(symbols).expect("please work"))))
                 }
             }
 
@@ -199,14 +219,21 @@ impl<'me> Scope<'me> {
 
             if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
                 let requester = requester.unwrap_or(ns);
-                if let Some(ty) = namespaces.get_sym(ns, requester, name) {
-                    return Some(Err(ty))
+                let result = namespaces.get_sym(ns, requester, name);
+
+                if result != SymbolGetResult::Undefined {
+                    return Some(Err(result));
                 }
             }
 
 
             None
-        })
+        });
+
+        match result {
+            Some(result) => result,
+            None => Err(SymbolGetResult::Undefined),
+        }
     }
 
 

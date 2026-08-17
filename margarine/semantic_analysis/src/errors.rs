@@ -40,6 +40,7 @@ pub enum Error {
         name: StringIndex,
     },
 
+    RecursiveAlias(SourceRange),
     UnknownType(StringIndex, SourceRange),
 
     FunctionBodyAndReturnMismatch {
@@ -289,6 +290,11 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             },
 
             
+            Error::RecursiveAlias(source) => {
+                fmt.error("recursive type alias")
+                    .highlight_with_note(*source, "type aliases cannot refer to themselves, directly or through another alias")
+            },
+
             Error::UnknownType(name, pos) => {
                 let name = fmt.string(*name).to_string();
                 fmt.error("unknown type")

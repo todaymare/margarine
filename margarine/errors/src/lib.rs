@@ -24,6 +24,13 @@ pub trait ErrorType<T> {
 }
 
 
+impl From<SemaError> for ErrorId {
+    fn from(value: SemaError) -> Self {
+        Self::Sema(value)
+    }
+}
+
+
 pub fn display<T>(e: &impl ErrorType<T>, string_map: &StringMap, file: &[FileData], data: &mut T) -> String {
     let mut string = String::new();
     if !string.is_empty() {
