@@ -78,7 +78,7 @@ impl<K: Key, V> KSlice<K, V> {
 
 
     #[inline]
-    pub fn kiter(&self) -> KIter<K, V> {
+    pub fn kiter(&self) -> KIter<'_, K, V> {
         KIter {
             idx: K::MIN,
             len: self.klen(),
@@ -88,7 +88,7 @@ impl<K: Key, V> KSlice<K, V> {
     }
 
     #[inline]
-    pub fn kiter_mut(&mut self) -> KIterMut<K, V> {
+    pub fn kiter_mut(&mut self) -> KIterMut<'_, K, V> {
         KIterMut {
             idx: K::MIN,
             len: self.klen(),
