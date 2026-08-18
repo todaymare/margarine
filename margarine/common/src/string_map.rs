@@ -85,6 +85,7 @@ impl<'str> StringMap<'str> {
     pub const LIST_ITER : StringIndex = StringIndex(65);
     pub const BUILTIN_LIST_ITER : StringIndex = StringIndex(66);
     pub const BUILTIN_LIST_ITER_NEXT : StringIndex = StringIndex(67);
+    pub const BUILTIN_FLOAT_SQRT : StringIndex = StringIndex(68);
  
     #[inline(always)]
     pub fn new(arena: &'str Arena) -> Self {
@@ -171,6 +172,7 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("ListIter"), Self::LIST_ITER);
         assert_eq!(s.insert("$list_iter"), Self::BUILTIN_LIST_ITER);
         assert_eq!(s.insert("$list_iter_next"), Self::BUILTIN_LIST_ITER_NEXT);
+        assert_eq!(s.insert("$float_sqrt"), Self::BUILTIN_FLOAT_SQRT);
         s
     }
 

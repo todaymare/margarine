@@ -1253,6 +1253,31 @@ impl<'me> SymbolMap<'me> {
             );
             slf.add_sym(pending, sym);
         }
+        // $float_sqrt
+        {
+            let pending = slf.pending(ns_map, None, StringMap::BUILTIN_FLOAT_SQRT, 0);
+            assert_eq!(pending, SymbolId::BUILTIN_FLOAT_SQRT);
+
+            let args = arena.alloc_new([
+                FunctionArgument::new(
+                    StringMap::VALUE,
+                    Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::F64, &[]), None),
+                )
+            ]);
+
+            let sym = Symbol::new(
+                StringMap::BUILTIN_FLOAT_SQRT,
+                &[],
+                SymbolKind::Function(FunctionTy::new(
+                    args,
+                    Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::F64, &[]), None),
+                    FunctionKind::FloatSqrt,
+                    None,
+                )),
+            );
+
+            slf.add_sym(pending, sym);
+        }
 
         slf
     }

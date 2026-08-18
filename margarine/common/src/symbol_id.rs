@@ -40,6 +40,7 @@ impl SymbolId {
     pub const LIST_ITER    : Self = Self(40);
     pub const BUILTIN_LIST_ITER : Self = Self(41);
     pub const BUILTIN_LIST_ITER_NEXT : Self = Self(42);
+    pub const BUILTIN_FLOAT_SQRT : Self = Self(43);
 
 
     pub fn supports_arith(self) -> bool {

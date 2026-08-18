@@ -572,6 +572,45 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
+    pub fn sqrt_fp(&self, value: FP<'ctx>) -> FP<'ctx> {
+        let mut overloads = [unsafe { value.ty().llvm_ty().as_ptr() }];
+        let intrinsic_id = unsafe { LLVMLookupIntrinsicID(cstr!("llvm.sqrt"), 9) };
+        assert_ne!(intrinsic_id, 0, "LLVM does not provide llvm.sqrt");
+
+        let intrinsic = unsafe {
+            LLVMGetIntrinsicDeclaration(
+                self.module.as_ptr(),
+                intrinsic_id,
+                overloads.as_mut_ptr(),
+                overloads.len(),
+            )
+        };
+        let intrinsic = NonNull::new(intrinsic).expect("failed to declare llvm.sqrt");
+        let intrinsic_ty = unsafe {
+            LLVMIntrinsicGetType(
+                self.ctx.ptr.as_ptr(),
+                intrinsic_id,
+                overloads.as_mut_ptr(),
+                overloads.len(),
+            )
+        };
+        let intrinsic_ty = NonNull::new(intrinsic_ty).expect("failed to get llvm.sqrt type");
+        let mut args = [unsafe { value.llvm_val().as_ptr() }];
+        let result = unsafe {
+            LLVMBuildCall2(
+                self.ptr.as_ptr(),
+                intrinsic_ty.as_ptr(),
+                intrinsic.as_ptr(),
+                args.as_mut_ptr(),
+                args.len() as u32,
+                cstr!("sqrtt"),
+            )
+        };
+
+        unsafe { FP::new(Value::new(NonNull::new(result).unwrap())) }
+    }
+
+
     pub fn cmp_int(&self, lhs: Integer<'ctx>, rhs: Integer<'ctx>, cmp: IntCmp) -> Bool<'ctx> {
         assert_eq!(lhs.ty().bit_size(), rhs.ty().bit_size(),
                     "the two integers can't be compared as their bit-sizes are different");

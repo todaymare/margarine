@@ -206,6 +206,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let _ = add_sym!(LIST_ITER);
             let _ = add_sym!(BUILTIN_LIST_ITER);
             let _ = add_sym!(BUILTIN_LIST_ITER_NEXT);
+            let _ = add_sym!(BUILTIN_FLOAT_SQRT);
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));

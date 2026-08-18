@@ -1889,6 +1889,34 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             },
 
 
+            syms::func::FunctionKind::FloatSqrt => {
+                let func_ty = llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let builder = func_ptr.builder(self.ctx, func_ty);
+                let arg = builder.arg(0).unwrap();
+                let arg = builder.local_get(arg);
+                let result = builder.sqrt_fp(arg.as_fp());
+                builder.ret(*result);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
             syms::func::FunctionKind::TypeId => {
                 let func_ty = llvm_ret.repr.fn_ty(
                     self.ctx.arena, 
@@ -1907,10 +1935,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     func_ty,
                     func_ptr,
                 };
-
                 assert!(self.funcs.insert(hash, func).is_none());
 
                 let builder = func_ptr.builder(self.ctx, func_ty);
+
                 
                 let id = gens[0].1.sym(self.syms).unwrap();
                 let num = builder.const_int(self.i64, id.0 as i64, false);

@@ -56,6 +56,7 @@ pub enum FunctionKind {
     ListLen,
     ListIter,
     ListIterNext,
+    FloatSqrt,
 
     Enum {
         sym: SymbolId,
