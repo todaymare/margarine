@@ -1941,6 +1941,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn accessors(&mut self, settings: &ParserSettings) -> ExprResult<'ta> {
         let mut result = self.atom(settings)?;
+        let start = self.ast.range(result).start();
 
         if self.current_is(TokenKind::SemiColon) { return Ok(result) }
 
@@ -1954,7 +1955,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             self.advance();
 
             if self.current_is(TokenKind::Bang) {
-                let source = SourceRange::new(self.ast.range(result).start(), self.current_range().end());
+                let source = SourceRange::new(start, self.current_range().end());
                 result = self.ast.add_expr(
                     Expr::Unwrap(result),
                     source,
@@ -1963,7 +1964,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             }
 
             if self.current_is(TokenKind::QuestionMark) {
-                let source = SourceRange::new(self.ast.range(result).start(), self.current_range().end());
+                let source = SourceRange::new(start, self.current_range().end());
                 result = self.ast.add_expr(Expr::OrReturn(result), source);
                 continue
             }
@@ -1975,14 +1976,13 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
                 self.expect(TokenKind::RightSquare)?;
 
-                let source = SourceRange::new(self.ast.range(result).start(), self.current_range().end());
+                let source = SourceRange::new(start, self.current_range().end());
                 result = self.ast.add_expr(Expr::IndexList { list: result, index }, source);
                 continue
             }
             
             if self.current_is(TokenKind::LeftParenthesis)
                 || self.peek_is(TokenKind::DoubleColon) {
-                let start = self.ast.range(result).start();
                 self.advance();
 
                 let args = self.parse_function_call_args(None)?;
@@ -2001,7 +2001,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             self.advance();
             
-            let start = self.current_range().start();
             let ident = match self.current_kind() {
                 TokenKind::Literal(Literal::Integer(int)) => self.string_map.num(int as usize),
 
