@@ -1846,6 +1846,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     ret_llvm_ty: Some(llvm_ret),
                 };
 
+                let Decl::Function { body, .. } = self.ast.decl(sym_func.decl().unwrap())
+                else { unreachable!() };
+
                 for (i, arg) in sym_func.args().iter().enumerate() {
                     let arg_ty = arg.symbol().to_ty(gens, self.syms).unwrap();
                     let arg_ty = arg_ty.resolve(&[], self.syms);
@@ -1858,12 +1861,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         env.alloc_var(arg.name(), local, arg_ty, true);
                         env.inouts.push((param, local));
                     } else {
-                        env.alloc_var(arg.name(), param, arg_ty, true);
+                        // Own every by-value parameter: the caller keeps its own reference and
+                        // releases it after the call, so the callee must hold its own copy to
+                        // make every intra-body drop (assignment overwrites, exit cleanup)
+                        // target an owned value. The pair is local to this function, so LLVM
+                        // can fold it when the body never touches the refcount.
+                        let value = builder.local_get(param);
+                        let owned = self.emit_copy(&mut builder, value, arg_ty);
+                        builder.local_set(param, owned);
+                        env.alloc_var(arg.name(), param, arg_ty, false);
                     }
                 }
-
-                let Decl::Function { body, .. } = self.ast.decl(sym_func.decl().unwrap())
-                else { unreachable!() };
 
 
                 let result = self.block(&mut env, &mut builder, &*body);
@@ -4435,7 +4443,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     for (i, arg) in func_ty.args().iter().enumerate() {
                         let arg_ty = arg.symbol().to_ty(env.gens, self.syms).unwrap();
                         let arg_ty = arg_ty.resolve(&[], self.syms);
-                        env.alloc_var(arg.name(), builder.arg(i).unwrap(), arg_ty, true);
+                        let param = builder.arg(i).unwrap();
+                        let value = builder.local_get(param);
+                        let owned = self.emit_copy(&mut builder, value, arg_ty);
+                        builder.local_set(param, owned);
+                        env.alloc_var(arg.name(), param, arg_ty, false);
                     }
 
                     let result = self.expr(&mut env, &mut builder, body);
@@ -5194,10 +5206,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
     fn drop_locals(&mut self, env: &mut Env<'_, 'ctx>, builder: &mut Builder<'ctx>, start: usize) {
         for i in (start..env.vars.len()).rev() {
-            let (_, local, ty, is_param) = env.vars[i];
+            let (_, local, ty, borrowed) = env.vars[i];
 
-            if is_param
-            || env.inouts.iter().any(|(_, inout)| *inout == local) {
+            // Borrowed locals (inout writeback slots, closure captures) are owned by their
+            // origin — the caller or the closure environment — and must not be released by
+            // this function's drop protocol.
+            if borrowed {
                 continue;
             }
 
@@ -5335,8 +5349,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
 impl Env<'_, '_> {
-    pub fn alloc_var(&mut self, name: StringIndex, local: Local, ty: Type, is_param: bool) {
-        self.vars.push((name, local, ty, is_param));
+    pub fn alloc_var(&mut self, name: StringIndex, local: Local, ty: Type, borrowed: bool) {
+        self.vars.push((name, local, ty, borrowed));
     }
 
 
