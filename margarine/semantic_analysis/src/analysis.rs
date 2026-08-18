@@ -1069,8 +1069,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 self.control_flow.restore(flow);
 
                 if !anal.ty.eq(&mut self.syms, ret) {
+                    let item = 
+                    body.last()
+                        .map(|n| self.ast.range(*n))
+                        .unwrap_or(body.range());
+
                     self.error(n, Error::FunctionBodyAndReturnMismatch {
-                        header: sig.source, item: body.range(),
+                        header: sig.source, item,
                         return_type: ret, body_type: anal.ty });
                 }
 
