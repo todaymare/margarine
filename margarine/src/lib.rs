@@ -102,6 +102,7 @@ impl<'me> Compiler<'me> {
     ) -> CompilationResult<'out> {
         let arena = settings.arena;
         let entry = self.string_map.insert(&settings.entry);
+        let empty = self.string_map.insert("");
         let preludes = settings.preludes
             .iter()
             .map(|p| (self.string_map.insert(&p.alias), self.string_map.insert(&p.url)))
@@ -116,7 +117,7 @@ impl<'me> Compiler<'me> {
         let root = 
         global.add_decl(Decl::Module { 
             visibility: Visibility::Public,
-            name: entry, 
+            name: empty, 
             header: SourceRange::ZERO, 
             body: Block::new(&[], SourceRange::ZERO), 
             is_root: true 
@@ -148,7 +149,7 @@ impl<'me> Compiler<'me> {
 
         stack.push(StackEntry {
             ast_node: root,
-            alias: entry,
+            alias: empty,
             path: entry,
             visibility: Visibility::Public,
             intercrate_depth: 0,
