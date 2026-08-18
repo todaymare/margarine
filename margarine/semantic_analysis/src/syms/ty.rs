@@ -84,6 +84,10 @@ impl Type {
                     return false;
                 }
 
+                if let SymbolKind::Alias(_) = map.sym(symbol_id).kind() {
+                    return false;
+                }
+
                 for (_, sym) in map.get_gens(gen_list_id) {
                     if !sym.is_resolved(map) {
                         return false 

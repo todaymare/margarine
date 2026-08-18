@@ -1647,6 +1647,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn get_func(&mut self, ty: Type) -> Result<&Function<'ctx>, ErrorId> {
+        let ty = ty.resolve(&[], self.syms);
         assert!(ty.is_resolved(&mut self.syms));
 
         let sym_id = ty.sym(self.syms).unwrap();
@@ -1674,6 +1675,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
 
         let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
+        let ret = ret.resolve(&[gens], self.syms);
         let is_never = ret.is_never(self.syms) || ret.is_err(self.syms);
 
         let llvm_ret = self.to_llvm_ty(ret);
@@ -1683,6 +1685,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             .map(|x| 
                 x.symbol()
                 .to_ty(gens, self.syms).unwrap()
+                .resolve(&[gens], self.syms)
             ).collect::<Vec<_>>();
 
         let external_abi = self.extern_abi(llvm_ret.repr);
@@ -2773,6 +2776,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn to_llvm_ty(&mut self, ty: Type) -> TypeMapping<'ctx> {
+        let ty = ty.resolve(&[], self.syms);
         assert!(ty.is_resolved(self.syms));
 
         let hash = ty.hash(self.syms);
@@ -4952,6 +4956,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         value: Value<'ctx>, 
         ty: Type
     ) {
+        let ty = ty.resolve(&[], self.syms);
 
         assert!(ty.is_resolved(self.syms));
 
