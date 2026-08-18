@@ -224,6 +224,11 @@ pub enum Error {
         source: SourceRange,
     },
 
+    AssignmentToImmutableVariable {
+        name: StringIndex,
+        source: SourceRange,
+    },
+
 
     InOutValueWithoutInOutBinding {
         source: SourceRange,
@@ -709,6 +714,12 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             Error::CannotMutateCapturedValue { source } => {
                 fmt.error("cannot mutate captured value")
                     .highlight_with_note(*source, "captured values are immutable inside closures");
+            },
+
+            Error::AssignmentToImmutableVariable { name, source } => {
+                let msg = format!("cannot assign to immutable variable '{}'; declare it with `var` to make it mutable", fmt.string_map().get(*name));
+                fmt.error("assignment to immutable variable")
+                    .highlight_with_note(*source, &msg);
             },
 
 

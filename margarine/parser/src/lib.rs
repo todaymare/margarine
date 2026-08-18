@@ -850,7 +850,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
         let node = 
         match self.current_kind() {
-            TokenKind::Keyword(Keyword::Var) => self.let_statement()?.into(),
+            TokenKind::Keyword(Keyword::Let) | TokenKind::Keyword(Keyword::Var) => self.let_statement()?.into(),
             TokenKind::Keyword(Keyword::For) => self.for_statement()?.into(),
 
             TokenKind::SemiColon => {
@@ -1622,7 +1622,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn let_statement(&mut self) -> StmtResult<'ta> {
         let start = self.current_range().start();
-        self.expect(TokenKind::Keyword(Keyword::Var))?;
+        let mutable = match self.current_kind() {
+            TokenKind::Keyword(Keyword::Let) => false,
+            TokenKind::Keyword(Keyword::Var) => true,
+            _ => unreachable!(),
+        };
         self.advance();
 
         let pattern = self.parse_pattern()?;
@@ -1643,7 +1647,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let rhs = self.expression(&ParserSettings::default())?;
         
         Ok(self.ast.add_stmt(
-            Stmt::Variable { pat: pattern, hint, rhs },
+            Stmt::Variable { mutable, pat: pattern, hint, rhs },
             source
         ))
         

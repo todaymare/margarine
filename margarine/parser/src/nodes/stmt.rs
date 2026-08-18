@@ -10,6 +10,7 @@ define_key!(pub StmtId(u32));
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Stmt<'a> {
     Variable {
+        mutable: bool,
         pat : Pattern<'a>,
         hint: Option<DataType<'a>>,
         rhs: ExprId,

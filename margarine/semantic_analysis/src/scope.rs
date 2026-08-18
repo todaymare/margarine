@@ -328,18 +328,22 @@ impl<'me> Scope<'me> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct VariableScope {
-    name  : StringIndex,
-    ty    : Type,
+    name   : StringIndex,
+    ty     : Type,
+    mutable: bool,
 }
 
 impl VariableScope {
-    pub fn new(name: StringIndex, ty: Type) -> Self { Self { name, ty } }
+    pub fn new(name: StringIndex, ty: Type, mutable: bool) -> Self { Self { name, ty, mutable } }
 
     #[inline(always)]
     pub fn ty(&self) -> Type { self.ty }
 
     #[inline(always)]
     pub fn name(&self) -> StringIndex { self.name }
+
+    #[inline(always)]
+    pub fn is_mutable(&self) -> bool { self.mutable }
 }
 
 

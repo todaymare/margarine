@@ -1044,7 +1044,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         }
                     };
 
-                    let vs = VariableScope::new(a.name(), ty);
+                    let vs = VariableScope::new(a.name(), ty, true);
                     scope = Scope::new(Some(self.scopes.push(scope)), ScopeKind::VariableScope(vs))
                 }
 
@@ -1353,7 +1353,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
     pub fn resolve_pattern(
         &mut self, id: NodeId, scope: &mut ScopeId, 
-        pattern: Pattern, rhs: AnalysisResult, rhs_range: SourceRange
+        pattern: Pattern, rhs: AnalysisResult, rhs_range: SourceRange, mutable: bool
     ) -> Result<(), Error> {
         //
         // yes, I'm aware this is a very.. brave way of doing error handling
@@ -1372,7 +1372,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         (|| {
             match pattern.kind() {
                 PatternKind::Variable(name) => {
-                    let vs = VariableScope::new(name, rhs.ty);
+                    let vs = VariableScope::new(name, rhs.ty, mutable);
                     let vs = Scope::new(*scope, ScopeKind::VariableScope(vs));
                     *scope = self.scopes.push(vs);
                 },
@@ -1418,7 +1418,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let gens = ty.gens(&mut self.syms);
                     let gens = self.syms.get_gens(gens);
                     for (&item, (_, ty)) in items.iter().zip(gens.iter()) {
-                        let vs = VariableScope::new(item, *ty);
+                        let vs = VariableScope::new(item, *ty, mutable);
                         let vs = Scope::new(*scope, ScopeKind::VariableScope(vs));
                         *scope = self.scopes.push(vs);
                     }
@@ -1441,7 +1441,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         let source = self.ast.range(id);
         let stmt = self.ast.stmt(id);
         match stmt {
-            Stmt::Variable { pat, hint, rhs } => {
+            Stmt::Variable { mutable, pat, hint, rhs } => {
                 let mut rhs_anal = self.expr(path, *scope, rhs);
 
                 let mut validate_hint = || {
@@ -1477,7 +1477,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let rhs_range = self.ast.range(rhs);
 
                 let result = self.resolve_pattern(
-                    id.into(), scope, pat, rhs_anal, rhs_range);
+                    id.into(), scope, pat, rhs_anal, rhs_range, mutable);
 
                 if let Err(e) = validate_hint {
                     self.set_error(id, e);
@@ -1503,6 +1503,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 if lhs_anal.is_captured && self.is_assignable_place(lhs) {
 
                     self.error(id, Error::CannotMutateCapturedValue { source: range });
+                } else if !lhs_anal.is_mut && self.is_assignable_place(lhs) {
+                    let name = self.root_identifier(lhs)
+                        .expect("assignable places always root at an identifier");
+                    self.error(id, Error::AssignmentToImmutableVariable { name, source: range });
                 } else if !lhs_anal.is_mut || !self.is_assignable_place(lhs) {
                     self.error(id, Error::AssignIsNotLHSValue { source: range });
                 }
@@ -1522,7 +1526,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     let _ = self.resolve_pattern(
                         id.into(), &mut scope, binding, 
-                        AnalysisResult::error(), range
+                        AnalysisResult::error(), range, true
                     );
 
                     self.control_flow.enter_loop();
@@ -1548,7 +1552,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     let _ = self.resolve_pattern(
                         id.into(), &mut scope, binding, 
-                        AnalysisResult::error(), range
+                        AnalysisResult::error(), range, true
                     );
 
                     self.control_flow.enter_loop();
@@ -1590,7 +1594,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let _ = self.resolve_pattern(
                     id.into(), &mut scope, binding, 
-                    AnalysisResult::new(binding_ty), source
+                    AnalysisResult::new(binding_ty), source, true
                 );
 
 
@@ -1635,6 +1639,20 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             | Expr::OrReturn(val) => self.is_assignable_place(val),
 
             _ => false,
+        }
+    }
+
+    fn root_identifier(&self, expr: ExprId) -> Option<StringIndex> {
+        match self.ast.expr(expr) {
+            Expr::Identifier(ident, _) => Some(ident),
+
+            Expr::AccessField { val, .. }
+            | Expr::IndexList { list: val, .. } => self.root_identifier(val),
+
+            Expr::Unwrap(val)
+            | Expr::OrReturn(val) => self.root_identifier(val),
+
+            _ => None,
         }
     }
 
@@ -1781,7 +1799,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         return Ok(if is_captured {
                             AnalysisResult::captured(variable.ty())
                         } else {
-                            AnalysisResult::new(variable.ty())
+                            let mut anal = AnalysisResult::new(variable.ty());
+                            anal.is_mut = variable.is_mutable();
+                            anal
                         })
                     },
 
@@ -1872,7 +1892,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     active_scope = 
                     self.scopes.push(Scope::new(
                         Some(active_scope), 
-                        ScopeKind::VariableScope(VariableScope::new(arg.0, ty))
+                        ScopeKind::VariableScope(VariableScope::new(arg.0, ty, true))
                     ));
 
                     sargs.push((arg.0, ty, arg.2));
@@ -2148,7 +2168,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 for (m, f) in mappings.iter().zip(cont.fields().iter()) {
                     let gens = anal.ty.gens(&mut self.syms);
                     let gens = self.syms.get_gens(gens);
-                    let vs = VariableScope::new(m.binding(), f.1.to_ty(gens, &mut self.syms).map_err(|e| self.error(id, e))?);
+                    let vs = VariableScope::new(m.binding(), f.1.to_ty(gens, &mut self.syms).map_err(|e| self.error(id, e))?, true);
 
                     let scope = Scope::new(Some(scope), ScopeKind::VariableScope(vs));
                     let scope = self.scopes.push(scope);
