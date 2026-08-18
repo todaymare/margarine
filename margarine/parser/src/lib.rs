@@ -1482,7 +1482,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     parser.advance();
 
                     parser.expect(TokenKind::RightParenthesis)?;
-                    parser.advance();
 
                     (ty, false)
                 }

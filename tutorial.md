@@ -98,7 +98,7 @@ fn main() {
 
 ### Enums
 ```mar
-enum Option<T> { Some: T, None }
+enum Option<T> { Some(T), None }
 
 fn main() {
     var x = Option::Some(42);
