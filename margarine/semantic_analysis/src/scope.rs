@@ -17,6 +17,8 @@ pub struct Scope<'me> {
 #[non_exhaustive]
 pub enum ScopeKind<'me> {
     ImplicitNamespace(NamespaceId),
+    QualifiedNamespace(NamespaceId),
+    QualifiedTypeNamespace(Type, Option<NamespaceId>),
     ImplicitTrait(SymbolId),
     NamespaceFence,
     AliasDecl(StringIndex, Generic<'me>),
@@ -75,6 +77,15 @@ impl<'me> Scope<'me> {
         })
     }
 
+    pub fn find_qualified_type(self, scope_map: &ScopeMap) -> Option<Type> {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::QualifiedTypeNamespace(ty, _) = scope.kind {
+                return Some(ty);
+            }
+            None
+        })
+    }
+
 
     pub fn find_sym(
         self, name: StringIndex, scope_map: &ScopeMap, 
@@ -104,13 +115,26 @@ impl<'me> Scope<'me> {
                 fence = true;
             }
 
+            match scope.kind {
+                ScopeKind::ImplicitNamespace(ns) | ScopeKind::QualifiedNamespace(ns) => {
+                    let result = namespaces.get_sym(ns, requester, name);
 
-            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
-                let result = namespaces.get_sym(ns, requester, name);
+                    if result != SymbolGetResult::Undefined {
+                        return Some(result)
+                    }
+                },
+                ScopeKind::QualifiedTypeNamespace(ty, qualified_requester) => {
+                    let Ok(sym) = ty.sym(symbols)
+                    else { return None };
+                    let ns = symbols.sym_ns(sym);
+                    let requester = qualified_requester.unwrap_or(ns);
+                    let result = namespaces.get_sym(ns, requester, name);
 
-                if result != SymbolGetResult::Undefined {
-                    return Some(result)
-                }
+                    if result != SymbolGetResult::Undefined {
+                        return Some(result)
+                    }
+                },
+                _ => (),
             }
 
 
@@ -215,13 +239,27 @@ impl<'me> Scope<'me> {
 
             if fence && scope.parent().is_some() { return None }
 
-            if let ScopeKind::ImplicitNamespace(ns) = scope.kind {
-                let requester = requester.unwrap_or(ns);
-                let result = namespaces.get_sym(ns, requester, name);
+            match scope.kind {
+                ScopeKind::ImplicitNamespace(ns) | ScopeKind::QualifiedNamespace(ns) => {
+                    let requester = requester.unwrap_or(ns);
+                    let result = namespaces.get_sym(ns, requester, name);
 
-                if result != SymbolGetResult::Undefined {
-                    return Some(Err(result));
-                }
+                    if result != SymbolGetResult::Undefined {
+                        return Some(Err(result));
+                    }
+                },
+                ScopeKind::QualifiedTypeNamespace(ty, qualified_requester) => {
+                    let Ok(sym) = ty.sym(symbols)
+                    else { return None };
+                    let ns = symbols.sym_ns(sym);
+                    let requester = qualified_requester.unwrap_or(ns);
+                    let result = namespaces.get_sym(ns, requester, name);
+
+                    if result != SymbolGetResult::Undefined {
+                        return Some(Err(result));
+                    }
+                },
+                _ => (),
             }
 
 

@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use common::{source::SourceRange, string_map::StringIndex};
-use errors::{ErrorId, SemaError};
-use parser::nodes::decl::Visibility;
+use errors::ErrorId;
+use parser::nodes::{decl::Visibility, NodeId};
 use sti::{define_key, vec::KVec};
 
-use crate::{errors::Error, syms::sym_map::SymbolId};
+use crate::{errors::Error, syms::sym_map::SymbolId, SemaErrors};
 
 define_key!(pub NamespaceId(u32));
 
@@ -91,10 +91,13 @@ impl Namespace {
         let visibility = self.symbols.get(&name).map(|entry| entry.visibility()).unwrap_or(Visibility::Private);
         self.symbols.insert(name, SymbolEntry { result: Err(err), visibility });
     }
+    pub fn add_sym_unchecked(&mut self, name: StringIndex, sym: SymbolId, visibility: Visibility) {
+        assert!(self.symbols.insert(name, SymbolEntry { result: Ok(sym), visibility }).is_none());
+    }
 
     pub fn add_sym(
-        &mut self, errs: &mut KVec<SemaError, Error>,
-        source: SourceRange, name: StringIndex, 
+        &mut self, errs: &mut SemaErrors, node: NodeId,
+        source: SourceRange, name: StringIndex,
         sym: SymbolId, visibility: Visibility,
     ) -> Result<(), ErrorId> {
         // A package can be brought into scope explicitly as well as through a
@@ -109,9 +112,7 @@ impl Namespace {
         let old_sym = self.symbols.insert(name, SymbolEntry { result: Ok(sym), visibility });
         if old_sym.is_some() {
             let err = Error::NameIsAlreadyDefined { source, name };
-            let id = errs.push(err);
-            let id = ErrorId::Sema(id);
-
+            let id = errs.push(node, err);
             self.symbols.insert(name, SymbolEntry { result: Err(id), visibility });
             return Err(id)
         }

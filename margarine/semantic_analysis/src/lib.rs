@@ -9,7 +9,7 @@ use sti::{arena::Arena, ext::FromIn, key::Key, vec::{KVec, Vec}};
 use syms::{ty::Type, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 use namespace::{Namespace, NamespaceId, NamespaceMap};
 
-use crate::{namespace::SymbolGetResult, scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId}, Symbol}};
+use crate::{namespace::SymbolGetResult, scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId}, Symbol, SymbolKind}};
 
 pub mod scope;
 pub mod namespace;
@@ -17,6 +17,24 @@ pub mod errors;
 pub mod analysis;
 pub mod syms;
 pub mod llvm_codegen;
+
+pub struct SemaErrors {
+    pub errors: KVec<SemaError, Error>,
+    pub nodes: KVec<SemaError, NodeId>,
+}
+
+impl SemaErrors {
+    pub fn new() -> Self {
+        Self { errors: KVec::new(), nodes: KVec::new() }
+    }
+
+    pub fn push(&mut self, node: NodeId, error: Error) -> ErrorId {
+        let id = self.errors.push(error);
+        assert_eq!(id.0 as usize, self.nodes.len());
+        self.nodes.push(node);
+        ErrorId::Sema(id)
+    }
+}
 
 pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     output      : &'out Arena,
@@ -33,8 +51,7 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub link_files: Vec<DeclId>,
     pub root_namespace: Option<NamespaceId>,
 
-    pub errors     : KVec<SemaError, Error>,
-    pub error_nodes: KVec<SemaError, NodeId>,
+    pub errors     : SemaErrors,
     pub silent_ranges: std::vec::Vec<SourceRange>,
     control_flow: ControlFlowState,
     tuple_syms: std::vec::Vec<SymbolId>,
@@ -127,17 +144,15 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                ast: &'me mut AST<'ast>,
                block: &[NodeId],
                string_map: &'me mut StringMap<'str>) -> Self {
-
         let mut ns = NamespaceMap::new();
-        let mut errors = KVec::new();
+        let errors = SemaErrors::new();
         let mut analyzer = TyChecker {
             output: out,
-            scopes: ScopeMap::new(),
-            syms: SymbolMap::new(out, &mut ns, string_map, &mut errors),
+            syms: SymbolMap::new(out, &mut ns, string_map),
             string_map,
             namespaces: ns,
+            scopes: ScopeMap::new(),
             errors,
-            error_nodes: KVec::new(),
             silent_ranges: std::vec::Vec::new(),
             control_flow: ControlFlowState::default(),
             tuple_syms: std::vec::Vec::new(),
@@ -170,7 +185,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             macro_rules! add_sym {
                 ($n: ident) => {
-                    namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::$n, SymbolId::$n, parser::nodes::decl::Visibility::Public)
+                    namespace.add_sym_unchecked(StringMap::$n, SymbolId::$n, parser::nodes::decl::Visibility::Public)
                 };
             }
 
@@ -210,14 +225,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
-                let _ = namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
-                let _ = namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                namespace.add_sym_unchecked(StringMap::SOME, ns.get_sym(StringMap::SOME).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                namespace.add_sym_unchecked(StringMap::NONE, ns.get_sym(StringMap::NONE).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
             }
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::RESULT));
-                let _ = namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::OK , ns.get_sym(StringMap::OK ).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
-                let _ = namespace.add_sym(&mut analyzer.errors, SourceRange::ZERO, StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                namespace.add_sym_unchecked(StringMap::OK, ns.get_sym(StringMap::OK).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
+                namespace.add_sym_unchecked(StringMap::ERR, ns.get_sym(StringMap::ERR).unwrap().unwrap(), parser::nodes::decl::Visibility::Public);
             }
 
             analyzer.namespaces.push(namespace, None)
@@ -234,13 +249,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             if !v.is_concrete(&mut analyzer.syms)
             && v.is_root(&mut analyzer.syms) {
                 let error = Error::UnableToInfer(v.range(), v.name());
-                Self::error_ex(
-                    &mut analyzer.errors,
-                    &mut analyzer.error_nodes,
-                    &mut analyzer.type_info,
-                    v.node(),
-                    error,
-                );
+                analyzer.error(v.node(), error);
             }
         }
 
@@ -249,16 +258,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
     fn error(&mut self, node: impl Into<NodeId>, error: Error) -> ErrorId {
-        Self::error_ex(&mut self.errors, &mut self.error_nodes, &mut self.type_info, node, error)
+        Self::error_ex(&mut self.errors, &mut self.type_info, node, error)
     }
-
 
     fn set_error(&mut self, node: impl Into<NodeId>, error: ErrorId) {
         let node = node.into();
-        if let ErrorId::Sema(error_id) = error
-        && error_id.0 as usize == self.error_nodes.len() {
-            self.error_nodes.push(node);
-        }
         match node {
             NodeId::Expr(id) => self.type_info.exprs[id] = Some(ExprInfo::Errored(error)),
             NodeId::Decl(id) => self.type_info.set_decl(id, error),
@@ -267,18 +271,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         };
     }
 
-
     fn error_ex(
-        errors: &mut KVec<SemaError, Error>,
-        error_nodes: &mut KVec<SemaError, NodeId>,
+        errors: &mut SemaErrors,
         ty_info: &mut TyInfo,
         node: impl Into<NodeId>,
         error: Error,
     ) -> ErrorId {
         let node = node.into();
-        let error = errors.push(error);
-        error_nodes.push(node);
-        let error = ErrorId::Sema(error);
+        let error = errors.push(node, error);
         match node {
             NodeId::Expr(id) => {
                 let val = &mut ty_info.exprs[id];
@@ -301,74 +301,60 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
     
 
     fn dt_to_gen(
-        &mut self, scope: Scope<'out>, 
+        &mut self, node: impl Into<NodeId> + Copy, scope: Scope<'out>,
         dt: DataType, gens: &[BoundedGeneric<'out>]
     ) -> Result<Generic<'out>, ErrorId> {
-
         let mut used_gens = sti::vec::Vec::from_value(gens.len(), false);
-        let res = self.dt_to_gen_ex(scope, dt, gens, &mut used_gens);
-        res
+        self.dt_to_gen_ex(node, scope, dt, gens, &mut used_gens)
     }
 
-
     fn convert_symbol_get_result(
-        &mut self, 
+        &mut self,
+        node: impl Into<NodeId> + Copy,
         name: StringIndex,
         source: SourceRange,
         result: SymbolGetResult,
     ) -> Result<SymbolId, ErrorId> {
         match result {
             SymbolGetResult::Symbol(sym) => Ok(sym),
-
-            SymbolGetResult::Errored(err) => {
-                Err(err)
-            },
-
+            SymbolGetResult::Errored(err) => Err(err),
             SymbolGetResult::Private => {
-                Err(self.errors.push(Error::PrivateSymbol { 
-                    source,
-                    name, 
-                }).into())
+                Err(self.error(node, Error::PrivateSymbol { source, name }))
             },
-
             SymbolGetResult::Undefined => {
-                return Err(self.errors.push(Error::NamespaceNotFound { 
-                    source, 
-                    namespace: name,
-                }).into())
+                Err(self.error(node, Error::NamespaceNotFound {
+                    source, namespace: name,
+                }))
             },
         }
     }
 
-    fn dt_to_gen_ex(&mut self, scope: Scope<'out>, dt: DataType,
-                 gens: &[BoundedGeneric<'out>], used_gens: &mut [bool]) -> Result<Generic<'out>, ErrorId> {
+    fn dt_to_gen_ex(
+        &mut self, node: impl Into<NodeId> + Copy, scope: Scope<'out>, dt: DataType,
+        gens: &[BoundedGeneric<'out>], used_gens: &mut [bool]
+    ) -> Result<Generic<'out>, ErrorId> {
         match dt.kind() {
             DataTypeKind::Unit => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::UNIT, &[]), None)),
 
-
-            DataTypeKind::Hole => Err(self.errors.push(Error::CantUseHoleHere { source: dt.range() }).into()),
-
+            DataTypeKind::Hole => Err(self.error(node, Error::CantUseHoleHere { source: dt.range() })),
 
             DataTypeKind::Never => Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[]), None)),
-
 
             DataTypeKind::Fn(args, ret) => {
                 let mut func_used_gens = sti::vec::Vec::from_value(gens.len(), false);
                 let fields = {
                     let mut fields = Buffer::new(&*self.output, args.len());
                     for (i, ty) in args.iter().enumerate() {
-                        let g = self.dt_to_gen_ex(scope, *ty, gens, &mut func_used_gens)?;
+                        let g = self.dt_to_gen_ex(node, scope, *ty, gens, &mut func_used_gens)?;
                         let func = FunctionArgument::new(self.string_map.num(i), g);
                         fields.push(func);
                     }
-
-
                     fields.leak()
                 };
 
-                let ret = self.dt_to_gen_ex(scope, *ret, gens, &mut func_used_gens)?;
+                let ret = self.dt_to_gen_ex(node, scope, *ret, gens, &mut func_used_gens)?;
 
-                for (i, ug) in func_used_gens.iter().enumerate(){
+                for (i, ug) in func_used_gens.iter().enumerate() {
                     if *ug {
                         used_gens[i] = true;
                     }
@@ -383,12 +369,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     }
                 }
 
-
                 let closure = self.syms.new_closure();
                 let sym = self.func_sym(closure, fields, ret, fg.leak());
                 Ok(Generic::new(dt.range(), GenericKind::Sym(sym, gs.leak()), None))
             }
-
 
             DataTypeKind::Tuple(tys) => {
                 let pool = self.output;
@@ -396,41 +380,34 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let mut fields = Buffer::new(&*pool, tys.len());
                     let mut generics = Buffer::new(self.output, tys.len());
                     for ty in tys {
-                        let g = self.dt_to_gen_ex(scope, ty.1, gens, used_gens)?;
+                        let g = self.dt_to_gen_ex(node, scope, ty.1, gens, used_gens)?;
                         fields.push(ty.0);
                         generics.push(g);
                     }
-
                     (fields.leak(), generics.leak())
                 };
 
                 let sym = self.tuple_sym(dt.range(), fields);
-
                 Ok(Generic::new(dt.range(), GenericKind::Sym(sym, generics), None))
             },
 
-
             DataTypeKind::List(ty) => {
-                let ty = self.dt_to_gen_ex(scope, *ty, gens, used_gens)?;
+                let ty = self.dt_to_gen_ex(node, scope, *ty, gens, used_gens)?;
                 let gens = self.output.alloc_new([ty]);
-
                 Ok(Generic::new(dt.range(), GenericKind::Sym(SymbolId::LIST, gens), None))
             },
 
-
             DataTypeKind::Within(ns_name, ty) => {
                 let ns = scope.find_sym(
-                    ns_name, &self.scopes, 
+                    ns_name, &self.scopes,
                     &mut self.syms, &self.namespaces
                 );
-
-                let ns = self.convert_symbol_get_result(ns_name, ty.range(), ns)?;
+                let ns = self.convert_symbol_get_result(node, ns_name, ty.range(), ns)?;
                 let ns = self.syms.sym_ns(ns);
-
-                let scope = Scope::new(None, ScopeKind::ImplicitNamespace(ns));
-                self.dt_to_gen_ex(scope, *ty, gens, used_gens)
+                let scope = self.scopes.push(scope);
+                let scope = Scope::new(scope, ScopeKind::QualifiedNamespace(ns));
+                self.dt_to_gen_ex(node, scope, *ty, gens, used_gens)
             },
-
 
             DataTypeKind::CustomType(name, generics) => {
                 if name == StringMap::SELF_TY
@@ -438,40 +415,38 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     return Ok(sym)
                 }
 
-
                 if let Some((i, g)) = gens.iter().enumerate().find(|x| x.1.name() == name) {
                     used_gens[i] = true;
-                    return Ok(
-                        Generic::new(dt.range(),
-                        GenericKind::Generic(*g), None)
-                    )
+                    return Ok(Generic::new(dt.range(), GenericKind::Generic(*g), None))
                 }
 
                 let base = scope.find_sym(
-                    name, &self.scopes, 
+                    name, &self.scopes,
                     &mut self.syms, &self.namespaces
                 );
-
-                let base = self.convert_symbol_get_result(name, dt.range(), base)?;
+                let base = self.convert_symbol_get_result(node, name, dt.range(), base)?;
                 let genc = self.syms.sym_gens_size(base);
 
                 if genc != generics.len() {
-                    return Err(self.errors.push(Error::GenericLenMismatch {
-                        source: dt.range(), found: generics.len(), expected: genc }).into());
+                    return Err(self.error(node, Error::GenericLenMismatch {
+                        source: dt.range(), found: generics.len(), expected: genc }));
                 }
 
                 let generics = {
                     let mut vec = Buffer::new(&*self.output, generics.len());
-
                     for g in generics {
-                        vec.push(self.dt_to_gen_ex(scope, *g, gens, used_gens)?);
+                        vec.push(self.dt_to_gen_ex(node, scope, *g, gens, used_gens)?);
                     }
                     vec
                 };
 
-                Ok(Generic::new(dt.range(),
-                                GenericKind::Sym(base, generics.leak()), None))
+                Ok(Generic::new(
+                    dt.range(),
+                    GenericKind::Sym(base, generics.leak()),
+                    None,
+                ))
             },
+
         }
     }
 
@@ -481,7 +456,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         match dt.kind() {
             DataTypeKind::Unit => Ok(SymbolId::UNIT),
             DataTypeKind::Never => Ok(SymbolId::NEVER),
-            DataTypeKind::Hole => Err(self.errors.push(Error::CantUseHoleHere { source: dt.range() }).into()),
+            DataTypeKind::Hole => Err(self.error(id, Error::CantUseHoleHere { source: dt.range() })),
 
 
             DataTypeKind::Within(ns_name, ty) => {
@@ -492,10 +467,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     &mut self.syms, &self.namespaces
                 );
 
-                let ns = self.convert_symbol_get_result(ns_name, dt.range(), ns)?;
+                let ns = self.convert_symbol_get_result(id, ns_name, dt.range(), ns)?;
                 let ns = self.syms.sym_ns(ns);
 
-                let scope = Scope::new(scope_id, ScopeKind::ImplicitNamespace(ns));
+                let scope = Scope::new(scope_id, ScopeKind::QualifiedNamespace(ns));
                 let scope = self.scopes.push(scope);
                 self.dt_to_sym(scope, id, *ty)
             },
@@ -505,12 +480,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let scope = self.scopes.get(scope_id);
                 if let Some(sym) = scope.find_gen(name, &self.scopes) {
                     let sym = sym.sym(&mut self.syms)
-                        .map_err(|e| ErrorId::Sema(self.errors.push(e)))?;
+                        .map_err(|e| self.error(id, e))?;
                     return Ok(sym)
                 }
 
                 let result = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces);
-                let base = self.convert_symbol_get_result(name, dt.range(), result)?;
+                let base = self.convert_symbol_get_result(id, name, dt.range(), result)?;
                 Ok(base)
             },
 
@@ -524,7 +499,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let fields = {
                     let mut fields = Buffer::new(&*self.output, args.len());
                     for (i, ty) in args.iter().enumerate() {
-                        let g = self.dt_to_gen(self.scopes.get(scope_id), *ty, &[])?;
+                        let g = self.dt_to_gen(id, self.scopes.get(scope_id), *ty, &[])?;
                         let func = FunctionArgument::new(self.string_map.num(i), g);
                         fields.push(func);
                     }
@@ -533,7 +508,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     fields.leak()
                 };
 
-                let ret = self.dt_to_gen(self.scopes.get(scope_id), *ret, &[])?;
+                let ret = self.dt_to_gen(id, self.scopes.get(scope_id), *ret, &[])?;
 
                 let closure = self.syms.new_closure();
                 let sym = self.func_sym(closure, fields, ret, &[]);
@@ -572,10 +547,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let scope = self.scopes.get(scope_id);
 
                 let result = scope.find_sym(ns_name, &self.scopes, &mut self.syms, &self.namespaces);
-                let ns = self.convert_symbol_get_result(ns_name, ty.range(), result)?;
+                let ns = self.convert_symbol_get_result(id, ns_name, ty.range(), result)?;
                 let ns = self.syms.sym_ns(ns);
 
-                let scope = Scope::new(scope_id, ScopeKind::ImplicitNamespace(ns));
+                let scope = Scope::new(scope_id, ScopeKind::QualifiedNamespace(ns));
                 let scope = self.scopes.push(scope);
                 self.dt_to_ty(scope, id, *ty)
             },
@@ -588,8 +563,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
                 let result = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces);
-                let base = self.convert_symbol_get_result(name, dt.range(), result)?;
+                let base = self.convert_symbol_get_result(id, name, dt.range(), result)?;
                 let base_sym = self.syms.sym(base);
+                if let SymbolKind::Alias(alias) = base_sym.kind()
+                && let Some(error) = alias.err() {
+                    return Err(error);
+                }
 
                 let pool = self.output;
                 let mut generics = Buffer::new(&*pool, base_sym.generics().len());
@@ -603,9 +582,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     }
 
                     if generics.len() != base_sym.generics().len() {
-                        return Err(self.errors.push(Error::GenericLenMismatch {
+                        return Err(self.error(id, Error::GenericLenMismatch {
                             source: dt.range(), found: generics.len(),
-                            expected: base_sym.generics().len() }).into());
+                            expected: base_sym.generics().len() }));
                     }
                 };
 
@@ -626,7 +605,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let fields = {
                     let mut fields = Buffer::new(&*self.output, args.len());
                     for (i, ty) in args.iter().enumerate() {
-                        let g = self.dt_to_gen(self.scopes.get(scope_id), *ty, &[])?;
+                        let g = self.dt_to_gen(id, self.scopes.get(scope_id), *ty, &[])?;
                         let func = FunctionArgument::new(self.string_map.num(i), g);
                         fields.push(func);
                     }
@@ -635,7 +614,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     fields.leak()
                 };
 
-                let ret = self.dt_to_gen(self.scopes.get(scope_id), *ret, &[])?;
+                let ret = self.dt_to_gen(id, self.scopes.get(scope_id), *ret, &[])?;
 
                 let closure = self.syms.new_closure();
                 let sym = self.func_sym(closure, fields, ret, &[]);
@@ -771,7 +750,7 @@ impl TyInfo<'_> {
     
     pub fn set_expr(&mut self, expr: ExprId, info: AnalysisResult) {
         let val = &mut self.exprs[expr];
-        if val.is_none() || !matches!(info.ty, Type::Ty(SymbolId::ERROR, GenListId::EMPTY)) {
+        if !matches!(val, Some(ExprInfo::Errored(_))) {
             *val = Some(ExprInfo::Result { ty: info.ty })
         }
     }

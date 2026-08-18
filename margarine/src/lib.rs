@@ -575,8 +575,8 @@ impl<'me> Compiler<'me> {
             errors: CompilationErrors {
                 lexer_errors: lex_errors,
                 parser_errors: parse_errors,
-                sema_errors: sema.errors,
-                sema_error_nodes: sema.error_nodes,
+                sema_errors: sema.errors.errors,
+                sema_error_nodes: sema.errors.nodes,
             },
 
             silent_ranges: merged_silent_ranges,
@@ -815,6 +815,43 @@ mod tests {
             output: "program".to_string(),
             cache: "artifacts".to_string(),
         })
+    }
+
+    #[test]
+    fn expression_type_info_covers_propagated_errors() {
+        let result = compile_source("fn main() { var value = missing + 1; }");
+        assert!(result.errors.sema_errors.iter().any(|error| matches!(
+            error,
+            semantic_analysis::errors::Error::VariableNotFound { .. }
+        )));
+
+        assert!(
+            result.ty_info.exprs.iter().all(|info| info.is_some()),
+            "every parsed expression must receive type information"
+        );
+    }
+
+    #[test]
+    fn semantic_errors_do_not_panic_codegen() {
+        let result = compile_source(
+            "mod math { struct Vec3 { value: int } \
+             impl Vec3 { fn new(value: int): Self { Self { value } } } } \
+             type Color = math::Vec3; \
+             fn main() { var color = Color::new(1); }",
+        );
+
+        assert!(result.errors.sema_errors.iter().any(|error| matches!(
+            error,
+            semantic_analysis::errors::Error::PrivateSymbol { .. }
+        )));
+        assert!(
+            result.ty_info.exprs.iter().any(|info| matches!(
+                info,
+                Some(semantic_analysis::ExprInfo::Errored(_))
+            )),
+            "failed namespace expressions must be marked errored"
+        );
+
     }
 
     #[test]

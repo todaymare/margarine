@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use common::{copy_slice_in, source::SourceRange, string_map::{StringIndex, StringMap}, ImmutableData};
-use errors::{ErrorId, SemaError};
+use errors::ErrorId;
 use parser::nodes::{decl::{DeclId, Visibility}, NodeId};
 use sti::{arena::Arena, define_key, ext::FromIn, vec::KVec};
 
@@ -181,7 +181,7 @@ impl<'me> SymbolMap<'me> {
 
 
     pub fn add_enum(&mut self, ns_map: &mut NamespaceMap,
-                    string_map: &mut StringMap, errs: &mut KVec<SemaError, Error>,
+                    string_map: &mut StringMap,
                     id: SymbolId, range: SourceRange,
                     name: StringIndex, mappings: &'me [(StringIndex, Generic<'me>)],
                     generics: &'me [BoundedGeneric<'me>], decl: Option<DeclId>) {
@@ -217,7 +217,7 @@ impl<'me> SymbolMap<'me> {
 
             let ns = ns_map.get_ns_mut(ns);
 
-            ns.add_sym(errs, range, mapping_name, id, Visibility::Private).unwrap();
+            ns.add_sym_unchecked(mapping_name, id, Visibility::Private);
         }
     }
 
@@ -392,8 +392,8 @@ impl<'me> Generic<'me> {
 
 impl<'me> SymbolMap<'me> {
     pub fn new(
-        arena: &'me Arena, ns_map: &mut NamespaceMap, 
-        string_map: &mut StringMap, errs: &mut KVec<SemaError, Error>
+        arena: &'me Arena, ns_map: &mut NamespaceMap,
+        string_map: &mut StringMap
     ) -> Self {
 
         let mut slf = Self { syms: KVec::new(), vars: KVec::new(), arena, gens: KVec::new(), closures: KVec::new(), };
@@ -422,7 +422,7 @@ impl<'me> SymbolMap<'me> {
                 (StringMap::TRUE, Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[]), None)),
             ];
 
-            slf.add_enum(ns_map, string_map, errs, pending, SourceRange::ZERO,
+            slf.add_enum(ns_map, string_map, pending, SourceRange::ZERO,
                          StringMap::BOOL, slf.arena.alloc_new(fields), &[], None);
         }
 
@@ -465,7 +465,7 @@ impl<'me> SymbolMap<'me> {
 
             let gens = slf.arena.alloc_new([t]);
 
-            slf.add_enum(ns_map, string_map, errs, pending, SourceRange::ZERO, 
+            slf.add_enum(ns_map, string_map, pending, SourceRange::ZERO,
                          StringMap::OPTION, slf.arena.alloc_new(fields), gens, None);
         }
 
@@ -484,7 +484,7 @@ impl<'me> SymbolMap<'me> {
 
             let gens = slf.arena.alloc_new([t, a]);
 
-            slf.add_enum(ns_map, string_map, errs, pending, SourceRange::ZERO, 
+            slf.add_enum(ns_map, string_map, pending, SourceRange::ZERO,
                          StringMap::RESULT, slf.arena.alloc_new(fields), gens, None);
 
         }
