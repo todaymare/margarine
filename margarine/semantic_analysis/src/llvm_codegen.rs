@@ -504,6 +504,14 @@ pub fn run<'a>(
         }
 
 
+        // Claim the entry symbol before any user function is emitted. Root-level
+        // `fn main` is now named exactly "main" (root-relative paths), so it would
+        // otherwise take the entry name and the linker would bind the process
+        // entry to it, making the exit code whatever garbage `w0` held on return.
+        let i32_ty = ctx.integer(32);
+        let main_fn_ty = i32_ty.fn_ty(ctx.arena, &[], false);
+        let main_fn = module.function("main", main_fn_ty);
+
         // create IR
         for sym in startups.iter() {
             let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
@@ -514,10 +522,6 @@ pub fn run<'a>(
         }
 
         // build main
-        let i32_ty = ctx.integer(32);
-        let main_fn_ty = i32_ty.fn_ty(ctx.arena, &[], false);
-        let main_fn = module.function("main", main_fn_ty);
-
         let builder = main_fn.builder(ctx.as_ctx_ref(), main_fn_ty);
 
         for sym_id in startups {
