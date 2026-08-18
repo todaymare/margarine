@@ -21,7 +21,7 @@ struct PayloadFoo {
 }
 
 enum Wrap {
-    some: PayloadFoo,
+    some(PayloadFoo),
     none,
 }
 

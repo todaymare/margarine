@@ -164,3 +164,193 @@ fn cow_list_write_out_of_bounds_panics() {
     var list = [1];
     list[1] = 99;
 }
+
+
+@test
+fn list_iter_traverses_rope_shapes() {
+    var flat = [1, 2, 3];
+    var flat_sum = 0;
+    for value in flat.iter() { flat_sum += value; }
+    assert(flat_sum == 6, "iterator: flat list order");
+
+    var left = [1, 2];
+    var right = [3, 4];
+    var concat = left.concat(right);
+    var concat_sum = 0;
+    for value in concat.iter() { concat_sum += value; }
+    assert(concat_sum == 10, "iterator: concatenated list order");
+
+    match concat.slice(1) {
+        some(pair) => {
+            var sliced_sum = 0;
+            for value in pair.1.iter() { sliced_sum += value; }
+            assert(sliced_sum == 9, "iterator: sliced list order");
+        },
+        none => assert(false, "iterator: valid slice returned none"),
+    }
+
+    var empty: [int] = [];
+    assert(empty.iter().count() == 0, "iterator: empty list");
+}
+
+@test
+fn list_iter_copies_share_cursor() {
+    var iter = [7, 8].iter();
+    var other = iter;
+
+    match iter.__next__() {
+        some(value) => assert(value == 7, "iterator: first shared value"),
+        none => assert(false, "iterator: first value missing"),
+    }
+    match other.__next__() {
+        some(value) => assert(value == 8, "iterator: shared cursor advanced"),
+        none => assert(false, "iterator: second value missing"),
+    }
+}
+
+@test
+fn list_iter_wrapper_writes_back_cursor() {
+    var iter = [7, 8].iter();
+
+    match iter.__next__() {
+        some(value) => assert(value == 7, "iterator wrapper: first value"),
+        none => assert(false, "iterator wrapper: first value missing"),
+    }
+    match iter.__next__() {
+        some(value) => assert(value == 8, "iterator wrapper: cursor persisted"),
+        none => assert(false, "iterator wrapper: second value missing"),
+    }
+}
+
+@test
+fn list_iter_values_copy_independently() {
+    var iter = $list_iter([7, 8]);
+    var other = iter;
+
+    match $list_iter_next(&iter) {
+        some(value) => assert(value == 7, "iterator value: first value"),
+        none => assert(false, "iterator value: first value missing"),
+    }
+    match $list_iter_next(&other) {
+        some(value) => assert(value == 7, "iterator value: independent copy"),
+        none => assert(false, "iterator value: copied value missing"),
+    }
+}
+
+@test
+fn list_iter_next_unwrap_inout_place() {
+    var maybe_iter = some($list_iter([42]));
+    match $list_iter_next(&maybe_iter!) {
+        some(value) => assert(value == 42, "iterator unwrap inout value"),
+        none => assert(false, "iterator unwrap inout returned none"),
+    }
+}
+
+@test
+fn list_deep_rope_flattens_and_iterates() {
+    var rope = [0];
+    rope = rope.concat([1]);
+    rope = rope.concat([2]);
+    rope = rope.concat([3]);
+    rope = rope.concat([4]);
+    rope = rope.concat([5]);
+    rope = rope.concat([6]);
+    rope = rope.concat([7]);
+    rope = rope.concat([8]);
+    rope = rope.concat([9]);
+    rope = rope.concat([10]);
+    rope = rope.concat([11]);
+    rope = rope.concat([12]);
+    rope = rope.concat([13]);
+    rope = rope.concat([14]);
+    rope = rope.concat([15]);
+    rope = rope.concat([16]);
+    rope = rope.concat([17]);
+
+    var sum = 0;
+    for value in rope.iter() { sum += value; }
+    assert(sum == 153, "iterator: deep rope order");
+    assert(rope[0] == 0 && rope[17] == 17, "deep rope: indexed boundaries");
+
+    match rope.slice(1) {
+        some(pair) => assert(pair.1[0] == 1 && pair.1[16] == 17, "deep rope: sliced boundaries"),
+        none => assert(false, "deep rope: valid slice returned none"),
+    }
+}
+
+@test
+fn list_balanced_rope_max_iterator_frontier() {
+    var rope = [0];
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+    rope = rope.concat(rope);
+
+    assert(rope.len() == 65536, "iterator: max frontier rope length");
+    assert(rope.iter().count() == 65536, "iterator: max frontier traversal");
+}
+
+@test
+fn list_deep_rope_slice_copies_rc_elements() {
+    var rope = [$rc(0)];
+    rope = rope.concat([$rc(1)]);
+    rope = rope.concat([$rc(2)]);
+    rope = rope.concat([$rc(3)]);
+    rope = rope.concat([$rc(4)]);
+    rope = rope.concat([$rc(5)]);
+    rope = rope.concat([$rc(6)]);
+    rope = rope.concat([$rc(7)]);
+    rope = rope.concat([$rc(8)]);
+    rope = rope.concat([$rc(9)]);
+    rope = rope.concat([$rc(10)]);
+    rope = rope.concat([$rc(11)]);
+    rope = rope.concat([$rc(12)]);
+    rope = rope.concat([$rc(13)]);
+    rope = rope.concat([$rc(14)]);
+    rope = rope.concat([$rc(15)]);
+    rope = rope.concat([$rc(16)]);
+
+    match rope.slice(1) {
+        some(pair) => {
+            assert($rc_get(pair.1[0]) == 1, "deep slice: first rc element");
+            assert($rc_get(pair.1[15]) == 16, "deep slice: last rc element");
+        },
+        none => assert(false, "deep slice: valid slice returned none"),
+    }
+    assert($rc_get(rope[0]) == 0 && $rc_get(rope[16]) == 16, "deep slice: source preserved");
+}
+
+@test
+fn list_deep_rope_index_assignment_updates_target() {
+    var rope = [0];
+    rope = rope.concat([1]);
+    rope = rope.concat([2]);
+    rope = rope.concat([3]);
+    rope = rope.concat([4]);
+    rope = rope.concat([5]);
+    rope = rope.concat([6]);
+    rope = rope.concat([7]);
+    rope = rope.concat([8]);
+    rope = rope.concat([9]);
+    rope = rope.concat([10]);
+    rope = rope.concat([11]);
+    rope = rope.concat([12]);
+    rope = rope.concat([13]);
+    rope = rope.concat([14]);
+    rope = rope.concat([15]);
+
+    rope[15] = 99;
+    assert(rope[15] == 99, "deep rope mutation: target updated");
+}

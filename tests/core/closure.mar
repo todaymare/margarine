@@ -6,6 +6,7 @@ fn closure_basic() {
 }
 
 
+
 struct ClosureFoo {
     bar: int,
 }

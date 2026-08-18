@@ -1,0 +1,60 @@
+@test
+fn let_binding_reads() {
+    let value = 42;
+    assert(value == 42, "let binding holds its value");
+}
+
+@test
+fn let_binding_with_hint() {
+    let value: int = 7;
+    assert(value == 7, "let binding with type hint");
+}
+
+@test
+fn let_tuple_pattern() {
+    let a, b = (1, 2);
+    assert(a == 1, "let tuple pattern binds first element");
+    assert(b == 2, "let tuple pattern binds second element");
+}
+
+@test
+fn let_inner_shadows_outer() {
+    var value = 1;
+    if true {
+        let value = 2;
+        assert(value == 2, "inner let shadows outer binding");
+    }
+    assert(value == 1, "outer binding untouched by inner let");
+}
+
+@test
+fn let_value_feeds_var_mutation() {
+    let base = 10;
+    var total = base;
+    total += 5;
+    assert(total == 15, "let value copied into mutable var");
+}
+
+fn bump(&value: int) {
+    value += 1;
+}
+
+struct LetCounter { value: int }
+
+@silent
+fn let_rejects_assignment() {
+    let value = 1;
+    value = 2;
+}
+
+@silent
+fn let_rejects_field_assignment() {
+    let counter = LetCounter { value: 1 };
+    counter.value = 2;
+}
+
+@silent
+fn let_rejects_inout_argument() {
+    let value = 1;
+    bump(&value);
+}

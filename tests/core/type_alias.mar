@@ -1,0 +1,80 @@
+type UserId = int;
+type Pair<T> = (T, T);
+type IntPair = Pair<int>;
+type IntList = [int];
+type Forward = Later;
+type Later = int;
+enum AliasNamespace {
+    make(int),
+}
+type AliasNamespaceAlias = AliasNamespace;
+enum GenericAliasTarget<T> {
+    make(T),
+}
+type GenericAlias<T> = GenericAliasTarget<T>;
+
+@test
+fn generic_aliases_resolve_namespaces() {
+    var value = GenericAlias::make(11);
+    match value {
+        make(number) => assert(number == 11, "generic alias namespace lookup failed"),
+    }
+}
+
+@test
+fn aliases_resolve_namespaces() {
+    var value = AliasNamespaceAlias::make(7);
+    match value {
+        make(number) => assert(number == 7, "alias namespace lookup failed"),
+    }
+}
+
+fn identity(value: UserId): UserId {
+    value
+}
+
+fn make_pair(): IntPair {
+    (4, 8)
+}
+
+fn first<T>(value: Pair<T>): T {
+    value.0
+}
+
+@test
+fn generic_alias_preserves_type_params() {
+    assert(first((9, 10)) == 9, "generic alias parameter substitution failed");
+}
+
+@test
+fn aliases_are_transparent() {
+    var id: UserId = identity(42);
+    assert(id == 42, "scalar alias failed");
+
+    var pair: IntPair = make_pair();
+    assert(pair.0 == 4, "generic alias first element failed");
+    assert(pair.1 == 8, "generic alias second element failed");
+
+    var values: IntList = [1, 2, 3];
+    assert(values.len() == 3, "list alias failed");
+
+    var later: Forward = 7;
+    assert(later == 7, "forward alias failed");
+}
+
+mod types {
+    pub type Number = int;
+}
+
+mod users {
+    use types::Number
+
+    pub fn identity(value: Number): Number {
+        value
+    }
+}
+
+@test
+fn public_aliases_can_be_imported() {
+    assert(users::identity(7) == 7, "public alias import failed");
+}

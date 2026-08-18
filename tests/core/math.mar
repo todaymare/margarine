@@ -1,0 +1,7 @@
+@test
+fn float_sqrt_returns_expected_values() {
+    assert($float_sqrt(0.0) == 0.0, "sqrt zero");
+    assert($float_sqrt(1.0) == 1.0, "sqrt one");
+    assert($float_sqrt(4.0) == 2.0, "sqrt four");
+    assert($float_sqrt(9.0) == 3.0, "sqrt nine");
+}
