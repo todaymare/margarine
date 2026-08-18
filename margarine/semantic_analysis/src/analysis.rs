@@ -2205,7 +2205,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     if !exists {
                         return Err(self.error(id, Error::FieldDoesntExist {
-                            source: f.1, field: f.0, typ: ty }));
+                            source: f.1, field: f.0, typ: ty, suggested: None }));
                     }
                 }
 
@@ -2268,7 +2268,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let field_check = 'b: {
                     let err = Error::FieldDoesntExist {
-                        source: range, field: field_name, typ: expr.ty };
+                        source: range, field: field_name, typ: expr.ty, suggested: None };
                     let SymbolKind::Container(cont) = sym.kind()
                     else { break 'b Err(err) };
 
@@ -2455,7 +2455,17 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                 let Some((t, func, g, generics)) = candidate
-                else { return Err(self.error(id, e)); };
+                else {
+                    let e = match e {
+                        Error::FieldDoesntExist { source, field, typ, .. } => Error::FieldDoesntExist {
+                            source, field, typ,
+                            suggested: self.suggest_trait_imports(sym_id, expr.ty, field_name),
+                        },
+                        e => e,
+                    };
+
+                    return Err(self.error(id, e));
+                };
                 let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.len());
 
                 for g in generics {
@@ -2934,5 +2944,52 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 AnalysisResult::error()
             },
         }
+    }
+
+
+    fn suggest_trait_imports(
+        &mut self,
+        sym_id: SymbolId,
+        ty: Type,
+        name: StringIndex,
+    ) -> Option<sti::vec::Vec<StringIndex>> {
+        let candidates = self.syms.traits(sym_id).clone();
+
+        let mut suggested = std::vec::Vec::new();
+        for (trait_id, (ns, _, _)) in candidates {
+            if ns == NamespaceId::MAX { continue; }
+
+            let SymbolKind::Trait(tr) = self.syms.sym(trait_id).kind()
+            else { continue; };
+
+            if !tr.funcs.iter().any(|x| x.0 == name) {
+                continue;
+            }
+
+            if !self.syms.type_implements_trait(ty, trait_id) {
+                continue;
+            }
+
+            suggested.push(trait_id);
+        }
+
+        if suggested.is_empty() {
+            return None;
+        }
+
+        suggested.sort_by(|a, b| {
+            let a = self.string_map.get(self.syms.sym(*a).name());
+            let b = self.string_map.get(self.syms.sym(*b).name());
+            a.cmp(b)
+        });
+
+        let mut qualified = std::vec::Vec::with_capacity(suggested.len());
+        for id in suggested {
+            let trait_ns = self.syms.sym_ns(id);
+            let qualified_name = self.namespaces.get_ns(trait_ns).path;
+            qualified.push(qualified_name);
+        }
+
+        Some(sti::vec::Vec::from_slice_in(GlobalAlloc, &qualified))
     }
 }

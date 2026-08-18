@@ -154,6 +154,7 @@ pub enum Error {
         source: SourceRange,
         field: StringIndex,
         typ: Type,
+        suggested: Option<sti::vec::Vec<StringIndex>>,
     },
 
     MissingFields {
@@ -485,14 +486,35 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             },
 
             
-            Error::FieldDoesntExist { source, field, typ } => {                
+            Error::FieldDoesntExist { source, field, typ, suggested } => {
                 let msg = format!("the type '{}' doesn't have a field named '{}'",
                     typ.display(fmt.string_map(), types),
                     fmt.string(*field),
                 );
 
-                fmt.error("field doesn't exist")
-                    .highlight_with_note(*source, &msg)
+                let note = suggested.as_ref().map(|suggested| {
+                    let mut names = String::new();
+                    for (_, id) in suggested {
+                        if !names.is_empty() {
+                            let _ = write!(names, ", ");
+                        }
+                        let _ = write!(names, "'{}'", fmt.string(*id));
+                    }
+
+                    if suggested.len() == 1 {
+                        format!("this method is provided by the trait {names}; consider importing it")
+                    } else {
+                        format!("these traits provide a method named '{}': {names}; consider importing one of them",
+                            fmt.string(*field))
+                    }
+                });
+
+                let mut error = fmt.error("field doesn't exist");
+                error.highlight_with_note(*source, &msg);
+
+                if let Some(note) = note {
+                    error.highlight_with_note(*source, &note);
+                }
             },
             
             
