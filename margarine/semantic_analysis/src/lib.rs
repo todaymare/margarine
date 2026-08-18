@@ -115,7 +115,7 @@ pub struct AnalysisResult {
 
 impl AnalysisResult {
     pub fn new(ty: Type) -> Self { Self { ty, is_mut: true, is_captured: false } }
-    pub fn captured(ty: Type) -> Self { Self { ty, is_mut: true, is_captured: true } }
+    pub fn captured(ty: Type) -> Self { Self { ty, is_mut: false, is_captured: true } }
     pub fn error() -> Self { Self::new(Type::ERROR) }
     pub fn never() -> Self { Self::new(Type::NEVER) }
 }
@@ -203,6 +203,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             let _ = add_sym!(LIST_CONCAT);
             let _ = add_sym!(LIST_SLICE);
             let _ = add_sym!(LIST_LEN);
+            let _ = add_sym!(LIST_ITER);
+            let _ = add_sym!(BUILTIN_LIST_ITER);
+            let _ = add_sym!(BUILTIN_LIST_ITER_NEXT);
 
             {
                 let ns = analyzer.namespaces.get_ns(analyzer.syms.sym_ns(SymbolId::OPTION));
@@ -251,7 +254,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
     fn set_error(&mut self, node: impl Into<NodeId>, error: ErrorId) {
         let node = node.into();
-        self.error_nodes.push(node);
+        if let ErrorId::Sema(error_id) = error
+        && error_id.0 as usize == self.error_nodes.len() {
+            self.error_nodes.push(node);
+        }
         match node {
             NodeId::Expr(id) => self.type_info.exprs[id] = Some(ExprInfo::Errored(error)),
             NodeId::Decl(id) => self.type_info.set_decl(id, error),

@@ -55,12 +55,20 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     collection_slice_payload: StructTy<'ctx>,
     /// struct(collection_header, collection_ty, collection_ty)
     collection_concat_payload: StructTy<'ctx>,
+
+
+    collection_iter: StructTy<'ctx>,
+    collection_iter_frame: StructTy<'ctx>,
+    collection_iter_new: (FunctionPtr<'ctx>, FunctionType<'ctx>),
+
     /// Sibling TBAA tags for header payload vs collection elements.
     tbaa_header: Value<'ctx>,
     tbaa_element: Value<'ctx>,
 
     collection_drop_funcs: HashMap<(LLVMType<'ctx>, Option<TypeHash>), (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
     collection_element_ptr_funcs: HashMap<LLVMType<'ctx>, (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
+    collection_iter_next_funcs: HashMap<LLVMType<'ctx>, (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
+    collection_flatten_funcs: HashMap<(LLVMType<'ctx>, Option<TypeHash>), (FunctionPtr<'ctx>, FunctionType<'ctx>)>,
 
     // ptr1 is a function ptr
     // ptr2 is the environment ptr
@@ -235,7 +243,7 @@ pub fn run<'a>(
         let ptr = ctx.ptr();
 
         let collection_ty = ctx.structure("collectionType");
-        collection_ty.set_fields(&[*ctx.ptr(), *usize_ty], false);
+        collection_ty.set_fields(&[*ctx.ptr(), *ctx.integer(64)], false);
 
 
         // Sibling TBAA: RC word, header payload, and collection elements
@@ -348,10 +356,86 @@ pub fn run<'a>(
         collection_flat_payload.set_fields(&[*collection_header], false);
 
         let collection_slice_payload = ctx.structure("collectionSliceHeader");
-        collection_slice_payload.set_fields(&[*collection_header, *usize_ty, *collection_ty], false);
+        collection_slice_payload.set_fields(&[*collection_header, *ctx.integer(64), *collection_ty], false);
 
         let collection_concat_payload = ctx.structure("collectionConcatHeader");
         collection_concat_payload.set_fields(&[*collection_header, *collection_ty, *collection_ty], false);
+
+
+        let collection_iter = ctx.structure("collectionIter");
+        let collection_iter_frame = ctx.structure("collectionIterFrame");
+        let collection_iter_frame_array =
+            ctx.array(*collection_iter_frame, COLLECTION_ITER_FRAME_CAPACITY);
+        // collectionIter(
+        //     owned: collectionType,
+        //     pending_count: i64,
+        //     frames: [collectionIterFrame; COLLECTION_ITER_FRAME_CAPACITY],
+        //     leaf_data: ptr,
+        //     leaf_index: i64,
+        //     leaf_end: i64,
+        // )
+        //
+        // collectionIterFrame(
+        //     tagged_collection: ptr,
+        //     start: i64,
+        //     end: i64,
+        // )
+        collection_iter_frame.set_fields(
+            &[*ptr, *ctx.integer(64), *ctx.integer(64)],
+            false,
+        );
+        collection_iter.set_fields(
+            &[
+                *collection_ty,
+                *ctx.integer(64),
+                *collection_iter_frame_array,
+                *ptr,
+                *ctx.integer(64), *ctx.integer(64),
+            ],
+            false,
+        );
+
+        let collection_iter_new_fn_ty = collection_iter.fn_ty(ctx.arena, &[*collection_ty], false);
+        let collection_iter_new_fn = module.function("collectionIterNew", collection_iter_new_fn_ty);
+        collection_iter_new_fn.set_linkage(Linkage::Internal);
+
+        {
+            let builder = collection_iter_new_fn.builder(ctx.as_ctx_ref(), collection_iter_new_fn_ty);
+            let collection = builder.local_get(builder.arg(0).unwrap()).as_struct();
+            let zero = builder.const_int(ctx.integer(64), 0, false);
+            let one = builder.const_int(ctx.integer(64), 1, false);
+            let length = {
+                let metadata = builder.field_load(collection, 1).as_integer();
+                let mask = builder.const_int(ctx.integer(64), COLLECTION_LENGTH_MASK, false);
+                builder.and(metadata, mask)
+            };
+
+            let iter_slot = builder.alloca(*collection_iter);
+            let owned_ptr = builder.field_ptr(iter_slot, collection_iter, 0);
+            builder.store(owned_ptr, *collection);
+            let pending_ptr = builder.field_ptr(iter_slot, collection_iter, 1);
+            builder.store(pending_ptr, *one);
+
+            let frames = builder.field_ptr(iter_slot, collection_iter, 2);
+            let frame = builder.gep(frames, *collection_iter_frame, zero);
+            let tagged_ptr = builder.field_load(collection, 0).as_ptr();
+            let frame_value =
+            builder.struct_instance(
+                collection_iter_frame,
+                [*tagged_ptr, *zero, *length],
+            );
+            builder.store(frame, *frame_value);
+
+            let leaf_data_ptr = builder.field_ptr(iter_slot, collection_iter, 3);
+            builder.store(leaf_data_ptr, *builder.ptr_null());
+            let leaf_index_ptr = builder.field_ptr(iter_slot, collection_iter, 4);
+            builder.store(leaf_index_ptr, *zero);
+            let leaf_end_ptr = builder.field_ptr(iter_slot, collection_iter, 5);
+            builder.store(leaf_end_ptr, *zero);
+
+            builder.ret(builder.load(iter_slot, *collection_iter));
+        }
+
 
 
 
@@ -386,14 +470,18 @@ pub fn run<'a>(
             collection_flat_payload,
             collection_slice_payload,
             collection_concat_payload,
+            collection_iter_frame,
+            collection_iter,
+            collection_iter_new: (collection_iter_new_fn, collection_iter_new_fn_ty),
             tbaa_header,
             tbaa_element,
             str_ty,
+            collection_flatten_funcs: HashMap::new(),
             collection_drop_funcs: HashMap::new(),
             collection_element_ptr_funcs: HashMap::new(),
+            collection_iter_next_funcs: HashMap::new(),
         };
 
-        conv.emit_string_copy_fn();
 
         conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn, ExternAbi::Direct));
         conv.externs.insert(conv.string_map.insert("margarinePanic"), (panic_fn_ty, panic_fn, ExternAbi::Direct));
@@ -469,6 +557,13 @@ pub fn run<'a>(
 }
 
 
+
+const COLLECTION_LENGTH_BITS: u32 = 59;
+const COLLECTION_DEPTH_SHIFT: u32 = COLLECTION_LENGTH_BITS;
+const COLLECTION_LENGTH_MASK: i64 = (1i64 << COLLECTION_LENGTH_BITS) - 1;
+const COLLECTION_DEPTH_MASK: i64 = (1i64 << (64 - COLLECTION_LENGTH_BITS)) - 1;
+const COLLECTION_FLATTEN_DEPTH: i64 = 16;
+const COLLECTION_ITER_FRAME_CAPACITY: usize = COLLECTION_FLATTEN_DEPTH as usize + 1;
 const COLLECTION_FLAT_TAG : usize = 0b00;
 const COLLECTION_SLICE_TAG : usize = 0b01;
 const COLLECTION_CONCAT_TAG : usize = 0b10;
@@ -492,15 +587,26 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             builder.const_bool(false)
         };
         let invalid = unsafe { Bool::new(*builder.or(negative.as_integer(), out_of_range.as_integer())) };
-        builder.ite(&mut (), invalid, |builder, _| {
+        builder.iff(invalid, |builder| {
             self.emit_panic(builder, "integer does not fit the target address space");
-        }, |_, _| {});
+        });
         builder.int_cast(value, *self.usize, false).as_integer()
     }
 
 
-    fn usize_to_i64(&self, builder: &Builder<'ctx>, value: Integer<'ctx>) -> Integer<'ctx> {
-        builder.int_cast(value, *self.i64, false).as_integer()
+    fn collection_metadata(
+        &self,
+        builder: &Builder<'ctx>,
+        length: Integer<'ctx>,
+        depth: Integer<'ctx>,
+    ) -> Integer<'ctx> {
+        let length_mask = builder.const_int(self.i64, COLLECTION_LENGTH_MASK, false);
+        let depth_mask = builder.const_int(self.i64, COLLECTION_DEPTH_MASK, false);
+        let depth_shift = builder.const_int(self.i64, COLLECTION_DEPTH_SHIFT as _, false);
+        let length = builder.and(length, length_mask);
+        let depth = builder.and(depth, depth_mask);
+        let depth = builder.shl(depth, depth_shift);
+        builder.or(length, depth)
     }
 
 
@@ -508,7 +614,19 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         &self, builder: &mut Builder<'ctx>,
         collection: Struct<'ctx>,
     ) -> Integer<'ctx> {
-        builder.field_load(collection, 1).as_integer()
+        let metadata = builder.field_load(collection, 1).as_integer();
+        let mask = builder.const_int(self.i64, COLLECTION_LENGTH_MASK, false);
+        builder.and(metadata, mask)
+    }
+
+
+    fn collection_depth(
+        &self, builder: &mut Builder<'ctx>,
+        collection: Struct<'ctx>,
+    ) -> Integer<'ctx> {
+        let metadata = builder.field_load(collection, 1).as_integer();
+        let shift = builder.const_int(self.i64, COLLECTION_DEPTH_SHIFT as _, false);
+        builder.shr(metadata, shift, false)
     }
 
 
@@ -528,9 +646,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn collection_flat_allocation_size(
-        &self, builder: &mut Builder<'ctx>,
+        &mut self, builder: &mut Builder<'ctx>,
         elem_ty: LLVMType<'ctx>, length: Integer<'ctx>
     ) -> Integer<'ctx> {
+        let length = self.int_to_usize(builder, length);
         let payload_ty = self.collection_flat_header_type(elem_ty);
         let header_size = payload_ty.size_of(self.module).unwrap();
         let header_size = builder.const_int(self.usize, header_size as _, false);
@@ -543,12 +662,281 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
+    fn collection_iter_frame_ptr(
+        &self,
+        builder: &Builder<'ctx>,
+        iter_ptr: Ptr<'ctx>,
+        index: Integer<'ctx>,
+    ) -> Ptr<'ctx> {
+        let frames = builder.field_ptr(iter_ptr, self.collection_iter, 2);
+        builder.gep(frames, *self.collection_iter_frame, index)
+    }
+
+    fn collection_iter_push_frame(
+        &self,
+        builder: &mut Builder<'ctx>,
+        iter_ptr: Ptr<'ctx>,
+        tagged_collection: Ptr<'ctx>,
+        start: Integer<'ctx>,
+        end: Integer<'ctx>,
+    ) {
+        let pending_ptr = builder.field_ptr(iter_ptr, self.collection_iter, 1);
+        let pending = builder.load(pending_ptr, *self.i64).as_integer();
+        let capacity = builder.const_int(self.i64, COLLECTION_ITER_FRAME_CAPACITY as i64, false);
+        builder.assume(builder.cmp_int(pending, capacity, IntCmp::UnsignedLt));
+
+        let frame = self.collection_iter_frame_ptr(builder, iter_ptr, pending);
+        let value =
+        builder.struct_instance(
+            self.collection_iter_frame,
+            [*tagged_collection, *start, *end],
+        );
+        builder.store(frame, *value);
+
+        let one = builder.const_int(self.i64, 1, false);
+        builder.store(pending_ptr, *builder.add_int_nuw(pending, one));
+    }
+
+
+    fn create_collection_iter(
+        &mut self,
+        elem_repr: LLVMType<'ctx>,
+    ) -> (FunctionPtr<'ctx>, FunctionType<'ctx>) {
+        if let Some(&(next_fn, next_fn_ty)) = self.collection_iter_next_funcs.get(&elem_repr) {
+            return (next_fn, next_fn_ty);
+        }
+
+        let ptr = self.ctx.ptr();
+        let next_fn_ty = ptr.fn_ty(self.ctx.arena, &[*ptr], false);
+        let next_fn =
+        self.module.function(
+            &format!("<collection_iter_next>::{}", elem_repr.name()),
+            next_fn_ty,
+        );
+        next_fn.set_linkage(Linkage::Internal);
+        self.collection_iter_next_funcs.insert(elem_repr, (next_fn, next_fn_ty));
+
+        let mut builder = next_fn.builder(self.ctx.as_ctx_ref(), next_fn_ty);
+        let iter_ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+        let zero = builder.const_int(self.i64, 0, false);
+        let one = builder.const_int(self.i64, 1, false);
+
+        builder.loop_indefinitely(|builder, loop_id| {
+            let leaf_index =
+                builder.field_ptr_load(iter_ptr, self.collection_iter, 4).as_integer();
+            let leaf_end =
+                builder.field_ptr_load(iter_ptr, self.collection_iter, 5).as_integer();
+            let has_leaf = builder.cmp_int(leaf_index, leaf_end, IntCmp::UnsignedLt);
+
+            builder.ite(has_leaf,
+                |builder| {
+                    let leaf_data =
+                        builder.field_ptr_load(iter_ptr, self.collection_iter, 3).as_ptr();
+                    let result = builder.gep(leaf_data, elem_repr, leaf_index);
+                    let next_index = builder.add_int_nuw(leaf_index, one);
+                    builder.field_store(iter_ptr, self.collection_iter, 4, next_index);
+                    builder.ret(*result);
+                },
+                |builder| {
+                    let pending =
+                        builder.field_ptr_load(iter_ptr, self.collection_iter, 1).as_integer();
+                    let has_pending = builder.cmp_int(pending, zero, IntCmp::UnsignedGt);
+
+                    builder.ite(has_pending,
+                        |builder| {
+                            let new_pending = builder.sub_int(pending, one);
+                            builder.field_store(
+                                iter_ptr,
+                                self.collection_iter,
+                                1,
+                                new_pending,
+                            );
+
+                            let frame =
+                                self.collection_iter_frame_ptr(builder, iter_ptr, new_pending);
+                            let tagged_ptr =
+                                builder.field_ptr_load(frame, self.collection_iter_frame, 0)
+                                    .as_ptr();
+                            let start = builder
+                                .field_ptr_load(frame, self.collection_iter_frame, 1)
+                                .as_integer();
+                            let end = builder
+                                .field_ptr_load(frame, self.collection_iter_frame, 2)
+                                .as_integer();
+
+                            let (header_ptr, kind) =
+                                self.collection_split_tag(builder, tagged_ptr);
+
+                            builder.assume(builder.cmp_int(start, end, IntCmp::UnsignedLe));
+
+                            builder.switch(kind, 0..4, |builder, alloc_kind| {
+                                match alloc_kind {
+                                    COLLECTION_FLAT_TAG => {
+                                        let payload_ty =
+                                            self.collection_flat_header_type(elem_repr);
+                                        let leaf_data =
+                                            builder.field_ptr(header_ptr, payload_ty, 1);
+
+                                        builder.field_store(
+                                            iter_ptr,
+                                            self.collection_iter,
+                                            3,
+                                            leaf_data,
+                                        );
+                                        builder.field_store(
+                                            iter_ptr,
+                                            self.collection_iter,
+                                            4,
+                                            start,
+                                        );
+                                        builder.field_store(
+                                            iter_ptr,
+                                            self.collection_iter,
+                                            5,
+                                            end,
+                                        );
+                                        builder.loop_continue(loop_id);
+                                    }
+
+                                    COLLECTION_SLICE_TAG => {
+                                        let ty = self.collection_slice_payload;
+                                        let offset = builder
+                                            .field_ptr_load_tbaa(
+                                                header_ptr,
+                                                ty,
+                                                1,
+                                                self.tbaa_header,
+                                            )
+                                            .as_integer();
+                                        let base = builder
+                                            .field_ptr_load_tbaa(
+                                                header_ptr,
+                                                ty,
+                                                2,
+                                                self.tbaa_header,
+                                            )
+                                            .as_struct();
+                                        let base_start = builder.add_int(start, offset);
+                                        let base_end = builder.add_int(end, offset);
+                                        let base_tagged_ptr =
+                                            self.collection_tagged_ptr(builder, base);
+                                        self.collection_iter_push_frame(
+                                            builder,
+                                            iter_ptr,
+                                            base_tagged_ptr,
+                                            base_start,
+                                            base_end,
+                                        );
+                                        builder.loop_continue(loop_id);
+                                    }
+
+                                    COLLECTION_CONCAT_TAG => {
+                                        let ty = self.collection_concat_payload;
+                                        let left = builder
+                                            .field_ptr_load_tbaa(
+                                                header_ptr,
+                                                ty,
+                                                1,
+                                                self.tbaa_header,
+                                            )
+                                            .as_struct();
+                                        let right = builder
+                                            .field_ptr_load_tbaa(
+                                                header_ptr,
+                                                ty,
+                                                2,
+                                                self.tbaa_header,
+                                            )
+                                            .as_struct();
+                                        let left_tagged_ptr =
+                                            self.collection_tagged_ptr(builder, left);
+                                        let right_tagged_ptr =
+                                            self.collection_tagged_ptr(builder, right);
+                                        let left_length =
+                                            self.collection_length(builder, left);
+                                        let end_in_left = builder.cmp_int(
+                                            end,
+                                            left_length,
+                                            IntCmp::UnsignedLe,
+                                        );
+
+                                        builder.ite(end_in_left,
+                                            |builder| {
+                                                self.collection_iter_push_frame(
+                                                    builder,
+                                                    iter_ptr,
+                                                    left_tagged_ptr,
+                                                    start,
+                                                    end,
+                                                );
+                                            },
+                                            |builder| {
+                                                let start_in_right = builder.cmp_int(
+                                                    start,
+                                                    left_length,
+                                                    IntCmp::UnsignedGe,
+                                                );
+
+                                                builder.ite(start_in_right,
+                                                    |builder| {
+                                                        let right_start =
+                                                            builder.sub_int(start, left_length);
+                                                        let right_end =
+                                                            builder.sub_int(end, left_length);
+                                                        self.collection_iter_push_frame(
+                                                            builder,
+                                                            iter_ptr,
+                                                            right_tagged_ptr,
+                                                            right_start,
+                                                            right_end,
+                                                        );
+                                                    },
+                                                    |builder| {
+                                                        let right_end =
+                                                            builder.sub_int(end, left_length);
+
+                                                        self.collection_iter_push_frame(
+                                                            builder,
+                                                            iter_ptr,
+                                                            right_tagged_ptr,
+                                                            zero,
+                                                            right_end,
+                                                        );
+                                                        self.collection_iter_push_frame(
+                                                            builder,
+                                                            iter_ptr,
+                                                            left_tagged_ptr,
+                                                            start,
+                                                            left_length,
+                                                        );
+                                                    },
+                                                );
+                                            },
+                                        );
+                                        builder.loop_continue(loop_id);
+                                    }
+
+                                    COLLECTION_UNUSED_TAG => builder.unreachable(),
+                                    _ => unreachable!(),
+                                }
+                            });
+                        },
+                        |builder| builder.ret(*builder.ptr_null()),
+                    );
+                },
+            );
+        });
+
+        (next_fn, next_fn_ty)
+    }
+
+
     /// IMPORTANT: the returned flat buffer is uninitialised
     /// returns:
     /// - collectionTy
     /// - ptr to buffer
     fn collection_flat(
-        &self, builder: &mut Builder<'ctx>,
+        &mut self, builder: &mut Builder<'ctx>,
         length: Integer<'ctx>, elem_ty: LLVMType<'ctx>,
     ) -> (Struct<'ctx>, Ptr<'ctx>) {
         let payload_ty = self.collection_flat_header_type(elem_ty);
@@ -559,9 +947,189 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let tag = builder.const_int(self.usize, COLLECTION_FLAT_TAG as _, false);
         let tagged_ptr = self.collection_with_tag(builder, buf, tag);
+        let zero = builder.const_int(self.i64, 0, false);
+        let metadata = self.collection_metadata(builder, length, zero);
 
-        let strct = builder.struct_instance(self.collection_ty, [*tagged_ptr, *length]);
+        let strct = builder.struct_instance(self.collection_ty, [*tagged_ptr, *metadata]);
         (strct, data_ptr)
+    }
+
+    /// Recursively copies a collection range into a flat destination.
+    ///
+    /// The input collection is borrowed. The caller remains responsible for
+    /// dropping its owned collection reference after this function returns.
+    fn collection_flatten(
+        &mut self,
+        builder: &mut Builder<'ctx>,
+        collection: Struct<'ctx>,
+        start: Integer<'ctx>,
+        end: Integer<'ctx>,
+        destination: Ptr<'ctx>,
+        output_index: Ptr<'ctx>,
+        elem_repr: LLVMType<'ctx>,
+        elem_ty: Option<Type>,
+    ) {
+        let key = (elem_repr, elem_ty.map(|ty| ty.hash(self.syms)));
+        if let Some(&(func, func_ty)) = self.collection_flatten_funcs.get(&key) {
+            builder.call(
+                func,
+                func_ty,
+                &[*collection, *start, *end, *destination, *output_index],
+            );
+            return;
+        }
+
+        let void = self.ctx.void();
+        let func_ty =
+        void.fn_ty(
+            self.ctx.arena,
+            &[
+                *self.collection_ty,
+                *self.i64,
+                *self.i64,
+                *self.ctx.ptr(),
+                *self.ctx.ptr(),
+            ],
+            false,
+        );
+        let name = elem_ty
+            .map(|ty| ty.display(self.string_map, self.syms).to_string())
+            .unwrap_or_else(|| elem_repr.name().to_string());
+        let func = self.module.function(&format!("<collection_flatten>::{}", name), func_ty);
+        func.set_linkage(Linkage::Internal);
+        self.collection_flatten_funcs.insert(key, (func, func_ty));
+
+        let mut flatten_builder = func.builder(self.ctx.as_ctx_ref(), func_ty);
+        let flatten_collection = flatten_builder.local_get(flatten_builder.arg(0).unwrap()).as_struct();
+        let flatten_start = flatten_builder.local_get(flatten_builder.arg(1).unwrap()).as_integer();
+        let flatten_end = flatten_builder.local_get(flatten_builder.arg(2).unwrap()).as_integer();
+        let flatten_destination = flatten_builder.local_get(flatten_builder.arg(3).unwrap()).as_ptr();
+        let flatten_output_index = flatten_builder.local_get(flatten_builder.arg(4).unwrap()).as_ptr();
+
+        let tagged_ptr = self.collection_tagged_ptr(&mut flatten_builder, flatten_collection);
+        let (header_ptr, allocation_kind) =
+            self.collection_split_tag(&mut flatten_builder, tagged_ptr);
+
+        let collection_length = self.collection_length(&mut flatten_builder, flatten_collection);
+        flatten_builder.assume(
+            flatten_builder.cmp_int(flatten_start, flatten_end, IntCmp::UnsignedLe),
+        );
+        flatten_builder.assume(
+            flatten_builder.cmp_int(flatten_end, collection_length, IntCmp::UnsignedLe),
+        );
+
+        flatten_builder.switch(allocation_kind, 0..4, |builder, kind| {
+            match kind {
+                COLLECTION_FLAT_TAG => {
+                    let payload_ty = self.collection_flat_header_type(elem_repr);
+                    let data_ptr = builder.field_ptr(header_ptr, payload_ty, 1);
+                    let index_slot = builder.alloca(*self.i64);
+                    builder.store(index_slot, *flatten_start);
+                    let one = builder.const_int(self.i64, 1, false);
+
+                    builder.loop_indefinitely(|builder, loop_id| {
+                        let index = builder.load(index_slot, *self.i64).as_integer();
+                        let done = builder.cmp_int(index, flatten_end, IntCmp::UnsignedGe);
+                        builder.ite(done,
+                            |builder| builder.loop_break(loop_id),
+                            |builder| {
+                                let source = builder.gep_inbounds(data_ptr, elem_repr, index);
+                                let value = builder.load_tbaa(source, elem_repr, self.tbaa_element);
+                                let value =
+                                if let Some(elem_ty) = elem_ty {
+                                    self.emit_copy(builder, value, elem_ty)
+                                } else {
+                                    value
+                                };
+                                let output = builder.load(flatten_output_index, *self.i64).as_integer();
+                                let destination = builder.gep(flatten_destination, elem_repr, output);
+                                builder.store_tbaa(destination, value, self.tbaa_element);
+                                builder.store(flatten_output_index, *builder.add_int_nuw(output, one));
+                                builder.store(index_slot, *builder.add_int_nuw(index, one));
+                            },
+                        );
+                    });
+                }
+
+                COLLECTION_SLICE_TAG => {
+                    let payload_ty = self.collection_slice_payload;
+                    let offset = builder
+                        .field_ptr_load_tbaa(header_ptr, payload_ty, 1, self.tbaa_header)
+                        .as_integer();
+                    let base = builder
+                        .field_ptr_load_tbaa(header_ptr, payload_ty, 2, self.tbaa_header)
+                        .as_struct();
+                    let base_start = builder.add_int_nuw(flatten_start, offset);
+                    let base_end = builder.add_int_nuw(flatten_end, offset);
+                    builder.call(
+                        func,
+                        func_ty,
+                        &[*base, *base_start, *base_end, *flatten_destination, *flatten_output_index],
+                    );
+                }
+
+                COLLECTION_CONCAT_TAG => {
+                    let payload_ty = self.collection_concat_payload;
+                    let left = builder
+                        .field_ptr_load_tbaa(header_ptr, payload_ty, 1, self.tbaa_header)
+                        .as_struct();
+                    let right = builder
+                        .field_ptr_load_tbaa(header_ptr, payload_ty, 2, self.tbaa_header)
+                        .as_struct();
+                    let left_length = self.collection_length(builder, left);
+                    let end_in_left = builder.cmp_int(flatten_end, left_length, IntCmp::UnsignedLe);
+
+                    builder.ite(end_in_left,
+                        |builder| {
+                            builder.call(
+                                func,
+                                func_ty,
+                                &[*left, *flatten_start, *flatten_end, *flatten_destination, *flatten_output_index],
+                            );
+                        },
+                        |builder| {
+                            let start_in_right =
+                                builder.cmp_int(flatten_start, left_length, IntCmp::UnsignedGe);
+                            builder.ite(start_in_right,
+                                |builder| {
+                                    let right_start = builder.sub_int(flatten_start, left_length);
+                                    let right_end = builder.sub_int(flatten_end, left_length);
+                                    builder.call(
+                                        func,
+                                        func_ty,
+                                        &[*right, *right_start, *right_end, *flatten_destination, *flatten_output_index],
+                                    );
+                                },
+                                |builder| {
+                                    let right_end = builder.sub_int(flatten_end, left_length);
+                                    let zero = builder.const_int(self.i64, 0, false);
+                                    builder.call(
+                                        func,
+                                        func_ty,
+                                        &[*left, *flatten_start, *left_length, *flatten_destination, *flatten_output_index],
+                                    );
+                                    builder.call(
+                                        func,
+                                        func_ty,
+                                        &[*right, *zero, *right_end, *flatten_destination, *flatten_output_index],
+                                    );
+                                },
+                            );
+                        },
+                    );
+                }
+
+                COLLECTION_UNUSED_TAG => builder.unreachable(),
+                _ => unreachable!(),
+            }
+        });
+
+        flatten_builder.ret_void();
+        builder.call(
+            func,
+            func_ty,
+            &[*collection, *start, *end, *destination, *output_index],
+        );
     }
 
 
@@ -572,6 +1140,39 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     /// base. The intermediate slice is released through `collection_drop`
     /// after cloning the grandbase. Because every slice goes through this
     /// function, a slice base is never itself a slice.
+    fn collection_flatten_range(
+        &mut self,
+        env: &mut Env<'_, 'ctx>,
+        builder: &mut Builder<'ctx>,
+        collection: Struct<'ctx>,
+        start: Integer<'ctx>,
+        length: Integer<'ctx>,
+        elem_repr: LLVMType<'ctx>,
+        elem_ty: Option<Type>,
+    ) -> Struct<'ctx> {
+        let (flat, data) = self.collection_flat(builder, length, elem_repr);
+        let output_index = builder.alloca(*self.i64);
+        let zero = builder.const_int(self.i64, 0, false);
+        builder.store(output_index, *zero);
+        let end = builder.add_int_nuw(start, length);
+
+        self.collection_flatten(
+            builder,
+            collection,
+            start,
+            end,
+            data,
+            output_index,
+            elem_repr,
+            elem_ty,
+        );
+        self.collection_drop(env, builder, collection, elem_repr, elem_ty);
+        flat
+    }
+
+
+
+
     fn collection_slice(
         &mut self,
         env: &mut Env<'_, 'ctx>,
@@ -595,10 +1196,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let base_slot = builder.alloca_store(*base);
         let offset_slot = builder.alloca_store(*offset);
 
-        builder.ite(
-            &mut (),
-            is_slice,
-            |builder, _| {
+        builder.iff(is_slice, |builder| {
                 let ty = self.collection_slice_payload;
                 let parent_offset = builder
                     .field_ptr_load_tbaa(header_ptr, ty, 1, self.tbaa_header)
@@ -606,7 +1204,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let grandbase = builder
                     .field_ptr_load_tbaa(header_ptr, ty, 2, self.tbaa_header)
                     .as_struct();
-                let current_offset = builder.load(offset_slot, *self.usize).as_integer();
+                let current_offset = builder.load(offset_slot, *self.i64).as_integer();
                 builder.store(offset_slot, *builder.add_int_nuw(current_offset, parent_offset));
 
                 let grand_tagged = self.collection_tagged_ptr(builder, grandbase);
@@ -614,57 +1212,154 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*grand_ptr]);
                 builder.store(base_slot, *grandbase);
                 self.collection_drop(env, builder, base, elem_repr, elem_ty);
-            },
-            |_, _| {},
-        );
+            });
 
         let base = builder.load(base_slot, *self.collection_ty).as_struct();
-        let offset = builder.load(offset_slot, *self.usize).as_integer();
+        let offset = builder.load(offset_slot, *self.i64).as_integer();
+        let one = builder.const_int(self.i64, 1, false);
+        let base_depth = self.collection_depth(builder, base);
+        let depth = builder.add_int_nuw(base_depth, one);
+        let metadata = self.collection_metadata(builder, length, depth);
+        let flatten_depth = builder.const_int(self.i64, COLLECTION_FLATTEN_DEPTH, false);
+        let should_flatten = builder.cmp_int(depth, flatten_depth, IntCmp::UnsignedGt);
+        let result_slot = builder.alloca(*self.collection_ty);
 
-        let total_size = self.collection_slice_payload.size_of(self.module).unwrap();
-        let total_size = builder.const_int(self.usize, total_size as _, false);
-        let buf = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
+        let slice_ty = self.collection_slice_payload;
+        let collection_ty = self.collection_ty;
+        let usize_ty = self.usize;
+        let ptr_ty = self.ctx.ptr();
+        let tbaa_header = self.tbaa_header;
+        let rc_alloc_fn = self.rc_alloc_fn;
+        let total_size = self.const_usize(builder, slice_ty.size_of(self.module).unwrap());
+        let slice_tag = self.const_usize(builder, COLLECTION_SLICE_TAG);
 
-        let offset_ptr = builder.field_ptr(buf, self.collection_slice_payload, 1);
-        builder.store_tbaa(offset_ptr, *offset, self.tbaa_header);
+        builder.ite(should_flatten,
+            |builder| {
+                let flat =
+                self.collection_flatten_range(
+                    env,
+                    builder,
+                    base,
+                    offset,
+                    length,
+                    elem_repr,
+                    elem_ty,
+                );
+                builder.store(result_slot, *flat);
+            },
+            |builder| {
+                let buf = builder.call(rc_alloc_fn.0, rc_alloc_fn.1, &[*total_size]).as_ptr();
+                let offset_ptr = builder.field_ptr(buf, slice_ty, 1);
+                builder.store_tbaa(offset_ptr, *offset, tbaa_header);
 
-        let base_ptr = builder.field_ptr(buf, self.collection_slice_payload, 2);
-        builder.store_tbaa(base_ptr, *base, self.tbaa_header);
+                let base_ptr = builder.field_ptr(buf, slice_ty, 2);
+                builder.store_tbaa(base_ptr, *base, tbaa_header);
 
-        let tag = builder.const_int(self.usize, COLLECTION_SLICE_TAG as _, false);
-        let tagged_ptr = self.collection_with_tag(builder, buf, tag);
+                let ptr_as_usize = builder.ptr_to_int(buf, usize_ty);
+                let tagged =
+                builder.int_to_ptr(
+                    builder.or(ptr_as_usize, slice_tag),
+                    ptr_ty,
+                );
+                let value = builder.struct_instance(collection_ty, [*tagged, *metadata]);
+                builder.store(result_slot, *value);
+            },
+        );
 
-        builder.struct_instance(self.collection_ty, [*tagged_ptr, *length])
+        builder.load(result_slot, *collection_ty).as_struct()
     }
 
 
     /// IMPORTANT: a & b take ownership
     fn collection_concat(
-        &self, builder: &mut Builder<'ctx>,
-        a: Struct<'ctx>, b: Struct<'ctx>,
+        &mut self,
+        env: &mut Env<'_, 'ctx>,
+        builder: &mut Builder<'ctx>,
+        a: Struct<'ctx>,
+        b: Struct<'ctx>,
+        elem_repr: LLVMType<'ctx>,
+        elem_ty: Option<Type>,
     ) -> Struct<'ctx> {
         assert_eq!(a.ty(), self.collection_ty);
         assert_eq!(b.ty(), self.collection_ty);
 
-        let total_size = self.collection_concat_payload.size_of(self.module).unwrap();
-        let total_size = builder.const_int(self.usize, total_size as _, false);
-        let buf = builder.call(self.rc_alloc_fn.0, self.rc_alloc_fn.1, &[*total_size]).as_ptr();
-
-        let left = builder.field_ptr(buf, self.collection_concat_payload, 1);
-        builder.store_tbaa(left, *a, self.tbaa_header);
-
-        let right = builder.field_ptr(buf, self.collection_concat_payload, 2);
-        builder.store_tbaa(right, *b, self.tbaa_header);
-
-        let tag = builder.const_int(self.usize, COLLECTION_CONCAT_TAG as _, false);
-        let tagged_ptr = self.collection_with_tag(builder, buf, tag);
-
         let len_a = self.collection_length(builder, a);
         let len_b = self.collection_length(builder, b);
-        let length = builder.add_int(len_a, len_b);
+        let length = builder.add_int_nuw(len_a, len_b);
+        let left_depth = self.collection_depth(builder, a);
+        let right_depth = self.collection_depth(builder, b);
+        let depth =
+            builder.add_int_nuw(
+            builder.max_int(left_depth, right_depth),
+            builder.const_int(self.i64, 1, false),
+        );
+        let metadata = self.collection_metadata(builder, length, depth);
+        let flatten_depth = builder.const_int(self.i64, COLLECTION_FLATTEN_DEPTH, false);
+        let should_flatten = builder.cmp_int(depth, flatten_depth, IntCmp::UnsignedGt);
+        let result_slot = builder.alloca(*self.collection_ty);
 
-        let strct = builder.struct_instance(self.collection_ty, [*tagged_ptr, *length]);
-        strct
+        let concat_ty = self.collection_concat_payload;
+        let collection_ty = self.collection_ty;
+        let usize_ty = self.usize;
+        let ptr_ty = self.ctx.ptr();
+        let tbaa_header = self.tbaa_header;
+        let rc_alloc_fn = self.rc_alloc_fn;
+        let total_size = self.const_usize(builder, concat_ty.size_of(self.module).unwrap());
+        let concat_tag = self.const_usize(builder, COLLECTION_CONCAT_TAG);
+
+        builder.ite(should_flatten,
+            |builder| {
+                let left_length = self.collection_length(builder, a);
+                let right_length = self.collection_length(builder, b);
+                let length = builder.add_int_nuw(left_length, right_length);
+                let (flat, data) = self.collection_flat(builder, length, elem_repr);
+                let output_index = builder.alloca(*self.i64);
+                let zero = builder.const_int(self.i64, 0, false);
+                builder.store(output_index, *zero);
+
+                self.collection_flatten(
+                    builder,
+                    a,
+                    zero,
+                    left_length,
+                    data,
+                    output_index,
+                    elem_repr,
+                    elem_ty,
+                );
+                self.collection_flatten(
+                    builder,
+                    b,
+                    zero,
+                    right_length,
+                    data,
+                    output_index,
+                    elem_repr,
+                    elem_ty,
+                );
+                self.collection_drop(env, builder, a, elem_repr, elem_ty);
+                self.collection_drop(env, builder, b, elem_repr, elem_ty);
+                builder.store(result_slot, *flat);
+            },
+            |builder| {
+                let buf = builder.call(rc_alloc_fn.0, rc_alloc_fn.1, &[*total_size]).as_ptr();
+                let left = builder.field_ptr(buf, concat_ty, 1);
+                builder.store_tbaa(left, *a, tbaa_header);
+                let right = builder.field_ptr(buf, concat_ty, 2);
+                builder.store_tbaa(right, *b, tbaa_header);
+
+                let ptr_as_usize = builder.ptr_to_int(buf, usize_ty);
+                let tagged =
+                builder.int_to_ptr(
+                    builder.or(ptr_as_usize, concat_tag),
+                    ptr_ty,
+                );
+                let value = builder.struct_instance(collection_ty, [*tagged, *metadata]);
+                builder.store(result_slot, *value);
+            },
+        );
+
+        builder.load(result_slot, *collection_ty).as_struct()
     }
 
     /// Resolves an already bounds-checked index to its flat leaf element.
@@ -679,7 +1374,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         elem_repr: LLVMType<'ctx>,
     ) -> Ptr<'ctx> {
         assert_eq!(collection.ty(), self.collection_ty);
-        assert_eq!(*index.ty(), *self.usize);
+        assert_eq!(*index.ty(), *self.i64);
 
         if let Some(&(func_ptr, func_ty)) = self.collection_element_ptr_funcs.get(&elem_repr) {
             return builder.call(func_ptr, func_ty, &[*collection, *index]).as_ptr();
@@ -687,7 +1382,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let func_ty = self.ctx.ptr().fn_ty(
             self.ctx.arena,
-            &[*self.collection_ty, *self.usize],
+            &[*self.collection_ty, *self.i64],
             false,
         );
 
@@ -709,7 +1404,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let index = builder.local_get(builder.arg(1).unwrap()).as_integer();
 
         let collection_slot = builder.alloca(*this.collection_ty);
-        let index_slot = builder.alloca(*this.usize);
+        let index_slot = builder.alloca(*this.i64);
         let result_slot = builder.alloca(*this.ctx.ptr());
 
 
@@ -720,7 +1415,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             let collection = builder.load(collection_slot, *this.collection_ty).as_struct();
             let tagged_ptr = self.collection_tagged_ptr(builder, collection);
             let length = self.collection_length(builder, collection);
-            let index = builder.load(index_slot, *this.usize).as_integer();
+            let index = builder.load(index_slot, *this.i64).as_integer();
 
             let (header_ptr, allocation_kind) = this.collection_split_tag(builder, tagged_ptr);
 
@@ -761,13 +1456,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         let left_len = this.collection_length(builder, left);
                         let in_left = builder.cmp_int(index, left_len, IntCmp::UnsignedLt);
 
-                        builder.ite(
-                            &mut (),
-                            in_left,
-                            |builder, _| {
+                        builder.ite(in_left,
+                            |builder| {
                                 builder.store(collection_slot, *left);
                             },
-                            |builder, _| {
+                            |builder| {
                                 let right_index = builder.sub_int(index, left_len);
                                 let right_len = this.collection_length(builder, right);
                                 builder.assume(builder.cmp_int(right_index, right_len, IntCmp::UnsignedLt));
@@ -791,56 +1484,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    /// Copies a rope-backed string into a caller-provided byte buffer.
-    ///
-    /// Native libraries use this helper when they need a temporary
-    /// NUL-terminated representation. The string remains borrowed for the
-    /// duration of the call; no collection ownership is transferred.
-    fn emit_string_copy_fn(&mut self) {
-        let void = self.ctx.void();
-        let func_ty = void.fn_ty(self.ctx.arena, &[*self.collection_ty, *self.ctx.ptr()], false);
-        let func = self.module.function("margarineStringCopy", func_ty);
-        func.set_linkage(Linkage::External);
-
-        let mut builder = func.builder(self.ctx, func_ty);
-        let collection = builder.local_get(builder.arg(0).unwrap()).as_struct();
-        let destination = builder.local_get(builder.arg(1).unwrap()).as_ptr();
-        let length = self.collection_length(&mut builder, collection);
-        let byte_ty = *self.ctx.integer(8);
-        let zero = self.const_usize(&builder, 0);
-        let index_slot = builder.alloca_store(*zero);
-        let one = self.const_usize(&builder, 1);
-
-        builder.loop_indefinitely(|builder, loop_id| {
-            let index = builder.load(index_slot, *self.usize).as_integer();
-            let done = builder.cmp_int(index, length, IntCmp::UnsignedGe);
-            builder.ite(
-                &mut (),
-                done,
-                |builder, _| builder.loop_break(loop_id),
-                |builder, _| {
-                    let element_ptr = self.collection_element_ptr(
-                        builder,
-                        collection,
-                        index,
-                        byte_ty,
-                    );
-                    let element = builder.load_tbaa(element_ptr, byte_ty, self.tbaa_element);
-                    let destination = builder.gep(destination, byte_ty, index);
-                    builder.store(destination, element);
-                    builder.store(index_slot, *builder.add_int(index, one));
-                },
-            );
-        });
-
-        builder.ret_void();
-    }
-
-
-
 
     fn collection_with_tag(
-        &self, builder: &mut Builder<'ctx>, 
+        &self, builder: &mut Builder<'ctx>,
         ptr: Ptr<'ctx>, num: Integer<'ctx>
     ) -> Ptr<'ctx> {
         let ptr_as_usize = builder.ptr_to_int(ptr, self.usize);
@@ -892,11 +1538,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             let should_drop = self.emit_rc_decrement(builder, header_ptr);
 
             builder.expect(should_drop, false);
-            builder.ite(
-                &mut (),
-                should_drop, 
-                |builder, _| { builder.call(func.0, func.1, &[*collection, *builder.ptr_null()]); }, 
-                |_, _| {}
+            builder.iff(
+                should_drop,
+                |builder| { builder.call(func.0, func.1, &[*collection, *builder.ptr_null()]); },
             );
 
             return;
@@ -939,20 +1583,20 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let payload_ty = self.collection_flat_header_type(elem_repr);
                     let data_ptr = builder.field_ptr(header_ptr, payload_ty, 1);
 
-                    let counter = builder.alloca(*self.usize);
+                    let counter = builder.alloca(*self.i64);
                     builder.store(counter, *length);
 
 
                     if let Some(elem_ty) = elem_ty {
-                        let one = self.const_usize(builder, 1);
-                        let zero_val = self.const_usize(builder, 0);
+                        let one = builder.const_int(self.i64, 1, false);
+                        let zero_val = builder.const_int(self.i64, 0, false);
 
                         builder.loop_indefinitely(|builder, l| {
-                            let i = builder.load(counter, *self.usize).as_integer();
+                            let i = builder.load(counter, *self.i64).as_integer();
                             let done = builder.cmp_int(i, zero_val, IntCmp::Eq);
-                            builder.ite(&mut () as &mut (), done,
-                                |builder, _| { builder.loop_break(l); },
-                                |builder, _| {
+                            builder.ite(done,
+                                |builder| { builder.loop_break(l); },
+                                |builder| {
                                     let i = builder.sub_int(i, one);
                                     builder.store(counter, *i);
                                     let ptr = builder.gep(data_ptr, elem_repr, i);
@@ -1774,8 +2418,98 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let list_value = builder.local_get(builder.arg(0).unwrap());
                 let list = list_value.as_struct();
                 let len = self.collection_length(&mut builder, list);
-                let len = self.usize_to_i64(&builder, len);
                 builder.ret(*len);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+            // $list_iter<T>(list: [T]): ListIter<T>
+            syms::func::FunctionKind::ListIter => {
+                let func_ty =
+                llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+                let list_value = builder.local_get(builder.arg(0).unwrap());
+                let list = self.emit_copy(&mut builder, list_value, args[0]).as_struct();
+                let iter =
+                builder.call(
+                    self.collection_iter_new.0,
+                    self.collection_iter_new.1,
+                    &[*list],
+                ).as_struct();
+                builder.ret(*iter);
+
+                return Ok(&self.funcs[&hash]);
+            },
+
+
+
+            // $list_iter_next<T>(&iter: ListIter<T>): Option<T>
+            syms::func::FunctionKind::ListIterNext => {
+                let func_ty =
+                llvm_ret.repr.fn_ty(
+                    self.ctx.arena,
+                    &llvm_args,
+                    false,
+                );
+                let func_ptr = self.module.function(name, func_ty);
+
+                let func = Function {
+                    sym: ty,
+                    name: name_idx,
+                    kind: FunctionKind::Code,
+                    error: None,
+                    func_ty,
+                    func_ptr,
+                };
+
+                assert!(self.funcs.insert(hash, func).is_none());
+
+                let mut builder = func_ptr.builder(self.ctx, func_ty);
+                let elem_ty = gens[0].1;
+                let llvm_elem = self.to_llvm_ty(elem_ty);
+                let (next_fn, next_fn_ty) =
+                self.create_collection_iter(llvm_elem.repr);
+
+                let iter_ptr = builder.local_get(builder.arg(0).unwrap()).as_ptr();
+                let element_ptr = builder.call(next_fn, next_fn_ty, &[*iter_ptr]).as_ptr();
+                let result = builder.alloca(llvm_ret.repr);
+
+                let none_tag = *builder.const_int(self.i32, 1, false);
+                let some_tag = *builder.const_int(self.i32, 0, false);
+                let unit = *builder.const_unit();
+                let none = self.create_enum(&mut builder, ret, none_tag, unit);
+                let is_end = builder.ptr_is_null(element_ptr);
+
+                builder.ite(is_end,
+                    |builder| {
+                        builder.store(result, none);
+                    },
+                    |builder| {
+                        let element = builder.load_tbaa(element_ptr, llvm_elem.repr, self.tbaa_element);
+                        let element = self.emit_copy(builder, element, elem_ty);
+                        let some = self.create_enum(builder, ret, some_tag, element);
+                        builder.store(result, some);
+                    },
+                );
+
+                builder.ret(builder.load(result, llvm_ret.repr));
 
                 return Ok(&self.funcs[&hash]);
             },
@@ -1808,7 +2542,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let left = self.emit_copy(&mut builder, left, args[0]);
                 let right = builder.local_get(builder.arg(1).unwrap());
                 let right = self.emit_copy(&mut builder, right, args[1]);
-                let result = self.collection_concat(&mut builder, left.as_struct(), right.as_struct());
+                let elem_ty = gens[0].1;
+                let elem_repr = self.to_llvm_ty(elem_ty).repr;
+                let mut env = Env::default();
+                let result =
+                self.collection_concat(
+                    &mut env,
+                    &mut builder,
+                    left.as_struct(),
+                    right.as_struct(),
+                    elem_repr,
+                    Some(elem_ty),
+                );
 
                 builder.ret(*result);
 
@@ -1844,15 +2589,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let list_len = self.collection_length(&mut builder, list_value);
                 let zero_i64 = builder.const_int(self.i64, 0, false);
                 let negative = builder.cmp_int(index_i64, zero_i64, IntCmp::SignedLt);
-                let list_len_i64 = self.usize_to_i64(&builder, list_len);
-                let past_end = builder.cmp_int(index_i64, list_len_i64, IntCmp::SignedGt);
+                let past_end = builder.cmp_int(index_i64, list_len, IntCmp::SignedGt);
                 let invalid = unsafe { Bool::new(*builder.or(negative.as_integer(), past_end.as_integer())) };
                 let result = builder.alloca(llvm_ret.repr);
 
                 let ret_gens = ret.gens(self.syms);
                 let option_gens = self.syms.get_gens(ret_gens);
                 let pair_ty = option_gens[0].1;
-                let zero = self.const_usize(&builder, 0);
+                let zero = builder.const_int(self.i64, 0, false);
                 let none_tag = *builder.const_int(self.i32, 1, false);
                 let unit = *builder.const_unit();
 
@@ -1860,12 +2604,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let pair_first = self.string_map.num(0);
                 let pair_second = self.string_map.num(1);
 
-                builder.ite(&mut (), invalid,
-                    |builder, _| {
+                builder.ite(invalid,
+                    |builder| {
                         builder.store(result, none);
                     },
-                    |builder, _| {
-                        let index = self.int_to_usize(builder, index_i64);
+                    |builder| {
+                        let index = index_i64;
                         let right_len = builder.sub_int(list_len, index);
                         let left_base = self.emit_copy(builder, *list_value, args[0]).as_struct();
                         let right_base = self.emit_copy(builder, *list_value, args[0]).as_struct();
@@ -2009,18 +2753,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         let sym_id = ty.sym(self.syms).unwrap();
 
-        if sym_id == SymbolId::LIST {
-            self.ty_mappings.insert(hash, TypeMapping { repr: *self.collection_ty, strct: *self.collection_ty });
-            return self.ty_mappings[&hash]
-        }
-
-        if sym_id == SymbolId::STR {
-            self.ty_mappings.insert(hash, TypeMapping { repr: *self.str_ty, strct: *self.str_ty });
-            return self.ty_mappings[&hash]
-        }
-
         let def =
         match sym_id {
+            SymbolId::LIST => Some(*self.collection_ty),
+            SymbolId::LIST_ITER => Some(*self.collection_iter),
+            SymbolId::STR => Some(*self.str_ty),
             SymbolId::UNIT => Some(*self.ctx.unit()),
             SymbolId::I64 => Some(*self.i64),
             SymbolId::F64 => Some(*self.ctx.f64()),
@@ -2031,7 +2768,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             self.ty_mappings.insert(hash, TypeMapping { repr: def, strct: def });
             return self.ty_mappings[&hash]
         }
-
 
         let sym = self.syms.sym(sym_id);
 
@@ -2139,7 +2875,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             SymbolKind::Opaque => {
-                self.ty_mappings.insert(hash, TypeMapping { repr: *self.ctx.ptr(), strct: *self.ctx.ptr() });
+                let mapping = TypeMapping { repr: *self.ctx.ptr(), strct: *self.ctx.ptr(), };
+                self.ty_mappings.insert(hash, mapping);
             },
 
 
@@ -2301,10 +3038,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let none_case = builder.const_int(tag.as_integer().ty(), 1, false);
                     let cond = builder.cmp_int(tag, none_case, IntCmp::Eq);
 
-                    builder.ite(&mut (), cond, 
-                    |builder, _| {
+                    builder.iff(cond, |builder| {
                         builder.loop_break(l);
-                    }, |_, _| {});
+                    });
 
                     let ret_alloca = builder.alloca_store(*call_ret_value);
                     let data_ptr = builder.field_ptr(ret_alloca, call_ret_value.ty(), 1);
@@ -2374,19 +3110,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         index: Integer<'ctx>,
     ) -> Integer<'ctx> {
         let len = self.collection_length(builder, list);
-        let len_i64 = self.usize_to_i64(builder, len);
-        let is_lt_len = builder.cmp_int(index, len_i64, IntCmp::SignedLt);
+        let is_lt_len = builder.cmp_int(index, len, IntCmp::SignedLt);
         let zero = builder.const_int(self.i64, 0, false);
         let is_ge_zero = builder.cmp_int(index, zero, IntCmp::SignedGe);
         let is_in_bounds = builder.bool_and(is_lt_len, is_ge_zero);
 
-        builder.ite(&mut (), is_in_bounds,
-            |_, _| {},
-            |builder, _| {
+        builder.ite(is_in_bounds,
+            |_| {},
+            |builder| {
                 self.emit_panic(builder, "list index out of bounds");
             },
         );
-        self.int_to_usize(builder, index)
+        index
     }
 
 
@@ -2443,8 +3178,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let index_val = self.check_list_index(builder, collection, index_val);
                 let length = self.collection_length(builder, collection);
 
-                let zero = self.const_usize(builder, 0);
-                let one = self.const_usize(builder, 1);
+                let zero = builder.const_int(self.i64, 0, false);
+                let one = builder.const_int(self.i64, 1, false);
 
                 let (this, this_data) = self.collection_flat(builder, one, llvm_ty.repr);
 
@@ -2471,17 +3206,24 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     llvm_ty.repr,
                     Some(elem_ty),
                 );
-                let concat = self.collection_concat(builder, a, this);
+                let concat =
+                self.collection_concat(
+                    env,
+                    builder,
+                    a,
+                    this,
+                    llvm_ty.repr,
+                    Some(elem_ty),
+                );
 
                 let rest = builder.add_int(index_val, one);
                 let has_rest = builder.cmp_int(rest, length, IntCmp::UnsignedLt);
 
                 builder.store(list_slot, *concat);
 
-                builder.ite(
-                    &mut (), 
+                builder.iff(
                     has_rest, 
-                    |builder, _| {
+                    |builder| {
                         let rest_len = builder.sub_int(length, rest);
                         let b_base = self.emit_copy(builder, *collection, list_ty).as_struct();
                         let b = self.collection_slice(
@@ -2493,16 +3235,28 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             llvm_ty.repr,
                             Some(elem_ty),
                         );
-                        let concat = self.collection_concat(builder, concat, b);
+                        let concat =
+                        self.collection_concat(
+                            env,
+                            builder,
+                            concat,
+                            b,
+                            llvm_ty.repr,
+                            Some(elem_ty),
+                        );
                         builder.store(list_slot, *concat);
-                    }, 
-                    |_, _| {}
-                );
+                    });
 
                 self.emit_drop(env, builder, *collection, list_ty);
 
-
-                this_data
+                let final_collection =
+                    builder.load(list_slot, *self.collection_ty).as_struct();
+                self.collection_element_ptr(
+                    builder,
+                    final_collection,
+                    index_val,
+                    llvm_ty.repr,
+                )
             }
 
 
@@ -2556,11 +3310,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
-                        builder.ite(&mut (), comp,
-                        |_, _| {}, 
+                        builder.ite(comp,
+                        |_| {},
 
 
-                        |builder, _| {
+                        |builder| {
                             self.emit_panic(builder, "attempted to unwrap a none value");
                         }, 
                         );
@@ -2608,11 +3362,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
-                                builder.ite(&mut (), comp,
-                                |_, _| {}, 
+                                builder.ite(comp,
+                                |_| {},
 
 
-                                |builder, _| {
+                                |builder| {
                                     self.emit_panic(builder, "attempted to unwrap a none value");
                                 }, 
                                 );
@@ -2634,11 +3388,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 let some = builder.const_int(self.i32, i as i64, false);
                                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
-                                builder.ite(&mut (), comp,
-                                |_, _| {}, 
+                                builder.ite(comp,
+                                |_| {},
 
 
-                                |builder, _| {
+                                |builder| {
                                     self.emit_panic(builder, "attempted to unwrap an invalid enum variant");
                                 }, 
                                 );
@@ -2677,11 +3431,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
-                        builder.ite(&mut (), comp,
-                        |_, _| {}, 
+                        builder.ite(comp,
+                        |_| {},
 
 
-                        |builder, _| {
+                        |builder| {
                             self.drop_all_locals(env, builder);
                             if let Some(ret_ty) = ret_llvm_ty {
                                 let none_tag = builder.const_int(self.i32, 1, false);
@@ -2737,11 +3491,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
-                                builder.ite(&mut (), comp,
-                                |_, _| {}, 
+                                builder.ite(comp,
+                                |_| {},
 
 
-                                |builder, _| {
+                                |builder| {
                                     self.drop_all_locals(env, builder);
                                     if let Some(ret_ty) = ret_llvm_ty {
                                         let none_tag = builder.const_int(self.i32, 1, false);
@@ -2771,11 +3525,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 let some = builder.const_int(self.i32, i as i64, false);
                                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
-                                builder.ite(&mut (), comp,
-                                |_, _| {}, 
+                                builder.ite(comp,
+                                |_| {},
 
 
-                                |builder, _| {
+                                |builder| {
                                     self.drop_all_locals(env, builder);
                                     let none_tag = builder.const_int(self.i32, 1, false);
                                     let none_value = *builder.const_unit();
@@ -2860,7 +3614,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     lexer::Literal::String(string_index) => {
                         let string = self.string_map.get(string_index);
-                        let len = self.const_usize(builder, string.len());
+                        let len = builder.const_int(self.i64, string.len() as _, false);
 
                         let byte_ty = self.ctx.integer(8);
                         let byte_arr_ty = self.ctx.array(*self.ctx.integer(8), string.len());
@@ -3097,7 +3851,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let tag = builder.field_load(cond.as_struct(), 0).as_integer();
                 let tag = builder.int_cast(tag, *self.ctx.bool(), false).as_bool();
 
-                builder.ite(&mut (self, env), tag,
+                builder.ite_ex(&mut (self, env), tag,
                 |builder, (this, env)| {
                     let value = 
                     match this.expr(env, builder, body) {
@@ -3327,10 +4081,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             let result_buf = builder.alloca(result_llvm_ty.repr);
                             let result_strct_ty = result_llvm_ty.strct.as_struct();
 
-                            builder.ite(
-                                &mut (),
-                                cond,
-                                |builder, _| {
+                            builder.ite(cond,
+                                |builder| {
                                     let some_tag = builder.const_int(self.i32, 0, false);
                                     let tag_ptr = builder.field_ptr(result_buf, result_strct_ty, 0);
                                     builder.store(tag_ptr, *some_tag);
@@ -3338,7 +4090,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                     let dst_data = builder.field_ptr(result_buf, result_strct_ty, 1);
                                     builder.store(dst_data, payload);
                                 },
-                                |builder, _| {
+                                |builder| {
                                     let none_tag = builder.const_int(self.i32, 1, false);
                                     let tag_ptr = builder.field_ptr(result_buf, result_strct_ty, 0);
                                     builder.store(tag_ptr, *none_tag);
@@ -3456,7 +4208,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let ty = ty.resolve(&[env.gens], self.syms);
 
                     let is_inout = function.args()[index].is_inout();
-                    let (value, inout) = 
+                    let (value, inout) =
                     if is_inout {
                         (*builder.alloca_store(value), Some(expr))
                     } else {
@@ -3567,8 +4319,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let is_zero = drop_builder.cmp_int(new_rc, zero, IntCmp::Eq);
 
-                    drop_builder.ite(&mut (), is_zero,
-                    |builder, _| {
+                    drop_builder.iff(is_zero,
+                    |builder| {
                         for i in (0..drop_tys.len()).rev() {
                             let capture_ty = drop_tys[i];
                             let value = builder.field_load(drop_header, i + 2);
@@ -3576,9 +4328,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         }
                         let size_val = self.const_usize(builder, strct_ty.size_of(self.module).unwrap());
                         builder.call(self.dealloc_fn.0, self.dealloc_fn.1, &[*drop_ptr, *size_val]);
-                    },
-                    |_, _| {},
-                    );
+                    });
 
                     drop_builder.ret_void();
                 }
@@ -3635,15 +4385,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let captured_ptr = builder.arg(func_ty.args().len() as _).unwrap();
                     let captured_ptr = builder.local_get(captured_ptr).as_ptr();
-                    let captured_strct = builder.load(captured_ptr, *strct_ty).as_struct();
 
                     for (i, capture) in captured.iter().enumerate() {
-                        let value = builder.field_load(captured_strct, i + 2);
                         let capture_ty = capture.1.resolve(&[combined_gens], self.syms);
-                        let value = self.emit_copy(&mut builder, value, capture_ty);
-                        let local = builder.local(value.ty());
-                        builder.local_set(local, value);
-                        env.alloc_var(capture.0, local, capture_ty, false);
+                        let capture_llvm_ty = self.to_llvm_ty(capture_ty);
+                        let capture_ptr = builder.field_ptr(captured_ptr, strct_ty, i + 2);
+                        let local = builder.local(capture_llvm_ty.repr);
+                        builder.local_set(local, builder.load(capture_ptr, capture_llvm_ty.repr));
+                        env.alloc_var(capture.0, local, capture_ty, true);
                     }
 
 
@@ -3806,11 +4555,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let elem_type = self.syms.get_gens(list_type_gens)[0].1;
                 let elem_repr = self.to_llvm_ty(elem_type).repr;
 
-                let len = builder.const_int(self.usize, exprs.len() as _, false);
+                let len = builder.const_int(self.i64, exprs.len() as _, false);
                 let (value, buf) = self.collection_flat(builder, len, elem_repr);
 
                 for (i, &value) in llvm_exprs.iter().enumerate() {
-                    let index = self.const_usize(builder, i);
+                    let index = builder.const_int(self.i64, i as _, false);
                     let ptr = builder.gep(buf, elem_repr, index);
                     builder.store_tbaa(ptr, value, self.tbaa_element);
                 }
@@ -3828,11 +4577,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
-                builder.ite(&mut (), comp,
-                |_, _| {}, 
+                builder.ite(comp,
+                |_| {},
 
 
-                |builder, _| {
+                |builder| {
                     self.emit_panic(builder, "attempted to unwrap a none value");
                 }, 
                 );
@@ -3860,11 +4609,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let comp = builder.cmp_int(tag.as_integer(), some, IntCmp::Eq);
 
-                builder.ite(&mut (), comp,
-                |_, _| {}, 
+                builder.ite(comp,
+                |_| {},
 
 
-                |builder, _| {
+                |builder| {
                     self.drop_all_locals(env, builder);
                     if let Some(ret_ty) = env.ret_llvm_ty {
                         let none_tag = builder.const_int(self.i32, 1, false);
@@ -4027,7 +4776,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn emit_copy(&mut self, builder: &mut Builder<'ctx>, value: Value<'ctx>, ty: Type) -> Value<'ctx> {
-        let Ok(sym_id) = ty.sym(self.syms) else {
+        let Ok(sym_id) = ty.sym(self.syms)
+        else {
             return value;
         };
 
@@ -4035,13 +4785,21 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             return builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[value]);
         }
 
-        if sym_id == SymbolId::LIST {
-            let collection = value.as_struct();
+        if sym_id == SymbolId::LIST 
+        || sym_id == SymbolId::LIST_ITER {
+
+            let collection = 
+            if sym_id == SymbolId::LIST {
+                value.as_struct()
+            } else {
+                builder.field_load(value.as_struct(), 0).as_struct()
+            };
+
             let tagged_ptr = self.collection_tagged_ptr(builder, collection);
             let (ptr, _) = self.collection_split_tag(builder, tagged_ptr);
             builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*ptr]);
-            let length = self.collection_length(builder, collection);
-            return *builder.struct_instance(self.collection_ty, [*tagged_ptr, *length]);
+
+            return value;
         }
 
         if sym_id == SymbolId::UNIT {
@@ -4055,12 +4813,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let func_ref = value.as_struct();
                 let capture_ptr = builder.field_load(func_ref, 1).as_ptr();
                 let is_closure = builder.bool_not(builder.ptr_is_null(capture_ptr));
-                builder.ite(&mut (), is_closure,
-                    |builder, _| {
+                builder.iff(is_closure,
+                    |builder| {
                         builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*capture_ptr]);
-                    },
-                    |_, _| {},
-                );
+                    });
                 return value;
             }
             return value;
@@ -4106,15 +4862,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let index = builder.const_int(self.i32, i as _, false);
                     let cond = builder.cmp_int(tag.as_integer(), index, IntCmp::Eq);
 
-                    builder.ite(
-                        &mut (),
+                    builder.iff(
                         cond,
-                        |builder, _| {
+                        |builder| {
                             let payload = builder.load(src_data_ptr, field_llvm.repr);
                             let copied = self.emit_copy(builder, payload, field_ty);
                             builder.store(dst_data_ptr, copied);
                         },
-                        |_, _| {},
                     );
                 }
 
@@ -4156,13 +4910,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let dealloc_fn = self.dealloc_fn;
 
         builder.expect(is_zero, false);
-        builder.ite(&mut (), is_zero,
-            |builder, _| {
+        builder.iff(is_zero,
+            |builder| {
                 on_zero(self, builder);
                 builder.call(dealloc_fn.0, dealloc_fn.1, &[*ptr, *size_val]);
-            },
-            |_, _| {},
-        );
+            });
     }
 
     fn emit_drop<'env>(
@@ -4193,13 +4945,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             self.emit_rc_drop(builder, ptr, size_val, |slf, builder| {
                 let rc = builder.load(ptr, *rc_ty).as_struct();
                 let data = builder.field_load(rc, 1);
-
                 let trait_func = slf.resolve_trait_method(
                     elem_ty,
                     SymbolId::DESTROY_TRAIT,
-                    StringMap::DESTROY_FUNC
+                    StringMap::DESTROY_FUNC,
                 ).map(|func| (func.func_ptr, func.func_ty));
-
                 if let Some((func_ptr, func_ty)) = trait_func {
                     let data_copy = slf.emit_copy(builder, data, elem_ty);
                     slf.call_function(
@@ -4217,7 +4967,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             return;
         }
 
-        if sym_id == SymbolId::LIST {
+        if sym_id == SymbolId::LIST 
+        || sym_id == SymbolId::LIST_ITER {
+            let collection = 
+            if sym_id == SymbolId::LIST {
+                value.as_struct()
+            } else {
+                builder.field_load(value.as_struct(), 0).as_struct()
+            };
+
             let gens_id = ty.gens(self.syms);
             let gens = self.syms.get_gens(gens_id);
             let elem_ty = gens[0].1;
@@ -4225,10 +4983,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             let llvm_elem = self.to_llvm_ty(elem_ty);
 
-            self.collection_drop(env, builder, value.as_struct(), llvm_elem.repr, Some(elem_ty));
+            self.collection_drop(env, builder, collection, llvm_elem.repr, Some(elem_ty));
             return;
         }
-
 
         if sym_id == SymbolId::UNIT {
             return;
@@ -4241,8 +4998,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let func_ref = value.as_struct();
                 let capture_ptr = builder.field_load(func_ref, 1).as_ptr();
                 let is_closure = builder.bool_not(builder.ptr_is_null(capture_ptr));
-                builder.ite(&mut (), is_closure,
-                    |builder, _| {
+                builder.iff(is_closure,
+                    |builder| {
                         let capture_header = self.ctx.literal_struct(&[*self.usize, *self.ctx.ptr()], false);
                         let drop_fn_ptr = builder.field_ptr(capture_ptr, capture_header, 1);
                         let drop_fn_val = builder.load(drop_fn_ptr, *self.ctx.ptr());
@@ -4250,9 +5007,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         let void = self.ctx.void();
                         let drop_fn_ty = void.fn_ty(self.ctx.arena, &[*self.ctx.ptr()], false);
                         builder.call(drop_fn_ptr, drop_fn_ty, &[*capture_ptr]);
-                    },
-                    |_, _| {},
-                );
+                    });
                 return;
             }
             return;
@@ -4296,14 +5051,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let index = builder.const_int(self.i32, i as _, false);
                     let cond = builder.cmp_int(tag.as_integer(), index, IntCmp::Eq);
 
-                    builder.ite(
-                        &mut (),
+                    builder.iff(
                         cond,
-                        |builder, _| {
+                        |builder| {
                             let payload = builder.load(src_data_ptr, field_llvm.repr);
                             self.emit_drop(env, builder, payload, field_ty);
                         },
-                        |_, _| {},
                     );
                 }
             },
@@ -4352,35 +5105,33 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn call_function<'env>(
-        &mut self, 
+        &mut self,
         env: &mut Env<'env, 'ctx>,
         builder: &mut Builder<'ctx>,
         (func_ptr, func_env): (FunctionPtr<'ctx>, Ptr<'ctx>),
         func_ty: FunctionType<'ctx>,
         values: &[(Value<'ctx>, Type, Option<ExprId>)]
     ) -> Value<'ctx> {
-
         let llvm_args = sti::vec::Vec::from_in(
-            self.ctx.arena, 
+            self.ctx.arena,
             values.iter()
                 .map(|s| s.0)
                 .chain(core::iter::once(*func_env))
         );
 
-
         let result = builder.call(
-            func_ptr, 
-            func_ty, 
+            func_ptr,
+            func_ty,
             &llvm_args
         );
 
-
         for (value, ty, inout_expr) in values {
+
             let value =
             if inout_expr.is_some() { builder.load(value.as_ptr(), self.to_llvm_ty(*ty).repr) }
             else { *value };
 
-            if let Some(expr) = *inout_expr 
+            if let Some(expr) = *inout_expr
             && self.is_inout_place(expr) {
                 self.assign(env, builder, expr, value);
             } else {
@@ -4441,6 +5192,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             _ => false,
         }
     }
+
+
 
 
     fn eq<'env>(

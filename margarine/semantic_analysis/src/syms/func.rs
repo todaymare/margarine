@@ -54,6 +54,8 @@ pub enum FunctionKind {
     ListConcat,
     ListSlice,
     ListLen,
+    ListIter,
+    ListIterNext,
 
     Enum {
         sym: SymbolId,

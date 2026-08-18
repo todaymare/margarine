@@ -523,6 +523,7 @@ impl<'me> SymbolMap<'me> {
         }
 
 
+
         // $type_id
         {
             let t = BoundedGeneric::new(StringMap::T, &[]);
@@ -1172,6 +1173,86 @@ impl<'me> SymbolMap<'me> {
 
 
         init!(BYTE);
+        // ListIter<T> is an opaque inline stack value.
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let pending = slf.pending(ns_map, None, StringMap::LIST_ITER, 1);
+            assert_eq!(pending, SymbolId::LIST_ITER);
+            slf.add_sym(
+                pending,
+                Symbol::new(StringMap::LIST_ITER, arena.alloc_new([t]), SymbolKind::Opaque),
+            );
+        }
+
+        // $list_iter<T>(list: [T]): ListIter<T>
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let pending = slf.pending(ns_map, None, StringMap::BUILTIN_LIST_ITER, 1);
+            assert_eq!(pending, SymbolId::BUILTIN_LIST_ITER);
+
+            let t_gen = Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None);
+            let list_ty =
+            Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST, arena.alloc_new([t_gen])),
+                None,
+            );
+            let iter_ty =
+            Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST_ITER, arena.alloc_new([t_gen])),
+                None,
+            );
+            let args = [FunctionArgument::new(StringMap::VALUE, list_ty)];
+
+            let sym =
+            Symbol::new(
+                StringMap::BUILTIN_LIST_ITER,
+                arena.alloc_new([t]),
+                SymbolKind::Function(FunctionTy::new(
+                    arena.alloc_new(args),
+                    iter_ty,
+                    FunctionKind::ListIter,
+                    None,
+                )),
+            );
+            slf.add_sym(pending, sym);
+        }
+
+        // $list_iter_next<T>(&iter: ListIter<T>): Option<T>
+        {
+            let t = BoundedGeneric::new(StringMap::T, &[]);
+            let pending = slf.pending(ns_map, None, StringMap::BUILTIN_LIST_ITER_NEXT, 1);
+            assert_eq!(pending, SymbolId::BUILTIN_LIST_ITER_NEXT);
+
+            let t_gen = Generic::new(SourceRange::ZERO, GenericKind::Generic(t), None);
+            let iter_ty =
+            Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::LIST_ITER, arena.alloc_new([t_gen])),
+                None,
+            );
+            let ret_ty =
+            Generic::new(
+                SourceRange::ZERO,
+                GenericKind::Sym(SymbolId::OPTION, arena.alloc_new([t_gen])),
+                None,
+            );
+            let args = [FunctionArgument::new_inout(StringMap::VALUE, iter_ty, true)];
+
+            let sym =
+            Symbol::new(
+                StringMap::BUILTIN_LIST_ITER_NEXT,
+                arena.alloc_new([t]),
+                SymbolKind::Function(FunctionTy::new(
+                    arena.alloc_new(args),
+                    ret_ty,
+                    FunctionKind::ListIterNext,
+                    None,
+                )),
+            );
+            slf.add_sym(pending, sym);
+        }
 
         slf
     }

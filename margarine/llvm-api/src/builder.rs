@@ -199,7 +199,31 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
-    pub fn ite<T>(
+    pub fn iff(
+        &mut self,
+        cond: Bool<'ctx>,
+        then_body: impl FnOnce(&mut Self),
+    ) {
+        self.ite(cond, then_body, |_| {});
+    }
+
+
+    pub fn ite(
+        &mut self,
+        cond: Bool<'ctx>,
+        then_body: impl FnOnce(&mut Self),
+        else_body: impl FnOnce(&mut Self),
+    ) {
+        self.ite_ex(
+            &mut (),
+            cond,
+            |builder, _| then_body(builder),
+            |builder, _| else_body(builder),
+        );
+    }
+
+
+    pub fn ite_ex<T>(
         &mut self,
         data: &mut T,
         cond: Bool<'ctx>,
@@ -304,6 +328,7 @@ impl<'ctx> Builder<'ctx> {
         let alloc = self.alloca(ty);
         self.locals.push((alloc, ty))
     }
+
 
 
     pub fn local_ptr(&self, local: Local) -> Ptr<'ctx> {
@@ -569,6 +594,22 @@ impl<'ctx> Builder<'ctx> {
 
         unsafe { Bool::new(Value::new(NonNull::new(ptr).unwrap())) }
     }
+
+    pub fn select(&self, cond: Bool<'ctx>, then_val: Value<'ctx>, else_val: Value<'ctx>) -> Value<'ctx> {
+        assert_eq!(then_val.ty(), else_val.ty(), "select values must have the same type");
+
+        let ptr =
+        unsafe { LLVMBuildSelect(
+            self.ptr.as_ptr(),
+            cond.llvm_val().as_ptr(),
+            then_val.llvm_val().as_ptr(),
+            else_val.llvm_val().as_ptr(),
+            cstr!("select"),
+        ) };
+
+        Value::new(NonNull::new(ptr).unwrap())
+    }
+
 
 
     pub fn max_int(&self, lhs: Integer<'ctx>, rhs: Integer<'ctx>) -> Integer<'ctx> {
@@ -883,6 +924,12 @@ impl<'ctx> Builder<'ctx> {
         let arr = lhs.ty().fields(&*arena);
         self.load(ptr, arr[index as u32])
     }
+
+    pub fn field_store(&self, lhs: Ptr<'ctx>, ty: StructTy<'ctx>, field_idx: usize, val: impl Deref<Target=Value<'ctx>>) {
+        let field_ptr = self.field_ptr(lhs, ty, field_idx);
+        self.store(field_ptr, *val);
+    }
+
 
 
     pub fn field_ptr_load(&self, lhs: Ptr<'ctx>, ty: StructTy<'ctx>, index: usize) -> Value<'ctx> {

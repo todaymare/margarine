@@ -223,6 +223,7 @@ pub enum Error {
         source: SourceRange,
     },
 
+
     InOutValueWithoutInOutBinding {
         source: SourceRange,
     },
@@ -684,9 +685,10 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
             },
 
             Error::CannotMutateCapturedValue { source } => {
-                fmt.error("cannot mutate a captured closure value")
-                    .highlight_with_note(*source, "closure captures are copied values");
+                fmt.error("cannot mutate captured value")
+                    .highlight_with_note(*source, "captured values are immutable inside closures");
             },
+
 
 
             Error::VariableValueNotTuple(s) => {

@@ -91,7 +91,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     );
 
                     if let Err(e) = result {
-                        self.type_info.set_decl(id, e);
+                        self.set_error(id, e);
                     }
                 },
 
@@ -121,7 +121,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     );
 
                     if let Err(e) = result {
-                        self.type_info.set_decl(id, e);
+                        self.set_error(id, e);
                     }
                 }
 
@@ -151,7 +151,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         );
 
                         if let Err(e) = result {
-                            self.type_info.set_decl(id, e);
+                            self.set_error(id, e);
                         }
 
                         ns = self.namespaces.get_ns_mut(ns_id);
@@ -187,7 +187,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     );
 
                     if let Err(e) = result {
-                        self.type_info.set_decl(id, e);
+                        self.set_error(id, e);
                     }
 
 
@@ -242,7 +242,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     match self.resolve_generics(scope, n, gens) {
                         Ok(v) => v,
                         Err(v) => {
-                            self.type_info.set_decl(id, v);
+                            self.set_error(id, v);
                             continue;
                         },
                     };
@@ -251,7 +251,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     match self.dt_to_gen(s, data_type, gens) {
                         Ok(v) => v,
                         Err(v) => {
-                            self.type_info.set_decl(id, v);
+                            self.set_error(id, v);
                             continue;
                         },
                     };
@@ -278,7 +278,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let gens = match self.resolve_generics(scope, n, gens) {
                         Ok(v) => v,
                         Err(v) => {
-                            self.type_info.set_decl(id, v);
+                            self.set_error(id, v);
                             continue;
                         },
                     };
@@ -287,7 +287,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let trait_ty = match self.dt_to_gen(s, trait_name, gens) {
                         Ok(v) => v,
                         Err(v) => {
-                            self.type_info.set_decl(id, v);
+                            self.set_error(id, v);
                             return;
                         },
                     };
@@ -295,7 +295,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let ty = match self.dt_to_gen(s, data_type, gens) {
                         Ok(v) => v,
                         Err(v) => {
-                            self.type_info.set_decl(id, v);
+                            self.set_error(id, v);
                             return;
                         },
                     };
@@ -398,7 +398,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let result = scope.find_sym_from(item.name(), &self.scopes, &mut self.syms, &self.namespaces, ns_id);
                 let import_ns = match self.convert_symbol_get_result(item.name(), item.range(), result) {
                     Ok(import_ns) => import_ns,
-                    Err(error) => { self.type_info.set_decl(node_id, error); return; }
+                    Err(error) => { self.set_error(node_id, error); return; }
                 };
 
                 let import_ns = self.syms.sym_ns(import_ns);
@@ -417,7 +417,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             ns.set_err_sym(item.name(), e);
                         }
                     },
-                    Err(e) => self.type_info.set_decl(node_id, e),
+                    Err(e) => self.set_error(node_id, e),
                 }
             },
 
@@ -425,7 +425,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let result = scope.find_sym_from(item.name(), &self.scopes, &mut self.syms, &self.namespaces, ns_id);
                 let import_ns = match self.convert_symbol_get_result(item.name(), item.range(), result) {
                     Ok(import_ns) => import_ns,
-                    Err(error) => { self.type_info.set_decl(node_id, error); return; }
+                    Err(error) => { self.set_error(node_id, error); return; }
                 };
 
                 let import_ns = self.syms.sym_ns(import_ns);
@@ -951,7 +951,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         match node {
             NodeId::Decl(decl) => {
                 if let Decl::Error(e) = self.ast.decl(decl) {
-                    self.type_info.set_decl(decl, e);
+                    self.set_error(decl, e);
                     return AnalysisResult::new(Type::ERROR);
                 }
 
@@ -1494,11 +1494,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     self.error(id, Error::ValueUpdateTypeMismatch { lhs: lhs_anal.ty, rhs: rhs_anal.ty, source });
                 }
 
+                let range = self.ast.range(lhs);
                 if lhs_anal.is_captured && self.is_assignable_place(lhs) {
-                    let range = self.ast.range(lhs);
+
                     self.error(id, Error::CannotMutateCapturedValue { source: range });
                 } else if !lhs_anal.is_mut || !self.is_assignable_place(lhs) {
-                    let range = self.ast.range(lhs);
                     self.error(id, Error::AssignIsNotLHSValue { source: range });
                 }
             },

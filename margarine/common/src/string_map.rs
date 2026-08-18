@@ -81,6 +81,10 @@ impl<'str> StringMap<'str> {
 
     pub const BYTE : StringIndex = StringIndex(63);
     pub const ERROR : StringIndex = StringIndex(64);
+
+    pub const LIST_ITER : StringIndex = StringIndex(65);
+    pub const BUILTIN_LIST_ITER : StringIndex = StringIndex(66);
+    pub const BUILTIN_LIST_ITER_NEXT : StringIndex = StringIndex(67);
  
     #[inline(always)]
     pub fn new(arena: &'str Arena) -> Self {
@@ -164,6 +168,9 @@ impl<'str> StringMap<'str> {
         assert_eq!(s.insert("$list_len"), Self::LIST_LEN);
         assert_eq!(s.insert("byte"), Self::BYTE);
         assert_eq!(s.insert("{error}"), Self::ERROR);
+        assert_eq!(s.insert("ListIter"), Self::LIST_ITER);
+        assert_eq!(s.insert("$list_iter"), Self::BUILTIN_LIST_ITER);
+        assert_eq!(s.insert("$list_iter_next"), Self::BUILTIN_LIST_ITER_NEXT);
         s
     }
 
