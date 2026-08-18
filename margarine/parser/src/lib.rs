@@ -1474,11 +1474,17 @@ impl<'ta> Parser<'_, 'ta, '_> {
             let name = parser.expect_identifier()?;
 
             let (data_type, is_implicit_unit) =
-                if parser.peek_kind() == Some(TokenKind::Colon) {
+                if parser.peek_kind() == Some(TokenKind::LeftParenthesis) {
                     parser.advance();
                     parser.advance();
-                    
-                    (parser.expect_type()?, false)
+
+                    let ty = parser.expect_type()?;
+                    parser.advance();
+
+                    parser.expect(TokenKind::RightParenthesis)?;
+                    parser.advance();
+
+                    (ty, false)
                 }
                 else {
                     (
