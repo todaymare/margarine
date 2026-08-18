@@ -102,7 +102,12 @@ impl<'me> Compiler<'me> {
     ) -> CompilationResult<'out> {
         let arena = settings.arena;
         let entry = self.string_map.insert(&settings.entry);
-        let empty = self.string_map.insert("");
+        let root_name = std::path::Path::new(&settings.entry)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy())
+            .filter(|stem| !stem.is_empty())
+            .map(|stem| self.string_map.insert(&stem))
+            .unwrap_or(entry);
         let preludes = settings.preludes
             .iter()
             .map(|p| (self.string_map.insert(&p.alias), self.string_map.insert(&p.url)))
@@ -117,7 +122,7 @@ impl<'me> Compiler<'me> {
         let root = 
         global.add_decl(Decl::Module { 
             visibility: Visibility::Public,
-            name: empty, 
+            name: root_name, 
             header: SourceRange::ZERO, 
             body: Block::new(&[], SourceRange::ZERO), 
             is_root: true 
@@ -149,7 +154,7 @@ impl<'me> Compiler<'me> {
 
         stack.push(StackEntry {
             ast_node: root,
-            alias: empty,
+            alias: root_name,
             path: entry,
             visibility: Visibility::Public,
             intercrate_depth: 0,
