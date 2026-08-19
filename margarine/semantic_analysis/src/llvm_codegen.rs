@@ -4077,6 +4077,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         Ok(value) => value,
                         Err(error) => {
                             self.error(env, builder, error);
+                            let binding = env.vars.pop().unwrap();
+                            debug_assert_eq!(binding, (mapping.binding(), local, field_ty, false));
                             return;
                         },
                     };
