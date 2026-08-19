@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 
 use common::string_map::{StringIndex, StringMap};
+use errors::ErrorId;
 use sti::{hash::fxhash::FxHasher32, ext::FromIn};
 
 use crate::{errors::Error, syms::{containers::ContainerKind, func::FunctionKind, sym_map::BoundedGeneric, SymbolKind}};
@@ -123,7 +124,7 @@ impl Type {
                     for (i, f) in cont.fields().iter().enumerate() {
                         if i != 0 { str.push(", ") }
 
-                        let ty = f.1.to_ty(gens, map).unwrap();
+                        let ty = f.1.to_ty(gens, map);
                         str.push(ty.display(string_map, map))
                     }
 
@@ -154,11 +155,11 @@ impl Type {
                             str.push(", ");
                         }
 
-                        str.push(f.symbol().to_ty(gens, map).unwrap().display(string_map, map));
+                        str.push(f.symbol().to_ty(gens, map).display(string_map, map));
                     }
                     str.push(")");
 
-                    let ret = func.ret().to_ty(gens, map).unwrap();
+                    let ret = func.ret().to_ty(gens, map);
                     if ret != Type::UNIT {
                         str.push(": ");
                         str.push(ret.display(string_map, map));
@@ -208,12 +209,12 @@ impl Type {
         let b = oth.instantiate_shallow(map);
         match (a, b) {
             (Type::Ty(symida, gena), Type::Ty(symidb, genb)) => {
-                if [SymbolId::ERROR, SymbolId::NEVER].contains(&symida) {
+                if map.is_err_sym(symida) || symida == SymbolId::NEVER {
                     b.propagate_taint(map, a);
                     return true;
                 }
 
-                if [SymbolId::ERROR, SymbolId::NEVER].contains(&symidb) {
+                if map.is_err_sym(symidb) || symidb == SymbolId::NEVER {
                     a.propagate_taint(map, b);
                     return true;
                 }
@@ -238,13 +239,13 @@ impl Type {
                     (SymbolKind::Function(fa), SymbolKind::Function(fb)) => {
                         if fa.args().len() != fb.args().len() { return false; }
 
-                        let reta = fa.ret().to_ty(gena, map).unwrap();
-                        let retb = fb.ret().to_ty(genb, map).unwrap();
+                        let reta = fa.ret().to_ty(gena, map);
+                        let retb = fb.ret().to_ty(genb, map);
 
                         let mut failed = false;
                         for (aa, ab) in fa.args().iter().zip(fb.args().iter()) {
-                            let aa = aa.symbol().to_ty(gena, map).unwrap();
-                            let ab = ab.symbol().to_ty(genb, map).unwrap();
+                            let aa = aa.symbol().to_ty(gena, map);
+                            let ab = ab.symbol().to_ty(genb, map);
 
                             if !aa.eq(map, ab) {
                                 failed = true;
@@ -271,8 +272,8 @@ impl Type {
                         if ca.fields().len() != cb.fields().len() { return false; }
 
                         for (fa, fb) in ca.fields().iter().zip(cb.fields().iter()) {
-                            let tfa = fa.1.to_ty(gena, map).unwrap_or(Type::ERROR);
-                            let tfb = fb.1.to_ty(genb, map).unwrap_or(Type::ERROR);
+                            let tfa = fa.1.to_ty(gena, map);
+                            let tfb = fb.1.to_ty(genb, map);
 
                             if !tfa.eq(map, tfb) { return false; }
                         }
@@ -330,9 +331,33 @@ impl Type {
     }
 
 
+    /// True when the type is error-typed or contains an error-typed generic
+    /// argument; a value of such a type cannot be built or meaningfully
+    /// used, so the error propagates through the container.
     pub fn is_err(self, map: &mut SymbolMap) -> bool {
-        if let Ok(sym) = self.sym(map) { sym == SymbolId::ERROR }
-        else { false }
+        match self.instantiate(map, 0) {
+            Type::Ty(sym, gens) => {
+                map.is_err_sym(sym)
+                || map.get_gens(gens).iter().any(|(_, ty)| ty.is_err(map))
+            },
+            Type::Var(_) => false,
+        }
+    }
+
+
+    /// The originating error id when this type is an error type or contains
+    /// an error-typed generic argument (the first error encountered);
+    /// None otherwise.
+    pub fn as_err(self, map: &mut SymbolMap) -> Option<ErrorId> {
+        match self.instantiate(map, 0) {
+            Type::Ty(sym, gens) => {
+                match map.sym(sym).kind() {
+                    SymbolKind::Error(id) => Some(id),
+                    _ => map.get_gens(gens).iter().find_map(|(_, ty)| ty.as_err(map)),
+                }
+            },
+            Type::Var(_) => None,
+        }
     }
 
 
@@ -393,7 +418,7 @@ impl Type {
             Type::Ty(sym, gens) => {
                 let gens = map.get_gens(gens);
                 if let SymbolKind::Alias(alias) = map.sym(sym).kind() {
-                    let ty = alias.to_ty(gens, map).unwrap();
+                    let ty = alias.to_ty(gens, map);
                     return ty.instantiate_shallow(map)
                 }
 
@@ -458,6 +483,7 @@ impl Type {
 
 
     pub fn is_int(self, map: &mut SymbolMap) -> bool {
+        if self.is_err(map) { return true }
         let ty = self.instantiate_shallow(map);
         match ty {
             Type::Ty(v, _) => v.is_int(),
@@ -475,6 +501,7 @@ impl Type {
 
 
     pub fn is_float(self, map: &mut SymbolMap) -> bool {
+        if self.is_err(map) { return true }
         let ty = self.instantiate_shallow(map);
         match ty {
             Type::Ty(v, _) => v.is_float(),
@@ -509,7 +536,6 @@ impl Type {
     pub const I64  : Self = Self::Ty(SymbolId::I64  , GenListId::EMPTY);
     pub const F64  : Self = Self::Ty(SymbolId::F64  , GenListId::EMPTY);
     pub const BOOL : Self = Self::Ty(SymbolId::BOOL , GenListId::EMPTY);
-    pub const ERROR: Self = Self::Ty(SymbolId::ERROR, GenListId::EMPTY);
     pub const NEVER: Self = Self::Ty(SymbolId::NEVER, GenListId::EMPTY);
     pub const RANGE: Self = Self::Ty(SymbolId::RANGE, GenListId::EMPTY);
     pub const STR  : Self = Self::Ty(SymbolId::STR  , GenListId::EMPTY);

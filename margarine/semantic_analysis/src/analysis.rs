@@ -247,14 +247,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         },
                     };
 
-                    let ty = 
-                    match self.dt_to_gen(id, s, data_type, gens) {
-                        Ok(v) => v,
-                        Err(v) => {
-                            self.set_error(id, v);
-                            continue;
-                        },
-                    };
+                    let ty = self.dt_to_gen(id, s, data_type, gens);
 
                     let source = self.ast.range(n);
                     let Some(sym) = ty.sym()
@@ -284,21 +277,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     };
 
                     let s = self.scopes.get(scope);
-                    let trait_ty = match self.dt_to_gen(id, s, trait_name, gens) {
-                        Ok(v) => v,
-                        Err(v) => {
-                            self.set_error(id, v);
-                            return;
-                        },
-                    };
+                    let trait_ty = self.dt_to_gen(id, s, trait_name, gens);
 
-                    let ty = match self.dt_to_gen(id, s, data_type, gens) {
-                        Ok(v) => v,
-                        Err(v) => {
-                            self.set_error(id, v);
-                            return;
-                        },
-                    };
+                    let ty = self.dt_to_gen(id, s, data_type, gens);
 
                     self.type_info.impls.insert(id, (trait_ty, ty, gens));
 
@@ -390,17 +371,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
     fn collect_use_item(&mut self, node: NodeId, scope: Scope, ns_id: NamespaceId, item: UseItem, visibility: Visibility) {
-        let NodeId::Decl(node_id) = node
+        let NodeId::Decl(_) = node
         else { return };
 
         match item.kind() {
             UseItemKind::List { list } => {
                 let result = scope.find_sym_from(item.name(), &self.scopes, &mut self.syms, &self.namespaces, ns_id);
-                let import_ns = match self.convert_symbol_get_result(node, item.name(), item.range(), result) {
-                    Ok(import_ns) => import_ns,
-                    Err(error) => { self.set_error(node_id, error); return; }
-                };
-
+                let import_ns = self.convert_symbol_get_result(node, item.name(), item.range(), result);
                 let import_ns = self.syms.sym_ns(import_ns);
                 let scope = Scope::new(None, ScopeKind::ImplicitNamespace(import_ns));
                 for ui in list {
@@ -410,24 +387,16 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             UseItemKind::BringName(alias) => {
                 let result = scope.find_sym_from(item.name(), &self.scopes, &mut self.syms, &self.namespaces, ns_id);
-                match self.convert_symbol_get_result(node, item.name(), item.range(), result) {
-                    Ok(import_sym) => {
-                        let ns = self.namespaces.get_ns_mut(ns_id);
-                        if let Err(e) = ns.add_sym(&mut self.errors, node, item.range(), alias, import_sym, visibility) {
-                            ns.set_err_sym(item.name(), e);
-                        }
-                    },
-                    Err(e) => self.set_error(node_id, e),
+                let import_sym = self.convert_symbol_get_result(node, item.name(), item.range(), result);
+                let ns = self.namespaces.get_ns_mut(ns_id);
+                if let Err(e) = ns.add_sym(&mut self.errors, node, item.range(), alias, import_sym, visibility) {
+                    ns.set_err_sym(item.name(), e);
                 }
             },
 
             UseItemKind::All => {
                 let result = scope.find_sym_from(item.name(), &self.scopes, &mut self.syms, &self.namespaces, ns_id);
-                let import_ns = match self.convert_symbol_get_result(node, item.name(), item.range(), result) {
-                    Ok(import_ns) => import_ns,
-                    Err(error) => { self.set_error(node_id, error); return; }
-                };
-
+                let import_ns = self.convert_symbol_get_result(node, item.name(), item.range(), result);
                 let import_ns = self.syms.sym_ns(import_ns);
                 if ns_id == import_ns { return };
                 let (ns, import_ns) = self.namespaces.get_double(ns_id, import_ns);
@@ -574,14 +543,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     for f in fields {
                         let sym = self.dt_to_gen(*id, self.scopes.get(scope), f.1, generics);
-                        let sym = 
-                        match sym {
-                            Ok(v) => v,
-                            Err(v) => {
-                                let id = v;
-                                Generic::new(f.1.range(), GenericKind::ERROR, Some(id))
-                            },
-                        };
 
                         let field = (f.0, sym);
                         structure_fields.push(field);
@@ -633,14 +594,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let sym = self.dt_to_gen(*id, self.scopes.get(scope), data_type, generics);
 
                     let sym_name = self.string_map.concat(path, name);
-                    let sym = 
-                    match sym {
-                        Ok(v) => v,
-                        Err(v) => {
-                            let id = v;
-                            Generic::new(data_type.range(), GenericKind::ERROR, Some(id))
-                        },
-                    };
 
                     let kind = SymbolKind::Alias(sym);
 
@@ -667,13 +620,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     for f in mappings {
                         let sym = self.dt_to_gen(*id, self.scopes.get(scope), *f.data_type(), generics);
-                        let sym = match sym {
-                            Ok(v) => v,
-                            Err(v) => {
-                                let id = v;
-                                Generic::new(f.data_type().range(), GenericKind::ERROR, Some(id))
-                            },
-                        };
 
                         let mapping = (f.name(), sym);
                         enum_mappings.push(mapping);
@@ -726,13 +672,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     for a in sig.arguments {
                         let sym = self.dt_to_gen(*id, self.scopes.get(scope), a.data_type(), generics);
-                        let sym = match sym {
-                            Ok(v) => v,
-                            Err(v) => {
-                                let id = v;
-                                Generic::new(a.data_type().range(), GenericKind::ERROR, Some(id))
-                            },
-                        };
 
                         let arg = FunctionArgument::new_inout(a.name(), sym, a.is_inout());
                         args.push(arg);
@@ -740,14 +679,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                     let ret = self.dt_to_gen(*id, self.scopes.get(scope), sig.return_type, generics);
-                    let ret = match ret {
-                        Ok(v) => v,
-                        Err(v) => {
-                            let id = v;
-                            Generic::new(sig.return_type.range(), GenericKind::ERROR, Some(id))
-                        },
-                    };
-
 
                     // Check for special functions
                     if impl_block.is_some() && sig.name == StringMap::ITER_NEXT_FUNC {
@@ -805,27 +736,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         for a in f.args() {
                             let sym = self.dt_to_gen(*id, self.scopes.get(scope), a.data_type(), gens);
-                            let sym = match sym {
-                                Ok(v) => v,
-                                Err(v) => {
-                                    let id = v;
-                                    Generic::new(a.data_type().range(), GenericKind::ERROR, Some(id))
-                                },
-                            };
-
                             let arg = FunctionArgument::new_inout(a.name(), sym, a.is_inout());
                             args.push(arg);
                         }
 
 
                         let ret = self.dt_to_gen(*id, self.scopes.get(scope), f.return_type(), gens);
-                        let ret = match ret {
-                            Ok(v) => v,
-                            Err(v) => {
-                                    let id = v;
-                                    Generic::new(f.return_type().range(), GenericKind::ERROR, Some(id))
-                            },
-                        };
 
 
                         // Finalise
@@ -851,9 +767,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             scope, 
                             ScopeKind::AliasDecl(
                                 StringMap::SELF_TY, 
-                                Generic::new(header, GenericKind::Generic(BoundedGeneric::new(StringMap::SELF_TY, &[])), 
-                                None,
-                    ))));
+                                Generic::new(header, GenericKind::Generic(BoundedGeneric::new(StringMap::SELF_TY, &[]))))));
 
 
                     let mut funcs = sti::vec::Vec::with_cap_in(self.output, functions.len());
@@ -871,13 +785,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         for a in f.arguments {
                             let sym = self.dt_to_gen(*id, self.scopes.get(scope), a.data_type(), gens);
-                            let sym = match sym {
-                                Ok(v) => v,
-                                Err(v) => {
-                                    let id = v;
-                                    Generic::new(a.data_type().range(), GenericKind::ERROR, Some(id))
-                                },
-                            };
 
                             let arg = FunctionArgument::new_inout(a.name(), sym, a.is_inout());
                             args.push(arg);
@@ -885,13 +792,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                         let ret = self.dt_to_gen(*id, self.scopes.get(scope), f.return_type, gens);
-                        let ret = match ret {
-                            Ok(v) => v,
-                            Err(v) => {
-                                let id = v;
-                                    Generic::new(f.return_type.range(), GenericKind::ERROR, Some(id))
-                            },
-                        };
 
 
                         funcs.push((f.name, FunctionTy::new(args.leak(), ret, FunctionKind::Trait, None)));
@@ -952,7 +852,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             NodeId::Decl(decl) => {
                 if let Decl::Error(e) = self.ast.decl(decl) {
                     self.set_error(decl, e);
-                    return AnalysisResult::new(Type::ERROR);
+                    return AnalysisResult::new(self.error_type(e));
                 }
 
                 self.decl(scope, ns, decl);
@@ -966,8 +866,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             NodeId::Expr(expr) => self.expr(path, *scope, expr),
 
-            NodeId::Err(_) => {
-                AnalysisResult::new(Type::ERROR)
+            NodeId::Err(err) => {
+                AnalysisResult::new(self.error_type(err))
             },
         }
     }
@@ -1014,7 +914,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                                 *b, 
                                 (
                                     NamespaceId::MAX,
-                                    Generic::new(sig.source, GenericKind::Sym(ty, &[]), None),
+                                    Generic::new(sig.source, GenericKind::Sym(ty, &[])),
                                     &[],
                                 )
                             );
@@ -1036,26 +936,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 for a in func.args() {
                     let ty = a.symbol().to_ty(generics, &mut self.syms);
-                    let ty = match ty {
-                        Ok(v) => v,
-                        Err(v) => {
-                            self.error(n, v);
-                            Type::ERROR
-                        }
-                    };
 
                     let vs = VariableScope::new(a.name(), ty, true);
                     scope = Scope::new(Some(self.scopes.push(scope)), ScopeKind::VariableScope(vs))
                 }
 
                 let ret = func.ret().to_ty(generics, &mut self.syms);
-                let ret = match ret {
-                    Ok(v) => v,
-                    Err(v) => {
-                        self.error(n, v);
-                        Type::ERROR
-                    }
-                };
 
                 // func scope
                 let fs = FunctionScope::new(ret, sig.return_type.range());
@@ -1174,14 +1060,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         let decl = f.decl().unwrap();
                         let source = self.ast.range(decl);
 
-                        let err = Error::FunctionArgsMismatch {
+                        self.error(decl, Error::FunctionArgsMismatch {
                             source, 
                             sig_len: ft.args().len(),
                             call_len: f.args().len() 
-                        };
-
-                        let err = self.error(decl, err);
-                        self.syms.set_err(sym_id, err);
+                        });
 
                         ns = self.namespaces.get_ns_mut(ns_id);
 
@@ -1198,10 +1081,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         if arg != farg {
                             let decl = f.decl().unwrap();
 
-                            let err = Error::InvalidArgument { source: arg.range() };
-
-                            let err = self.error(decl, err);
-                            self.syms.set_err(sym_id, err);
+                            self.error(decl, Error::InvalidArgument { source: arg.range() });
 
                             ns = self.namespaces.get_ns_mut(ns_id);
                         }
@@ -1446,13 +1326,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let mut validate_hint = || {
                     if let Some(hint) = hint {
-                        let hint = match self.dt_to_ty(*scope, id, hint) {
-                            Ok(v)  => v,
-                            Err(v) => {
-                                rhs_anal.ty = Type::ERROR;
-                                return Err(v);
-                            },
-                        };
+                        let hint = self.dt_to_ty(*scope, id, hint);
+                        if let Some(err) = hint.as_err(&mut self.syms) {
+                            rhs_anal.ty.eq(&mut self.syms, hint);
+                            rhs_anal.ty = hint;
+                            return Err(err);
+                        }
 
                         if !rhs_anal.ty.eq(&mut self.syms, hint) {
                             rhs_anal.ty = hint;
@@ -1521,12 +1400,19 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 else {
                     let range = self.ast.range(expr);
 
+                    // The iterable's type is an unresolved inference variable;
+                    // report it so the loop binding carries a real error, and
+                    // resolve the variable so the post-pass doesn't repeat it.
+                    let err = self.error(id, Error::UnableToInfer(range, None));
+                    let err_ty = self.error_type(err);
+                    iter_anal.ty.eq(&mut self.syms, err_ty);
+
                     let scope = Scope::new(*scope, ScopeKind::Loop);
                     let mut scope = self.scopes.push(scope);
 
                     let _ = self.resolve_pattern(
                         id.into(), &mut scope, binding, 
-                        AnalysisResult::error(), range, true
+                        AnalysisResult::new(err_ty), range, true
                     );
 
                     self.control_flow.enter_loop();
@@ -1545,14 +1431,15 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let Some(sym) = ns.get_sym(StringMap::ITER_NEXT_FUNC)
                 else { 
                     let range = self.ast.range(expr);
-                    self.error(id, Error::ValueIsntAnIterator { ty: iter_anal.ty, range });
+                    let err = self.error(id, Error::ValueIsntAnIterator { ty: iter_anal.ty, range });
+                    let err_ty = self.error_type(err);
 
                     let scope = Scope::new(*scope, ScopeKind::Loop);
                     let mut scope = self.scopes.push(scope);
 
                     let _ = self.resolve_pattern(
                         id.into(), &mut scope, binding, 
-                        AnalysisResult::error(), range, true
+                        AnalysisResult::new(err_ty), range, true
                     );
 
                     self.control_flow.enter_loop();
@@ -1575,13 +1462,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let gens = self.syms.get_gens(gens);
 
                 let binding_ty = binding_ty.ret().to_ty(gens, &mut self.syms);
-                let binding_ty = match binding_ty {
-                    Ok(v) => v,
-                    Err(v) => {
-                        self.error(id, v);
-                        Type::ERROR
-                    },
-                };
 
                 // unwrap the option
                 let binding_ty = binding_ty.gens(&mut self.syms);
@@ -1824,7 +1704,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                                 if let Some(gens) = gens {
                                     for (g, dt) in sym.generics().iter().zip(gens.iter()) {
-                                        let sym = self.dt_to_ty(scope, id, *dt)?;
+                                        let sym = self.dt_to_ty(scope, id, *dt);
+                                        if let Some(err) = sym.as_err(&mut self.syms) { return Err(err); }
 
                                         let g = BoundedGeneric::new(g.name(), &[]);
                                         vgens.push((g, sym));
@@ -1886,7 +1767,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let mut sargs = sti::vec::Vec::new_in(self.syms.arena());
                 for arg in args {
                     let ty = 
-                    if let Some(ty) = arg.1 { self.dt_to_ty(scope, id, ty)? } 
+                    if let Some(ty) = arg.1 { self.dt_to_ty(scope, id, ty) } 
                     else { self.syms.new_var(id, arg.0, arg.2) };
 
                     active_scope = 
@@ -1925,10 +1806,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let g = BoundedGeneric::new(g, &[]);
                     gens.push((g, arg.1));
                     gen_list.push(g);
-                    fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Generic(g), None)));
+                    fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Generic(g))));
                 }
 
-                let ret = Generic::new(range, GenericKind::Generic(t), None);
+                let ret = Generic::new(range, GenericKind::Generic(t));
 
                 let closure_ty = self.func_sym(closure, fargs.leak(), ret, gen_list.leak());
                 let gens = self.syms.add_gens(gens.leak());
@@ -1965,12 +1846,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let lhs_sym = lhs_anal.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
 
-                if lhs_sym == SymbolId::ERROR { return Ok(AnalysisResult::error()) }
+                if lhs_anal.ty.is_err(&mut self.syms) { return Ok(AnalysisResult::new(lhs_anal.ty)) }
                 if lhs_sym == SymbolId::NEVER { return Ok(AnalysisResult::never()) }
 
                 let rhs_sym = rhs_anal.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
 
-                if rhs_sym == SymbolId::ERROR { return Ok(AnalysisResult::error()) }
+                if rhs_anal.ty.is_err(&mut self.syms) { return Ok(AnalysisResult::new(rhs_anal.ty)) }
                 if rhs_sym == SymbolId::NEVER { return Ok(AnalysisResult::never()) }
 
                 let mut validate = || {
@@ -2043,7 +1924,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let rhs_anal = self.expr(path, scope, rhs);
                 let sym = rhs_anal.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
 
-                if sym == SymbolId::ERROR { return Ok(AnalysisResult::error()) }
+                if rhs_anal.ty.is_err(&mut self.syms) { return Ok(AnalysisResult::new(rhs_anal.ty)) }
                 if sym == SymbolId::NEVER { return Ok(AnalysisResult::never()) }
 
                 match operator {
@@ -2061,7 +1942,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let cond = self.expr(path, scope, condition);
 
                 if let Ok(sym) = cond.ty.sym(&mut self.syms) {
-                    if sym == SymbolId::ERROR { return Ok(AnalysisResult::error()) }
+                    if self.syms.is_err_sym(sym) { return Ok(AnalysisResult::new(cond.ty)) }
                     if sym == SymbolId::NEVER { return Ok(AnalysisResult::never()) }
                 }
 
@@ -2109,8 +1990,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let sym = anal.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
 
-                if sym == SymbolId::ERROR {
-                    return Err(self.error(id, Error::Bypass));
+                if let Some(err) = anal.ty.as_err(&mut self.syms) {
+                    return Err(err);
                 }
 
                 let sym = self.syms.sym(sym);
@@ -2163,19 +2044,21 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 // ty chck
                 let ret_ty = self.syms.new_var(id, StringMap::RESULT, range);
-                let mut errored = false;
+                let mut errored = None;
                 let mut has_value_branch = false;
                 for (m, f) in mappings.iter().zip(cont.fields().iter()) {
                     let gens = anal.ty.gens(&mut self.syms);
                     let gens = self.syms.get_gens(gens);
-                    let vs = VariableScope::new(m.binding(), f.1.to_ty(gens, &mut self.syms).map_err(|e| self.error(id, e))?, true);
+                    let vs = VariableScope::new(m.binding(), f.1.to_ty(gens, &mut self.syms), true);
 
                     let scope = Scope::new(Some(scope), ScopeKind::VariableScope(vs));
                     let scope = self.scopes.push(scope);
 
                     let anal = self.expr(path, scope, m.expr());
                     if anal.ty.is_err(&mut self.syms) {
-                        errored = true;
+                        if errored.is_none() {
+                            errored = anal.ty.as_err(&mut self.syms);
+                        }
                         continue;
                     }
 
@@ -2192,7 +2075,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
                 if !has_value_branch {
-                    ret_ty.eq(&mut self.syms, if errored { Type::ERROR } else { Type::NEVER });
+                    let ty = 
+                    if let Some(err) = errored {
+                        self.error_type(err)
+                    } else {
+                        Type::NEVER
+                    };
+
+                    ret_ty.eq(&mut self.syms, ty);
                 }
 
                 AnalysisResult::new(ret_ty)
@@ -2203,7 +2093,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
             Expr::CreateStruct { data_type, fields  } => {
-                let ty = self.dt_to_ty(scope, id, data_type)?;
+                let ty = self.dt_to_ty(scope, id, data_type);
+                if let Some(err) = ty.as_err(&mut self.syms) { return Err(err); }
 
                 let sym = ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
                 let sym = self.syms.sym(sym);
@@ -2230,13 +2121,18 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
 
-                // check missing fields
+                // check missing fields; an errored field is optional (its slot
+                // is zeroed at codegen, and the field is unusable anyway)
                 let mut missing_fields = Vec::new_in(self.temp);
                 for f in cont.fields().iter() {
                     let name = f.0;
 
                     if !fields.iter().any(|x| x.0 == name) {
-                        missing_fields.push(name);
+                        let gens = ty.gens(&mut self.syms);
+                        let gens = self.syms.get_gens(gens);
+                        if !f.1.to_ty(gens, &mut self.syms).is_err(&mut self.syms) {
+                            missing_fields.push(name);
+                        }
                     }
                 }
 
@@ -2252,7 +2148,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let gens = self.syms.get_gens(gens);
 
                     for f in cont.fields() {
-                        vec.push((f.0, f.1.to_ty(gens, &mut self.syms).map_err(|e| self.error(id, e))?))
+                        vec.push((f.0, f.1.to_ty(gens, &mut self.syms)))
                     }
 
                     vec
@@ -2280,7 +2176,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let expr = self.expr(path, scope, val);
 
                 if expr.ty.is_err(&mut self.syms) {
-                    return Ok(AnalysisResult::error())
+                    return Ok(AnalysisResult::new(expr.ty))
                 }
 
                 let sym_id = expr.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
@@ -2311,7 +2207,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         let gens = self.syms.get_gens(gens);
 
                         let field_gen = field.1;
-                        let field_ty = field_gen.to_ty(gens, &mut self.syms).map_err(|e| self.error(id, e))?;
+                        let field_ty = field_gen.to_ty(gens, &mut self.syms);
 
                         let ty = match cont.kind() {
                             ContainerKind::Struct => field_ty,
@@ -2325,10 +2221,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                             ContainerKind::Generic => unreachable!(),
                         };
-
-                        if let Some(e) = field_gen.err() {
-                            self.type_info.exprs[id] = Some(crate::ExprInfo::Errored(e));
-                        }
 
                         return Ok(AnalysisResult {
                             ty,
@@ -2373,14 +2265,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     if let Some(gens) = expr_gens {
                         for (g, (_, s)) in gens.iter().zip(vgens.iter().skip(sym_gens.len())) {
                             let ty = self.dt_to_ty(scope, id, *g);
-
-                            let ty = match ty {
-                                Ok(v) => v,
-                                Err(v) => {
-                                    self.set_error(id, v);
-                                    continue;
-                                },
-                            };
+                            if ty.is_err(&mut self.syms) { continue; }
 
                             if !ty.eq(&mut self.syms, *s) {
                                 self.error(id, Error::InvalidType { source: range, found: *s, expected: ty });
@@ -2494,20 +2379,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
                 let gens = self.syms.add_gens(vgens.leak());
-                let implementation_ty = g.to_ty(self.syms.get_gens(gens), &mut self.syms).map_err(|e| self.error(id, e))?;
+                let implementation_ty = g.to_ty(self.syms.get_gens(gens), &mut self.syms);
                 assert!(expr.ty.eq(&mut self.syms, implementation_ty));
 
                 if let Some(explicit_gens) = expr_gens {
                     for (g, (_, s)) in explicit_gens.iter().zip(self.syms.get_gens(gens)) {
                         let ty = self.dt_to_ty(scope, id, *g);
-
-                        let ty = match ty {
-                            Ok(v) => v,
-                            Err(v) => {
-                            self.set_error(id, v);
-                                continue;
-                            },
-                        };
+                        if ty.is_err(&mut self.syms) { continue; }
 
                         if !ty.eq(&mut self.syms, *s) {
                             self.error(id, Error::InvalidType { source: range, found: *s, expected: ty });
@@ -2574,7 +2452,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
                 if lhs.ty.is_err(&mut self.syms) {
-                    return Ok(AnalysisResult::error())
+                    return Ok(AnalysisResult::new(lhs.ty))
                 }
 
                 let sym_id = lhs.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
@@ -2596,13 +2474,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let func_args = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*pool, func.args().len());
                     for g in func.args() {
-                        vec.push((g.symbol().to_ty(gens, &mut self.syms).map_err(|e| self.error(id, e))?, g.is_inout()));
+                        vec.push((g.symbol().to_ty(gens, &mut self.syms), g.is_inout()));
                     }
 
                     vec
                 };
 
-                let ret = func.ret().to_ty(gens, &mut self.syms).map_err(|e| self.error(id, e))?;
+                let ret = func.ret().to_ty(gens, &mut self.syms);
 
                 // ty check args
                 for (i, ((source, anal, expr, explicit_inout), (fa, formal_inout))) in args_anals.iter().copied().zip(func_args.iter().copied()).enumerate() {
@@ -2631,15 +2509,15 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     for bound in sym_g.bounds {
                         if self.syms.type_implements_trait(*value, *bound) { continue }
                         if value.is_err(&mut self.syms)
-                        || value.is_never(&mut self.syms) { return Ok(AnalysisResult::error()) }
+                        || value.is_never(&mut self.syms) { return Ok(AnalysisResult::new(*value)) }
 
-                        self.error(
+                        let err = self.error(
                             lhs_expr,
                             Error::TypeDoesntImplTrait { 
                                 source: range, ty: *value, tr: *bound }
                         );
                         
-                        return Ok(AnalysisResult::error())
+                        return Ok(AnalysisResult::new(self.error_type(err)))
                     }
 
                 }
@@ -2656,9 +2534,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     &mut self.syms, &self.namespaces
                 );
 
-                let sym = self.convert_symbol_get_result(id, namespace, namespace_source, sym)?;
+                let sym = self.convert_symbol_get_result(id, namespace, namespace_source, sym);
                 if let SymbolKind::Alias(alias) = self.syms.sym(sym).kind()
-                && let Some(error) = alias.err() {
+                && let Some(error) = alias.to_ty(&[], &mut self.syms).as_err(&mut self.syms) {
                     return Err(error);
                 }
 
@@ -2671,8 +2549,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let ty = self.syms.get_ty(sym, &*generics);
                 let sym = ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
-                if sym == SymbolId::ERROR {
-                    return Err(ErrorId::Bypass);
+                if let SymbolKind::Error(err) = self.syms.sym(sym).kind() {
+                    return Err(err);
                 }
                 let scope = Scope::new(scope, ScopeKind::QualifiedTypeNamespace(ty, None));
                 let scope = self.scopes.push(scope);
@@ -2683,10 +2561,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             },
 
             Expr::WithinTypeNamespace { namespace, action  } => {
-                let ty = self.dt_to_ty(scope, id, namespace)?;
+                let ty = self.dt_to_ty(scope, id, namespace);
                 let sym = ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
-                if sym == SymbolId::ERROR {
-                    return Err(ErrorId::Bypass);
+                if let SymbolKind::Error(err) = self.syms.sym(sym).kind() {
+                    return Err(err);
                 }
 
                 self.expr(path, scope, action)
@@ -2712,7 +2590,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let Some(func) = self.scopes.get(scope).find_curr_func(&self.scopes)
                 else { return Err(self.error(id, Error::OutsideOfAFunction { source: range })) };
                 let ret_anal = self.expr(path, scope, ret);
-                if ret_anal.ty.is_err(&mut self.syms) { return Ok(AnalysisResult::error()) }
+                if ret_anal.ty.is_err(&mut self.syms) { return Ok(AnalysisResult::new(ret_anal.ty)) }
                 if ret_anal.ty.is_never(&mut self.syms) { return Ok(AnalysisResult::never()) }
 
                 if ret_anal.ty.ne(&mut self.syms, func.ret) {
@@ -2802,7 +2680,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let sym = list.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
 
-                if sym == SymbolId::NEVER || sym == SymbolId::ERROR { return Ok(AnalysisResult::new(list.ty)) }
+                if sym == SymbolId::NEVER || self.syms.is_err_sym(sym) { return Ok(AnalysisResult::new(list.ty)) }
 
                 if sym != SymbolId::LIST {
                     return Err(self.error(id, Error::IndexOnNonList(range, list.ty)));
@@ -2825,7 +2703,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             Expr::AsCast { lhs, data_type  } => {
                 let anal = self.expr(path, scope, lhs);
-                let ty = self.dt_to_ty(scope, id, data_type)?;
+                let ty = self.dt_to_ty(scope, id, data_type);
 
                 if anal.ty.eq(&mut self.syms, ty) {
                     return Ok(AnalysisResult::new(ty))
@@ -2857,7 +2735,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             Expr::Unwrap(val) => {
                 let expr = self.expr(path, scope, val);
                 let sym = expr.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
-                if sym == SymbolId::ERROR { return Ok(AnalysisResult::error()) }
+                if self.syms.is_err_sym(sym) { return Ok(AnalysisResult::new(expr.ty)) }
 
                 if sym != SymbolId::OPTION
                    && sym != SymbolId::RESULT {
@@ -2880,8 +2758,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let sym = expr.ty.sym(&mut self.syms).map_err(|e| self.error(id, e))?;
                 let Some(func) = self.scopes.get(scope).find_curr_func(&self.scopes)
                 else { return Err(self.error(id, Error::OutsideOfAFunction { source: range })) };
-                if sym == SymbolId::ERROR {
-                    return Err(self.error(id, Error::Bypass));
+                if let Some(err) = expr.ty.as_err(&mut self.syms) {
+                    return Err(err);
                 }
 
                 if sym == SymbolId::OPTION {
@@ -2955,13 +2833,18 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
         match result {
             Ok(v) => {
-                self.type_info.set_expr(id, v);
+                let already_err = self.type_info.exprs[id]
+                    .map(|info| info.ty.is_err(&mut self.syms))
+                    .unwrap_or(false);
+                if !already_err {
+                    self.type_info.set_expr(id, v.ty);
+                }
                 v
             },
 
             Err(v) => {
                 self.set_error(id, v);
-                AnalysisResult::error()
+                AnalysisResult::new(self.error_type(v))
             },
         }
     }

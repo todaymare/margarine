@@ -273,8 +273,6 @@ pub enum Error {
     },
 
     InvalidArgument { source: SourceRange },
-
-    Bypass,
 }
 
 
@@ -878,9 +876,6 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                 fmt.error("invalid argument for this trait function")
                     .highlight(*source);
             },
-
-
-            Error::Bypass => (),
         }
     }
 }

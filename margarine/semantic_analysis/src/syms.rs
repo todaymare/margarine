@@ -14,7 +14,6 @@ pub struct Symbol<'me> {
     name    : StringIndex,
     generics: &'me [BoundedGeneric<'me>],
     kind    : SymbolKind<'me>,
-    err     : Option<ErrorId>,
 }
 
 
@@ -26,6 +25,10 @@ pub enum SymbolKind<'me> {
     Alias(Generic<'me>),
     Opaque,
     Namespace,
+    /// A symbol that failed to resolve; carries the originating error so
+    /// consumers can cite it. Every failed resolution registers its own
+    /// entry (see `SymbolMap::error_sym`).
+    Error(ErrorId),
 }
 
 
@@ -52,7 +55,7 @@ pub enum TraitImplementation<'me> {
 
 impl<'me> Symbol<'me> {
     pub fn new(name: StringIndex, generics: &'me [BoundedGeneric<'me>], kind: SymbolKind<'me>) -> Self {
-        Self { name, generics, kind, err: None }
+        Self { name, generics, kind }
     }
 
     pub fn new_ns(name: StringIndex) -> Self {

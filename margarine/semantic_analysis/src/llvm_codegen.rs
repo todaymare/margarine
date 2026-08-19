@@ -256,6 +256,13 @@ pub fn run<'a>(
         let str_ty = ctx.structure("strType");
         str_ty.set_fields(&[*collection_ty], false);
 
+        // The error type: a concrete zero-size struct so containers that hold
+        // an errored field still have valid layouts. It carries no payload;
+        // errored values are skipped by out_if_err! before emission, so this
+        // is the codegen totality net, not a runtime value.
+        let error_ty = ctx.structure("{error}");
+        error_ty.set_fields(&[], false);
+
         let panic_fn_ty = void.fn_ty(ctx.arena, &[*ptr, *ctx.integer(64)], false);
         let panic_fn = module.function("margarinePanic", panic_fn_ty);
         panic_fn.set_linkage(Linkage::External);
@@ -1650,6 +1657,55 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
 
+    fn extern_type_error(
+        &mut self,
+        ty: Type,
+        active: &mut Vec<SymbolId>,
+    ) -> Option<ErrorId> {
+        let ty = ty.resolve(&[], self.syms);
+        if let Some(error) = ty.as_err(self.syms) {
+            return Some(error);
+        }
+
+        let Type::Ty(sym, gens) = ty
+        else { return None };
+
+        if active.contains(&sym) {
+            return None;
+        }
+        active.push(sym);
+
+        let kind = self.syms.sym(sym).kind();
+        let nested = match kind {
+            SymbolKind::Container(cont) => {
+                let gens = self.syms.get_gens(gens);
+                let mut fields = Vec::with_capacity(cont.fields().len());
+                for (_, field) in cont.fields() {
+                    fields.push(field.to_ty(gens, self.syms));
+                }
+                fields
+            },
+
+            SymbolKind::Function(func) => {
+                let gens = self.syms.get_gens(gens);
+                let mut fields = Vec::with_capacity(func.args().len() + 1);
+                for arg in func.args() {
+                    fields.push(arg.symbol().to_ty(gens, self.syms));
+                }
+                fields.push(func.ret().to_ty(gens, self.syms));
+                fields
+            },
+
+            _ => Vec::new(),
+        };
+
+        let error = nested.into_iter()
+            .find_map(|nested| self.extern_type_error(nested, active));
+        active.pop();
+        error
+    }
+
+
     fn get_func(&mut self, ty: Type) -> Result<&Function<'ctx>, ErrorId> {
         let ty = ty.resolve(&[], self.syms);
         assert!(ty.is_resolved(&mut self.syms));
@@ -1666,10 +1722,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         // create
         let sym = self.syms.sym(sym_id);
-        if let Some(err) = sym.err() { return Err(err) }
-
         let SymbolKind::Function(sym_func) = sym.kind()
         else { unreachable!() };
+
+        // Calls to validation-broken methods fail fast with the reported
+        // diagnostic: the trait-impl validation records the error on the
+        // method's decl, and functions are only ever created through here.
+        if let Some(decl) = sym_func.decl()
+        && let Some(err) = self.ty_info.decls[decl] {
+            return Err(err);
+        }
 
         let gens = self.syms.gens()[gens_id];
 
@@ -1678,19 +1740,29 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             assert_eq!(g0.name, n1.name);
         }
 
-        let ret = sym_func.ret().to_ty(gens, self.syms).unwrap();
+        let ret = sym_func.ret().to_ty(gens, self.syms);
         let ret = ret.resolve(&[gens], self.syms);
         let is_never = ret.is_never(self.syms) || ret.is_err(self.syms);
-
-        let llvm_ret = self.to_llvm_ty(ret);
 
         let args = sym_func
             .args().iter()
             .map(|x| 
                 x.symbol()
-                .to_ty(gens, self.syms).unwrap()
+                .to_ty(gens, self.syms)
                 .resolve(&[gens], self.syms)
             ).collect::<Vec<_>>();
+        let is_extern = matches!(sym_func.kind(), syms::func::FunctionKind::Extern(_));
+        if is_extern {
+            let mut active = Vec::new();
+            let error = args.iter().copied()
+                .find_map(|arg| self.extern_type_error(arg, &mut active))
+                .or_else(|| self.extern_type_error(ret, &mut active));
+            if let Some(error) = error {
+                return Err(error);
+            }
+        }
+
+        let llvm_ret = self.to_llvm_ty(ret);
 
         let external_abi = self.extern_abi(llvm_ret.repr);
         let llvm_args = {
@@ -1850,7 +1922,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 else { unreachable!() };
 
                 for (i, arg) in sym_func.args().iter().enumerate() {
-                    let arg_ty = arg.symbol().to_ty(gens, self.syms).unwrap();
+                    let arg_ty = arg.symbol().to_ty(gens, self.syms);
                     let arg_ty = arg_ty.resolve(&[], self.syms);
                     let param = builder.arg(i).unwrap();
                     if arg.is_inout() {
@@ -2537,7 +2609,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let none_tag = *builder.const_int(self.i32, 1, false);
                 let some_tag = *builder.const_int(self.i32, 0, false);
                 let unit = *builder.const_unit();
-                let none = self.create_enum(&mut builder, ret, none_tag, unit);
+                let none = self.create_enum(&mut builder, ret, none_tag, unit, Type::UNIT);
                 let is_end = builder.ptr_is_null(element_ptr);
 
                 builder.ite(is_end,
@@ -2547,7 +2619,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     |builder| {
                         let element = builder.load_tbaa(element_ptr, llvm_elem.repr, self.tbaa_element);
                         let element = self.emit_copy(builder, element, elem_ty);
-                        let some = self.create_enum(builder, ret, some_tag, element);
+                        let some = self.create_enum(builder, ret, some_tag, element, elem_ty);
                         builder.store(result, some);
                     },
                 );
@@ -2643,7 +2715,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let none_tag = *builder.const_int(self.i32, 1, false);
                 let unit = *builder.const_unit();
 
-                let none = self.create_enum(&mut builder, ret, none_tag, unit);
+                let none = self.create_enum(&mut builder, ret, none_tag, unit, Type::UNIT);
                 let pair_first = self.string_map.num(0);
                 let pair_second = self.string_map.num(1);
 
@@ -2682,7 +2754,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             (pair_first, *left),
                             (pair_second, *right),
                         ]);
-                        let some = self.create_enum(builder, ret, *builder.const_int(self.i32, 0, false), *pair);
+                        let some = self.create_enum(builder, ret, *builder.const_int(self.i32, 0, false), *pair, pair_ty);
                         builder.store(result, some);
                     },
                 );
@@ -2701,11 +2773,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             syms::func::FunctionKind::Enum { sym: sym_id, index } => {
                 let sym = self.syms.sym(sym_id);
+                // add_enum registers the constructor with the enum's own
+                // just-finalized container symbol, and errored constructions
+                // are skipped by out_if_err before reaching get_func.
                 let SymbolKind::Container(cont) = sym.kind()
-                else { unreachable!() };
+                else { unreachable!("enum-constructor symbol is a finalized container") };
 
                 let arg = cont.fields()[index];
-                let arg_ty = arg.1.to_ty(gens, self.syms).unwrap();
+                let arg_ty = arg.1.to_ty(gens, self.syms);
 
                 let is_unit = arg_ty.sym(self.syms).unwrap() == SymbolId::UNIT;
 
@@ -2748,13 +2823,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 if is_unit {
                     let kind = builder.const_int(self.i32, index as _, false);
                     let unit = *builder.const_unit();
-                    self.create_enum(&mut builder, ret, *kind, unit)
+                    self.create_enum(&mut builder, ret, *kind, unit, arg_ty)
                 } else {
                     let kind = builder.const_int(self.i32, index as _, false);
                     let value = builder.arg(0).unwrap();
                     let value = builder.local_get(value);
                     let value = self.emit_copy(&mut builder, value, arg_ty);
-                    self.create_enum(&mut builder, ret, *kind, value)
+                    self.create_enum(&mut builder, ret, *kind, value, arg_ty)
                 };
 
                 builder.ret(en);
@@ -2775,10 +2850,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             ErrorId::Lexer((file, error)) => self.errors[0][file as usize][error.0 as usize].clone(),
             ErrorId::Parser((file, error)) => self.errors[1][file as usize][error.0 as usize].clone(),
             ErrorId::Sema(error) => self.errors[2][0][error.0 as usize].clone(),
-            ErrorId::Bypass => {
-                builder.unreachable();
-                return;
-            },
         };
 
         self.emit_panic(builder, &message);
@@ -2825,13 +2896,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let mapping = TypeMapping { repr: *self.func_ref, strct: *self.ctx.void() };
                 self.ty_mappings.insert(hash, mapping);
 
-                let ret = function_ty.ret().to_ty(gens, self.syms).unwrap();
+                let ret = function_ty.ret().to_ty(gens, self.syms);
 
                 let ret = self.to_llvm_ty(ret).repr;
                 let llvm_args = {
                     let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, function_ty.args().len());
                     for i in function_ty.args().iter() {
-                        let arg = i.symbol().to_ty(gens, self.syms).unwrap();
+                        let arg = i.symbol().to_ty(gens, self.syms);
                         if i.is_inout() {
                             vec.push(*self.ctx.ptr());
                         } else {
@@ -2855,7 +2926,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         let mut fields = sti::vec::Vec::with_cap_in(&*self.ctx.arena, cont.fields().len());
 
                         for i in cont.fields() {
-                            let ty = i.1.to_ty(gens, self.syms).unwrap();
+                            let ty = i.1.to_ty(gens, self.syms);
                             fields.push(self.to_llvm_ty(ty).repr);
                         }
 
@@ -2876,7 +2947,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, cont.fields().len());
 
                             for i in cont.fields() {
-                                let ty = i.1.to_ty(gens, self.syms).unwrap();
+                                let ty = i.1.to_ty(gens, self.syms);
                                 vec.push(self.to_llvm_ty(ty).repr);
                             }
 
@@ -2894,7 +2965,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let mut payload_tys = sti::vec::Vec::with_cap_in(&*self.ctx.arena, cont.fields().len());
                         for field in cont.fields() {
-                            let ft = field.1.to_ty(gens, self.syms).unwrap();
+                            let ft = field.1.to_ty(gens, self.syms);
                             let llvm = self.to_llvm_ty(ft);
                             payload_tys.push(llvm.repr);
                         }
@@ -2920,6 +2991,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             SymbolKind::Opaque => {
                 let mapping = TypeMapping { repr: *self.ctx.ptr(), strct: *self.ctx.ptr(), };
+                self.ty_mappings.insert(hash, mapping);
+            },
+
+
+            SymbolKind::Error(_) => {
+                // Keep the zero-field error aggregate concrete: error-typed
+                // fields may be stored inside otherwise valid structs.
+                let strct = self.ctx.structure("{error}");
+                strct.set_fields(&[], false);
+                let mapping = TypeMapping { repr: *strct, strct: *strct };
                 self.ty_mappings.insert(hash, mapping);
             },
 
@@ -3008,7 +3089,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 out_if_err!();
                 let value = self.expr(env, builder, rhs)?;
 
-                let margarine_ty = self.ty_info.expr(rhs).unwrap();
+                let margarine_ty = self.ty_info.expr(rhs);
                 let margarine_ty = margarine_ty.resolve(&[env.gens], self.syms);
 
                 let ty = self.to_llvm_ty(margarine_ty);
@@ -3021,7 +3102,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             parser::nodes::stmt::Stmt::UpdateValue { lhs, rhs } => {
                 out_if_err!();
-                if let Err(e) = self.ty_info.expr(lhs) { return Err(e) }
+                if let Some(e) = self.ty_info.expr(lhs).as_err(&mut self.syms) { return Err(e) }
                 let rhs = self.expr(env, builder, rhs)?;
 
                 self.assign(env, builder, lhs, rhs);
@@ -3032,7 +3113,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             parser::nodes::stmt::Stmt::ForLoop { binding, expr, body } => {
                 out_if_err!();
                 let iter_value = self.expr(env, builder, expr)?;
-                let iter_sym = self.ty_info.expr(expr)?.resolve(&[env.gens], self.syms);
+                let iter_sym = self.ty_info.expr(expr).resolve(&[env.gens], self.syms);
 
                 let (iter_fn_ret_ty, iter_fn_is_inout, func_ptr, func_ty) = {
                     let sym = iter_sym.sym(self.syms).unwrap();
@@ -3052,7 +3133,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let gens = iter_sym.gens(self.syms);
                     let gens = self.syms.get_gens(gens);
-                    let ret_ty = ret_ty.ret().to_ty(gens, self.syms).unwrap();
+                    let ret_ty = ret_ty.ret().to_ty(gens, self.syms);
 
                     let func = self.get_func(func)?;
                     (ret_ty, iter_fn_is_inout, func.func_ptr, func.func_ty)
@@ -3184,7 +3265,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
                 let parent_ptr = self.resolve_mut_lvalue_ptr(env, builder, val);
 
-                let ty = self.ty_info.expr(val).unwrap();
+                let ty = self.ty_info.expr(val);
                 if ty.is_err(self.syms) { unreachable!() }
 
                 let ty = ty.resolve(&[env.gens], self.syms);
@@ -3210,13 +3291,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let list_slot = self.resolve_mut_lvalue_ptr(env, builder, list);
                 let index_val = self.expr(env, builder, index).unwrap().as_integer();
 
-                let elem_ty = self.ty_info.expr(list).unwrap();
+                let elem_ty = self.ty_info.expr(list);
                 let elem_ty = elem_ty.gens(self.syms);
                 let elem_ty = self.syms.get_gens(elem_ty)[0].1;
                 let elem_ty = elem_ty.resolve(&[env.gens], self.syms);
                 let llvm_ty = self.to_llvm_ty(elem_ty);
 
-                let list_ty = self.ty_info.expr(list).unwrap().resolve(&[env.gens], self.syms);
+                let list_ty = self.ty_info.expr(list).resolve(&[env.gens], self.syms);
 
                 let collection = builder.load(list_slot, *self.collection_ty).as_struct();
                 let index_val = self.check_list_index(builder, collection, index_val);
@@ -3314,7 +3395,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         builder: &mut Builder<'ctx>, 
         expr: ExprId, value: Value<'ctx>
     ) {
-        self.ty_info.expr(expr).unwrap();
+        self.ty_info.expr(expr);
 
         match self.ast.expr(expr) {
             parser::nodes::expr::Expr::Identifier(name, _) => {
@@ -3328,7 +3409,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::AccessField { .. } => {
-                let ty = self.ty_info.expr(expr).unwrap().resolve(&[env.gens], self.syms);
+                let ty = self.ty_info.expr(expr).resolve(&[env.gens], self.syms);
                 let llvm_ty = self.to_llvm_ty(ty);
                 let ptr = self.resolve_mut_lvalue_ptr(env, builder, expr);
                 let old_value = builder.load(ptr, llvm_ty.repr);
@@ -3338,7 +3419,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::Unwrap(expr) => {
-                let ty = self.ty_info.expr(expr).unwrap();
+                let ty = self.ty_info.expr(expr);
                 if ty.is_err(self.syms) { unreachable!() }
                 let ty = ty.resolve(&[env.gens], self.syms);
                 let llvm_enum_ty = self.to_llvm_ty(ty);
@@ -3370,7 +3451,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                     parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
-                        let ty = self.ty_info.expr(val).unwrap();
+                        let ty = self.ty_info.expr(val);
                         if ty.is_err(self.syms) { unreachable!() }
 
                         let sym = ty.sym(self.syms).unwrap();
@@ -3386,7 +3467,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let gens = ty.gens(self.syms);
                         let gens = self.syms.get_gens(gens);
-                        let field_ty = cont.fields()[i].1.to_ty(gens, self.syms).unwrap();
+                        let field_ty = cont.fields()[i].1.to_ty(gens, self.syms);
                         let field_ty = field_ty.resolve(&[env.gens], self.syms);
                         let field_llvm_ty = self.to_llvm_ty(field_ty);
 
@@ -3458,7 +3539,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::OrReturn(expr) => {
-                let ty = self.ty_info.expr(expr).unwrap();
+                let ty = self.ty_info.expr(expr);
                 if ty.is_err(self.syms) { unreachable!() }
                 let ty = ty.resolve(&[env.gens], self.syms);
                 let llvm_enum_ty = self.to_llvm_ty(ty);
@@ -3499,7 +3580,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                     parser::nodes::expr::Expr::AccessField { val, field_name, .. } => {
-                        let ty = self.ty_info.expr(val).unwrap();
+                        let ty = self.ty_info.expr(val);
                         if ty.is_err(self.syms) { unreachable!() }
 
                         let sym = ty.sym(self.syms).unwrap();
@@ -3515,7 +3596,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                         let gens = ty.gens(self.syms);
                         let gens = self.syms.get_gens(gens);
-                        let field_ty = cont.fields()[i].1.to_ty(gens, self.syms).unwrap();
+                        let field_ty = cont.fields()[i].1.to_ty(gens, self.syms);
                         let field_ty = field_ty.resolve(&[env.gens], self.syms);
                         let field_llvm_ty = self.to_llvm_ty(field_ty);
 
@@ -3600,7 +3681,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             Expr::IndexList { .. } => {
-                let elem_ty = self.ty_info.expr(expr).unwrap().resolve(&[env.gens], self.syms);
+                let elem_ty = self.ty_info.expr(expr).resolve(&[env.gens], self.syms);
                 let llvm_ty = self.to_llvm_ty(elem_ty);
                 let elem_ptr = self.resolve_mut_lvalue_ptr(env, builder, expr);
                 let old_elem = builder.load(elem_ptr, llvm_ty.repr);
@@ -3628,24 +3709,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     ) -> Result<(Value<'ctx>, Type), ErrorId> {
         macro_rules! out_if_err {
             () => {{
-                match self.ty_info.expr(expr) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        return Err(e);
-                    },
-               }
+                let ty = self.ty_info.expr(expr);
+                if let Some(err) = ty.as_err(&mut self.syms) {
+                    return Err(err);
+                }
+                ty
             }};
         }
 
 
         let val = self.ast.expr(expr);
-        let ty = self.ty_info.exprs[expr];
-        let result_ty = match ty.unwrap() {
-            crate::ExprInfo::Result { ty } => Ok(ty.resolve(&[env.gens], self.syms)),
-            crate::ExprInfo::Errored(e) => Err(e),
-        };
-
-        let is_err = result_ty.map(|t| t.is_err(self.syms));
+        let result_ty = self.ty_info.exprs[expr].unwrap().ty.resolve(&[env.gens], self.syms);
+        let result_err = result_ty.as_err(&mut self.syms);
 
         let llvm_value = 
         match val {
@@ -3676,7 +3751,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     lexer::Literal::Bool(v) => {
                         let kind = builder.const_bool(v);
                         let value = *builder.const_unit();
-                        self.create_enum(builder, Type::BOOL, *kind, value)
+                        self.create_enum(builder, Type::BOOL, *kind, value, Type::UNIT)
                     },
                 }
             },
@@ -3760,7 +3835,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let rhs_val = self.expr(env, builder, rhs)?;
                 out_if_err!();
 
-                let sym = self.ty_info.expr(lhs).unwrap();
+                let sym = self.ty_info.expr(lhs);
                 let sym = sym.resolve(&[env.gens], self.syms);
 
                 let result = match operator {
@@ -3845,6 +3920,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         Type::BOOL,
                         result,
                         value,
+                        Type::UNIT,
                     )
                 } else {
                     result 
@@ -3944,7 +4020,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let match_value = self.expr(env, builder, value)?;
                 let ty = out_if_err!().resolve(&[env.gens], self.syms);
 
-                let sym = self.ty_info.expr(value).unwrap();
+                let sym = self.ty_info.expr(value);
                 let sym = sym.resolve(&[env.gens], self.syms);
 
                 let gens = sym.gens(self.syms);
@@ -3973,7 +4049,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 |builder, (field, mapping)| {
                     // initialize the binding
                     let gens = self.syms.get_gens(gens);
-                    let field_ty = field.1.to_ty(gens, self.syms).unwrap();
+                    let field_ty = field.1.to_ty(gens, self.syms);
                     let field_ty = field_ty.resolve(&[env.gens], self.syms);
                     let field_ty_llvm = self.to_llvm_ty(field_ty);
 
@@ -3990,7 +4066,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     self.emit_drop(env, builder, match_value, sym);
 
                     let match_body_is_never = self.ty_info.expr(mapping.expr())
-                        .unwrap()
                         .is_never(self.syms);
 
                     env.vars.push((mapping.binding(), local, field_ty, false));
@@ -4021,7 +4096,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             parser::nodes::expr::Expr::IndexList { list, index } => {
-                let list_ty = self.ty_info.expr(list).unwrap().resolve(&[env.gens], self.syms);
+                let list_ty = self.ty_info.expr(list).resolve(&[env.gens], self.syms);
                 let (list_value, list_is_temporary) = 
                 match self.ast.expr(list) {
                     parser::nodes::expr::Expr::Identifier(name, _) => {
@@ -4067,9 +4142,29 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let ty = out_if_err!();
                 let ty = ty.resolve(&[env.gens], self.syms);
+                let gens = ty.gens(self.syms);
+                let gens = self.syms.get_gens(gens);
+
+                let sym = ty.sym(self.syms).unwrap();
+                let field_types = match self.syms.sym(sym).kind() {
+                    SymbolKind::Container(cont) => {
+                        cont.fields().iter().map(|(name, f)| (*name, f.to_ty(gens, self.syms))).collect::<Vec<_>>()
+                    },
+                    _ => unreachable!("type is not a container"),
+                };
 
                 for (name, _, e) in fields {
-                    let value = self.expr(env, builder, *e)?;
+                    let fty = field_types.iter().find(|(n, _)| *n == *name).map(|(_, t)| *t);
+                    let value = match fty {
+                        // The errored field's slot is the zero-size error type;
+                        // evaluate its value for side effects but absorb its
+                        // error so the rest of the literal stays constructible.
+                        Some(fty) if fty.is_err(self.syms) => {
+                            let _ = self.expr(env, builder, *e);
+                            builder.const_zero(self.to_llvm_ty(fty).strct)
+                        },
+                        _ => self.expr(env, builder, *e)?,
+                    };
                     values.push((*name, value));
                 }
 
@@ -4083,7 +4178,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let this = out_if_err!();
 
-                let val = self.ty_info.expr(val).unwrap();
+                let val = self.ty_info.expr(val);
                 let val = val.resolve(&[env.gens], self.syms);
                 let ty = val.sym(self.syms).unwrap();
 
@@ -4116,7 +4211,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             let val_gens = val.gens(self.syms);
                             let gens_list = self.syms.get_gens(val_gens);
                             let field_gen = cont.fields()[i].1;
-                            let field_ty = field_gen.to_ty(gens_list, self.syms).unwrap();
+                            let field_ty = field_gen.to_ty(gens_list, self.syms);
                             let field_llvm = self.to_llvm_ty(field_ty);
 
                             let src_buf = builder.alloca_store(value);
@@ -4156,11 +4251,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let ns = 
                 if let Some(tr) = self.ty_info.trait_funcs.get(&expr) {
-                    // Semantic analysis has already reported the invalid accessor. Do not
-                    // index partial trait metadata while emitting its recovery path.
-                    let Some(implementation) = self.syms.traits(ty).get(tr) else {
-                        return Err(ErrorId::Bypass);
-                    };
+                    // The analysis only registers trait accessors whose
+                    // receiver type_implements_trait's, so the implementation
+                    // is present here; errored accessors are skipped by the
+                    // out_if_err! at the arm head before reaching this point.
+                    let implementation = self.syms.traits(ty).get(tr)
+                        .copied()
+                        .expect("trait implementation registered for accessor");
                     implementation.0
                 } else {
                     self.syms.sym_ns(ty)
@@ -4220,7 +4317,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 // Type errors are attached to individual arguments, not necessarily the call.
                 // Check them before materializing the callee, which may instantiate generic code.
                 for arg in args {
-                    self.ty_info.expr(arg.expr)?;
+                    if let Some(e) = self.ty_info.expr(arg.expr).as_err(&mut self.syms) {
+                        return Err(e);
+                    }
                 }
 
                 let (func, func_ty) = self.expr_ex(env, builder, lhs)?;
@@ -4248,7 +4347,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 for (index, arg_expr) in args_iter.into_iter().enumerate() {
                     let (value, expr) = arg_expr?;
 
-                    let ty = self.ty_info.expr(expr).unwrap();
+                    let ty = self.ty_info.expr(expr);
                     let ty = ty.resolve(&[env.gens], self.syms);
 
                     let is_inout = function.args()[index].is_inout();
@@ -4414,7 +4513,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     assert!(self.funcs.insert(hash, func).is_none());
 
                     let mut builder = func_ptr.builder(self.ctx, llvm_func_ty);
-                    let closure_ret = func_ty.ret().to_ty(combined_gens, self.syms).unwrap().resolve(&[], self.syms);
+                    let closure_ret = func_ty.ret().to_ty(combined_gens, self.syms).resolve(&[], self.syms);
                     let closure_ret = self.to_llvm_ty(closure_ret);
 
                     let mut env = Env {
@@ -4441,7 +4540,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                     for (i, arg) in func_ty.args().iter().enumerate() {
-                        let arg_ty = arg.symbol().to_ty(env.gens, self.syms).unwrap();
+                        let arg_ty = arg.symbol().to_ty(env.gens, self.syms);
                         let arg_ty = arg_ty.resolve(&[], self.syms);
                         let param = builder.arg(i).unwrap();
                         let value = builder.local_get(param);
@@ -4541,7 +4640,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     vec
                 };
 
-                let ty = self.ty_info.expr(expr).unwrap();
+                let ty = self.ty_info.expr(expr);
 
                 let ty = ty.resolve(&[env.gens], self.syms);
                 *self.create_struct(builder, ty, &llvm_exprs)
@@ -4550,7 +4649,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
             parser::nodes::expr::Expr::AsCast { lhs, .. } => {
                 let lhs_val = self.expr(env, builder, lhs)?;
-                let lsym = self.ty_info.expr(lhs).unwrap().sym(self.syms).unwrap();
+                let lsym = self.ty_info.expr(lhs).sym(self.syms).unwrap();
                 out_if_err!();
 
 
@@ -4636,7 +4735,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
                 let buf = builder.alloca_store(value);
-                let field_ty = self.ty_info.expr(expr_id).unwrap();
+                let field_ty = self.ty_info.expr(expr_id);
                 let gens = field_ty.gens(self.syms);
                 let payload_ty = self.syms.get_gens(gens)[0].1;
                 let payload_ty = payload_ty.resolve(&[env.gens], self.syms);
@@ -4674,7 +4773,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }, 
                 );
 
-                let ty = self.ty_info.expr(expr_id).unwrap();
+                let ty = self.ty_info.expr(expr_id);
                 let gens = ty.resolve(&[env.gens], self.syms).gens(self.syms);
                 let gens = self.syms.get_gens(gens);
 
@@ -4689,9 +4788,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             },
         };
 
-        let result_ty = result_ty?;
-        if is_err == Ok(true) {
-            return Err(ErrorId::Bypass);
+        if let Some(err) = result_err {
+            return Err(err);
         }
 
 
@@ -4721,7 +4819,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let sym_id = ty.sym(self.syms).unwrap();
                 let sym_data = self.syms.sym(sym_id);
                 let SymbolKind::Container(cont) = sym_data.kind()
-                else { unreachable!() };
+                else { return };
                 let item_type_gens = ty.gens(self.syms);
                 let gens = self.syms.get_gens(item_type_gens);
 
@@ -4729,7 +4827,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let field = builder.field_load(value, i);
                     let local = builder.local(field.ty());
 
-                    let field_ty = cont.fields()[i].1.to_ty(gens, self.syms).unwrap();
+                    let field_ty = cont.fields()[i].1.to_ty(gens, self.syms);
                     let field_ty = field_ty.resolve(&[], self.syms);
 
                     env.alloc_var(item, local, field_ty, false);
@@ -4748,19 +4846,40 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     ) -> Struct<'ctx> {
         let sym_id = ty.sym(self.syms).unwrap();
         let sym = self.syms.sym(sym_id);
-        let SymbolKind::Container(cont) = sym.kind()
-        else { unreachable!("type is not a container") };
+        let cont = match sym.kind() {
+            SymbolKind::Container(cont) => cont,
+            SymbolKind::Error(_) => return builder.const_zero(self.to_llvm_ty(ty).strct).as_struct(),
+            _ => unreachable!("type is not a container"),
+        };
 
-        assert_eq!(values.len(), cont.fields().len());
+        assert!(values.len() <= cont.fields().len());
         assert!(matches!(cont.kind(), ContainerKind::Struct | ContainerKind::Tuple));
+
+        let gens = ty.gens(self.syms);
+        let gens = self.syms.get_gens(gens);
 
         let ty = self.to_llvm_ty(ty);
 
+        // A field whose type failed to resolve maps to the zero-size error
+        // type; store a zero in that slot so the struct stays constructible
+        // and only the errored field is unusable (reads of it propagate the
+        // error). The CreateStruct arm absorbs the errored field's value.
         builder.struct_instance(
-            ty.strct.as_struct(), 
-            cont.fields().iter().map(|(field_name, _)| {
-                let value = values.iter().find(|x| x.0 == *field_name).unwrap();
-                value.1
+            ty.strct.as_struct(),
+            cont.fields().iter().map(|(field_name, field)| {
+                let value = values.iter().find(|x| x.0 == *field_name);
+                let fty = field.to_ty(gens, self.syms);
+                if fty.is_err(self.syms) {
+                    // Error-typed fields are represented by the zero-size
+                    // `{error}` type even when the source omitted the field.
+                    builder.const_zero(self.to_llvm_ty(fty).strct)
+                } else {
+                    let Some((_, value)) = value
+                    else {
+                        unreachable!("non-error struct field missing after semantic analysis");
+                    };
+                    *value
+                }
             })
         )
     }
@@ -4772,6 +4891,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         ty: Type,
         kind: Value<'ctx>,
         value: Value<'ctx>,
+        payload_ty: Type,
     ) -> Value<'ctx> {
         assert_eq!(kind.ty().kind(), TypeKind::Integer);
 
@@ -4782,6 +4902,21 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let strct_ty = llvm_ty.strct.as_struct();
 
         let tag_ptr = builder.field_ptr(buf, strct_ty, 0);
+
+        // The selected payload may have failed to resolve. Its LLVM slot is
+        // the zero-size error type, so storing the real value would produce
+        // invalid LLVM. Other variants with errored payloads remain usable.
+        let type_is_error = ty.sym(self.syms).ok()
+            .is_some_and(|sym| matches!(self.syms.sym(sym).kind(), SymbolKind::Error(_)));
+
+        if type_is_error 
+        || payload_ty.is_err(self.syms) {
+            let zero = builder.const_zero(llvm_ty.repr);
+            builder.store(buf, zero);
+            builder.store(tag_ptr, tag_val);
+            return builder.load(buf, llvm_ty.repr);
+        }
+
         if value.ty().size_of(self.module).unwrap_or(1) == 0 {
             let zero = builder.const_zero(llvm_ty.repr);
             builder.store(buf, zero);
@@ -4883,7 +5018,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let struct_val = value.as_struct();
                 let mut fields = Vec::with_capacity(cont.fields().len());
                 for (i, (_, field_gen)) in cont.fields().iter().enumerate() {
-                    let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
+                    let field_ty = field_gen.to_ty(cont_gens, self.syms);
                     let field_ty = field_ty.resolve(&[], self.syms);
                     let field_val = builder.field_load(struct_val, i);
                     let copied = self.emit_copy(builder, field_val, field_ty);
@@ -4900,7 +5035,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let dst_data_ptr = builder.field_ptr(buf, llvm_ty.strct.as_struct(), 1);
 
                 for (i, (_, field_gen)) in cont.fields().iter().enumerate() {
-                    let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
+                    let field_ty = field_gen.to_ty(cont_gens, self.syms);
                     let field_ty = field_ty.resolve(&[], self.syms);
                     if field_ty.sym(self.syms) == Ok(SymbolId::UNIT) {
                         continue;
@@ -5075,8 +5210,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let struct_val = value.as_struct();
                 for i in (0..cont.fields().len()).rev() {
                     let (_, field_gen) = cont.fields()[i];
-                    let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) 
-                    else { continue };
+                    let field_ty = field_gen.to_ty(cont_gens, self.syms);
 
                     let field_ty = field_ty.resolve(&[], self.syms);
                     let field_val = builder.field_load(struct_val, i);
@@ -5090,7 +5224,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let src_data_ptr = builder.field_ptr(src_buf, llvm_ty.strct.as_struct(), 1);
 
                 for (i, (_, field_gen)) in cont.fields().iter().enumerate() {
-                    let Ok(field_ty) = field_gen.to_ty(cont_gens, self.syms) else { continue };
+                    let field_ty = field_gen.to_ty(cont_gens, self.syms);
                     let field_ty = field_ty.resolve(&[], self.syms);
                     if field_ty.sym(self.syms) == Ok(SymbolId::UNIT) {
                         continue;
