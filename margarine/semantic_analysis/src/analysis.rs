@@ -2533,9 +2533,16 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     if sym_g.bounds.is_empty() { continue }
 
                     for bound in sym_g.bounds {
-                        if self.syms.type_implements_trait(*value, *bound) { continue }
                         if value.is_err(&mut self.syms)
-                        || value.is_never(&mut self.syms) { return Ok(AnalysisResult::new(*value)) }
+                        || value.is_never(&mut self.syms) {
+                            return Ok(AnalysisResult::new(*value))
+                        }
+
+                        if let SymbolKind::Error(error) = self.syms.sym(*bound).kind() {
+                            return Ok(AnalysisResult::new(self.error_type(error)))
+                        }
+
+                        if self.syms.type_implements_trait(*value, *bound) { continue }
 
                         let err = self.error(
                             lhs_expr,
