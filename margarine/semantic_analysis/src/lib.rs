@@ -378,7 +378,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
                 let closure = self.syms.new_closure();
-                let sym = self.func_sym(closure, fields, ret, fg.leak());
+                let fg = fg.leak();
+                let sym = self.func_sym(closure, fields, ret, fg, fg);
                 Generic::new(dt.range(), GenericKind::Sym(sym, gs.leak()))
             }
 
@@ -523,7 +524,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let ret = self.dt_to_gen(id, self.scopes.get(scope_id), *ret, &[]);
 
                 let closure = self.syms.new_closure();
-                let sym = self.func_sym(closure, fields, ret, &[]);
+                let sym = self.func_sym(closure, fields, ret, &[], &[]);
                 sym
             }
 
@@ -633,7 +634,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let ret = self.dt_to_gen(id, self.scopes.get(scope_id), *ret, &[]);
 
                 let closure = self.syms.new_closure();
-                let sym = self.func_sym(closure, fields, ret, &[]);
+                let sym = self.func_sym(closure, fields, ret, &[], &[]);
                 Type::Ty(sym, GenListId::EMPTY)
             }
 
@@ -743,12 +744,14 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         closure: ClosureId,
         fields: &'out [FunctionArgument<'out>],
         ret: Generic<'out>,
-        gens: &'out [BoundedGeneric<'out>],
+        symbol_gens: &'out [BoundedGeneric<'out>],
+        declared_gens: &'out [BoundedGeneric<'out>],
     ) -> SymbolId {
 
-        let func = FunctionTy::new(fields, ret, syms::func::FunctionKind::Closure(closure), None);
-        let sym = Symbol::new(StringMap::CLOSURE, &gens, syms::SymbolKind::Function(func));
-        let id = self.syms.pending(&mut self.namespaces, None, StringMap::CLOSURE, gens.len());
+        let func = FunctionTy::new(
+            fields, ret, syms::func::FunctionKind::Closure(closure), None, declared_gens);
+        let sym = Symbol::new(StringMap::CLOSURE, symbol_gens, syms::SymbolKind::Function(func));
+        let id = self.syms.pending(&mut self.namespaces, None, StringMap::CLOSURE, symbol_gens.len());
         self.syms.add_sym(id, sym);
 
         id

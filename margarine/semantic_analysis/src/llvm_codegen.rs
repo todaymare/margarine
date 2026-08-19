@@ -4269,17 +4269,37 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 if let Some(sym) = ns.get_sym(field_name) {
                     let sym = sym.unwrap();
-                    let gens = if self.ty_info.trait_funcs.contains_key(&expr) {
-                        // Tuple symbols bind slots as 0, 1, ... while an implementation may
-                        // name them T0, T1, .... Match the implementation arguments by position.
+                    let gens =
+                    if self.ty_info.trait_funcs.contains_key(&expr) {
+                        // Trait implementation symbols own the receiver generics,
+                        // while the accessor closure owns the method generics.
+                        // A trait-bound receiver may not carry the implementation
+                        // values in the accessor type until codegen resolves it.
                         let implementation_gens = self.syms.sym(sym).generics();
-                        let receiver_type_gens = val.gens(self.syms);
-                        let receiver_gens = self.syms.get_gens(receiver_type_gens);
-                        assert_eq!(implementation_gens.len(), receiver_gens.len());
-                        let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), implementation_gens.len());
-                        for (implementation_gen, (_, receiver_ty)) in implementation_gens.iter().zip(receiver_gens) {
-                            gens.push((*implementation_gen, *receiver_ty));
-                        }
+                        let accessor_sym = this.sym(self.syms).unwrap();
+                        let method_gen_count =
+                        match self.syms.sym(accessor_sym).kind() {
+                            SymbolKind::Function(func) => func.declared_generics().len(),
+                            _ => unreachable!(),
+                        };
+
+                        assert!(implementation_gens.len() >= method_gen_count);
+                        let implementation_gen_count = implementation_gens.len() - method_gen_count;
+                        let accessor_gens_id = this.gens(self.syms);
+                        let accessor_gens = self.syms.get_gens(accessor_gens_id);
+                        let method_gens = &accessor_gens[accessor_gens.len() - method_gen_count..];
+                        let generic_values = val_gens
+                            .iter()
+                            .take(implementation_gen_count)
+                            .chain(method_gens.iter());
+                        let gens = sti::vec::Vec::from_in(
+                            self.syms.arena(),
+                            implementation_gens
+                                .iter()
+                                .zip(generic_values)
+                                .map(|(implementation_gen, (_, ty))| (*implementation_gen, *ty)),
+                        );
+
                         self.syms.add_gens(gens.leak())
                     } else {
                         this.gens(self.syms)

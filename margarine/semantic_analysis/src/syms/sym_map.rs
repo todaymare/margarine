@@ -204,7 +204,7 @@ impl<'me> SymbolMap<'me> {
 
             let args = if is_unit { [].as_slice() }
                        else { &*self.arena.alloc_new([FunctionArgument::new(StringMap::VALUE, i.1)]) };
-            let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id, index }, decl);
+            let sym = FunctionTy::new(args, ret, FunctionKind::Enum { sym: id, index }, decl, generics);
             let sym = Symbol::new(func_name, generics, SymbolKind::Function(sym));
             let id = self.pending(ns_map, Some(ns), func_name, generics.len());
             self.add_sym(id, sym);
@@ -551,6 +551,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[])),
                         FunctionKind::TypeId,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -571,6 +572,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[])),
                         FunctionKind::SizeOf,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -603,6 +605,7 @@ impl<'me> SymbolMap<'me> {
 
                             FunctionKind::Trait,
                             None,
+                            &[],
                         )
                     )]),
                     synthesis: TraitSynthesis::None,
@@ -646,6 +649,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::RC, ret_gens)),
                         FunctionKind::Rc,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -673,6 +677,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Generic(t)),
                         FunctionKind::RcGet,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -703,6 +708,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[])),
                         FunctionKind::RcSet,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -731,6 +737,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::PTR, ret_gens)),
                         FunctionKind::PtrAlloc,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -761,6 +768,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[])),
                         FunctionKind::PtrFree,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -788,6 +796,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Generic(t)),
                         FunctionKind::PtrRead,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -818,6 +827,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[])),
                         FunctionKind::PtrWrite,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -848,6 +858,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[])),
                         FunctionKind::PtrWriteUninit,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -870,6 +881,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::PTR, ret_gens)),
                         FunctionKind::PtrNull,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -902,6 +914,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::PTR, ret_gens)),
                         FunctionKind::PtrOffset,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -934,6 +947,7 @@ impl<'me> SymbolMap<'me> {
                         ptr_u,
                         FunctionKind::PtrCast,
                         None,
+                        arena.alloc_new([t, u]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -961,6 +975,7 @@ impl<'me> SymbolMap<'me> {
 
                             FunctionKind::Trait,
                             None,
+                            &[],
                         )
                     )]),
                     synthesis: TraitSynthesis::UniversalNoop,
@@ -991,6 +1006,7 @@ impl<'me> SymbolMap<'me> {
                         Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::UNIT, &[])),
                         FunctionKind::PtrDrop,
                         None,
+                        arena.alloc_new([t]),
                 )));
 
             slf.add_sym(pending, sym);
@@ -1018,6 +1034,7 @@ impl<'me> SymbolMap<'me> {
                     list_ty,
                     FunctionKind::ListConcat,
                     None,
+                    arena.alloc_new([t]),
                 )),
             );
 
@@ -1067,6 +1084,7 @@ impl<'me> SymbolMap<'me> {
                     ret,
                     FunctionKind::ListSlice,
                     None,
+                    arena.alloc_new([t]),
                 )),
             );
 
@@ -1094,6 +1112,7 @@ impl<'me> SymbolMap<'me> {
                     Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::I64, &[])),
                     FunctionKind::ListLen,
                     None,
+                    arena.alloc_new([t]),
                 )),
             );
             slf.add_sym(pending, sym);
@@ -1134,6 +1153,7 @@ impl<'me> SymbolMap<'me> {
                     iter_ty,
                     FunctionKind::ListIter,
                     None,
+                    arena.alloc_new([t]),
                 )),
             );
             slf.add_sym(pending, sym);
@@ -1161,6 +1181,7 @@ impl<'me> SymbolMap<'me> {
                     ret_ty,
                     FunctionKind::ListIterNext,
                     None,
+                    arena.alloc_new([t]),
                 )),
             );
             slf.add_sym(pending, sym);
@@ -1185,6 +1206,7 @@ impl<'me> SymbolMap<'me> {
                     Generic::new(SourceRange::ZERO, GenericKind::Sym(SymbolId::F64, &[])),
                     FunctionKind::FloatSqrt,
                     None,
+                    &[],
                 )),
             );
 

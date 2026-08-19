@@ -712,7 +712,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         sym_name = self.string_map.concat(self.syms.sym(impl_ty).name(), method_path);
                     }
 
-                    let func = FunctionTy::new(args.leak(), ret, FunctionKind::UserDefined, Some(*id));
+                    let func = FunctionTy::new(args.leak(), ret, FunctionKind::UserDefined, Some(*id), gens);
                     let func = Symbol::new(sym_name, generics, SymbolKind::Function(func));
 
                     self.syms.add_sym(fid, func);
@@ -747,7 +747,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         // Finalise
                         let sym_name = self.string_map.concat(path, f.name());
 
-                        let func = FunctionTy::new(args.leak(), ret, FunctionKind::Extern(f.path()), Some(*id));
+                        let func = FunctionTy::new(args.leak(), ret, FunctionKind::Extern(f.path()), Some(*id), gens);
                         let func = Symbol::new(sym_name, gens, SymbolKind::Function(func));
 
                         let Ok(id) = self.namespaces.get_ns(ns).get_sym(f.name()).unwrap()
@@ -794,7 +794,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         let ret = self.dt_to_gen(*id, self.scopes.get(scope), f.return_type, gens);
 
 
-                        funcs.push((f.name, FunctionTy::new(args.leak(), ret, FunctionKind::Trait, None)));
+                        funcs.push((f.name, FunctionTy::new(args.leak(), ret, FunctionKind::Trait, None, gens)));
                     }
 
                     self.syms.add_sym(sym, Symbol::new(name, &[], SymbolKind::Trait(Trait {
@@ -1536,8 +1536,47 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         }
     }
 
+    fn trait_method_sym(
+        &mut self,
+        func: FunctionTy<'out>,
+        receiver: Generic<'out>,
+        implementation_generics: &'out [BoundedGeneric<'out>],
+    ) -> (SymbolId, &'out [BoundedGeneric<'out>]) {
+        let method_generics = func.declared_generics();
+        let mut all_generics = Buffer::new(
+            self.output,
+            implementation_generics.len() + method_generics.len(),
+        );
+        all_generics.extend_from_slice(implementation_generics);
+        all_generics.extend_from_slice(method_generics);
+        let all_generics = all_generics.leak();
+
+        let closure = self.syms.new_closure();
+        let mut func_args = sti::vec::Vec::with_cap_in(self.output, func.args().len());
+        for arg in func.args() {
+            let symbol = arg
+                .symbol()
+                .rec_replace(self.output, StringMap::SELF_TY, receiver);
+            func_args.push(FunctionArgument::new_inout(arg.name(), symbol, arg.is_inout()));
+        }
+
+        let ret = func
+            .ret()
+            .rec_replace(self.output, StringMap::SELF_TY, receiver);
+        let symbol = self.func_sym(
+            closure,
+            func_args.leak(),
+            ret,
+            all_generics,
+            method_generics,
+        );
+
+        (symbol, all_generics)
+    }
+
     pub fn expr(&mut self, path: StringIndex, scope: ScopeId, id: ExprId) -> AnalysisResult {
         let range = self.ast.range(id);
+
         let expr = self.ast.expr(id);
         let result = (|| -> Result<AnalysisResult, ErrorId> {Ok(match expr {
             Expr::Unit => AnalysisResult::new(Type::UNIT),
@@ -1557,7 +1596,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
             Expr::Identifier(ident, gens) => {
-                let mut pregens = None;
 
                 let mut variable = || {
                     let sym_id = self.scopes.get(scope).find_super(&self.scopes)?;
@@ -1618,35 +1656,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         }
                     }
 
-                    let Some((t, func, g, generics)) = candidate
+                    let Some((t, func, g, impl_generics)) = candidate
                     else { return None; };
 
-                    let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.len());
-
-                    for g in generics {
-                        let var = self.syms.new_var(id, g.name, range);
-                        vgens.push((*g, var));
-                    }
-
-                    let gens = self.syms.add_gens(vgens.leak());
-
-                    let closure = self.syms.new_closure();
-                    
-                    pregens = Some(gens);
                     self.type_info.set_acc(id, t);
                     self.type_info.set_ident(id, Some(sym_id));
-
-                    let mut func_args = sti::vec::Vec::with_cap_in(self.output, func.args().len());
-                    for arg in func.args() {
-                        let gn = arg.symbol()
-                            .rec_replace(self.output, StringMap::SELF_TY, g);
-                        func_args.push(FunctionArgument::new_inout(arg.name(), gn, arg.is_inout()));
-                    }
-
-                    let ret = func.ret()
-                        .rec_replace(self.output, StringMap::SELF_TY, g);
-
-                    let sym = self.func_sym(closure, func_args.leak(), ret, generics);
+                    let (sym, _) = self.trait_method_sym(func, g, impl_generics);
 
                     Some(Err(Ok(sym)))
                 };
@@ -1733,7 +1748,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                                     _ => {
                                         let closure = self.syms.new_closure();
 
-                                        let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
+                                        let sym = self.func_sym(
+                                            closure,
+                                            func.args(),
+                                            func.ret(),
+                                            sym.generics(),
+                                            func.declared_generics()
+                                        );
                                         AnalysisResult::new(Type::Ty(sym, gens))
                                     }
                                 };
@@ -1811,7 +1832,15 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let ret = Generic::new(range, GenericKind::Generic(t));
 
-                let closure_ty = self.func_sym(closure, fargs.leak(), ret, gen_list.leak());
+                let gen_list = gen_list.leak();
+                let closure_ty = self.func_sym(
+                    closure,
+                    fargs.leak(),
+                    ret,
+                    gen_list,
+                    gen_list
+                );
+
                 let gens = self.syms.add_gens(gens.leak());
 
                 AnalysisResult::new(Type::Ty(closure_ty, gens))
@@ -2284,7 +2313,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         _ => {
                             let closure = self.syms.new_closure();
 
-                            let sym = self.func_sym(closure, func.args(), func.ret(), sym.generics());
+                            let sym = self.func_sym(
+                                closure,
+                                func.args(),
+                                func.ret(),
+                                sym.generics(),
+                                func.declared_generics()
+                            );
 
                             AnalysisResult::new(Type::Ty(sym, gens))
                         }
@@ -2359,7 +2394,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 }
 
 
-                let Some((t, func, g, generics)) = candidate
+                let Some((t, func, g, impl_generics)) = candidate
                 else {
                     let e = match e {
                         Error::FieldDoesntExist { source, field, typ, .. } => Error::FieldDoesntExist {
@@ -2371,11 +2406,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     return Err(self.error(id, e));
                 };
-                let mut vgens = sti::vec::Vec::with_cap_in(self.output, generics.len());
-
-                for g in generics {
-                    let var = self.syms.new_var(id, g.name, range);
-                    vgens.push((*g, var));
+                let (sym, all_generics) =
+                    self.trait_method_sym(func, g, impl_generics);
+                let mut vgens = sti::vec::Vec::with_cap_in(self.output, all_generics.len());
+                for generic in all_generics {
+                    let var = self.syms.new_var(id, generic.name, range);
+                    vgens.push((*generic, var));
                 }
 
                 let gens = self.syms.add_gens(vgens.leak());
@@ -2383,7 +2419,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 assert!(expr.ty.eq(&mut self.syms, implementation_ty));
 
                 if let Some(explicit_gens) = expr_gens {
-                    for (g, (_, s)) in explicit_gens.iter().zip(self.syms.get_gens(gens)) {
+                    let resolved_gens = self.syms.get_gens(gens);
+                    for (g, (_, s)) in explicit_gens.iter().zip(
+                        resolved_gens.iter().skip(impl_generics.len())
+                    ) {
                         let ty = self.dt_to_ty(scope, id, *g);
                         if ty.is_err(&mut self.syms) { continue; }
 
@@ -2393,19 +2432,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     }
                 }
 
-                let closure = self.syms.new_closure();
-
-                let mut func_args = sti::vec::Vec::with_cap_in(self.output, func.args().len());
-                for arg in func.args() {
-                    let gn = arg.symbol()
-                        .rec_replace(self.output, StringMap::SELF_TY, g);
-                    func_args.push(FunctionArgument::new_inout(arg.name(), gn, arg.is_inout()));
-                }
-
-                let ret = func.ret()
-                    .rec_replace(self.output, StringMap::SELF_TY, g);
-
-                let sym = self.func_sym(closure, func_args.leak(), ret, generics);
                 self.type_info.set_acc(id, t);
 
                 AnalysisResult::new(Type::Ty(sym, gens))

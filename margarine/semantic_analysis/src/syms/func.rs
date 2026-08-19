@@ -3,12 +3,14 @@ use parser::nodes::decl::DeclId;
 
 use crate::syms::sym_map::ClosureId;
 
-use super::sym_map::{Generic, SymbolId};
+use super::sym_map::{BoundedGeneric, Generic, SymbolId};
 
 #[derive(Debug, Clone, Copy, ImmutableData, PartialEq)]
 pub struct FunctionTy<'me> {
     args: &'me [FunctionArgument<'me>],
     ret : Generic<'me>,
+    declared_generics: &'me [BoundedGeneric<'me>],
+
 
     kind: FunctionKind,
     decl: Option<DeclId>,
@@ -66,8 +68,15 @@ pub enum FunctionKind {
 
 
 impl<'me> FunctionTy<'me> {
-    pub fn new(args: &'me [FunctionArgument<'me>], ret: Generic<'me>, kind: FunctionKind, decl: Option<DeclId>) -> Self { Self { args, ret, kind, decl, cached: false } }
-
+    pub fn new(
+        args: &'me [FunctionArgument<'me>],
+        ret: Generic<'me>,
+        kind: FunctionKind,
+        decl: Option<DeclId>,
+        declared_generics: &'me [BoundedGeneric<'me>],
+    ) -> Self {
+        Self { args, ret, declared_generics, kind, decl, cached: false }
+    }
 }
 
 
