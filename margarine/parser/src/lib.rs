@@ -1699,6 +1699,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
             Some(TokenKind::SubEquals) => binary_op_assignment(self, BinaryOperator::Sub, lhs, settings)?.into(),
             Some(TokenKind::MulEquals) => binary_op_assignment(self, BinaryOperator::Mul, lhs, settings)?.into(),
             Some(TokenKind::DivEquals) => binary_op_assignment(self, BinaryOperator::Div, lhs, settings)?.into(),
+            Some(TokenKind::BitwiseXorEquals) => binary_op_assignment(self, BinaryOperator::BitwiseXor, lhs, settings)?.into(),
             Some(TokenKind::Equals) => {
                 self.advance();
                 self.advance();
