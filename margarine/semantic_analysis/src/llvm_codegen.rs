@@ -4543,16 +4543,31 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         let arg_ty = arg.symbol().to_ty(env.gens, self.syms);
                         let arg_ty = arg_ty.resolve(&[], self.syms);
                         let param = builder.arg(i).unwrap();
-                        let value = builder.local_get(param);
-                        let owned = self.emit_copy(&mut builder, value, arg_ty);
-                        builder.local_set(param, owned);
-                        env.alloc_var(arg.name(), param, arg_ty, false);
+                        if arg.is_inout() {
+                            let llvm_ty = self.to_llvm_ty(arg_ty);
+                            let local = builder.local(llvm_ty.repr);
+                            let value = builder.load(builder.local_get(param).as_ptr(), llvm_ty.repr);
+                            builder.local_set(local, value);
+                            env.alloc_var(arg.name(), local, arg_ty, true);
+                            env.inouts.push((param, local));
+                        } else {
+                            // Own every by-value parameter: the caller keeps its own reference and
+                            // releases it after the call, so the callee must hold its own copy to
+                            // make every intra-body drop (assignment overwrites, exit cleanup)
+                            // target an owned value. The pair is local to this function, so LLVM
+                            // can fold it when the body never touches the refcount.
+                            let value = builder.local_get(param);
+                            let owned = self.emit_copy(&mut builder, value, arg_ty);
+                            builder.local_set(param, owned);
+                            env.alloc_var(arg.name(), param, arg_ty, false);
+                        }
                     }
 
                     let result = self.expr(&mut env, &mut builder, body);
 
                     match result {
                         Ok(v) => {
+                            self.update_inouts(&env, &mut builder);
                             self.drop_all_locals(&mut env, &mut builder);
                             builder.ret(v);
                         },

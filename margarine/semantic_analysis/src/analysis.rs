@@ -2006,18 +2006,17 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 // create generics for inference
                 let mut sargs = sti::vec::Vec::new_in(self.syms.arena());
                 for arg in args {
-                    let ty = 
-                    if let Some(ty) = arg.1 { self.dt_to_ty(scope, id, ty) } 
-                    else { self.syms.new_var(id, arg.0, arg.2) };
+                    let ty =
+                    if let Some(ty) = arg.1 { self.dt_to_ty(scope, id, ty) }
+                    else { self.syms.new_var(id, arg.0, arg.3) };
 
-                    active_scope = 
+                    active_scope =
                     self.scopes.push(Scope::new(
-                        Some(active_scope), 
+                        Some(active_scope),
                         ScopeKind::VariableScope(VariableScope::new(arg.0, ty, true))
                     ));
 
-                    sargs.push((arg.0, ty, arg.2));
-
+                    sargs.push((arg.0, ty, arg.2, arg.3));
                 }
 
 
@@ -2046,7 +2045,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let g = BoundedGeneric::new(g, &[]);
                     gens.push((g, arg.1));
                     gen_list.push(g);
-                    fargs.push(FunctionArgument::new(arg.0, Generic::new(arg.2, GenericKind::Generic(g))));
+                    fargs.push(FunctionArgument::new_inout(
+                        arg.0,
+                        Generic::new(arg.3, GenericKind::Generic(g)),
+                        arg.2
+                    ));
                 }
 
                 let ret = Generic::new(range, GenericKind::Generic(t));
@@ -2457,7 +2460,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         let field_gen = field.1;
                         let field_ty = field_gen.to_ty(gens, &mut self.syms);
 
-                        let ty = match cont.kind() {
+                        let ty = 
+                        match cont.kind() {
                             ContainerKind::Struct => field_ty,
 
                             ContainerKind::Enum => {

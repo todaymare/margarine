@@ -2211,6 +2211,9 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     Some(TokenKind::Comma),
                     |parser, _| {
                         let start = parser.current_range().start();
+                        let is_inout = parser.current_is(TokenKind::Ampersand);
+                        if is_inout { parser.advance(); }
+
                         let name = parser.expect_identifier()?;
 
                         let dt = if parser.peek_is(TokenKind::Colon) {
@@ -2221,7 +2224,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                             None
                         };
 
-                        Ok((name, dt, SourceRange::new(start, parser.current_range().end())))
+                        Ok((name, dt, is_inout, SourceRange::new(start, parser.current_range().end())))
                     }
                 )?;
 

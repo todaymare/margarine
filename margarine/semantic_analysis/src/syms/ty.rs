@@ -229,6 +229,8 @@ impl Type {
 
 
                 if symida == symidb {
+                    if gena.len() != genb.len() { return false }
+
                     return gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1));
                 }
 
