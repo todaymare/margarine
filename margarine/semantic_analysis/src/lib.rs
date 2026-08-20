@@ -359,9 +359,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 let mut func_used_gens = sti::vec::Vec::from_value(gens.len(), false);
                 let fields = {
                     let mut fields = Buffer::new(&*self.output, args.len());
-                    for (i, ty) in args.iter().enumerate() {
-                        let g = self.dt_to_gen_ex(node, scope, *ty, gens, &mut func_used_gens);
-                        let func = FunctionArgument::new(self.string_map.num(i), g);
+                    for (i, arg) in args.iter().enumerate() {
+                        let g = self.dt_to_gen_ex(
+                            node, scope, arg.data_type(), gens, &mut func_used_gens);
+                        let func = FunctionArgument::new_inout(
+                            self.string_map.num(i), g, arg.is_inout());
                         fields.push(func);
                     }
                     fields.leak()
@@ -539,9 +541,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             DataTypeKind::Fn(args, ret) => {
                 let fields = {
                     let mut fields = Buffer::new(&*self.output, args.len());
-                    for (i, ty) in args.iter().enumerate() {
-                        let g = self.dt_to_gen(id, self.scopes.get(scope_id), *ty, &[]);
-                        let func = FunctionArgument::new(self.string_map.num(i), g);
+                    for (i, arg) in args.iter().enumerate() {
+                        let g = self.dt_to_gen(id, self.scopes.get(scope_id), arg.data_type(), &[]);
+                        let func = FunctionArgument::new_inout(self.string_map.num(i), g, arg.is_inout());
                         fields.push(func);
                     }
 

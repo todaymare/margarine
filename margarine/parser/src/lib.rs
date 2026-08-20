@@ -4,7 +4,7 @@ pub mod dt;
 
 use std::collections::HashMap;
 use common::{source::SourceRange, string_map::{StringIndex, StringMap}};
-use dt::{DataType, DataTypeKind};
+use dt::{DataType, DataTypeKind, FunctionTypeArgument};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
@@ -211,7 +211,13 @@ impl<'out> Parser<'_, 'out, '_> {
 
             let list = self.list(TokenKind::RightParenthesis, Some(TokenKind::Comma),
             |parser, _| {
-                parser.expect_type()
+                let is_inout = parser.current_is(TokenKind::Ampersand);
+                if is_inout {
+                    parser.advance();
+                }
+
+                let data_type = parser.expect_type()?;
+                Ok(FunctionTypeArgument::new(data_type, is_inout))
             })?;
 
             let ret = if self.peek_is(TokenKind::Colon) {

@@ -244,6 +244,10 @@ impl Type {
 
                         let mut failed = false;
                         for (aa, ab) in fa.args().iter().zip(fb.args().iter()) {
+                            if aa.is_inout() != ab.is_inout() {
+                                failed = true;
+                            }
+
                             let aa = aa.symbol().to_ty(gena, map);
                             let ab = ab.symbol().to_ty(genb, map);
 

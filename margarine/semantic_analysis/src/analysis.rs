@@ -1089,12 +1089,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         continue;
                     }
 
-                    let args = f.args().iter().map(|x| x.symbol()).chain([f.ret()].into_iter());
-                    let fargs = ft.args().iter().map(|x| x.symbol()).chain([ft.ret()].into_iter());
-
-                    for (arg, mut farg) in args.zip(fargs) {
-                        let arg = arg.rec_replace(self.output, StringMap::SELF_TY, ty);
-                        farg = farg.rec_replace(self.output, StringMap::SELF_TY, ty);
+                    for (arg, trait_arg) in f.args().iter().zip(ft.args()) {
+                        let arg_ty = arg.symbol().rec_replace(self.output, StringMap::SELF_TY, ty);
+                        let mut farg = trait_arg.symbol().rec_replace(self.output, StringMap::SELF_TY, ty);
 
                         if let Some(trait_args) = trait_ty.gens() {
                             for (t_gen, t_arg) in trait_sym.generics().iter().zip(trait_args.iter()) {
@@ -1102,13 +1099,30 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             }
                         }
 
-                        if arg != farg {
+                        if arg.is_inout() != trait_arg.is_inout() || arg_ty != farg {
                             let decl = f.decl().unwrap();
 
-                            self.error(decl, Error::InvalidArgument { source: arg.range() });
+                            self.error(decl, Error::InvalidArgument { source: arg_ty.range() });
 
                             ns = self.namespaces.get_ns_mut(ns_id);
                         }
+                    }
+
+                    let arg = f.ret().rec_replace(self.output, StringMap::SELF_TY, ty);
+                    let mut farg = ft.ret().rec_replace(self.output, StringMap::SELF_TY, ty);
+
+                    if let Some(trait_args) = trait_ty.gens() {
+                        for (t_gen, t_arg) in trait_sym.generics().iter().zip(trait_args.iter()) {
+                            farg = farg.rec_replace(self.output, t_gen.name(), *t_arg);
+                        }
+                    }
+
+                    if arg != farg {
+                        let decl = f.decl().unwrap();
+
+                        self.error(decl, Error::InvalidArgument { source: arg.range() });
+
+                        ns = self.namespaces.get_ns_mut(ns_id);
                     }
 
 

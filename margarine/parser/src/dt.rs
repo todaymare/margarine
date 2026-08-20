@@ -7,6 +7,21 @@ pub struct DataType<'a> {
 }
 
 
+#[derive(Debug, PartialEq, Clone, Copy, ImmutableData)]
+pub struct FunctionTypeArgument<'a> {
+    data_type: DataType<'a>,
+    is_inout: bool,
+}
+
+
+impl<'a> FunctionTypeArgument<'a> {
+    pub fn new(data_type: DataType<'a>, is_inout: bool) -> Self {
+        Self { data_type, is_inout }
+    }
+}
+
+
+
 impl<'a> DataType<'a> {
     pub fn new(source_range: SourceRange, kind: DataTypeKind<'a>) -> Self { 
         Self { range: source_range, kind } 
@@ -23,7 +38,7 @@ pub enum DataTypeKind<'a> {
     List(&'a DataType<'a>),
     Within(StringIndex, &'a DataType<'a>),
     CustomType(StringIndex, &'a [DataType<'a>]),
-    Fn(&'a [DataType<'a>], &'a DataType<'a>),
+    Fn(&'a [FunctionTypeArgument<'a>], &'a DataType<'a>),
 }
 
 
@@ -72,7 +87,8 @@ impl std::hash::Hash for DataTypeKind<'_> {
             DataTypeKind::Fn(args, ret) => {
                 207.hash(state);
                 for a in args.iter() {
-                    a.kind().hash(state);
+                    a.is_inout().hash(state);
+                    a.data_type().kind().hash(state);
                 }
                 ret.kind().hash(state);
             },
