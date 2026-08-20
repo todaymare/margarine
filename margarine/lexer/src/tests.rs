@@ -161,6 +161,45 @@ fn numbers() {
 
 
 #[test]
+fn tuple_field_chains_are_not_floats() {
+    let arena = Arena::new();
+    let mut symbol_table = StringMap::new(&arena);
+    let file = symbol_table.insert("test");
+    let data = "pair.0.1";
+    let file_data = FileData::new(data.to_string(), file, Extension::None);
+
+    let tokens = lex(&file_data, &mut symbol_table, 0);
+
+    compare_individually(&*tokens.0, &[
+        Token {
+            token_kind: TokenKind::Identifier(symbol_table.insert("pair")),
+            source_range: SourceRange::new(0, 3),
+        },
+        Token {
+            token_kind: TokenKind::Dot,
+            source_range: SourceRange::new(4, 4),
+        },
+        Token {
+            token_kind: TokenKind::Literal(Literal::Integer(0)),
+            source_range: SourceRange::new(5, 5),
+        },
+        Token {
+            token_kind: TokenKind::Dot,
+            source_range: SourceRange::new(6, 6),
+        },
+        Token {
+            token_kind: TokenKind::Literal(Literal::Integer(1)),
+            source_range: SourceRange::new(7, 7),
+        },
+        Token {
+            token_kind: TokenKind::EndOfFile,
+            source_range: SourceRange::new(7, 7),
+        },
+    ]);
+}
+
+
+#[test]
 fn identifiers() {
     let arena = Arena::new();
     let mut symbol_table = StringMap::new(&arena);

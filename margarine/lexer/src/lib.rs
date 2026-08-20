@@ -235,6 +235,7 @@ pub fn lex<'a, 'arena>(
         string_map,
         errors: KVec::new(),
         source_offset,
+        after_dot: false,
     };
 
 
@@ -261,6 +262,7 @@ struct Lexer<'a, 's> {
     string_map: &'a mut StringMap<'s>,
     errors: KVec<LexerError, Error>,
     source_offset: u32,
+    after_dot: bool,
 }
 
 
@@ -279,6 +281,8 @@ impl Lexer<'_, '_> {
             self.reader.consume_while(|x| *x != b'\n');
             self.skip_whitespace();
         }
+        let after_dot = self.after_dot;
+        self.after_dot = false;
 
 
         let start = self.reader.offset() as u32;
@@ -420,7 +424,10 @@ impl Lexer<'_, '_> {
 
             b'.' => {
                 if self.reader.consume_if_eq(&b'.') { TokenKind::DoubleDot }
-                else { TokenKind::Dot }
+                else {
+                    self.after_dot = true;
+                    TokenKind::Dot
+                }
             }
 
             b'"' => self.string(start as usize),
@@ -428,7 +435,7 @@ impl Lexer<'_, '_> {
             _ if val.is_ascii_alphabetic() || val == b'_' => self.identifier(start as usize),
 
 
-            _ if val.is_ascii_digit() => self.number(start, true),
+            _ if val.is_ascii_digit() => self.number(start, !after_dot, !after_dot),
             
 
             _ => {
@@ -655,7 +662,7 @@ impl Lexer<'_, '_> {
 
 
 
-    fn number(&mut self, start: u32, is_top_level: bool) -> TokenKind {
+    fn number(&mut self, start: u32, is_top_level: bool, allow_dot: bool) -> TokenKind {
         self.reader.set_offset(start as usize);
         if is_top_level {
             if self.reader.starts_with(b"0b") { return self.based_integer(2) }
@@ -668,11 +675,11 @@ impl Lexer<'_, '_> {
         let mut has_dot = false;
         let str = self.reader.consume_while_slice(|a| {
             if *a == b'.' {
+                if !allow_dot { return false }
                 if has_dot { return false }
                 has_dot = true;
                 return true;
             }
-
 
             a.is_ascii_digit() || *a == b'_'
         });
@@ -724,7 +731,7 @@ impl Lexer<'_, '_> {
             return TokenKind::Error(self.errors.push(Error::InvalidExponent(source)));
         }
 
-        let exp = match self.number(self.reader.offset() as u32, false) {
+        let exp = match self.number(self.reader.offset() as u32, false, false) {
             TokenKind::Literal(Literal::Integer(exp)) => exp,
             TokenKind::Error(e) => return TokenKind::Error(e),
             _ => {

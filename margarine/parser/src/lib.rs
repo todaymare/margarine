@@ -2019,7 +2019,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
             self.advance();
             
-            let ident = match self.current_kind() {
+            let ident = 
+            match self.current_kind() {
                 TokenKind::Literal(Literal::Integer(int)) => self.string_map.num(int as usize),
 
                 _ => self.expect_identifier()?,
