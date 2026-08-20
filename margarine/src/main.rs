@@ -216,8 +216,8 @@ fn main() {
                 return;
             }
 
-            run_tests(&tests, filter);
-            return;
+            let success = run_tests(&tests, filter);
+            std::process::exit(success as _);
         },
 
 
@@ -271,13 +271,13 @@ fn run_step(label: &str, cmd: &mut Command) -> bool {
 }
 
 
-fn run_tests(tests: &[(String, bool)], filter: Option<String>) {
+fn run_tests(tests: &[(String, bool)], filter: Option<String>) -> bool {
     if tests.is_empty() {
         println!();
         println!("running 0 tests");
         println!();
         println!("test result: ok. 0 passed; 0 failed; 0 ignored; finished in 0.00s");
-        return;
+        return true;
     }
 
     let start = Instant::now();
@@ -423,6 +423,7 @@ fn run_tests(tests: &[(String, bool)], filter: Option<String>) {
             result, passed, failed, ignored, elapsed.as_secs_f64()
         );
         println!();
+        failed == 0
     }
 }
 

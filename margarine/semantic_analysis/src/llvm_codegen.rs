@@ -295,7 +295,7 @@ pub fn run<'a>(
 
         let rc_clone_fn_ty = ptr.fn_ty(ctx.arena, &[*ctx.ptr()], false);
         let rc_clone_fn = module.function("margarineRcClone", rc_clone_fn_ty);
-        rc_clone_fn.set_linkage(Linkage::External);
+        rc_clone_fn.set_linkage(Linkage::Internal);
 
         {
             let builder = rc_clone_fn.builder(ctx.as_ctx_ref(), rc_clone_fn_ty);
@@ -324,7 +324,7 @@ pub fn run<'a>(
 
         let rc_drop_fn_ty = ctx.bool().fn_ty(ctx.arena, &[*ctx.ptr()], false);
         let rc_drop_fn = module.function("margarineRcDrop", rc_drop_fn_ty);
-        rc_drop_fn.set_linkage(Linkage::External);
+        rc_drop_fn.set_linkage(Linkage::Internal);
 
         {
             let builder = rc_drop_fn.builder(ctx.as_ctx_ref(), rc_drop_fn_ty);
