@@ -21,6 +21,7 @@ pub struct TraitImplEntry<'me> {
     pub receiver: Generic<'me>,
     pub generics: &'me [BoundedGeneric<'me>],
     pub declaration: Option<DeclId>,
+    pub bound_error: Option<ErrorId>,
 }
 
 pub type TraitMap<'me> = HashMap<SymbolId, Vec<TraitImplEntry<'me>>>;
@@ -173,6 +174,33 @@ impl<'me> SymbolMap<'me> {
         }
 
         true
+    }
+
+    pub(crate) fn trait_argument_bound_failure(
+        &mut self,
+        trait_ty: Type,
+    ) -> Option<(usize, Type, SymbolId)> {
+        let Type::Ty(trait_id, _) = trait_ty.instantiate_shallow(self)
+        else { return None };
+        let trait_generics = self.sym(trait_id).generics();
+        let trait_args_id = trait_ty.gens(self);
+        let trait_args = self.get_gens(trait_args_id);
+        if trait_generics.len() != trait_args.len() {
+            return None;
+        }
+
+        for (index, (generic, (_, actual))) in trait_generics.iter().zip(trait_args).enumerate() {
+            for bound in generic.bounds {
+                let bound_trait_ty = bound.to_ty(trait_args, self);
+                if !self.type_implements_trait_generic(*actual, bound_trait_ty) {
+                    let Type::Ty(bound_id, _) = bound_trait_ty.instantiate_shallow(self)
+                    else { continue };
+                    return Some((index, *actual, bound_id));
+                }
+            }
+        }
+
+        None
     }
 
 

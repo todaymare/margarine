@@ -4,7 +4,7 @@ use errors::ErrorId;
 use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{AttributeValue, Decl, DeclId, FunctionSignature, UseItem, UseItemKind, Visibility}, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::{Stmt, StmtId}, NodeId, Pattern, PatternKind}};
 use sti::{alloc::GlobalAlloc, key::Key, vec::{KVec, Vec}};
 
-use crate::{errors::Error, namespace::{Namespace, NamespaceId, SymbolGetResult}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, Generic, GenericKind, SymbolId, TraitImplEntry}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
+use crate::{errors::Error, namespace::{Namespace, NamespaceId, SymbolGetResult}, scope::{FunctionScope, GenericsScope, Scope, ScopeId, ScopeKind, VariableScope}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, sym_map::{BoundedGeneric, Generic, GenericKind, SymbolId, SymbolMap, TraitImplEntry}, ty::Type, Symbol, SymbolKind, Trait}, AnalysisResult, TyChecker};
 
 impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub fn block(&mut self, path: StringIndex, scope: ScopeId, body: &[NodeId]) -> AnalysisResult {
@@ -278,6 +278,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         receiver: ty,
                         generics: gens,
                         declaration: Some(id),
+                        bound_error: None,
                     });
                 },
 
@@ -914,17 +915,19 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         let kind = SymbolKind::Container(Container::new(&[], ContainerKind::Generic));
 
                         self.syms.add_sym(ty, Symbol::new(g.name(), &[], kind));
-                        let hm = self.syms.traits(ty);
                         for b in g.bounds.iter() {
-                            if let Some(trait_id) = b.sym() {
-                                hm.entry(trait_id).or_default().push(TraitImplEntry {
-                                    namespace: NamespaceId::MAX,
-                                    trait_ty: *b,
-                                    receiver: Generic::new(sig.source, GenericKind::Sym(ty, &[])),
-                                    generics: &[],
-                                    declaration: None,
-                                });
-                            }
+                            let Some(trait_id) = b.sym()
+                            else { continue };
+
+                            let bound_error = self.validate_trait_bound(n.into(), *b, &[]);
+                            self.syms.traits(ty).entry(trait_id).or_default().push(TraitImplEntry {
+                                namespace: NamespaceId::MAX,
+                                trait_ty: *b,
+                                receiver: Generic::new(sig.source, GenericKind::Sym(ty, &[])),
+                                generics: &[],
+                                declaration: None,
+                                bound_error,
+                            });
                         }
                         vec.push((*g, self.syms.get_ty(ty, &[])));
                     }
@@ -1015,6 +1018,18 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     self.error(n, Error::ImplTraitOnNonTrait(data_type.range()));
                     return;
                 };
+
+                let bound_error = self.validate_trait_bound(n.into(), trait_ty, &[]);
+                if let Some(error) = bound_error {
+                    if let Some(entry) = self.syms.traits(sym)
+                        .get_mut(&trait_sym_id)
+                        .and_then(|impls| impls.iter_mut().find(|entry| entry.declaration == Some(n)))
+                    {
+                        entry.bound_error = Some(error);
+                    }
+                }
+
+                
 
                 let path = trait_sym.name();
 
@@ -1633,6 +1648,86 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         (symbol, all_generics)
     }
 
+    fn validate_trait_bound(
+        &mut self,
+        node: NodeId,
+        bound: Generic<'out>,
+        bindings: &[(BoundedGeneric<'out>, Type)],
+    ) -> Option<ErrorId> {
+        let mut required_generics = std::vec::Vec::new();
+        bound.collect_generics(&mut required_generics);
+        if required_generics.iter().any(|generic| {
+            !bindings.iter().any(|(binding, _)| binding.name == generic.name)
+        }) {
+            return None;
+        }
+
+        let bound_ty = bound.to_ty(bindings, &mut self.syms);
+        let Some((index, actual, trait_id)) =
+            self.syms.trait_argument_bound_failure(bound_ty)
+        else {
+            return None;
+        };
+
+        let source = bound.gens()
+            .and_then(|generics| generics.get(index))
+            .map(|generic| generic.range())
+            .unwrap_or(bound.range());
+
+        Some(self.error(node, Error::TypeDoesntImplTrait {
+            source,
+            ty: actual,
+            tr: trait_id,
+        }))
+    }
+
+    fn trait_method_entry_matches(
+        syms: &mut SymbolMap<'out>,
+        entry: TraitImplEntry<'out>,
+        receiver_ty: Option<Type>,
+        rejection: &mut Option<TraitMethodRejection>,
+    ) -> bool {
+        let mut bindings = std::vec::Vec::with_capacity(entry.generics.len());
+        if let Some(receiver_ty) = receiver_ty {
+            if !syms.match_impl_type(
+                entry.receiver,
+                receiver_ty,
+                entry.generics,
+                &mut bindings,
+            ) {
+                return false;
+            }
+        }
+
+        if let Some(error) = entry.bound_error {
+            // A declaration-time bound error outranks any call-site failure.
+            if !matches!(rejection, Some(TraitMethodRejection::BoundError(_))) {
+                *rejection = Some(TraitMethodRejection::BoundError(error));
+            }
+            return false;
+        }
+
+        let mut trait_generics = std::vec::Vec::new();
+        entry.trait_ty.collect_generics(&mut trait_generics);
+        if trait_generics.iter().all(|generic| {
+            bindings.iter().any(|(binding, _)| binding.name == generic.name)
+        }) {
+            let trait_ty = entry.trait_ty.to_ty(&bindings, syms);
+            if !syms.trait_arguments_satisfy_bounds(trait_ty) {
+                if rejection.is_none()
+                && let Some((_, actual, trait_id)) =
+                    syms.trait_argument_bound_failure(trait_ty)
+                {
+                    *rejection = Some(TraitMethodRejection::BoundFailure(actual, trait_id));
+                }
+                return false;
+            }
+        }
+
+        true
+    }
+
+
     fn find_trait_method_candidate(
         &mut self,
         scope: ScopeId,
@@ -1645,6 +1740,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         let candidates = self.syms.traits(sym_id).clone();
         let mut candidate = None;
         let mut ambiguous_trait_method = false;
+        let mut rejection = None;
 
         self.scopes.get(scope).over::<()>(&self.scopes, |scope| {
             let ScopeKind::ImplicitNamespace(ns) = scope.kind() else { return None };
@@ -1656,27 +1752,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let SymbolKind::Trait(tr) = sym.kind() else { continue };
                     let Some(ft) = tr.funcs.iter().find(|x| x.0 == method_name) else { continue };
 
-                    if let Some(receiver_ty) = receiver_ty {
-                        let mut bindings = std::vec::Vec::with_capacity(entry.generics.len());
-                        if !self.syms.match_impl_type(
-                            entry.receiver,
-                            receiver_ty,
-                            entry.generics,
-                            &mut bindings,
-                        ) {
-                            continue;
-                        }
-
-                        let mut trait_generics = std::vec::Vec::new();
-                        entry.trait_ty.collect_generics(&mut trait_generics);
-                        if trait_generics.iter().all(|generic| {
-                            bindings.iter().any(|(binding, _)| binding.name == generic.name)
-                        }) {
-                            let trait_ty = entry.trait_ty.to_ty(&bindings, &mut self.syms);
-                            if !self.syms.trait_arguments_satisfy_bounds(trait_ty) {
-                                continue;
-                            }
-                        }
+                    if !Self::trait_method_entry_matches(
+                        &mut self.syms,
+                        *entry,
+                        receiver_ty,
+                        &mut rejection,
+                    ) {
+                        continue;
                     }
 
                     if candidate.is_none() {
@@ -1705,27 +1787,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     let SymbolKind::Trait(tr) = sym.kind() else { continue };
                     let Some(ft) = tr.funcs.iter().find(|x| x.0 == method_name) else { continue };
 
-                    if let Some(receiver_ty) = receiver_ty {
-                        let mut bindings = std::vec::Vec::with_capacity(entry.generics.len());
-                        if !self.syms.match_impl_type(
-                            entry.receiver,
-                            receiver_ty,
-                            entry.generics,
-                            &mut bindings,
-                        ) {
-                            continue;
-                        }
-
-                        let mut trait_generics = std::vec::Vec::new();
-                        entry.trait_ty.collect_generics(&mut trait_generics);
-                        if trait_generics.iter().all(|generic| {
-                            bindings.iter().any(|(binding, _)| binding.name == generic.name)
-                        }) {
-                            let trait_ty = entry.trait_ty.to_ty(&bindings, &mut self.syms);
-                            if !self.syms.trait_arguments_satisfy_bounds(trait_ty) {
-                                continue;
-                            }
-                        }
+                    if !Self::trait_method_entry_matches(
+                        &mut self.syms,
+                        entry,
+                        receiver_ty,
+                        &mut rejection,
+                    ) {
+                        continue;
                     }
 
                     if candidate.is_none() {
@@ -1743,6 +1811,20 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 source: range,
                 name: method_name,
             }));
+        }
+
+        if candidate.is_none() {
+            if let Some(rejection) = rejection {
+                return Err(match rejection {
+                    TraitMethodRejection::BoundError(error) => error,
+                    TraitMethodRejection::BoundFailure(actual, trait_id) =>
+                        self.error(id, Error::TypeDoesntImplTrait {
+                            source: range,
+                            ty: actual,
+                            tr: trait_id,
+                        }),
+                });
+            }
         }
 
         Ok(candidate)
@@ -3000,4 +3082,9 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
         Some(sti::vec::Vec::from_slice_in(GlobalAlloc, &qualified))
     }
+}
+
+enum TraitMethodRejection {
+    BoundError(ErrorId),
+    BoundFailure(Type, SymbolId),
 }
