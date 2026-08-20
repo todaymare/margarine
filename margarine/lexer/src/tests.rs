@@ -32,7 +32,7 @@ fn tokens() {
         let mut symbol_table = StringMap::new(&arena);
         let file = symbol_table.insert("test");
         let data = "() <> {} [] % / + - * ^ : :: , . ! = _ \
-                    <= >= == != || && += -= *= /= @ ?";
+                    <= >= == != || && += -= *= /= ^= @ ?";
         let file_data = FileData::new(data.to_string(), file, Extension::None);
     
         let tokens = lex(&file_data, &mut symbol_table, 0);
@@ -75,11 +75,12 @@ fn tokens() {
             token(TokenKind::SubEquals, 60, 61),
             token(TokenKind::MulEquals, 63, 64),
             token(TokenKind::DivEquals, 66, 67),
+            token(TokenKind::BitwiseXorEquals, 69, 70),
 
-            token(TokenKind::At, 69, 69),
-            token(TokenKind::QuestionMark, 71, 71),
+            token(TokenKind::At, 72, 72),
+            token(TokenKind::QuestionMark, 74, 74),
 
-            token(TokenKind::EndOfFile, 71, 71)
+            token(TokenKind::EndOfFile, 74, 74)
         ])
     }
 

@@ -162,7 +162,8 @@ pub enum TokenKind {
     BitwiseOr,
     /// '^'
     BitwiseXor,
-
+    /// '^='
+    BitwiseXorEquals,
     /// '=>'
     Arrow,
 
@@ -303,7 +304,10 @@ impl Lexer<'_, '_> {
             b',' => TokenKind::Comma,
             b'@' => TokenKind::At,
             b'?' => TokenKind::QuestionMark,
-            b'^' => TokenKind::BitwiseXor,
+            b'^' => {
+                if self.reader.consume_if_eq(&b'=') { TokenKind::BitwiseXorEquals }
+                else { TokenKind::BitwiseXor }
+            }
             b';' => TokenKind::SemiColon,
             b'$' => TokenKind::DollarSign,
 
