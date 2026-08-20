@@ -1,3 +1,4 @@
+use core::str;
 use std::{collections::HashMap, fmt, hash::Hash, path::Path};
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
@@ -4407,34 +4408,40 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 });
 
 
-                let mut tys: Vec<LLVMType<'ctx>> = Vec::with_capacity(captured.len());
-                let mut vals: Vec<Value<'ctx>> = Vec::with_capacity(captured.len());
-                let mut drop_tys: Vec<Type> = Vec::with_capacity(captured.len());
-                for name in &captured {
-                    let index = env.find_var(name.0).unwrap();
-                    let value = builder.local_get(index);
-                    let capture_ty = name.1.resolve(&[env.gens], self.syms);
-                    let value = self.emit_copy(builder, value, capture_ty);
-                    tys.push(value.ty());
-                    vals.push(value);
-                    drop_tys.push(capture_ty);
-                }
-                
-                let mut strct_fields: Vec<LLVMType<'ctx>> = Vec::with_capacity(captured.len() + 2);
-                strct_fields.push(*self.usize);
-                strct_fields.push(*self.ctx.ptr());
-                strct_fields.extend_from_slice(&tys);
-                let strct_ty = self.ctx.structure("captures");
-                strct_ty.set_fields(&strct_fields, false);
+              
+                let (buf, strct_ty) =
+                if !captured.is_empty() {
+                    let mut tys: Vec<LLVMType<'ctx>> = Vec::with_capacity(captured.len());
+                    let mut vals: Vec<Value<'ctx>> = Vec::with_capacity(captured.len());
+                    let mut drop_tys: Vec<Type> = Vec::with_capacity(captured.len());
+     
+                    for name in &captured {
+                        let index = env.find_var(name.0).unwrap();
+                        let value = builder.local_get(index);
+                        let capture_ty = name.1.resolve(&[env.gens], self.syms);
+                        let value = self.emit_copy(builder, value, capture_ty);
+                        tys.push(value.ty());
+                        vals.push(value);
+                        drop_tys.push(capture_ty);
+                    }
+     
 
-                let one = self.const_usize(builder, 1);
-                let zero = self.const_usize(builder, 0);
+                    let mut strct_fields: Vec<LLVMType<'ctx>> = Vec::with_capacity(captured.len() + 2);
+                    strct_fields.push(*self.usize);
+                    strct_fields.push(*self.ctx.ptr());
+                    strct_fields.extend_from_slice(&tys);
 
-                let void = self.ctx.void();
-                let drop_fn_ty = void.fn_ty(self.ctx.arena, &[*self.ctx.ptr()], false);
-                let drop_fn = self.module.function("__closure_drop", drop_fn_ty);
+                    let strct_ty = self.ctx.structure("captures");
+                    strct_ty.set_fields(&strct_fields, false);
 
-                {
+                    let one = self.const_usize(builder, 1);
+                    let zero = self.const_usize(builder, 0);
+
+
+                    let void = self.ctx.void();
+                    let drop_fn_ty = void.fn_ty(self.ctx.arena, &[*self.ctx.ptr()], false);
+                    let drop_fn = self.module.function("__closure_drop", drop_fn_ty);
+
                     let mut drop_builder = drop_fn.builder(self.ctx, drop_fn_ty);
                     let arg = drop_builder.arg(0).unwrap();
                     let drop_ptr = drop_builder.local_get(arg).as_ptr();
@@ -4460,18 +4467,22 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     });
 
                     drop_builder.ret_void();
-                }
 
-                let mut all_vals: Vec<Value<'ctx>> = Vec::with_capacity(captured.len() + 2);
-                all_vals.push(*one);
-                all_vals.push(*drop_fn);
-                all_vals.extend_from_slice(&vals);
 
-                let captures = builder.struct_instance(strct_ty, all_vals);
+                    let mut all_vals: Vec<Value<'ctx>> = Vec::with_capacity(captured.len() + 2);
+                    all_vals.push(*one);
+                    all_vals.push(*drop_fn);
+                    all_vals.extend_from_slice(&vals);
 
-                let size = self.const_usize(builder, strct_ty.size_of(self.module).unwrap());
-                let buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]).as_ptr();
-                builder.store(buf, *captures);
+                    let captures = builder.struct_instance(strct_ty, all_vals);
+
+                    let size = self.const_usize(builder, strct_ty.size_of(self.module).unwrap());
+                    let buf = builder.call(self.alloc_fn.0, self.alloc_fn.1, &[*size]).as_ptr();
+                    builder.store(buf, *captures);
+                    (buf, Some(strct_ty))
+                } else {
+                    (builder.ptr_null(), None)
+                };
 
 
                 let closure_name =
@@ -4479,6 +4490,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     Some(parent) => format!("{}.closure.{}", self.string_map.get(parent), self.func_counter),
                     None => format!("<closure>.{}", self.func_counter),
                 };
+
                 self.func_counter += 1;
                 let closure_name = self.string_map.insert(&closure_name);
 
@@ -4515,13 +4527,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let captured_ptr = builder.arg(func_ty.args().len() as _).unwrap();
                     let captured_ptr = builder.local_get(captured_ptr).as_ptr();
 
-                    for (i, capture) in captured.iter().enumerate() {
-                        let capture_ty = capture.1.resolve(&[combined_gens], self.syms);
-                        let capture_llvm_ty = self.to_llvm_ty(capture_ty);
-                        let capture_ptr = builder.field_ptr(captured_ptr, strct_ty, i + 2);
-                        let local = builder.local(capture_llvm_ty.repr);
-                        builder.local_set(local, builder.load(capture_ptr, capture_llvm_ty.repr));
-                        env.alloc_var(capture.0, local, capture_ty, true);
+                    if let Some(strct_ty) = strct_ty { 
+                        for (i, capture) in captured.iter().enumerate() {
+                            let capture_ty = capture.1.resolve(&[combined_gens], self.syms);
+                            let capture_llvm_ty = self.to_llvm_ty(capture_ty);
+                            let capture_ptr = builder.field_ptr(captured_ptr, strct_ty, i + 2);
+                            let local = builder.local(capture_llvm_ty.repr);
+                            builder.local_set(local, builder.load(capture_ptr, capture_llvm_ty.repr));
+                            env.alloc_var(capture.0, local, capture_ty, true);
+                        }
                     }
 
 

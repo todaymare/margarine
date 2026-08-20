@@ -9,7 +9,7 @@ use sti::{arena::Arena, ext::FromIn, key::Key, vec::{KVec, Vec}};
 use syms::{ty::Type, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 use namespace::{Namespace, NamespaceId, NamespaceMap};
 
-use crate::{namespace::SymbolGetResult, scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId}, Symbol, SymbolKind}};
+use crate::{namespace::SymbolGetResult, scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId, VarId}, Symbol, SymbolKind}};
 
 pub mod scope;
 pub mod namespace;
@@ -236,15 +236,22 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         let scope = Scope::new(None, ScopeKind::ImplicitNamespace(core_ns));
         let scope = analyzer.scopes.push(scope);
         analyzer.base_scope = scope;
+
         let empty = analyzer.string_map.insert("");
         analyzer.block(empty, scope, block);
 
-        let vars = analyzer.syms.vars().iter().copied().collect::<std::vec::Vec<_>>();
-        for v in vars.iter() {
+        let vars = analyzer.syms.vars().len();
+        for idx in 0..vars {
+            let idx = VarId(idx as _);
+            let v = analyzer.syms.vars()[idx];
+
             if !v.is_concrete(&mut analyzer.syms)
             && v.is_root(&mut analyzer.syms) {
                 let error = Error::UnableToInfer(v.range(), v.name());
-                analyzer.error(v.node(), error);
+                let error_id = analyzer.error(v.node(), error);
+                let sym = analyzer.syms.error_sym(&mut analyzer.namespaces, error_id);
+                let v = &mut analyzer.syms.vars_mut()[idx];
+                v.set_sub(syms::sym_map::VarSub::Concrete(Type::Ty(sym, GenListId::EMPTY)));
             }
         }
 
