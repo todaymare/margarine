@@ -574,7 +574,7 @@ const COLLECTION_LENGTH_BITS: u32 = 59;
 const COLLECTION_DEPTH_SHIFT: u32 = COLLECTION_LENGTH_BITS;
 const COLLECTION_LENGTH_MASK: i64 = (1i64 << COLLECTION_LENGTH_BITS) - 1;
 const COLLECTION_DEPTH_MASK: i64 = (1i64 << (64 - COLLECTION_LENGTH_BITS)) - 1;
-const COLLECTION_FLATTEN_DEPTH: i64 = 16;
+const COLLECTION_FLATTEN_DEPTH: i64 = 8;
 const COLLECTION_ITER_FRAME_CAPACITY: usize = COLLECTION_FLATTEN_DEPTH as usize + 1;
 const COLLECTION_FLAT_TAG : usize = 0b00;
 const COLLECTION_SLICE_TAG : usize = 0b01;
@@ -3141,7 +3141,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
                 // Iterator advancement mutates the iterator through its in-out receiver.
-                let (iter_expr, iter_slot) = if iter_fn_is_inout {
+                let (iter_expr, iter_slot) = 
+                if iter_fn_is_inout {
                     let value = self.emit_copy(builder, iter_value, iter_sym);
                     let slot = builder.alloca_store(value);
                     (*slot, Some(slot))
@@ -4408,6 +4409,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 });
 
 
+                let closure_name =
+                match self.current_function_name {
+                    Some(parent) => format!("{}.closure.{}", self.string_map.get(parent), self.func_counter),
+                    None => format!("<closure>.{}", self.func_counter),
+                };
+
+
               
                 let (buf, strct_ty) =
                 if !captured.is_empty() {
@@ -4440,7 +4448,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                     let void = self.ctx.void();
                     let drop_fn_ty = void.fn_ty(self.ctx.arena, &[*self.ctx.ptr()], false);
-                    let drop_fn = self.module.function("__closure_drop", drop_fn_ty);
+                    let drop_fn = self.module.function(&format!("{closure_name}.drop"), drop_fn_ty);
 
                     let mut drop_builder = drop_fn.builder(self.ctx, drop_fn_ty);
                     let arg = drop_builder.arg(0).unwrap();
@@ -4482,13 +4490,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     (buf, Some(strct_ty))
                 } else {
                     (builder.ptr_null(), None)
-                };
-
-
-                let closure_name =
-                match self.current_function_name {
-                    Some(parent) => format!("{}.closure.{}", self.string_map.get(parent), self.func_counter),
-                    None => format!("<closure>.{}", self.func_counter),
                 };
 
                 self.func_counter += 1;
