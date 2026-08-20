@@ -142,6 +142,8 @@ fn tuple_funcs() {
     var s = swap(t);
     assert(s.0 == 2, "swapped tuple field 0 wrong");
     assert(s.1 == 1, "swapped tuple field 1 wrong");
+    let nested = ((3, 4), 5);
+    assert(nested.0.1 == 4, "nested tuple field chain was parsed as a float");
 }
 
 

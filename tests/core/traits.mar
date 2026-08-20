@@ -50,6 +50,20 @@ impl InOutMethod for InOutCounter {
     fn increment(&self) { self.value = self.value + 1; }
 }
 
+struct WrongInOutCounter {}
+
+@silent
+impl InOutMethod for WrongInOutCounter {
+    fn increment(self) {}
+}
+
+@test(should_panic)
+@silent
+fn trait_inout_signature_mismatch_is_rejected() {
+    var counter = WrongInOutCounter {};
+    counter.increment();
+}
+
 impl Method for int {
     fn method(self) {
     }
@@ -229,10 +243,12 @@ trait BoundedTrait<T: RequiredArgument> {
 }
 
 struct BoundedImpl {}
+@silent
 impl BoundedTrait<InvalidArgument> for BoundedImpl {
     fn bounded(self, value: InvalidArgument) {}
 }
 
+@silent
 fn call_bounded<T: BoundedTrait<InvalidArgument> >(value: T) {
     value.bounded(InvalidArgument {});
 }
@@ -286,6 +302,7 @@ impl qualified_second::Second<int> for QualifiedConflict {
     fn conflict(self): int { 2 }
 }
 
+@silent
 fn call_qualified_conflict<
     T: qualified_first::First<int> + qualified_second::Second<int>
 >(value: T): int {

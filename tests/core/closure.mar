@@ -76,3 +76,44 @@ fn no_capture_closure_higher_order() {
 
 
 
+fn takes_inout_callback(callback: fn(&int)) {}
+
+
+struct InoutCallbackHolder {
+    callback: fn(&int),
+}
+
+@test
+fn function_type_inout_marker_is_preserved_in_struct_field() {
+    let holder = InoutCallbackHolder { callback: mutable_callback };
+}
+fn mutable_callback(&value: int) {}
+
+@test
+fn function_type_inout_marker_accepts_matching_function() {
+    takes_inout_callback(mutable_callback);
+}
+
+@test(should_panic)
+@silent
+fn function_type_inout_marker_rejects_by_value_closure() {
+    takes_inout_callback(|value: int| value);
+}
+
+fn invoke_inout_callback(callback: fn(&int), value: int): int {
+    callback(&value);
+    value
+}
+
+@test
+fn closure_inout_parameter_is_preserved() {
+    var result =
+        invoke_inout_callback(
+            |&value| {
+                value = value + 1;
+            },
+            1
+        );
+    assert(result == 2, "inout closure parameter was not written back");
+}
+

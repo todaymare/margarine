@@ -5,3 +5,33 @@ fn float_sqrt_returns_expected_values() {
     assert($float_sqrt(4.0) == 2.0, "sqrt four");
     assert($float_sqrt(9.0) == 3.0, "sqrt nine");
 }
+
+@test
+fn float_scientific_notation_literals() {
+    assert(1e3 == 1000.0, "positive exponent");
+    assert(2.5e-2 == 0.025, "negative exponent");
+    assert(5e0 == 5.0, "zero exponent");
+    assert(7.25e2 == 725.0, "fractional mantissa");
+    var scaled = 3e-4;
+    assert(scaled * 10000.0 > 2.9 && scaled * 10000.0 < 3.1, "exponent literal usable as value");
+}
+
+@test(should_panic)
+@silent
+fn float_exponent_overflow_is_rejected() {
+    1e9999999999;
+}
+
+@test
+fn base_prefixed_integer_literals() {
+    assert(0b1010 == 10, "binary literal");
+    assert(0o17 == 15, "octal literal");
+    assert(0xff == 255, "hex literal");
+    assert(0b1_0000 == 16, "binary literal with separator");
+}
+
+@test(should_panic)
+@silent
+fn binary_literal_rejects_invalid_digit() {
+    assert(0b102 == 0, "unreachable");
+}

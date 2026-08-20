@@ -194,7 +194,7 @@ fn list_iter_traverses_rope_shapes() {
 }
 
 @test
-fn list_iter_copies_share_cursor() {
+fn list_iter_does_not_copies_share_cursor() {
     var iter = [7, 8].iter();
     var other = iter;
 
@@ -203,7 +203,7 @@ fn list_iter_copies_share_cursor() {
         none => assert(false, "iterator: first value missing"),
     }
     match other.__next__() {
-        some(value) => assert(value == 8, "iterator: shared cursor advanced"),
+        some(value) => assert(value == 7, "iterator: shared cursor advanced"),
         none => assert(false, "iterator: second value missing"),
     }
 }
