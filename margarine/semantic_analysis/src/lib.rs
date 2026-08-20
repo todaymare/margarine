@@ -108,7 +108,7 @@ pub struct TyInfo<'out> {
     decls: KVec<DeclId, Option<ErrorId>>,
     funcs: HashMap<ExprId, (SymbolId, GenListId)>,
     idents: HashMap<ExprId, Option<SymbolId>>,
-    trait_funcs: HashMap<ExprId, SymbolId>,
+    trait_funcs: HashMap<ExprId, Generic<'out>>,
     impls: HashMap<DeclId, (Generic<'out>, Generic<'out>, &'out [BoundedGeneric<'out>])>,
 }
 
@@ -457,95 +457,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
     }
 
 
-    fn dt_to_sym(&mut self, scope_id: ScopeId, id: impl Into<NodeId> + Copy,
-                dt: DataType) -> SymbolId {
-        match dt.kind() {
-            DataTypeKind::Unit => SymbolId::UNIT,
-            DataTypeKind::Never => SymbolId::NEVER,
-            DataTypeKind::Hole => {
-                let err = self.error(id, Error::CantUseHoleHere { source: dt.range() });
-                self.syms.error_sym(&mut self.namespaces, err)
-            },
-
-
-            DataTypeKind::Within(ns_name, ty) => {
-                let scope = self.scopes.get(scope_id);
-
-                let ns = scope.find_sym(
-                    ns_name, &self.scopes, 
-                    &mut self.syms, &self.namespaces
-                );
-
-                let ns = self.convert_symbol_get_result(id, ns_name, dt.range(), ns);
-                let ns = self.syms.sym_ns(ns);
-
-                let scope = Scope::new(scope_id, ScopeKind::QualifiedNamespace(ns));
-                let scope = self.scopes.push(scope);
-                self.dt_to_sym(scope, id, *ty)
-            },
-
-
-            DataTypeKind::CustomType(name, _) => {
-                let scope = self.scopes.get(scope_id);
-                if let Some(sym) = scope.find_gen(name, &self.scopes) {
-                    match sym.sym(&mut self.syms) {
-                        Ok(sym) => return sym,
-                        Err(e) => {
-                            let err = self.error(id, e);
-                            return self.syms.error_sym(&mut self.namespaces, err);
-                        },
-                    }
-                }
-
-                let result = scope.find_sym(name, &self.scopes, &mut self.syms, &self.namespaces);
-                let base = self.convert_symbol_get_result(id, name, dt.range(), result);
-                base
-            },
-
-
-            DataTypeKind::List(_) => {
-                SymbolId::LIST
-            },
-
-
-            DataTypeKind::Fn(args, ret) => {
-                let fields = {
-                    let mut fields = Buffer::new(&*self.output, args.len());
-                    for (i, ty) in args.iter().enumerate() {
-                        let g = self.dt_to_gen(id, self.scopes.get(scope_id), *ty, &[]);
-                        let func = FunctionArgument::new(self.string_map.num(i), g);
-                        fields.push(func);
-                    }
-
-
-                    fields.leak()
-                };
-
-                let ret = self.dt_to_gen(id, self.scopes.get(scope_id), *ret, &[]);
-
-                let closure = self.syms.new_closure();
-                let sym = self.func_sym(closure, fields, ret, &[], &[]);
-                sym
-            }
-
-
-            DataTypeKind::Tuple(vals) => {
-                let pool = self.output;
-                let fields = {
-                    let mut fields = Buffer::new(&*pool, vals.len());
-                    for ty in vals.iter() {
-                        fields.push(ty.0);
-                    }
-
-                    fields.leak()
-                };
-
-                let sym = self.tuple_sym(dt.range(), fields);
-
-                sym
-            },
-        }
-    }
 
 
     fn dt_to_ty(&mut self, scope_id: ScopeId, id: impl Into<NodeId> + Copy,
@@ -674,7 +585,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         let mut gens = sti::vec::Vec::with_cap_in(self.output, generics.len());
 
         for &g in generics.iter() {
-            gens.push(self.resolve_generic(scope_id, id, g)?);
+            gens.push(self.resolve_generic(scope_id, id, g, &gens)?);
         }
 
         Ok(gens.leak_slice())
@@ -683,14 +594,15 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
     fn resolve_generic(
         &mut self, scope_id: ScopeId, 
-        id: NodeId, generic: DeclGeneric<'ast>
+        id: NodeId, generic: DeclGeneric<'ast>,
+        prev_gens: &[BoundedGeneric<'out>],
     ) -> Result<BoundedGeneric<'out>, ErrorId> {
 
         let mut bounds = sti::vec::Vec::with_cap_in(self.output, generic.bounds().len());
 
         for bound in generic.bounds() {
-            let sym = self.dt_to_sym(scope_id, id, *bound);
-            bounds.push(sym);
+            let g = self.dt_to_gen(id, self.scopes.get(scope_id), *bound, prev_gens);
+            bounds.push(g);
         }
 
         Ok(BoundedGeneric::new(generic.name(), bounds.leak()))
@@ -759,7 +671,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 }
 
 
-impl TyInfo<'_> {
+impl<'out> TyInfo<'out> {
     pub fn set_stmt(&mut self, stmt: StmtId, info: ErrorId) {
         let val = &mut self.stmts[stmt];
         if val.is_none() {
@@ -794,7 +706,7 @@ impl TyInfo<'_> {
     }
 
 
-    pub fn set_acc(&mut self, expr: ExprId, tra: SymbolId) {
+    pub fn set_acc(&mut self, expr: ExprId, tra: Generic<'out>) {
         self.trait_funcs.insert(expr, tra);
     }
 
@@ -818,10 +730,6 @@ impl TyInfo<'_> {
 
     pub fn func_call(&self, expr: ExprId) -> Option<(SymbolId, GenListId)> {
         self.funcs.get(&expr).copied()
-    }
-
-    pub fn trait_func(&self, expr: ExprId) -> Option<SymbolId> {
-        self.trait_funcs.get(&expr).copied()
     }
 
 }

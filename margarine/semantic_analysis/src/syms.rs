@@ -5,7 +5,7 @@ pub mod sym_map;
 
 use common::{string_map::StringIndex, ImmutableData};
 use errors::ErrorId;
-use crate::{namespace::NamespaceId, syms::sym_map::{BoundedGeneric, Generic}};
+use crate::syms::sym_map::{BoundedGeneric, Generic};
 
 use self::{containers::Container, func::FunctionTy};
 
@@ -43,13 +43,6 @@ pub struct Trait<'me> {
 pub enum TraitSynthesis {
     None,
     UniversalNoop,
-}
-
-
-#[derive(Debug, Clone, Copy)]
-pub enum TraitImplementation<'me> {
-    Explicit(NamespaceId, sym_map::Generic<'me>, &'me [sym_map::BoundedGeneric<'me>]),
-    Synthesized(TraitSynthesis),
 }
 
 

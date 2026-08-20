@@ -111,6 +111,7 @@ pub enum Decl<'a> {
         visibility: Visibility,
         name: StringIndex,
         header: SourceRange,
+        generics: &'a [DeclGeneric<'a>],
         functions: &'a [FunctionSignature<'a>],
     },
 

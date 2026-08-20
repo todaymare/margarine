@@ -1164,8 +1164,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.advance();
 
         let name = self.expect_identifier()?;
-        let header = SourceRange::new(start, self.current_range().end());
         self.advance();
+
+        let generics = self.generic_decl()?;
+        let header = SourceRange::new(start, self.current_range().end());
 
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
@@ -1181,7 +1183,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         )?;
 
         Ok(self.ast.add_decl(
-            Decl::Trait { visibility, header, functions, name },
+            Decl::Trait { visibility, header, generics, functions, name },
             SourceRange::new(start, self.current_range().end())
         ))
     }

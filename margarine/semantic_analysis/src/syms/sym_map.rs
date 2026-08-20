@@ -5,7 +5,7 @@ use errors::ErrorId;
 use parser::nodes::{decl::{DeclId, Visibility}, NodeId};
 use sti::{arena::Arena, define_key, ext::FromIn, vec::KVec};
 
-use crate::{namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind, Trait, TraitImplementation, TraitSynthesis}};
+use crate::{namespace::{Namespace, NamespaceId, NamespaceMap}, syms::{containers::{Container, ContainerKind}, func::{FunctionArgument, FunctionKind, FunctionTy}, SymbolKind, Trait, TraitSynthesis}};
 
 use super::{ty::Type, Symbol};
 
@@ -14,8 +14,19 @@ define_key!(pub GenListId(pub u32));
 define_key!(pub VarId(pub u32));
 define_key!(pub ClosureId(pub u32));
 
+#[derive(Clone, Copy, Debug)]
+pub struct TraitImplEntry<'me> {
+    pub namespace: NamespaceId,
+    pub trait_ty: Generic<'me>,
+    pub receiver: Generic<'me>,
+    pub generics: &'me [BoundedGeneric<'me>],
+    pub declaration: Option<DeclId>,
+}
+
+pub type TraitMap<'me> = HashMap<SymbolId, Vec<TraitImplEntry<'me>>>;
+
 pub struct SymbolMap<'me> {
-    syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId, HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [BoundedGeneric<'me>])>)>,
+    syms : KVec<SymbolId, (Result<Symbol<'me>, usize>, NamespaceId, TraitMap<'me>)>,
     gens : KVec<GenListId, &'me [(BoundedGeneric<'me>, Type)]>,
     vars : KVec<VarId, Var>,
     closures: KVec<ClosureId, Closure>,
@@ -55,7 +66,7 @@ pub struct Generic<'me> {
 #[derive(Clone, Copy, Debug, PartialEq, ImmutableData)]
 pub struct BoundedGeneric<'me> {
     pub name: StringIndex,
-    pub bounds: &'me [SymbolId],
+    pub bounds: &'me [Generic<'me>],
 }
 
 
@@ -64,7 +75,7 @@ impl<'me> BoundedGeneric<'me> {
     pub const A : Self = Self::new(StringMap::A, &[]);
 
 
-    pub const fn new(name: StringIndex, bounds: &'me [SymbolId]) -> Self {
+    pub const fn new(name: StringIndex, bounds: &'me [Generic<'me>]) -> Self {
         Self { name, bounds }
     }
 }
@@ -90,54 +101,108 @@ impl<'me> SymbolMap<'me> {
     }
 
 
-    pub fn traits(&mut self, sym: SymbolId) -> &mut HashMap<SymbolId, (NamespaceId, Generic<'me>, &'me [BoundedGeneric<'me>])> {
+    pub fn traits(&mut self, sym: SymbolId) -> &mut TraitMap<'me> {
         &mut self.syms[sym].2
     }
 
 
-    pub fn trait_implementation(&mut self, ty: Type, trait_id: SymbolId) -> Option<TraitImplementation<'me>> {
-        let sym = ty.sym(self).ok()?;
-        if let Some(&(ns, ty, gens)) = self.syms[sym].2.get(&trait_id) {
-            return Some(TraitImplementation::Explicit(ns, ty, gens));
+    pub fn trait_implementation(
+        &mut self,
+        ty: Type,
+        trait_ty: Type,
+    ) -> Option<(NamespaceId, std::vec::Vec<(BoundedGeneric<'me>, Type)>)> {
+        let Type::Ty(trait_id, _) = trait_ty.instantiate_shallow(self)
+        else { return None; };
+        if !self.trait_arguments_satisfy_bounds(trait_ty) {
+            return None;
         }
 
-        let SymbolKind::Trait(trait_sym) = self.sym(trait_id).kind() else {
-            return None;
+        let sym = ty.sym(self).ok()?;
+        let impls = self.syms[sym].2.get(&trait_id)?.clone();
+        let mut implementation = None;
+
+        for entry in impls {
+            let mut bindings = std::vec::Vec::with_capacity(entry.generics.len());
+            if !self.match_impl_type(entry.receiver, ty, entry.generics, &mut bindings) {
+                continue;
+            }
+            if !self.match_impl_type(entry.trait_ty, trait_ty, entry.generics, &mut bindings) {
+                continue;
+            }
+
+            let bounds_ok =
+            entry.generics.iter().all(|generic| {
+                let Some((_, bound_ty)) = bindings.iter().find(|(value, _)| value.name == generic.name)
+                else { return false };
+
+                generic.bounds.iter().all(|bound| {
+                    let bound_trait_ty = bound.to_ty(&bindings, self);
+                    self.type_implements_trait_generic(*bound_ty, bound_trait_ty)
+                })
+            });
+
+            if bounds_ok {
+                if implementation.is_some() {
+                    return None;
+                }
+                implementation = Some((entry.namespace, bindings));
+            }
+        }
+
+        implementation
+    }
+
+
+    pub(crate) fn trait_arguments_satisfy_bounds(&mut self, trait_ty: Type) -> bool {
+        let Type::Ty(trait_id, _) = trait_ty.instantiate_shallow(self)
+        else { return false; };
+        let trait_generics = self.sym(trait_id).generics();
+        let trait_args_id = trait_ty.gens(self);
+        let trait_args = self.get_gens(trait_args_id);
+        if trait_generics.len() != trait_args.len() {
+            return false;
+        }
+
+        for (generic, (_, actual)) in trait_generics.iter().zip(trait_args) {
+            for bound in generic.bounds {
+                let bound_trait_ty = bound.to_ty(trait_args, self);
+                if !self.type_implements_trait_generic(*actual, bound_trait_ty) {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+
+    pub fn type_implements_trait_generic(&mut self, ty: Type, trait_ty: Type) -> bool {
+        let Type::Ty(trait_id, _) = trait_ty.instantiate_shallow(self) 
+        else {
+            return false;
+        };
+
+        if self.trait_implementation(ty, trait_ty).is_some() {
+            return true;
+        }
+
+        let SymbolKind::Trait(trait_sym) = self.sym(trait_id).kind()
+        else {
+            return false;
         };
 
         match trait_sym.synthesis {
-            TraitSynthesis::None => None,
-            synthesis => Some(TraitImplementation::Synthesized(synthesis)),
+            TraitSynthesis::None => false,
+            TraitSynthesis::UniversalNoop => true,
         }
     }
 
-
-    pub fn type_implements_trait(&mut self, ty: Type, trait_id: SymbolId) -> bool {
-        match self.trait_implementation(ty, trait_id) {
-            Some(TraitImplementation::Synthesized(_)) => true,
-            Some(TraitImplementation::Explicit(_, impl_ty, impl_gens)) => {
-                let mut bindings = std::vec::Vec::with_capacity(impl_gens.len());
-                if !self.match_impl_type(impl_ty, ty, impl_gens, &mut bindings) {
-                    return false;
-                }
-
-                impl_gens.iter().all(|generic| {
-                    let Some((_, ty)) = bindings.iter().find(|(name, _)| *name == generic.name)
-                    else { return false };
-
-                    generic.bounds.iter().all(|bound| self.type_implements_trait(*ty, *bound))
-                })
-            },
-            None => false,
-        }
-    }
-
-    fn match_impl_type(
+    pub(crate) fn match_impl_type(
         &mut self,
         pattern: Generic<'me>,
         actual: Type,
         impl_gens: &[BoundedGeneric<'me>],
-        bindings: &mut std::vec::Vec<(StringIndex, Type)>,
+        bindings: &mut std::vec::Vec<(BoundedGeneric<'me>, Type)>,
     ) -> bool {
         match pattern.kind {
             GenericKind::Generic(generic) => {
@@ -145,10 +210,14 @@ impl<'me> SymbolMap<'me> {
                     return false;
                 }
 
-                match bindings.iter().find(|(name, _)| *name == generic.name) {
+                match bindings.iter().find(|(value, _)| value.name == generic.name) {
                     Some((_, bound)) => (*bound).eq(self, actual),
                     None => {
-                        bindings.push((generic.name, actual));
+                        let generic = impl_gens.iter()
+                            .find(|value| value.name == generic.name)
+                            .copied()
+                            .unwrap();
+                        bindings.push((generic, actual));
                         true
                     },
                 }
@@ -354,6 +423,28 @@ impl<'me> Generic<'me> {
         match self.kind {
             GenericKind::Generic(_) => None,
             GenericKind::Sym(v, _) => Some(v),
+        }
+    }
+
+    pub fn gens(self) -> Option<&'me [Generic<'me>]> {
+        match self.kind {
+            GenericKind::Generic(_) => None,
+            GenericKind::Sym(_, gens) => Some(gens),
+        }
+    }
+
+    pub fn collect_generics(self, out: &mut std::vec::Vec<BoundedGeneric<'me>>) {
+        match self.kind {
+            GenericKind::Generic(g) => {
+                if !out.iter().any(|existing| existing.name == g.name) {
+                    out.push(g);
+                }
+            },
+            GenericKind::Sym(_, args) => {
+                for arg in args {
+                    arg.collect_generics(out);
+                }
+            }
         }
     }
     

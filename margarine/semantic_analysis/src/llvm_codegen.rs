@@ -6,7 +6,7 @@ use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, Co
 use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
 use sti::{arena::Arena, ext::FromIn, hash::fxhash::FxHasher64};
 
-use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind, TraitImplementation}, TyInfo};
+use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, Generic, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind}, TyInfo};
 
 pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     string_map: &'me mut StringMap<'str>,
@@ -3765,32 +3765,25 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 let ty = ty.resolve(&[env.gens], self.syms);
 
-                let func = 
+                let func =
                 // its a trait func
-                if let Some(tr) = self.ty_info.trait_funcs.get(&expr) {
+                if let Some(trait_ty) = self.ty_info.trait_funcs.get(&expr).copied() {
                     let sym = self.ty_info.idents.get(&expr).unwrap().unwrap();
                     let sym = Type::Ty(sym, GenListId::EMPTY);
                     let sym = sym.resolve(&[env.gens], self.syms);
-
-                    let sym = sym.sym(self.syms).unwrap();
-
-                    let (ns, _, _) = self.syms.traits(sym).get(tr).unwrap();
-                    self.ns.get_ns(*ns).get_sym(name).unwrap().ok()
+                    self.trait_accessor_function(sym, trait_ty, ty, name, &[env.gens])
                     
                 } else if let Some(Some(sym)) = self.ty_info.idents.get(&expr) {
-                    Some(*sym)
+                    let func_gens = ty.gens(self.syms);
+                    Some(Type::Ty(*sym, func_gens).resolve(&[env.gens], self.syms))
 
                 } else {
                     None
                 };
 
                 // it's a function
-                if let Some(func) = func {
-                    let func_gens = ty.gens(self.syms);
-                    let sym = Type::Ty(func, func_gens);
-
-                    let sym = sym.resolve(&[env.gens], self.syms);
-
+                if let Some(sym) = func {
+                    let func_ref_ty = self.func_ref;
                     let func = self.get_func(sym)?;
 
                     // create func ref
@@ -3799,9 +3792,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     // need to allocate anything
                     let null = builder.ptr_null();
                     let ptr = func.func_ptr;
-                    let ty = self.func_ref;
                     let func_ref = builder.struct_instance(
-                        ty,
+                        func_ref_ty,
                         [*ptr, *null],
                     );
 
@@ -4251,61 +4243,33 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let val_gens = val.gens(self.syms);
                 let val_gens = self.syms.get_gens(val_gens);
 
-                let ns = 
-                if let Some(tr) = self.ty_info.trait_funcs.get(&expr) {
-                    // The analysis only registers trait accessors whose
-                    // receiver type_implements_trait's, so the implementation
-                    // is present here; errored accessors are skipped by the
-                    // out_if_err! at the arm head before reaching this point.
-                    let implementation = self.syms.traits(ty).get(tr)
-                        .copied()
-                        .expect("trait implementation registered for accessor");
-                    implementation.0
-                } else {
-                    self.syms.sym_ns(ty)
-                };
+                if let Some(trait_ty) = self.ty_info.trait_funcs.get(&expr).copied() {
+                    let sym = self.trait_accessor_function(
+                        val,
+                        trait_ty,
+                        this,
+                        field_name,
+                        &[env.gens, val_gens],
+                    ).expect("trait implementation registered for accessor");
+                    let func_ref_ty = self.func_ref;
+                    let func = self.get_func(sym)?;
+
+                    let null = builder.ptr_null();
+                    let func_ref = builder.struct_instance(
+                        func_ref_ty,
+                        [*func.func_ptr, *null],
+                    );
+
+                    return Ok((*func_ref, sym))
+                }
 
 
-                let ns = self.ns.get_ns(ns);
+                let ns = self.ns.get_ns(self.syms.sym_ns(ty));
 
 
                 if let Some(sym) = ns.get_sym(field_name) {
                     let sym = sym.unwrap();
-                    let gens =
-                    if self.ty_info.trait_funcs.contains_key(&expr) {
-                        // Trait implementation symbols own the receiver generics,
-                        // while the accessor closure owns the method generics.
-                        // A trait-bound receiver may not carry the implementation
-                        // values in the accessor type until codegen resolves it.
-                        let implementation_gens = self.syms.sym(sym).generics();
-                        let accessor_sym = this.sym(self.syms).unwrap();
-                        let method_gen_count =
-                        match self.syms.sym(accessor_sym).kind() {
-                            SymbolKind::Function(func) => func.declared_generics().len(),
-                            _ => unreachable!(),
-                        };
-
-                        assert!(implementation_gens.len() >= method_gen_count);
-                        let implementation_gen_count = implementation_gens.len() - method_gen_count;
-                        let accessor_gens_id = this.gens(self.syms);
-                        let accessor_gens = self.syms.get_gens(accessor_gens_id);
-                        let method_gens = &accessor_gens[accessor_gens.len() - method_gen_count..];
-                        let generic_values = val_gens
-                            .iter()
-                            .take(implementation_gen_count)
-                            .chain(method_gens.iter());
-                        let gens = sti::vec::Vec::from_in(
-                            self.syms.arena(),
-                            implementation_gens
-                                .iter()
-                                .zip(generic_values)
-                                .map(|(implementation_gen, (_, ty))| (*implementation_gen, *ty)),
-                        );
-
-                        self.syms.add_gens(gens.leak())
-                    } else {
-                        this.gens(self.syms)
-                    };
+                    let gens = this.gens(self.syms);
 
                     let sym = Type::Ty(sym, gens)
                         .resolve(&[env.gens, val_gens], self.syms);
@@ -5277,33 +5241,61 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         trait_id: SymbolId,
         func_name: StringIndex,
     ) -> Option<&Function<'ctx>> {
-        let ns = 
-        match self.syms.trait_implementation(ty, trait_id)? {
-            TraitImplementation::Explicit(ns, _, _) => ns,
-            TraitImplementation::Synthesized(_) => return None,
-        };
+        let trait_ty = Type::Ty(trait_id, GenListId::EMPTY);
+        let (ns, bindings) = self.syms.trait_implementation(ty, trait_ty)?;
 
         let func_sym = self.ns.get_ns(ns).get_sym(func_name).unwrap().ok()?;
-        let actual_type_gens = ty.gens(self.syms);
-        let actual_gens: Vec<_> = self.syms.get_gens(actual_type_gens)
-            .iter()
-            .map(|(_, ty)| *ty)
-            .collect();
-
         let func_gens = self.syms.sym(func_sym).generics();
 
-        if actual_gens.len() != func_gens.len() {
-            return None;
-        }
-
         let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), func_gens.len());
-        for (generic, ty) in func_gens.iter().zip(actual_gens) {
-            gens.push((*generic, ty));
+        for generic in func_gens {
+            let (_, ty) = bindings.iter().find(|(binding, _)| binding.name == generic.name)?;
+            gens.push((*generic, *ty));
         }
 
         let gens = self.syms.add_gens(gens.leak());
 
         self.get_func(Type::Ty(func_sym, gens)).ok()
+    }
+
+
+    fn trait_accessor_function(
+        &mut self,
+        receiver: Type,
+        trait_pattern: Generic<'out>,
+        accessor: Type,
+        name: StringIndex,
+        env_gens: &[&[(BoundedGeneric<'_>, Type)]],
+    ) -> Option<Type> {
+        let accessor_gens_id = accessor.gens(self.syms);
+        let accessor_gens = self.syms.get_gens(accessor_gens_id);
+        let trait_ty = trait_pattern.to_ty(accessor_gens, self.syms);
+        let trait_ty = trait_ty.resolve(env_gens, self.syms);
+        let (ns, bindings) = self.syms.trait_implementation(receiver, trait_ty)?;
+        let func = self.ns.get_ns(ns).get_sym(name)?.ok()?;
+
+        let implementation_gens = self.syms.sym(func).generics();
+        let accessor_sym = accessor.sym(self.syms).ok()?;
+        let method_gen_count =
+        match self.syms.sym(accessor_sym).kind() {
+            SymbolKind::Function(func) => func.declared_generics().len(),
+            _ => return None,
+        };
+        let implementation_gen_count = implementation_gens.len().checked_sub(method_gen_count)?;
+        let accessor_gens_id = accessor.gens(self.syms);
+        let accessor_gens = self.syms.get_gens(accessor_gens_id);
+        let method_gens = &accessor_gens[accessor_gens.len().checked_sub(method_gen_count)?..];
+
+        let mut gens = sti::vec::Vec::with_cap_in(self.syms.arena(), implementation_gens.len());
+        for implementation_gen in &implementation_gens[..implementation_gen_count] {
+            let (_, ty) = bindings.iter()
+                .find(|(binding, _)| binding.name == implementation_gen.name)?;
+            gens.push((*implementation_gen, *ty));
+        }
+        gens.extend_from_slice(method_gens);
+
+        let gens = self.syms.add_gens(gens.leak());
+        Some(Type::Ty(func, gens).resolve(env_gens, self.syms))
     }
 
 
