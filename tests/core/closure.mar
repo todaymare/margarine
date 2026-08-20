@@ -53,4 +53,26 @@ fn nested_closure_in_generic() {
 }
 
 
+@test
+fn no_capture_closure_basic() {
+    var add = |a: int, b: int| { a + b };
+    assert(add(10, 20) == 30, "no-capture binary closure failed");
+
+    var constant = || 42;
+    assert(constant() == 42, "no-capture nullary closure failed");
+}
+
+
+@test
+fn no_capture_closure_higher_order() {
+    var c = Container { value: 100 };
+    var mapped = c.map(|x: int| x * 2);
+    assert(mapped.value == 200, "no-capture closure in higher-order method failed");
+
+    var copy_fn = |x: int| x * 2;
+    var mapped2 = c.map(copy_fn);
+    assert(mapped2.value == 200, "no-capture closure passed as variable failed");
+}
+
+
 

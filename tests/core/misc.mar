@@ -63,6 +63,13 @@ fn bitwise_and_is_not_inout() {
     assert((6 & 3) == 2, "bitwise and changed while adding in-out values");
 }
 
+@test
+fn bitwise_xor_assignment() {
+    var value = 10;
+    value ^= 12;
+    assert(value == 6, "xor assignment produced the wrong value");
+}
+
 struct InOutValue {
     value: int,
 }

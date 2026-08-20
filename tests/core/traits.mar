@@ -77,3 +77,223 @@ fn qualified_generic_trait_bound_allows_method_lookup() {
 fn list_to_str<T: std::string::ToStr>(value: T): str {
     value.to_str()
 }
+
+trait SimpleIterator<Item> {
+    fn next_item(&self): Option<Item>
+}
+
+struct StepCounter {
+    current: int,
+}
+
+impl SimpleIterator<int> for StepCounter {
+    fn next_item(&self): Option<int> {
+        self.current = self.current + 1;
+        some(self.current)
+    }
+}
+
+fn consume_first<T, I: SimpleIterator<T> >(iter: I, fallback: T): T {
+    match iter.next_item() {
+        some(v) => v,
+        none => fallback,
+    }
+}
+
+@test
+fn generic_trait_in_language() {
+    var c = StepCounter { current: 10 };
+    var val = consume_first(c, 0);
+    assert(val == 11, "generic trait did not produce expected value");
+}
+
+trait ConvertTo<T> {
+    fn convert_to(self): T
+}
+
+struct MultiConverter {}
+
+impl ConvertTo<int> for MultiConverter {
+    fn convert_to(self): int { 17 }
+}
+
+impl ConvertTo<str> for MultiConverter {
+    fn convert_to(self): str { "seventeen" }
+}
+
+fn convert_to_int<T: ConvertTo<int> >(value: T): int { value.convert_to() }
+fn convert_to_str<T: ConvertTo<str> >(value: T): str { value.convert_to() }
+
+@test
+fn generic_trait_dispatch_selects_trait_arguments() {
+    assert(convert_to_int(MultiConverter {}) == 17, "selected the wrong int implementation");
+    assert(convert_to_str(MultiConverter {}) == "seventeen", "selected the wrong str implementation");
+}
+
+trait Echo<T> {
+    fn echo(self, value: T): T
+}
+
+struct Echoer {}
+
+impl<T> Echo<T> for Echoer {
+    fn echo(self, value: T): T { value }
+}
+
+fn echo<T, E: Echo<T> >(echoer: E, value: T): T { echoer.echo(value) }
+
+@test
+fn trait_only_implementation_generic_is_inferred() {
+    assert(echo(Echoer {}, 23) == 23, "failed to infer int trait argument");
+    assert(echo(Echoer {}, "hello") == "hello", "failed to infer str trait argument");
+}
+
+trait PairWith<T> {
+    fn pair_with<U>(self, first: T, second: U): (T, U)
+}
+
+struct Pairer {}
+impl PairWith<int> for Pairer {
+    fn pair_with<U>(self, first: int, second: U): (int, U) { (first, second) }
+}
+
+fn pair_with_str<P: PairWith<int> >(pairer: P): (int, str) {
+    pairer.pair_with::<str>(31, "thirty-one")
+}
+
+@test
+fn generic_trait_preserves_method_generics() {
+    let pair = pair_with_str(Pairer {});
+    assert(pair.0 == 31, "trait argument was not preserved");
+    assert(pair.1 == "thirty-one", "method generic was not preserved");
+}
+
+trait NestedBound<T> {
+    fn nested(self)
+}
+
+struct NestedValue {}
+impl NestedBound<str> for NestedValue { fn nested(self) {} }
+
+trait RequiresNested<T> { fn required(self, value: T) }
+struct RequiresNestedImpl<T> { value: T }
+impl<T: NestedBound<int> > RequiresNested<T> for RequiresNestedImpl<T> {
+    fn required(self, value: T) {}
+}
+
+fn require_nested<T, R: RequiresNested<T> >(value: R, marker: T) { value.required(marker); }
+
+@test(should_panic)
+@silent
+fn nested_generic_trait_bound_keeps_arguments() {
+    require_nested(RequiresNestedImpl { value: NestedValue {} }, NestedValue {});
+}
+
+trait Returns<T> { fn returns(self): T }
+struct InvalidReturn {}
+
+@silent
+impl Returns<int> for InvalidReturn {
+    fn returns(self): str { "wrong" }
+}
+
+fn returns_int<T: Returns<int> >(value: T): int { value.returns() }
+
+@test(should_panic)
+@silent
+fn generic_trait_rejects_wrong_method_return() {
+    returns_int(InvalidReturn {});
+}
+
+trait Duplicate<T> { fn duplicate(self): T }
+struct DuplicateImpl {}
+
+impl Duplicate<int> for DuplicateImpl { fn duplicate(self): int { 1 } }
+impl Duplicate<int> for DuplicateImpl { fn duplicate(self): int { 2 } }
+
+fn call_duplicate<T: Duplicate<int> >(value: T): int { value.duplicate() }
+
+@test(should_panic)
+@silent
+fn overlapping_generic_trait_impls_are_rejected() {
+    call_duplicate(DuplicateImpl {});
+}
+
+trait RequiredArgument { fn required_argument(self) }
+struct ValidArgument {}
+impl RequiredArgument for ValidArgument { fn required_argument(self) {} }
+struct InvalidArgument {}
+
+trait BoundedTrait<T: RequiredArgument> {
+    fn bounded(self, value: T)
+}
+
+struct BoundedImpl {}
+impl BoundedTrait<InvalidArgument> for BoundedImpl {
+    fn bounded(self, value: InvalidArgument) {}
+}
+
+fn call_bounded<T: BoundedTrait<InvalidArgument> >(value: T) {
+    value.bounded(InvalidArgument {});
+}
+
+@test(should_panic)
+@silent
+fn trait_declaration_bounds_are_enforced() {
+    call_bounded(BoundedImpl {});
+}
+
+@test(should_panic)
+@silent
+fn direct_trait_declaration_bounds_are_enforced() {
+    BoundedImpl {}.bounded(InvalidArgument {});
+}
+
+struct GenericBoundedImpl {}
+impl<T> BoundedTrait<T> for GenericBoundedImpl {
+    fn bounded(self, value: T) {}
+}
+
+@test(should_panic)
+@silent
+fn inferred_trait_declaration_bounds_are_enforced() {
+    GenericBoundedImpl {}.bounded(InvalidArgument {});
+}
+
+struct ValidBoundedImpl {}
+impl<T: RequiredArgument> BoundedTrait<T> for ValidBoundedImpl {
+    fn bounded(self, value: T) {}
+}
+
+@test
+fn valid_trait_declaration_bounds_are_accepted() {
+    ValidBoundedImpl {}.bounded(ValidArgument {});
+}
+
+mod qualified_first {
+    pub trait First<T> { fn conflict(self): T }
+}
+
+mod qualified_second {
+    pub trait Second<T> { fn conflict(self): T }
+}
+
+struct QualifiedConflict {}
+impl qualified_first::First<int> for QualifiedConflict {
+    fn conflict(self): int { 1 }
+}
+impl qualified_second::Second<int> for QualifiedConflict {
+    fn conflict(self): int { 2 }
+}
+
+fn call_qualified_conflict<
+    T: qualified_first::First<int> + qualified_second::Second<int>
+>(value: T): int {
+    value.conflict()
+}
+
+@test(should_panic)
+@silent
+fn qualified_generic_trait_bounds_are_ambiguous() {
+    call_qualified_conflict(QualifiedConflict {});
+}
