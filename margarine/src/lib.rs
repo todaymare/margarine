@@ -91,8 +91,66 @@ impl<'me> Compiler<'me> {
             files: Files { files: vec![] },
             arena,
             string_map: StringMap::new(arena),
-            silent: true,
+            silent: false,
         }
+    }
+
+
+    pub fn check(&self, result: &mut CompilationResult<'me>) -> [Vec<Vec<String>>; 3] {
+        let mut lex_error_files = Vec::with_capacity(result.errors.lexer_errors.len());
+        for l in &result.errors.lexer_errors {
+            let mut file = Vec::with_capacity(l.len());
+            for e in l.iter() {
+                let report = display(e, &self.string_map, &self.files.files, &mut ());
+
+                if !cfg!(feature="fuzzer") {
+                    println!("{report}");
+                }
+
+                file.push(report);
+            }
+            lex_error_files.push(file);
+        }
+
+        let mut parse_error_files = Vec::with_capacity(result.errors.parser_errors.len());
+        for l in &result.errors.parser_errors {
+            let mut file = Vec::with_capacity(l.len());
+            for e in l.iter() {
+                let report = display(e, &self.string_map, &self.files.files, &mut ());
+
+                if !cfg!(feature="fuzzer") {
+                    println!("{report}");
+                }
+
+                file.push(report);
+            }
+            parse_error_files.push(file);
+        }
+
+        let mut sema_errors = Vec::with_capacity(result.errors.sema_errors.len());
+        for (id, error) in &result.errors.sema_errors {
+            let report = display(error, &self.string_map, &self.files.files, &mut result.syms);
+
+            if !cfg!(feature="fuzzer")
+            && !result.is_silent_error(result.errors.sema_error_nodes[id]) {
+                println!("{report}");
+            }
+
+            sema_errors.push(report);
+        }
+
+        let errors = [lex_error_files, parse_error_files, vec![sema_errors]];
+        errors
+    }
+
+
+    pub fn codegen(
+        &mut self, 
+        settings: &CompilationSettings, 
+        result: &mut CompilationResult<'me>,
+        errors: [Vec<Vec<String>>; 3]
+    ) {
+        result.codegen(self, &settings, settings.tests, errors);
     }
 
 
@@ -413,20 +471,22 @@ impl<'me> Compiler<'me> {
                             );
                         }
 
-                        let repository = 
+                        let cached_repository =
                         if std::fs::exists(&resource.path).unwrap_or(false) {
-                            match Repository::open(&resource.path) {
-                                Ok(repo) => repo,
-                                Err(_) => {
-                                    let err = pe.push(parser::errors::Error::RepoDoesntExist {
-                                        source,
-                                        path: repo,
-                                    });
-                                    global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                                    continue;
-                                }
-                            }
+                            Repository::open(&resource.path).ok()
                         } else {
+                            None
+                        };
+
+                        let repository =
+                        if let Some(repository) = cached_repository {
+                            repository
+                        } else {
+                            // Missing or corrupted cache entry (e.g. leftovers
+                            // from an interrupted build): drop whatever is there
+                            // and clone afresh instead of poisoning the build.
+                            let _ = fs::remove_dir_all(&resource.path);
+
                             if !self.silent {
                                 println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
                             }
@@ -628,6 +688,9 @@ impl<'me> CompilationResult<'me> {
 
     pub fn link_files(&self) -> &[String] { &self.link_files }
 
+    /// Test symbol names paired with their `should_panic` flag.
+    pub fn tests(&self) -> &[(SymbolId, bool)] { &self.tests }
+
     fn is_silent_error(&self, node: NodeId) -> bool {
         let (start, end) = self.ast.range(node).range();
         let index = self.silent_ranges.partition_point(|range| range.range().0 <= start);
@@ -664,75 +727,6 @@ impl Files {
     pub fn sort_by(&mut self, offsets: &[(StringIndex, u32)]) {
         self.files.sort_by_key(|f| offsets.iter().find(|n| n.0 == f.name()).map(|x| x.1).unwrap_or(u32::MAX));
     }
-}
-
-
-
-pub fn run<'str>(mut settings: CompilationSettings) -> (Vec<String>, Vec<(String, bool)>) {
-    let _ = std::fs::create_dir_all(&settings.cache);
-
-    let mut comp = Compiler::new(settings.arena);
-    comp.silent = false;
-
-    let file = FileData::open(&settings.entry, &mut comp.string_map).unwrap();
-    settings.entry = comp.string_map.get(file.name()).into();
-    comp.files.register(file);
-
-    let mut result = comp.run(&settings);
-
-    let mut lex_error_files = Vec::with_capacity(result.errors.lexer_errors.len());
-    for l in &result.errors.lexer_errors {
-        let mut file = Vec::with_capacity(l.len());
-        for e in l.iter() {
-            let report = display(e, &comp.string_map, &comp.files.files, &mut ());
-
-            if !cfg!(feature="fuzzer") {
-                println!("{report}");
-            }
-
-            file.push(report);
-        }
-        lex_error_files.push(file);
-    }
-
-    let mut parse_error_files = Vec::with_capacity(result.errors.parser_errors.len());
-    for l in &result.errors.parser_errors {
-        let mut file = Vec::with_capacity(l.len());
-        for e in l.iter() {
-            let report = display(e, &comp.string_map, &comp.files.files, &mut ());
-
-            if !cfg!(feature="fuzzer") {
-                println!("{report}");
-            }
-
-            file.push(report);
-        }
-        parse_error_files.push(file);
-    }
-
-    let mut sema_errors = Vec::with_capacity(result.errors.sema_errors.len());
-    for (id, error) in &result.errors.sema_errors {
-        let report = display(error, &comp.string_map, &comp.files.files, &mut result.syms);
-
-        if !cfg!(feature="fuzzer")
-        && !result.is_silent_error(result.errors.sema_error_nodes[id]) {
-            println!("{report}");
-        }
-
-        sema_errors.push(report);
-    }
-
-    let errors = [lex_error_files, parse_error_files, vec![sema_errors]];
-
-    result.codegen(&mut comp, &settings, settings.tests, errors);
-    let link_files = result.link_files().to_vec();
-
-    let mut tests = vec![];
-    for (sym, should_panic) in &result.tests {
-        tests.push((comp.string_map.get(result.syms.sym(*sym).name()).to_string(), *should_panic));
-    }
-
-    (link_files, tests)
 }
 
 

@@ -189,7 +189,24 @@ impl TryFrom<String> for CompilationTarget {
 }
 
 
+impl std::str::FromStr for CompilationTarget {
+    type Err = UnsupportedCompilationTarget;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::try_from(value)
+    }
+}
+
+
 impl CompilationTarget {
+    pub fn output_suffix(self) -> String {
+        match self {
+            CompilationTarget::Arm64AppleDarwin => "".into(),
+            CompilationTarget::Wasm32UnknownUnknown => "wasm".into(),
+        }
+    }
+
+
     pub fn margarine_target_triple(self) -> String {
         match self {
             CompilationTarget::Arm64AppleDarwin => "arm64-apple-darwin".into(),
