@@ -1,9 +1,21 @@
+mod library;
+mod update;
+
 use std::{ffi::CString, fmt::Write, io::{self, Write as _}, path::PathBuf, process::Command, time::Instant};
 
 use clap::{Parser, Subcommand};
 use colourful::ColourBrush;
 use margarine::{CompilationSettings, CompilationTarget, Prelude};
 use sti::{arena::Arena};
+
+use crate::update::cmd_update;
+
+const VERSION : &str = env!("CARGO_PKG_VERSION");
+const VERSION_INFO : &str = concat!("margarine ", env!("CARGO_PKG_VERSION"));
+const TARGET : &str = env!("MARGARINE_TARGET");
+
+pub const X_GLYPH : &str = "error:";
+pub const TICK_GLYPH : &str = "✓";
 
 #[derive(Parser)]
 #[command(
@@ -23,6 +35,7 @@ use sti::{arena::Arena};
         "https://github.com/todaymare/margarine",
     ),
 )]
+
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -112,13 +125,15 @@ enum Commands {
         update: bool,
     },
 
+    /// Check GitHub for a newer release and show its notes
+    Update,
+
     /// Remove build artifacts
     Clean {
         /// Cache directory
         #[arg(long)]
         cache: Option<String>,
     },
-
 }
 
 
@@ -136,18 +151,16 @@ enum LibCommands {
 
 
 /// Process exit codes, complementing clap's own usage-error code (2).
-mod exit {
-    /// Compilation reported errors.
-    pub const COMPILE_ERROR: i32 = 1;
-    /// A link or other external toolchain step failed.
-    pub const LINK_ERROR: i32 = 3;
-    /// The program launched by `run` exited non-zero; the child's own code is
-    /// propagated when it fits the portable 0..=125 range.
-    pub const PROGRAM_ERROR: i32 = 4;
-}
+/// Compilation reported errors.
+pub const COMPILE_ERROR: i32 = 1;
+/// A link or other external toolchain step failed.
+pub const LINK_ERROR: i32 = 3;
+/// The program launched by `run` exited non-zero; the child's own code is
+/// propagated when it fits the portable 0..=125 range.
+pub const PROGRAM_ERROR: i32 = 4;
 
 /// Prints a clap-styled error and terminates with `code`.
-fn fail(code: i32, message: impl std::fmt::Display) -> ! {
+pub fn fail(code: i32, message: impl std::fmt::Display) -> ! {
     use clap::error::{Error, ErrorKind};
 
     let mut cmd = <Cli as clap::CommandFactory>::command();
@@ -175,14 +188,14 @@ fn main() {
                     path.map(|s| cd.join(s))
                         .unwrap_or(cd);
 
-                margarine::library::validate_prerequisites().unwrap();
-                margarine::library::init(path).unwrap();
+                library::validate_prerequisites().unwrap();
+                library::init(path).unwrap();
             }
 
             LibCommands::Build => {
                 let path = std::env::current_dir().unwrap();
-                if let Err(error) = margarine::library::build(&path) {
-                    fail(exit::LINK_ERROR, format!("cannot build library: {error}"));
+                if let Err(error) = library::build(&path) {
+                    fail(LINK_ERROR, format!("cannot build library: {error}"));
                 }
             }
         }
@@ -205,7 +218,7 @@ fn main() {
                 .status()
                 .unwrap();
             if !status.success() {
-                let code = status.code().unwrap_or(exit::PROGRAM_ERROR);
+                let code = status.code().unwrap_or(PROGRAM_ERROR);
                 std::process::exit(code.clamp(0, 125));
             }
         }
@@ -255,7 +268,7 @@ fn main() {
                 .arg("-o")
                 .arg(format!("{program}.dylib"));
             if !run_step("linking...", &mut clang) {
-                fail(exit::LINK_ERROR, "linking failed");
+                fail(LINK_ERROR, "linking failed");
             }
 
             let success = run_tests(&tests, filter, &format!("{program}.dylib"));
@@ -290,8 +303,12 @@ fn main() {
             if error_count == 0 {
                 println!("{}", "no errors found".green());
             } else {
-                std::process::exit(exit::COMPILE_ERROR);
+                std::process::exit(COMPILE_ERROR);
             }
+        }
+
+        Commands::Update => {
+            std::process::exit(cmd_update());
         }
 
         Commands::Clean { cache } => {
@@ -351,7 +368,7 @@ fn compile_and_link(
     // Codegen still runs unconditionally after diagnostics (repo policy), but
     // a compile that produced errors must not report success.
     if error_count > 0 {
-        fail(exit::COMPILE_ERROR,
+        fail(COMPILE_ERROR,
             format!("compilation failed with {error_count} error(s)"));
     }
 
@@ -385,7 +402,7 @@ fn compile_and_link(
     };
 
     if !link_ok {
-        fail(exit::LINK_ERROR, "linking failed");
+        fail(LINK_ERROR, "linking failed");
     }
 
     output.into()
@@ -535,9 +552,9 @@ fn format_bytes(bytes: u64) -> String {
         unit += 1;
     }
     if unit == 0 {
-        format!("{bytes}b")
+        format!("{bytes} B")
     } else {
-        format!("{value:.1}{}", units[unit])
+        format!("{value:.1} {}", units[unit])
     }
 }
 
@@ -800,10 +817,7 @@ fn parse_env_preludes() -> Vec<Prelude> {
 
 
     if preludes.is_empty() {
-        let url = format!(
-            "https://cdn.daymare.net/margarine/{}/share", 
-            env!("CARGO_PKG_VERSION")
-        );
+        let url = format!("https://cdn.daymare.net/margarine/{VERSION}/share");
 
         vec![
             Prelude { alias: "core".into(), url: format!("{url}/core") },
@@ -813,3 +827,84 @@ fn parse_env_preludes() -> Vec<Prelude> {
         preludes
     }
 }
+
+
+
+
+/// Renders one GitHub-markdown line for the update dialogue. Deliberately
+/// tiny: headings become bold labels, list items become bullets, everything
+/// else passes through indented.
+fn render_markdown_line(out: &mut String, line: &str) {
+    let trimmed = line.trim_start();
+
+    if let Some(heading) = trimmed.strip_prefix('#') {
+        let heading = heading.trim_start_matches('#').trim();
+        if !heading.is_empty() {
+            let _ = writeln!(out, "\n{}", heading.bold());
+            return;
+        }
+    }
+
+    if let Some(item) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        let _ = writeln!(out, "  • {item}");
+        return;
+    }
+
+    let _ = writeln!(out, "  {line}");
+}
+
+
+
+
+/// Pipes `text` through $PAGER (default less) only when stdout is a terminal
+/// and the text does not fit on one screen; otherwise prints it directly.
+fn page_if_tty(text: &str) {
+    let is_tty = unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
+    if !is_tty {
+        print!("{text}");
+        return;
+    }
+
+    let lines = text.lines().count() as i32;
+    let mut winsize = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+
+    let rows = unsafe {
+        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut winsize) == 0 {
+            winsize.ws_row
+        } else {
+            0
+        }
+    };
+
+    if rows == 0 || lines <= rows.into() {
+        print!("{text}");
+        return;
+    }
+
+    let pager = std::env::var("MARGARINE_PAGER")
+        .or_else(|_| std::env::var("PAGER"))
+        .unwrap_or_else(|_| "less".to_string());
+
+    let mut child = match Command::new(&pager)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => {
+            print!("{text}");
+            return;
+        }
+    };
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        let _ = stdin.write_all(text.as_bytes());
+    }
+    drop(child.stdin.take());
+    let _ = child.wait();
+}
+
