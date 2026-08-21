@@ -762,6 +762,8 @@ impl Lexer<'_, '_> {
         let mut has_dot = false;
 
         let str = self.reader.consume_while_slice(|a| {
+            if *a == b'_' { return true }
+
             if a.is_ascii_digit() {
                 let digit = a - b'0';
                 max_base = max_base.max(digit + 1);
@@ -784,6 +786,9 @@ impl Lexer<'_, '_> {
         });
 
 
+        let str = core::str::from_utf8(str.0).unwrap();
+        let str = str.replace('_', "");
+
         if has_dot {
             let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
             let err = Error::BasedFloatsArentSupported(source);
@@ -798,8 +803,7 @@ impl Lexer<'_, '_> {
         }
 
 
-        let str = core::str::from_utf8(str.0).unwrap();
-        let Ok(num) = i64::from_str_radix(str, base as u32)
+        let Ok(num) = i64::from_str_radix(&str, base as u32)
         else { 
             let source = SourceRange::new(start as u32, self.reader.offset() as u32-1).offset(self.source_offset);
             let err = Error::NumberTooLarge(source);
