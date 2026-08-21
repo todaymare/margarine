@@ -78,6 +78,10 @@ enum Commands {
         #[arg(value_parser = existing_file_path)]
         path: PathBuf,
 
+        /// Compilation target
+        #[arg(long, default_value = "default")]
+        target: CompilationTarget,
+
         /// Cache directory
         #[arg(long)]
         cache: Option<String>,
@@ -97,6 +101,10 @@ enum Commands {
         #[arg(value_parser = existing_file_path)]
         path: PathBuf,
 
+        /// Compilation target
+        #[arg(long, default_value = "default")]
+        target: CompilationTarget,
+
         /// Cache directory
         #[arg(long)]
         cache: Option<String>,
@@ -115,6 +123,10 @@ enum Commands {
 
         /// Test name filter
         filter: Option<String>,
+
+        /// Compilation target
+        #[arg(long, default_value = "default")]
+        target: CompilationTarget,
 
         /// Cache directory
         #[arg(long)]
@@ -184,9 +196,7 @@ fn main() {
         Commands::Lib { command } => match command {
             LibCommands::Init { path } => {
                 let cd = std::env::current_dir().unwrap();
-                let path =
-                    path.map(|s| cd.join(s))
-                        .unwrap_or(cd);
+                let path = path.map(|s| cd.join(s)).unwrap_or(cd);
 
                 library::validate_prerequisites().unwrap();
                 library::init(path).unwrap();
@@ -200,14 +210,15 @@ fn main() {
             }
         }
 
-        Commands::Build { path, target, output: _, cache, update } => {
+        Commands::Build { path, target, output, cache, update } => {
             let cache = reset_cache_if(update, cache);
-            compile_and_link(&path, target, None, Some(cache));
+            compile_and_link(&path, target, output, Some(cache));
         }
-        Commands::Run { path, cache, update, program_args } => {
+
+        Commands::Run { path, target, cache, update, program_args } => {
             let cache = reset_cache_if(update, cache);
             let output =
-            compile_and_link(&path, CompilationTarget::try_from("default").unwrap(), None, Some(cache));
+                compile_and_link(&path, target, Some(format!("{cache}/program")), Some(cache));
 
             println!("running '{output}'");
             let status = Command::new(&output)
@@ -216,14 +227,18 @@ fn main() {
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::inherit())
                 .status()
-                .unwrap();
+                .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot run '{output}': {error}")));
             if !status.success() {
                 let code = status.code().unwrap_or(PROGRAM_ERROR);
-                std::process::exit(code.clamp(0, 125));
+                std::process::exit(if (0..=125).contains(&code) {
+                    code
+                } else {
+                    PROGRAM_ERROR
+                });
             }
         }
 
-        Commands::Test { path, filter, cache, update } => {
+        Commands::Test { path, filter, target, cache, update } => {
             let cache = reset_cache_if(update, cache);
             let program = format!("{cache}/program");
             let arena = Arena::new();
@@ -236,7 +251,7 @@ fn main() {
             compiler.files.register(file);
 
             let settings = CompilationSettings {
-                compilation_target: CompilationTarget::try_from("default").unwrap(),
+                compilation_target: target,
                 preludes: parse_env_preludes(),
                 entry,
                 output: program.clone(),
@@ -249,7 +264,6 @@ fn main() {
             let errors = compiler.check(&mut result);
             compiler.codegen(&settings, &mut result, errors);
             let link_files = result.link_files().to_vec();
-
             let tests = result.tests().iter()
                 .map(|(sym, should_panic)| (
                     compiler.string_map.get(result.syms.sym(*sym).name()).to_string(),
@@ -257,25 +271,47 @@ fn main() {
                 ))
                 .collect::<Vec<_>>();
 
-            let mut clang = Command::new("clang");
-            clang.arg("-shared")
-                .arg(format!("{program}.o"))
-                .args(&link_files)
-                .arg("-lzstd")
-                .arg("-lz")
-                .arg("-lc++")
-                .arg("-lc++abi")
-                .arg("-o")
-                .arg(format!("{program}.dylib"));
-            if !run_step("linking...", &mut clang) {
+            let dylib = format!("{program}.{}", target.shared_library_suffix());
+            let link_ok = match target {
+                CompilationTarget::Arm64AppleDarwin => {
+                    let mut clang = Command::new("clang");
+                    clang.arg("-shared")
+                        .arg(format!("{program}.o"))
+                        .args(&link_files)
+                        .arg("-lzstd")
+                        .arg("-lz")
+                        .arg("-lc++")
+                        .arg("-lc++abi")
+                        .arg("-o")
+                        .arg(&dylib);
+                    run_step("linking...", &mut clang)
+                }
+                CompilationTarget::X86_64UnknownLinuxGnu
+                | CompilationTarget::Aarch64UnknownLinuxGnu => {
+                    let mut clang = Command::new("clang");
+                    clang.arg("-shared")
+                        .arg(format!("{program}.o"))
+                        .args(&link_files)
+                        .arg("-lzstd")
+                        .arg("-lz")
+                        .arg("-lstdc++")
+                        .arg("-o")
+                        .arg(&dylib);
+                    run_step("linking...", &mut clang)
+                }
+                CompilationTarget::Wasm32UnknownUnknown => {
+                    fail(LINK_ERROR, "tests do not support the wasm32-unknown-unknown target");
+                }
+            };
+            if !link_ok {
                 fail(LINK_ERROR, "linking failed");
             }
 
-            let success = run_tests(&tests, filter, &format!("{program}.dylib"));
-            std::process::exit(!success as i32);
+            let success = run_tests(&tests, filter, &dylib);
+            std::process::exit(if success { 0 } else { COMPILE_ERROR });
         }
 
-        Commands::Check { path, cache, update } => {
+        Commands::Check { path, target, cache, update } => {
             let cache = reset_cache_if(update, cache);
             let arena = Arena::new();
             let mut compiler = margarine::Compiler::new(&arena);
@@ -287,7 +323,7 @@ fn main() {
             compiler.files.register(file);
 
             let settings = CompilationSettings {
-                compilation_target: CompilationTarget::try_from("default").unwrap(),
+                compilation_target: target,
                 preludes: parse_env_preludes(),
                 entry,
                 output: String::new(),
@@ -365,25 +401,36 @@ fn compile_and_link(
     let errors = compiler.check(&mut result);
     let error_count = errors.iter().flatten().map(|file| file.len()).sum::<usize>();
 
-    // Codegen still runs unconditionally after diagnostics (repo policy), but
-    // a compile that produced errors must not report success.
-    if error_count > 0 {
-        fail(COMPILE_ERROR,
-            format!("compilation failed with {error_count} error(s)"));
-    }
-
     compiler.codegen(&settings, &mut result, errors);
     let link_files = result.link_files().to_vec();
 
     let link_ok = match target {
         CompilationTarget::Arm64AppleDarwin => {
+            let c_target = target.c_target_triple();
             let mut clang = Command::new("clang");
-            clang.arg(format!("{output}.o"))
+            clang.arg("-target")
+                .arg(c_target)
+                .arg(format!("{output}.o"))
                 .args(&link_files)
                 .arg("-lzstd")
                 .arg("-lz")
                 .arg("-lc++")
                 .arg("-lc++abi")
+                .arg("-o")
+                .arg(&*output);
+            run_step("linking...", &mut clang)
+        }
+        CompilationTarget::X86_64UnknownLinuxGnu
+        | CompilationTarget::Aarch64UnknownLinuxGnu => {
+            let c_target = target.c_target_triple();
+            let mut clang = Command::new("clang");
+            clang.arg("-target")
+                .arg(c_target)
+                .arg(format!("{output}.o"))
+                .args(&link_files)
+                .arg("-lzstd")
+                .arg("-lz")
+                .arg("-lstdc++")
                 .arg("-o")
                 .arg(&*output);
             run_step("linking...", &mut clang)

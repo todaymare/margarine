@@ -14,6 +14,7 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     syms: &'me mut SymbolMap<'out>,
     ns: &'me NamespaceMap,
     ast: &'me AST<'ast>,
+    target: CompilationTarget,
 
     ty_info: &'me TyInfo<'out>,
     ty_mappings: HashMap<TypeHash, TypeMapping<'ctx>>,
@@ -142,6 +143,8 @@ pub struct CompilationSettings<'out> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompilationTarget {
     Arm64AppleDarwin,
+    X86_64UnknownLinuxGnu,
+    Aarch64UnknownLinuxGnu,
     Wasm32UnknownUnknown,
 }
 
@@ -171,7 +174,10 @@ impl TryFrom<&str> for CompilationTarget {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "default" | "arm64-apple-darwin" => Ok(CompilationTarget::Arm64AppleDarwin),
+            "default" => Ok(Self::host()),
+            "arm64-apple-darwin" => Ok(CompilationTarget::Arm64AppleDarwin),
+            "x86_64-unknown-linux-gnu" => Ok(CompilationTarget::X86_64UnknownLinuxGnu),
+            "aarch64-unknown-linux-gnu" => Ok(CompilationTarget::Aarch64UnknownLinuxGnu),
             "wasm32-unknown-unknown" => Ok(CompilationTarget::Wasm32UnknownUnknown),
             value => Err(UnsupportedCompilationTarget {
                 target: value.to_owned(),
@@ -199,10 +205,31 @@ impl std::str::FromStr for CompilationTarget {
 
 
 impl CompilationTarget {
+    pub fn host() -> Self {
+        if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
+            CompilationTarget::X86_64UnknownLinuxGnu
+        } else if cfg!(all(target_arch = "aarch64", target_os = "linux")) {
+            CompilationTarget::Aarch64UnknownLinuxGnu
+        } else {
+            CompilationTarget::Arm64AppleDarwin
+        }
+    }
+
     pub fn output_suffix(self) -> String {
         match self {
-            CompilationTarget::Arm64AppleDarwin => "".into(),
+            CompilationTarget::Arm64AppleDarwin
+            | CompilationTarget::X86_64UnknownLinuxGnu
+            | CompilationTarget::Aarch64UnknownLinuxGnu => "".into(),
             CompilationTarget::Wasm32UnknownUnknown => "wasm".into(),
+        }
+    }
+
+    pub fn shared_library_suffix(self) -> &'static str {
+        match self {
+            CompilationTarget::Arm64AppleDarwin => "dylib",
+            CompilationTarget::X86_64UnknownLinuxGnu
+            | CompilationTarget::Aarch64UnknownLinuxGnu => "so",
+            CompilationTarget::Wasm32UnknownUnknown => "wasm",
         }
     }
 
@@ -210,6 +237,8 @@ impl CompilationTarget {
     pub fn margarine_target_triple(self) -> String {
         match self {
             CompilationTarget::Arm64AppleDarwin => "arm64-apple-darwin".into(),
+            CompilationTarget::X86_64UnknownLinuxGnu => "x86_64-unknown-linux-gnu".into(),
+            CompilationTarget::Aarch64UnknownLinuxGnu => "aarch64-unknown-linux-gnu".into(),
             CompilationTarget::Wasm32UnknownUnknown => "wasm32-unknown-unknown".into(),
         }
     }
@@ -218,6 +247,8 @@ impl CompilationTarget {
     pub fn llvm_target_triple(self) -> String {
         match self {
             CompilationTarget::Arm64AppleDarwin => "arm64-apple-darwin".into(),
+            CompilationTarget::X86_64UnknownLinuxGnu => "x86_64-unknown-linux-gnu".into(),
+            CompilationTarget::Aarch64UnknownLinuxGnu => "aarch64-unknown-linux-gnu".into(),
             CompilationTarget::Wasm32UnknownUnknown => "wasm32-unknown-unknown".into(),
         }
     }
@@ -226,6 +257,8 @@ impl CompilationTarget {
     pub fn c_target_triple(self) -> String {
         match self {
             CompilationTarget::Arm64AppleDarwin => "aarch64-apple-darwin".into(),
+            CompilationTarget::X86_64UnknownLinuxGnu => "x86_64-unknown-linux-gnu".into(),
+            CompilationTarget::Aarch64UnknownLinuxGnu => "aarch64-unknown-linux-gnu".into(),
             CompilationTarget::Wasm32UnknownUnknown => "wasm32-unknown-unknown".into(),
         }
     }
@@ -466,6 +499,7 @@ pub fn run<'a>(
 
         let mut conv = Conversion {
             string_map,
+            target,
             syms,
             ns: nss,
             ast,
@@ -5388,8 +5422,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn extern_abi(&self, ret: LLVMType<'ctx>) -> ExternAbi<'ctx> {
-        let is_arm64_darwin = llvm_api::ctx::default_target_triple().starts_with("arm64-apple-darwin");
-        if is_arm64_darwin
+        let uses_large_struct_sret = matches!(
+            self.target,
+            CompilationTarget::Arm64AppleDarwin
+            | CompilationTarget::X86_64UnknownLinuxGnu
+            | CompilationTarget::Aarch64UnknownLinuxGnu
+        );
+        if uses_large_struct_sret
         && ret.kind() == TypeKind::Struct
         && ret.size_of(self.module).is_some_and(|size| size > 16) {
             ExternAbi::SRet(ret)
@@ -5537,6 +5576,26 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CompilationTarget;
+
+    #[test]
+    fn linux_targets_expose_platform_triples() {
+        let x86 = CompilationTarget::try_from("x86_64-unknown-linux-gnu").unwrap();
+        assert_eq!(x86.margarine_target_triple(), "x86_64-unknown-linux-gnu");
+        assert_eq!(x86.llvm_target_triple(), "x86_64-unknown-linux-gnu");
+        assert_eq!(x86.c_target_triple(), "x86_64-unknown-linux-gnu");
+        assert_eq!(x86.shared_library_suffix(), "so");
+
+        let arm = CompilationTarget::try_from("aarch64-unknown-linux-gnu").unwrap();
+        assert_eq!(arm.margarine_target_triple(), "aarch64-unknown-linux-gnu");
+        assert_eq!(arm.llvm_target_triple(), "aarch64-unknown-linux-gnu");
+        assert_eq!(arm.c_target_triple(), "aarch64-unknown-linux-gnu");
+        assert_eq!(arm.shared_library_suffix(), "so");
+    }
 }
 
 

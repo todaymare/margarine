@@ -490,8 +490,9 @@ fn init_temp<P: AsRef<Path>>(path: P, name: &str) -> io::Result<()> {
     {
         let mut targets = Table::new();
         targets.insert("arm64-apple-darwin".into(), Table::new().into());
+        targets.insert("x86_64-unknown-linux-gnu".into(), Table::new().into());
+        targets.insert("aarch64-unknown-linux-gnu".into(), Table::new().into());
         targets.insert("wasm32-unknown-unknown".into(), Table::new().into());
-
         toml["target"] = targets.into();
 
         toml["target"]
