@@ -51,11 +51,6 @@ pub fn validate_prerequisites() -> Result<(), MissingPrerequisites> {
     }
 }
 
-/// Verifies that `path` contains a valid Margarine project manifest.
-pub fn validate_project<P: AsRef<Path>>(path: P) -> io::Result<()> {
-    read_manifest(path).map(|_| ())
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum NativeBackend {
     C,
