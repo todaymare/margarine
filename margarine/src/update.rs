@@ -13,6 +13,8 @@ pub fn cmd_update() -> i32 {
     let api_url = 
     std::env::var("MARGARINE_RELEASES_API")
         .unwrap_or_else(|_| "https://api.daymare.net/margarine/v1/releases/latest".into());
+    let fetching = spinner();
+    fetching.set_message("checking updates");
 
     // fetch response
 
@@ -21,10 +23,15 @@ pub fn cmd_update() -> i32 {
         .header("User-Agent", "margarine-cli")
         .send();
 
+
+    fetching.finish_and_clear();
+
     let response = 
     match response {
         Ok(response) => response,
-        Err(error) => fail(LINK_ERROR, format!("update check failed: {error}")),
+        Err(error) => {
+            fail(LINK_ERROR, format!("update check failed: {error}"))
+        },
     };
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -43,7 +50,6 @@ pub fn cmd_update() -> i32 {
         }
         Err(error) => fail(LINK_ERROR, format!("update check failed: {error}")),
     };
-
 
     let latest = release.tag_name.trim_start_matches('v');
 
