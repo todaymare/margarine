@@ -4,7 +4,7 @@ use std::{ffi::CString, fmt::Write, io::{self, Write as _}, path::{Path, PathBuf
 
 use clap::{Parser, Subcommand};
 use colourful::ColourBrush;
-use margarine::{resource, CompilationSettings, CompilationTarget};
+use margarine::{progress::{item_progress, StatusLine}, resource, start_compilation_status, CompilationSettings, CompilationTarget};
 use sti::{arena::Arena};
 
 use crate::update::cmd_update;
@@ -162,6 +162,10 @@ pub fn fail(code: i32, message: impl std::fmt::Display) -> ! {
     // `Error::exit` hardcodes clap's usage code (2); render the styled
     // message ourselves and exit with the specific status.
     let _ = error.print();
+    // clap deliberately leaves the cursor after the final message byte.
+    // Terminate the diagnostic before exiting so shells do not render their
+    // "missing newline" marker beside the error.
+    eprintln!();
     std::process::exit(code);
 }
 
@@ -186,6 +190,8 @@ mod tests {
     }
 }
 
+
+
 fn main() {
     let Cli { command } = Cli::parse();
     let _lock =
@@ -208,7 +214,7 @@ fn main() {
             let output =
                 compile_and_link(&path, target, output, Some(cache));
 
-            println!("running '{output}'");
+            println!("{}", format!("› Running {}", path.display()).dim());
 
             let status = Command::new(&output)
                 .args(program_args)
@@ -252,14 +258,26 @@ fn main() {
                 arena: &arena,
                 tests: true,
             };
+            let compile_status =
+            start_compilation_status(&settings, compiler.silent);
 
-            let mut result = compiler.run(&settings)
-                .unwrap_or_else(|error| fail(LINK_ERROR, format!("compilation failed: {error}")));
-            let errors = compiler.check(&mut result);
+
+            let mut result =
+            match compiler.run(&settings) {
+                Ok(result) => result,
+                Err(error) => {
+                    compile_status.clear();
+                    fail(LINK_ERROR, format!("compilation failed: {error}"))
+                },
+            };
+            let errors =
+            compile_status.suspend(|| compiler.check(&mut result));
             compiler.codegen(&settings, &mut result, errors);
             let mut link_files = result.link_files().to_vec();
-            margarine::prepare_link_files(target, &mut link_files)
-                .unwrap_or_else(|error| fail(LINK_ERROR, error));
+            if let Err(error) = margarine::prepare_link_files(target, &mut link_files) {
+                compile_status.clear();
+                fail(LINK_ERROR, error);
+            }
             let tests = result.tests().iter()
                 .map(|(sym, should_panic)| (
                     compiler.string_map.get(result.syms.sym(*sym).name()).to_string(),
@@ -269,6 +287,7 @@ fn main() {
             let dylib = format!("{program}.{}", target.shared_library_suffix());
 
             let toolchain_libs = resource::toolchain_libs_path(target);
+
             let link_ok = match target {
                 CompilationTarget::Arm64AppleDarwin => {
                     let mut clang = Command::new("clang");
@@ -285,7 +304,7 @@ fn main() {
                         .arg("-lc++abi")
                         .arg("-o")
                         .arg(&dylib);
-                    run_step("linking...", &mut clang)
+                    run_step("Linking test library", &mut clang)
                 }
                 CompilationTarget::X86_64UnknownLinuxGnu
                 | CompilationTarget::Aarch64UnknownLinuxGnu => {
@@ -302,15 +321,19 @@ fn main() {
                         .arg("-lstdc++")
                         .arg("-o")
                         .arg(&dylib);
-                    run_step("linking...", &mut clang)
+                    run_step("Linking test library", &mut clang)
                 }
                 CompilationTarget::Wasm32UnknownUnknown => {
+                    compile_status.clear();
                     fail(LINK_ERROR, "tests do not support the wasm32-unknown-unknown target");
                 }
             };
             if !link_ok {
+                compile_status.clear();
                 fail(LINK_ERROR, "linking failed");
             }
+            compile_status.finish(format!("Built {}", path.display()));
+
 
             let success = run_tests(&tests, filter, &dylib);
             std::process::exit(if success { 0 } else { COMPILE_ERROR });
@@ -339,10 +362,21 @@ fn main() {
                 arena: &arena,
                 tests: false,
             };
+            let compile_status =
+            start_compilation_status(&settings, compiler.silent);
 
-            let mut result = compiler.run(&settings)
-                .unwrap_or_else(|error| fail(LINK_ERROR, format!("compilation failed: {error}")));
-            let errors = compiler.check(&mut result);
+
+            let mut result =
+            match compiler.run(&settings) {
+                Ok(result) => result,
+                Err(error) => {
+                    compile_status.clear();
+                    fail(LINK_ERROR, format!("compilation failed: {error}"))
+                },
+            };
+            let errors =
+            compile_status.suspend(|| compiler.check(&mut result));
+            compile_status.clear();
             let error_count = errors.iter().flatten().map(|file| file.len()).sum::<usize>();
 
             if error_count == 0 {
@@ -404,6 +438,7 @@ fn compile_and_link(
         &cache,
         margarine::preludes_from_env(),
     ).unwrap_or_else(|error| fail(LINK_ERROR, format!("build failed: {error}")));
+
     output.to_string_lossy().into_owned()
 }
 
@@ -427,11 +462,15 @@ impl ArtifactsLock {
             .open("artifacts.lock")
             .unwrap_or_else(|error| panic!("cannot open artifacts.lock: {error}"));
 
-        // Try non-blocking first so the uncontended case stays silent.
-        if file.try_lock_exclusive().is_err() {
-            eprintln!("{}", "waiting for artifacts lock...".dim());
-            file.lock_exclusive()
-                .unwrap_or_else(|error| panic!("cannot lock artifacts: {error}"));
+        match file.try_lock_exclusive() {
+            Ok(()) => {},
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                let waiting = StatusLine::start("Waiting for artifacts lock");
+                file.lock_exclusive()
+                    .unwrap_or_else(|error| panic!("cannot lock artifacts: {error}"));
+                waiting.clear();
+            },
+            Err(error) => panic!("cannot lock artifacts: {error}"),
         }
 
         ArtifactsLock { file }
@@ -443,6 +482,7 @@ impl Drop for ArtifactsLock {
         let _ = self.file.unlock();
     }
 }
+
 
 fn clean_artifacts(cache: &str) {
     if !std::fs::exists(cache).unwrap_or(false) {
@@ -468,57 +508,46 @@ fn clean_artifacts(cache: &str) {
         .filter_map(|path| std::fs::metadata(path).ok())
         .map(|meta| meta.len())
         .sum();
-
     let total = format_bytes(total_bytes);
-    let bar_width = 30;
-    let tick = |done: usize| -> String {
-        let filled = done * bar_width / paths.len().max(1);
-        format!(
-            "[{}{}] {}/{}",
-            "=".repeat(filled),
-            " ".repeat(bar_width - filled),
-            done,
-            paths.len(),
-        )
-    };
+    let progress =
+    item_progress(
+        paths.len() as u64,
+        format!("Removing {total}"),
+    );
 
-    let is_tty = unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
-    let progress = |done: usize| {
-        if !is_tty { return; }
-        print!("\r     Removing {total} {}",
-            tick(done),
-        );
-        let _ = io::stdout().flush();
-    };
-
-    progress(0);
+    let mut removed = 0usize;
     let mut failures = 0usize;
-    for (index, path) in paths.iter().enumerate() {
-        if std::fs::remove_file(path).is_err() {
-            failures += 1;
-            eprintln!("{} could not remove {}", "warning:".yellow().bold(), path.display());
+    for path in &paths {
+        match std::fs::remove_file(path) {
+            Ok(()) => removed += 1,
+            Err(_) => {
+                failures += 1;
+                progress.suspend(|| {
+                    eprintln!("{} could not remove {}", "warning:".yellow().bold(), path.display());
+                });
+            }
         }
-        progress(index + 1);
+        progress.inc(1);
     }
 
     if let Err(error) = std::fs::remove_dir_all(cache) {
-        eprintln!("{} could not remove {cache}: {error}", "warning:".yellow().bold());
+        progress.suspend(|| {
+            eprintln!("{} could not remove {cache}: {error}", "warning:".yellow().bold());
+        });
         failures += 1;
     }
+    progress.finish();
 
-    if is_tty {
-        print!("\r");
-    }
     if failures == 0 {
         println!("{} Removed {} files, {}",
             "✓".green(),
-            paths.len(),
+            removed,
             total.cyan(),
         );
     } else {
-        println!("{} removed {} files, {} failed; use `--update` to reset the cache",
+        println!("{} Removed {} files, {} failed; use `--update` to reset the cache",
             "!".yellow().bold(),
-            paths.len() - failures,
+            removed,
             failures,
         );
     }
@@ -576,23 +605,32 @@ fn existing_file_path(path: &str) -> Result<PathBuf, String> {
 
 
 fn run_step(label: &str, cmd: &mut Command) -> bool {
-    println!("{}", label.green().bold());
+    let status = StatusLine::start(label);
     match cmd.output() {
-        Ok(output) if output.status.success() => true,
+        Ok(output) if output.status.success() => {
+            status.finish("Linked test library");
+            true
+        }
         Ok(output) => {
-            eprintln!("{} failed with {}", label, output.status);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stdout.trim().is_empty() {
-                eprintln!("{stdout}");
-            }
-            if !stderr.trim().is_empty() {
-                eprintln!("{stderr}");
-            }
+            status.suspend(|| {
+                eprintln!("{} {} failed with {}", X_GLYPH.red().bold(), label, output.status);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stdout.trim().is_empty() {
+                    eprintln!("{stdout}");
+                }
+                if !stderr.trim().is_empty() {
+                    eprintln!("{stderr}");
+                }
+            });
+            status.clear();
             false
         }
         Err(err) => {
-            eprintln!("{} failed to start: {err}", label);
+            status.suspend(
+                || eprintln!("{} {} failed to start: {err}", X_GLYPH.red().bold(), label),
+            );
+            status.clear();
             false
         }
     }
@@ -633,24 +671,29 @@ fn run_tests(tests: &[(String, bool)], filter: Option<String>, dylib: &str) -> b
         let mut failed = 0u32;
         let mut ignored = 0u32;
         let mut fails = String::new();
+        let progress = item_progress(tests.len() as u64, "Testing");
+
 
         for (name, should_panic) in tests {
             if let Some(ref filter) = filter {
                 if !name.contains(filter.as_str()) {
                     ignored += 1;
+                    progress.inc(1);
                     continue;
                 }
             }
 
             let label = if *should_panic { " - should panic" } else { "" };
-            print!("test '{}'{} ... ", name, label);
-            io::stdout().flush().unwrap();
+            progress.set_message(format!("Testing {name}"));
 
             let func = lookup_test(lib, name);
             if func.is_null() {
-                println!("{}", "FAILED".red());
+                progress.suspend(|| {
+                    println!("test '{}'{} ... {}", name, label, "FAILED".red());
+                });
                 failed += 1;
                 writeln!(&mut fails, "failed '{}': function not found in dylib", name).unwrap();
+                progress.inc(1);
                 continue;
             }
 
@@ -695,7 +738,9 @@ fn run_tests(tests: &[(String, bool)], filter: Option<String>, dylib: &str) -> b
             let exited_ok = wifexited(status) && wexitstatus(status) == 0;
 
             if timed_out {
-                println!("{}", "FAILED".red());
+                progress.suspend(|| {
+                    println!("test '{}'{} ... {}", name, label, "FAILED".red());
+                });
                 failed += 1;
                 writeln!(&mut fails, "failed '{}' (timed out after {}ms):\n{}",
                     name,
@@ -704,19 +749,27 @@ fn run_tests(tests: &[(String, bool)], filter: Option<String>, dylib: &str) -> b
                 ).unwrap();
             } else if *should_panic {
                 if !exited_ok {
-                    println!("{}", "ok".green());
+                    progress.suspend(|| {
+                        println!("test '{}'{} ... {}", name, label, "ok".green());
+                    });
                     passed += 1;
                 } else {
-                    println!("{}", "FAILED".red());
+                    progress.suspend(|| {
+                        println!("test '{}'{} ... {}", name, label, "FAILED".red());
+                    });
                     failed += 1;
                     writeln!(&mut fails, "failed '{}' (exit code 0): test did not panic as expected", name).unwrap();
                 }
             } else {
                 if exited_ok {
-                    println!("{}", "ok".green());
+                    progress.suspend(|| {
+                        println!("test '{}'{} ... {}", name, label, "ok".green());
+                    });
                     passed += 1;
                 } else {
-                    println!("{}", "FAILED".red());
+                    progress.suspend(|| {
+                        println!("test '{}'{} ... {}", name, label, "FAILED".red());
+                    });
                     failed += 1;
                     let reason = if wifsignaled(status) {
                         format!(" (signal {})", wtermsig(status))
@@ -732,9 +785,11 @@ fn run_tests(tests: &[(String, bool)], filter: Option<String>, dylib: &str) -> b
                     ).unwrap();
                 }
             }
+            progress.inc(1);
         }
 
         libc::dlclose(lib);
+        progress.finish();
 
         println!();
         if !fails.is_empty() {

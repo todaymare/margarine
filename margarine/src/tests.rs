@@ -179,6 +179,39 @@ margarine:link=lib/first.a";
 }
 
 #[test]
+fn linker_error_details_are_indented_under_the_summary() {
+    let error = CompilerError::Link {
+        target: CompilationTarget::Arm64AppleDarwin,
+        status: None,
+        output: "first detail\nsecond detail\n".into(),
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "linking for target 'arm64-apple-darwin' failed\n  first detail\n  second detail",
+    );
+}
+
+#[test]
+fn build_script_output_is_labeled_and_indented() {
+    let cases = [
+        ("", ""),
+        ("one", "build script stderr (https://example.com/pkg.git):\n  one\n"),
+        ("one\n", "build script stderr (https://example.com/pkg.git):\n  one\n"),
+        (
+            "one\n\nthree",
+            "build script stderr (https://example.com/pkg.git):\n  one\n  \n  three\n",
+        ),
+    ];
+
+    for (output, expected) in cases {
+        let mut rendered = Vec::new();
+        write_build_script_output(&mut rendered, "stderr", "https://example.com/pkg.git", output).unwrap();
+        assert_eq!(String::from_utf8(rendered).unwrap(), expected);
+    }
+}
+
+#[test]
 fn prelude_environment_has_a_std_default_and_preserves_explicit_order() {
     let _guard = EnvGuard::new("MARGARINE_PRELUDE");
     std::env::remove_var("MARGARINE_PRELUDE");
@@ -201,8 +234,10 @@ fn prelude_environment_has_a_std_default_and_preserves_explicit_order() {
     assert_eq!(explicit[1].url, "https://example.com/second");
 }
 
+
+
 #[test]
-fn package_materialization_is_reused_and_omits_git_metadata() {
+fn package_artifacts_are_grouped_by_hash_and_rebuilt_cleanly() {
     let workspace = tempfile::tempdir().unwrap();
     let source = workspace.path().join("source");
     fs::create_dir(&source).unwrap();
@@ -231,7 +266,7 @@ fn package_materialization_is_reused_and_omits_git_metadata() {
         preludes: vec![],
         entry: "unused.mar".to_string(),
         output: "unused".to_string(),
-        cache,
+        cache: cache.clone(),
         arena: &arena,
         tests: false,
     };
@@ -242,15 +277,120 @@ fn package_materialization_is_reused_and_omits_git_metadata() {
     let environment = HashMap::new();
     let url = source.to_string_lossy();
 
-    let first = load_package(&settings, &mut state, 0, &url, &environment).unwrap();
+    let first = load_package(&settings, &cache, &mut state, 0, &url, &environment).unwrap();
+    let hash = &first.resource.partial_string_hash;
+    assert_eq!(first.resource.path, cache.join(CACHE_REPOSITORY_DIR).join(hash));
+    assert_eq!(
+        first.path,
+        cache.join(CACHE_BUILD_DIR).join(hash).join(PACKAGE_SOURCE_DIR),
+    );
     assert!(!first.path.join(".git").exists());
     let marker = first.path.join("materialization-marker");
     fs::write(&marker, "kept").unwrap();
+    let build_root = first.path.parent().unwrap();
+    let out_dir = build_root.join(PACKAGE_OUT_DIR);
+    fs::create_dir(&out_dir).unwrap();
+    fs::write(out_dir.join("stale"), "stale").unwrap();
 
-    let second = load_package(&settings, &mut state, 0, &url, &environment).unwrap();
+    let second = load_package(&settings, &cache, &mut state, 0, &url, &environment).unwrap();
     assert_eq!(first.path, second.path);
     assert_eq!(fs::read_to_string(marker).unwrap(), "kept");
+    assert!(out_dir.join("stale").exists());
     assert_eq!(state.packages.len(), 1);
+
+    let mut next_compilation = CompilationState {
+        linker_files: Vec::new(),
+        packages: HashMap::new(),
+    };
+    let rebuilt =
+        load_package(&settings, &cache, &mut next_compilation, 0, &url, &environment).unwrap();
+    assert_eq!(rebuilt.path, first.path);
+    assert!(!rebuilt.path.join("materialization-marker").exists());
+    assert!(!out_dir.join("stale").exists());
+    assert!(!rebuilt.path.join(".git").exists());
+}
+
+#[test]
+fn build_scripts_share_repository_cache_and_keep_artifacts_together() {
+    let workspace = tempfile::tempdir().unwrap();
+    let workspace_root = workspace.path().join("workspace with spaces");
+    let dependency_source = workspace_root.join("dependency");
+    fs::create_dir_all(&dependency_source).unwrap();
+    fs::write(dependency_source.join("lib.mar"), "pub fn value(): int { 1 }").unwrap();
+    let repository = Repository::init(&dependency_source).unwrap();
+    let mut index = repository.index().unwrap();
+    index.add_path(Path::new("lib.mar")).unwrap();
+    let tree = repository.find_tree(index.write_tree().unwrap()).unwrap();
+    let signature = git2::Signature::now("Margarine", "margarine@localhost").unwrap();
+    repository.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        "fixture",
+        &tree,
+        &[],
+    ).unwrap();
+    drop(tree);
+    drop(repository);
+    let build_root = workspace_root.join(CACHE_BUILD_DIR).join("package-hash");
+    let package_root = build_root.join(PACKAGE_SOURCE_DIR);
+    fs::create_dir_all(&package_root).unwrap();
+    let build_path = package_root.join("build.mar");
+    fs::write(
+        &build_path,
+        format!(
+            r#"
+import "{}" as dependency;
+
+@cfg(env("MARGARINE_OUT_DIR", "../out"))
+fn main() {{}}
+
+@cfg(not(env("MARGARINE_OUT_DIR", "../out")))
+fn main() {{
+    output_directory_must_be_relative;
+}}
+"#,
+            dependency_source.display(),
+        ),
+    ).unwrap();
+
+    let arena = Arena::new();
+    let settings = CompilationSettings {
+        compilation_target: CompilationTarget::host(),
+        preludes: vec![],
+        entry: "unused.mar".to_string(),
+        output: "unused".to_string(),
+        cache: workspace.path().join("unused-cache"),
+        arena: &arena,
+        tests: false,
+    };
+    let repository_cache = workspace.path().join("shared-cache");
+
+    let links =
+        run_build_script(
+            &build_path,
+            &build_root,
+            &repository_cache,
+            "fixture",
+            &settings,
+            1,
+            &HashMap::new(),
+        ).unwrap();
+
+    assert!(links.is_empty());
+    assert!(build_root.join(BUILD_SCRIPT_OUTPUT).is_file());
+    assert!(build_root.join(BUILD_SCRIPT_CACHE_DIR).is_dir());
+    assert!(build_root.join(PACKAGE_OUT_DIR).is_dir());
+    assert!(!package_root.join(".margarine-out").exists());
+    let dependency = resource_cache_entry(
+        &repository_cache,
+        &dependency_source.to_string_lossy(),
+    ).unwrap();
+    assert!(dependency.path.is_dir());
+    assert!(!build_root
+        .join(BUILD_SCRIPT_CACHE_DIR)
+        .join(CACHE_REPOSITORY_DIR)
+        .exists());
 }
 
 #[test]
@@ -269,7 +409,7 @@ fn package_cache_creation_errors_are_typed() {
         tests: false,
     };
 
-    let error = resource_cache_entry(&settings, "fixture")
+    let error = resource_cache_entry(&settings.cache, "fixture")
         .expect_err("a file cannot contain the package cache directory");
 
     assert!(matches!(error, CompilerError::Io {

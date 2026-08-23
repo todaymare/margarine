@@ -1,4 +1,6 @@
 pub mod resource;
+#[doc(hidden)]
+pub mod progress;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const VERSION_INFO: &str = concat!("margarine ", env!("CARGO_PKG_VERSION"));
 pub const TARGET: &str = env!("MARGARINE_TARGET");
@@ -9,9 +11,11 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
+use progress::StatusLine;
 
 use colourful::ColourBrush;
 use common::string_map::StringIndex;
@@ -55,6 +59,7 @@ pub struct Compiler<'me> {
     pub silent: bool,
     environment: HashMap<String, String>,
     build_depth: Option<usize>,
+    repository_cache: Option<PathBuf>,
 }
 
 
@@ -117,8 +122,8 @@ impl fmt::Display for CompilerError {
                 if let Some(status) = status {
                     write!(formatter, " with {status}")?;
                 }
-                if !output.trim().is_empty() {
-                    write!(formatter, "\n{output}")?;
+                for line in output.lines() {
+                    write!(formatter, "\n  {line}")?;
                 }
                 Ok(())
             }
@@ -218,6 +223,7 @@ impl<'me> Compiler<'me> {
                 environment
             },
             build_depth: None,
+            repository_cache: None,
         }
     }
 
@@ -339,6 +345,8 @@ impl<'me> Compiler<'me> {
             linker_files: Vec::new(),
             packages: HashMap::new(),
         };
+        let repository_cache =
+            self.repository_cache.as_deref().unwrap_or(&settings.cache);
 
         let mut cfg_env = self
             .environment
@@ -359,38 +367,13 @@ impl<'me> Compiler<'me> {
         let target_triple = self.string_map.insert(&settings.compilation_target.llvm_target_triple());
         cfg_env.entry(comp_target).or_insert(target_triple);
 
-        let output_depth = self.build_depth.unwrap_or_else(build_output_depth);
 
-        if !self.silent {
-            let prefix = build_output_prefix(output_depth);
-            println!(
-                "{}{} {}",
-                prefix,
-                "target:".green().bold(),
-                settings.compilation_target.margarine_target_triple(),
-            );
-        }
-
+        let package_depth = self.build_depth.unwrap_or_else(build_output_depth);
 
         while let Some(entry) = stack.pop() {
             let file_path = self.string_map.get(entry.path);
             let file = self.files.get(entry.path).unwrap();
-            let depth = output_depth + entry.interpackage_depth as usize;
-
-            let display = display_compile_path(settings, file_path);
-
-            if !self.silent {
-                let prefix = build_output_prefix(depth);
-                println!(
-                    "{}{} {}",
-                    prefix,
-                    "compiling:".green().bold(),
-                    display,
-                );
-            }
-
-
-
+            let depth = package_depth + entry.interpackage_depth as usize;
 
             let (tokens, le) = DropTimer::with_timer("tokenisation", || {
                 let tokens = lex(&file, &mut self.string_map, source_offset);
@@ -402,11 +385,11 @@ impl<'me> Compiler<'me> {
                 parse(tokens, counter, &arena, &mut self.string_map, &mut global, &cfg_env)
             });
 
-            let body = 
+            let body =
             if entry.is_included_by_prelude { body }
             else {
                 let mut vec = sti::vec::Vec::with_cap_in(arena, preludes.len() * 2 + body.len());
-                
+
                 for &p in &preludes {
                     let import = global.add_decl(Decl::ImportRepo { alias: p.0, repo: p.1 }, SourceRange::ZERO);
                     let item = UseItem::new(StringMap::PRELUDE, UseItemKind::All, SourceRange::ZERO);
@@ -467,6 +450,7 @@ impl<'me> Compiler<'me> {
 
                         let package = load_package(
                             settings,
+                            &repository_cache,
                             &mut state,
                             depth,
                             repo_str,
@@ -573,6 +557,7 @@ impl<'me> Compiler<'me> {
         }
 
 
+
         self.files.sort_by(&file_offsets);
 
         let temp = Arena::new();
@@ -662,7 +647,7 @@ pub fn build<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
     cache: C,
     preludes: Vec<Prelude>,
 ) -> Result<PathBuf, CompilerError> {
-    build_ex(path, target, output, cache, preludes, current_environment(), None)
+    build_ex(path, target, output, cache, preludes, current_environment(), None, None)
 }
 
 fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
@@ -673,6 +658,7 @@ fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
     preludes: Vec<Prelude>,
     environment: HashMap<String, String>,
     build_depth: Option<usize>,
+    repository_cache: Option<PathBuf>,
 ) -> Result<PathBuf, CompilerError> {
     let path = path.as_ref();
     let output = output.as_ref().to_path_buf();
@@ -701,6 +687,7 @@ fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
     let mut compiler = Compiler::new(&arena);
     compiler.environment = environment;
     compiler.build_depth = build_depth;
+    compiler.repository_cache = repository_cache;
 
     let file = FileData::open(path, &mut compiler.string_map)
         .map_err(|source| CompilerError::SourceOpen {
@@ -720,18 +707,20 @@ fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
         arena: &arena,
         tests: false,
     };
+    let compile_status =
+    start_compilation_status(&settings, compiler.silent);
+
 
     let mut result = compiler.run(&settings)?;
-    let errors = compiler.check(&mut result);
+    let errors =
+    compile_status.suspend(|| compiler.check(&mut result));
     compiler.codegen(&settings, &mut result, errors);
     let mut link_files = result.link_files().to_vec();
     prepare_link_files(target, &mut link_files)?;
-    link_compilation(
-        target,
-        &output,
-        &link_files,
-        build_depth.unwrap_or_else(build_output_depth),
-    )?;
+
+    link_compilation(target, &output, &link_files)?;
+    compile_status.finish(format!("Built {}", path.display()));
+
     Ok(output)
 }
 
@@ -764,16 +753,17 @@ pub fn prepare_link_files(
     Ok(())
 }
 
+
+
 fn link_compilation(
     target: CompilationTarget,
     output: &Path,
     link_files: &[String],
-    depth: usize,
 ) -> Result<(), CompilerError> {
     let toolchain_libs = resource::toolchain_libs_path(target);
     let output_object = format!("{}.o", output.display());
 
-    let (label, mut linker) = match target {
+    let mut linker = match target {
         CompilationTarget::Arm64AppleDarwin => {
             let mut linker = Command::new("clang");
             linker
@@ -789,7 +779,7 @@ fn link_compilation(
                 .arg("-lc++abi")
                 .arg("-o")
                 .arg(output);
-            ("linking...", linker)
+            linker
         }
         CompilationTarget::X86_64UnknownLinuxGnu
         | CompilationTarget::Aarch64UnknownLinuxGnu => {
@@ -806,7 +796,7 @@ fn link_compilation(
                 .arg("-lstdc++")
                 .arg("-o")
                 .arg(output);
-            ("linking...", linker)
+            linker
         }
         CompilationTarget::Wasm32UnknownUnknown => {
             let mut linker = Command::new("wasm-ld");
@@ -820,17 +810,23 @@ fn link_compilation(
                 .args(link_files)
                 .arg("-o")
                 .arg(output);
-            ("linking browser wasm...", linker)
+            linker
         }
     };
 
-    println!("{}{}", build_output_prefix(depth), label.green().bold());
+    let label =
+    match target {
+        CompilationTarget::Wasm32UnknownUnknown => "Linking browser Wasm",
+        _ => "Linking",
+    };
+    let status = StatusLine::start(label);
     let result = linker.output().map_err(|source| CompilerError::Link {
         target,
         status: None,
         output: format!("could not start linker: {source}"),
     })?;
     if result.status.success() {
+        status.finish(format!("Linked {}", output.display()));
         return Ok(());
     }
 
@@ -929,8 +925,12 @@ enum PackageError {
 }
 
 
-const CACHE_DOWNLOAD_DIR : &str = "build";
-const CACHE_MATERIAL_DIR : &str = "deps";
+const CACHE_REPOSITORY_DIR : &str = "repos";
+const CACHE_BUILD_DIR : &str = "build";
+const PACKAGE_SOURCE_DIR : &str = "package";
+const PACKAGE_OUT_DIR : &str = "out";
+const BUILD_SCRIPT_CACHE_DIR : &str = "cache";
+const BUILD_SCRIPT_OUTPUT : &str = "build-script";
 
 
 struct CompilationState {
@@ -948,6 +948,7 @@ struct Package {
 
 fn load_package(
     settings: &CompilationSettings,
+    repository_cache: &Path,
     state: &mut CompilationState,
     depth: usize,
     ident: &str,
@@ -958,32 +959,30 @@ fn load_package(
         return Ok(package.clone());
     }
 
-    let resource = resource_cache_entry(settings, &url)
+    let resource = resource_cache_entry(repository_cache, &url)
         .map_err(PackageError::Compiler)?;
 
     if !load_repository(&resource.path, &url) {
         return Err(PackageError::RepoUnreachable);
     }
 
-    let path = {
-        let materialised_path = settings.cache.join(CACHE_MATERIAL_DIR);
-        let materialised_path = materialised_path.join(&resource.partial_string_hash);
-
-        if materialised_path.exists() {
-            std::fs::remove_dir_all(&materialised_path)
-                .map_err(|source| PackageError::Compiler(CompilerError::PackageCopy {
-                    path: materialised_path.clone(),
-                    source,
-                }))?;
-        }
-        copy_dir(&resource.path, &materialised_path)
+    let build_root =
+        settings.cache
+            .join(CACHE_BUILD_DIR)
+            .join(&resource.partial_string_hash);
+    let path = build_root.join(PACKAGE_SOURCE_DIR);
+    if build_root.exists() {
+        std::fs::remove_dir_all(&build_root)
             .map_err(|source| PackageError::Compiler(CompilerError::PackageCopy {
-                path: materialised_path.clone(),
+                path: build_root.clone(),
                 source,
             }))?;
-
-        materialised_path
-    };
+    }
+    copy_dir(&resource.path, &path)
+        .map_err(|source| PackageError::Compiler(CompilerError::PackageCopy {
+            path: path.clone(),
+            source,
+        }))?;
 
     let is_prelude = settings.preludes
         .iter()
@@ -992,13 +991,22 @@ fn load_package(
     let build_path = path.join("build.mar");
     if build_path.is_file() {
         if is_prelude {
-            println!(
-                "{}warn: build script inside a prelude package. skipped",
-                build_output_prefix(depth + 1),
+            eprintln!(
+                "{} build script inside a prelude package. skipped",
+                "warning:".yellow().bold(),
             );
         } else {
-            let links = run_build_script(build_path, settings, depth + 1, environment)
-                .map_err(|error| PackageError::Compiler(error.into()))?;
+            let links =
+                run_build_script(
+                    build_path,
+                    &build_root,
+                    repository_cache,
+                    &url,
+                    settings,
+                    depth + 1,
+                    environment,
+                )
+                    .map_err(|error| PackageError::Compiler(error.into()))?;
             state.linker_files.extend(links);
         }
     }
@@ -1042,13 +1050,17 @@ fn load_repository(
         return true;
     }
 
-    // todo: add progress bar to download
-
     // Missing or corrupted cache entry (e.g. leftovers
     // from an interrupted build): drop whatever is there
     // and clone afresh instead of poisoning the build.
     let _ = fs::remove_dir_all(&path);
-    Repository::clone(&url, &path).is_ok()
+
+    let status = StatusLine::start("Cloning");
+    let cloned = Repository::clone(&url, &path).is_ok();
+    if cloned {
+        status.finish(format!("Cloned {}", url));
+    }
+    cloned
 }
 
 fn parse_build_script_stdout(stdout: &str, package_root: &Path) -> (Vec<PathBuf>, String) {
@@ -1065,9 +1077,34 @@ fn parse_build_script_stdout(stdout: &str, package_root: &Path) -> (Vec<PathBuf>
     (links, output)
 }
 
+fn write_build_script_output(
+    mut writer: impl Write,
+    stream: &str,
+    source: &str,
+    output: &str,
+) -> io::Result<()> {
+    if output.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(writer, "build script {stream} ({source}):")?;
+    for line in output.split_inclusive('\n') {
+        write!(writer, "  {line}")?;
+    }
+    if !output.ends_with('\n') {
+        writeln!(writer)?;
+    }
+    Ok(())
+}
+
+
+
 
 fn run_build_script<P: AsRef<Path>>(
     build_path: P,
+    build_root: &Path,
+    repository_cache: &Path,
+    source: &str,
     settings: &CompilationSettings<'_>,
     depth: usize,
     environment: &HashMap<String, String>,
@@ -1079,13 +1116,13 @@ fn run_build_script<P: AsRef<Path>>(
             path: build_path.to_path_buf(),
             source,
         })?;
-    let workspace = tempfile::tempdir()
+    let build_root = fs::canonicalize(build_root)
         .map_err(|source| BuildScriptError::Launch {
             path: build_path.to_path_buf(),
             source,
         })?;
-    let out_dir = package_root.join(".margarine-out");
-    let cache_dir = workspace.path().join("cache");
+    let out_dir = build_root.join(PACKAGE_OUT_DIR);
+    let cache_dir = build_root.join(BUILD_SCRIPT_CACHE_DIR);
     fs::create_dir_all(&out_dir)
         .and_then(|_| fs::create_dir_all(&cache_dir))
         .map_err(|source| BuildScriptError::Launch {
@@ -1093,7 +1130,7 @@ fn run_build_script<P: AsRef<Path>>(
             source,
         })?;
 
-    let output_path = workspace.path().join("build-script");
+    let output_path = build_root.join(BUILD_SCRIPT_OUTPUT);
     let prelude_env = settings
         .preludes
         .iter()
@@ -1102,7 +1139,7 @@ fn run_build_script<P: AsRef<Path>>(
         .join(";");
     let requested_target = settings.compilation_target.margarine_target_triple().to_string();
     let package_dir = package_root.to_string_lossy().into_owned();
-    let out_dir_string = out_dir.to_string_lossy().into_owned();
+    let out_dir_string = format!("../{PACKAGE_OUT_DIR}");
     let mut build_env = environment.clone();
     build_env.insert("MARGARINE_BUILD_SCRIPT".to_string(), "1".to_string());
     build_env.insert("MARGARINE_BUILD_DEPTH".to_string(), depth.to_string());
@@ -1122,28 +1159,35 @@ fn run_build_script<P: AsRef<Path>>(
         settings.preludes.clone(),
         build_env.clone(),
         Some(depth),
+        Some(repository_cache.to_path_buf()),
     ).map_err(|source| BuildScriptError::Compile {
         path: build_path.to_path_buf(),
         source: Box::new(source),
     })?;
 
-    println!("{}running '{}'", build_output_prefix(depth), output_path.display());
-    let output = Command::new(&output_path)
+    let running = StatusLine::start("Running build script");
+    let mut command = Command::new(&output_path);
+    command
         .current_dir(&package_root)
         .env_clear()
         .envs(&build_env)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
-        .output()
+        .stderr(std::process::Stdio::piped());
+    let output =
+    command.output()
         .map_err(|source| BuildScriptError::Launch {
             path: build_path.to_path_buf(),
             source,
         })?;
-
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     let (links, visible_stdout) = parse_build_script_stdout(stdout.as_ref(), &package_root);
-    print!("{visible_stdout}");
+    running.suspend(|| {
+        let _ = write_build_script_output(io::stderr(), "stderr", source, &stderr);
+        let _ = write_build_script_output(io::stdout(), "stdout", source, &visible_stdout);
+    });
+    running.clear();
     if !output.status.success() {
         return Err(BuildScriptError::Failed {
             path: build_path.to_path_buf(),
@@ -1171,13 +1215,17 @@ fn build_output_depth() -> usize {
         .unwrap_or(0)
 }
 
-fn build_output_prefix(depth: usize) -> String {
-    if depth == 0 {
-        String::new()
-    } else {
-        format!("{}{}> ", "|", "-".repeat(depth))
-    }
+
+#[doc(hidden)]
+pub fn start_compilation_status(
+    settings: &CompilationSettings,
+    silent: bool,
+) -> StatusLine {
+    let entry = display_compile_path(settings, &settings.entry);
+    StatusLine::start_compilation(format!("Compiling {}", entry), !silent)
 }
+
+
 fn display_compile_path(settings: &CompilationSettings, file_path: &str) -> String {
     let path = file_path.strip_prefix(&*settings.cache.to_string_lossy()).unwrap_or(file_path);
     let path = path.strip_prefix("/").unwrap_or(path);
@@ -1219,14 +1267,14 @@ struct Resource {
 
 
 fn resource_cache_entry(
-    settings: &CompilationSettings,
+    cache: &Path,
     ident: &str,
 ) -> Result<Resource, CompilerError> {
     let full_hash = sha2::Sha256::digest(ident.as_bytes());
     // Sixteen bytes produce the first thirty-two characters when hex-encoded.
     let string_hash = hex::encode(&full_hash[..16]);
 
-    let downloads_dir = settings.cache.join(CACHE_DOWNLOAD_DIR);
+    let downloads_dir = cache.join(CACHE_REPOSITORY_DIR);
     std::fs::create_dir_all(&downloads_dir)
         .map_err(|source| CompilerError::Io {
             operation: "create package cache directory",

@@ -1,21 +1,19 @@
-use std::{cmp::Ordering, fs::File, io::{Read, Seek, Write}, os::unix::fs::PermissionsExt as _, path::Path, process::Command, time::Duration};
+use std::{cmp::Ordering, fs::File, io::{Read, Seek, Write}, os::unix::fs::PermissionsExt as _, path::Path, process::Command};
 use flate2::read::GzDecoder;
-use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use sti::writeln;
 
 use colourful::ColourBrush;
 use tempfile::NamedTempFile;
 
-use margarine::{TARGET, VERSION, VERSION_INFO};
+use margarine::{progress::{byte_progress, ProgressReader, StatusLine}, TARGET, VERSION, VERSION_INFO};
 use crate::{fail, format_bytes, page_if_tty, render_markdown_line, LINK_ERROR, TICK_GLYPH, X_GLYPH};
 
 pub fn cmd_update() -> i32 {
     let api_url = 
     std::env::var("MARGARINE_RELEASES_API")
         .unwrap_or_else(|_| "https://api.daymare.net/margarine/v1/releases/latest".into());
-    let fetching = spinner();
-    fetching.set_message("checking updates");
+    let fetching = StatusLine::start("Checking updates");
 
     // fetch response
 
@@ -25,7 +23,7 @@ pub fn cmd_update() -> i32 {
         .send();
 
 
-    fetching.finish_and_clear();
+    fetching.clear();
 
     let response = 
     match response {
@@ -36,8 +34,8 @@ pub fn cmd_update() -> i32 {
     };
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        println!(" {} {}", TICK_GLYPH.green(), "no updates available");
-        println!("   current version: {VERSION_INFO}");
+        println!("{} No updates available", TICK_GLYPH.green());
+        println!("  Current version: {VERSION_INFO}");
         return 0;
     }
 
@@ -55,8 +53,8 @@ pub fn cmd_update() -> i32 {
     let latest = release.tag_name.trim_start_matches('v');
 
     if semver_cmp(VERSION, latest).is_ge() {
-        println!(" {} margarine is up to date", TICK_GLYPH.green());
-        println!("   current version: {VERSION_INFO}");
+        println!("{} Margarine is up to date", TICK_GLYPH.green());
+        println!("  Current version: {VERSION_INFO}");
         return 0;
     }
 
@@ -136,7 +134,7 @@ pub fn cmd_update() -> i32 {
 
     let (file, file_checksum) = download(&asset.browser_download_url);
     println!(
-        " {} downloaded {} ({})",
+        "{} Downloaded {} ({})",
         TICK_GLYPH.green().bold(),
         asset.name,
         format_bytes(asset.size)
@@ -165,46 +163,44 @@ pub fn cmd_update() -> i32 {
 
     // verify binary
 
-    let verify_binary = spinner();
-    verify_binary.set_message("verifying binary (1/2)");
+    let verify_binary = StatusLine::start("Verifying binary (1/2)");
 
 
     if let Err(e) = run_binary_check(new_executable.path()) {
-        verify_binary.finish_and_clear();
+        verify_binary.clear();
         println!("{} couldn't verify installation", X_GLYPH.red().bold());
         println!("   {e}");
         return 1;
     }
 
-    verify_binary.finish_and_clear();
+    verify_binary.clear();
 
     println!(
-        " {} verified binary (1/2)",
+        "{} Verified binary (1/2)",
         TICK_GLYPH.green().bold(),
     );
 
 
     // atomically replace the current binary, then verify it at its final path
-    let verify_binary = spinner();
-    verify_binary.set_message("verifying binary (2/2)");
+    let verify_binary = StatusLine::start("Verifying binary (2/2)");
 
     if let Err(e) = install_update(new_executable, &curr_executable) {
-        verify_binary.finish_and_clear();
+        verify_binary.clear();
         println!("{} couldn't verify installation", X_GLYPH.red().bold());
         println!("   {e}");
         return 1;
     }
 
-    verify_binary.finish_and_clear();
+    verify_binary.clear();
 
     println!(
-        " {} verified binary (2/2)",
+        "{} Verified binary (2/2)",
         TICK_GLYPH.green().bold(),
     );
 
 
     println!(
-        " {} margarine updated to {}", 
+        "{} Margarine updated to {}",
         TICK_GLYPH.green(), 
         release.tag_name.trim_start_matches('v')
     );
@@ -283,7 +279,7 @@ fn install_update(
 
 
 fn download(url: &str) -> (NamedTempFile, String) {
-    let mut response =
+    let response =
     match reqwest::blocking::Client::new().get(url).send() {
         Ok(response) => response.error_for_status()
             .unwrap_or_else(|error| fail(LINK_ERROR, format!("download failed: {error}"))),
@@ -294,31 +290,34 @@ fn download(url: &str) -> (NamedTempFile, String) {
     let mut file = tempfile::NamedTempFile::new()
         .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot create temp file: {error}")));
     let mut hasher = Sha256::new();
+    let progress = byte_progress(response.content_length());
+    progress.set_message("Downloading");
+    let mut reader = ProgressReader::new(response, &progress);
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read =
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) => {
+                progress.finish();
+                fail(LINK_ERROR, format!("download interrupted: {error}"))
+            },
+        };
 
-    with_progress("downloading".into(), response.content_length().unwrap_or(1), 
-    |bar| {
-        let mut buffer = [0u8; 64 * 1024];
-
-        loop {
-
-            let read = 
-            match response.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(read) => read,
-                Err(error) => fail(LINK_ERROR, format!("download interrupted: {error}")),
-            };
-
-            file.write_all(&buffer[..read])
-                .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot write temp file: {error}")));
-
-            hasher.update(&buffer[..read]);
-
-            bar.inc(read as u64);
+        if let Err(error) = file.write_all(&buffer[..read]) {
+            progress.finish();
+            fail(LINK_ERROR, format!("cannot write temp file: {error}"));
         }
-    });
 
-    let _ = file.flush();
-    let _ = file.rewind();
+        hasher.update(&buffer[..read]);
+    }
+    progress.finish();
+
+    file.flush()
+        .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot flush temp file: {error}")));
+    file.rewind()
+        .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot rewind temp file: {error}")));
 
     let hex = hex::encode(hasher.finalize());
 
@@ -327,119 +326,88 @@ fn download(url: &str) -> (NamedTempFile, String) {
 
 
 fn extract(tarball: &File, executable_dir: &Path) -> NamedTempFile {
-    let spinner = spinner();
-    spinner.set_message("extracting entries");
-    spinner.tick();
+    let scanning = StatusLine::start("Extracting entries");
 
-    let mut out = NamedTempFile::new_in(executable_dir)
-        .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot create update file: {error}")));
-
+    let mut out =
+    match NamedTempFile::new_in(executable_dir) {
+        Ok(out) => out,
+        Err(error) => {
+            scanning.clear();
+            fail(LINK_ERROR, format!("cannot create update file: {error}"))
+        },
+    };
 
     let decompressed = GzDecoder::new(tarball);
     let mut archive = tar::Archive::new(decompressed);
-    let mut entry = archive
-        .entries()
-        .unwrap_or_else(|error| {
-            spinner.finish_and_clear();
+    let entries =
+    match archive.entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            scanning.clear();
             fail(LINK_ERROR, format!("not a valid tar.gz: {error}"))
-        })
-        .filter_map(Result::ok)
-        .find(|entry| {
-            entry
-                .path()
-                .ok()
-                .and_then(|p| p.file_name().map(|p| p.to_string_lossy().to_string()))
-                .is_some_and(|name| name == "margarine")
-        })
-        .unwrap_or_else(|| {
-            spinner.finish_and_clear();
+        },
+    };
+    let mut executable = None;
+    for candidate in entries {
+        let candidate =
+        match candidate {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                scanning.clear();
+                fail(LINK_ERROR, format!("cannot read archive entry: {error}"))
+            },
+        };
+        let path =
+        match candidate.path() {
+            Ok(path) => path,
+            Err(error) => {
+                scanning.clear();
+                fail(LINK_ERROR, format!("invalid archive path: {error}"))
+            },
+        };
+        if path.file_name().is_some_and(|name| name == "margarine") {
+            executable = Some(candidate);
+            break;
+        }
+    }
+    let mut entry =
+    match executable {
+        Some(entry) => entry,
+        None => {
+            scanning.clear();
             fail(LINK_ERROR, "archive does not contain a `margarine` binary")
-        });
+        },
+    };
+    scanning.clear();
 
-    spinner.finish_and_clear();
-    with_progress(
-        "extracting".into(), 
-        entry.size(),
-        |bar| {
-            let mut writer = ProgressWriter {
-                writer: &mut out,
-                bar,
-            };
-
-            std::io::copy(&mut entry, &mut writer)
-                .unwrap_or_else(|error| fail(LINK_ERROR, format!("extraction failed: {error}")));
-        });
+    let entry_size = entry.size();
+    let progress = byte_progress(Some(entry_size));
+    progress.set_message("Extracting");
+    let mut reader = ProgressReader::new(&mut entry, &progress);
+    let extraction = std::io::copy(&mut reader, &mut out);
+    progress.finish();
+    extraction
+        .unwrap_or_else(|error| fail(LINK_ERROR, format!("extraction failed: {error}")));
 
     out.as_file_mut()
         .set_permissions(std::fs::Permissions::from_mode(0o755))
         .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot set permissions: {error}")));
 
     println!(
-        " {} extracted margarine ({})",
+        "{} Extracted margarine ({})",
         TICK_GLYPH.green().bold(),
-        format_bytes(entry.size())
+        format_bytes(entry_size)
     );
-
 
     out
 }
 
 
 
-fn with_progress<T>(
-    message: String,
-    total: u64,
-    f: impl FnOnce(&ProgressBar) -> T,
-) -> T {
-    let pb = ProgressBar::new(total);
-
-    pb.enable_steady_tick(Duration::from_millis(50));
-    pb.set_style(progress_style());
-    pb.set_message(message);
-
-    let result = f(&pb);
-
-    pb.finish_and_clear();
-    result
-}
 
 
-fn spinner() -> ProgressBar {
-    let spinner = indicatif::ProgressBar::new_spinner();
-    spinner.enable_steady_tick(Duration::from_millis(50));
-    spinner.set_style(indicatif::ProgressStyle::with_template(" {spinner:.green} {msg}")
-        .expect("static template is valid"));
-    spinner
-
-}
 
 
-fn progress_style() -> ProgressStyle {
-    ProgressStyle::with_template(
-        " {spinner:.green} {msg} {bar:40.cyan/blue} {bytes}/{total_bytes} ({eta})"
-    )
-    .unwrap()
-    .progress_chars("█▓░")
-}
-
-
-struct ProgressWriter<'a, W: Write> {
-    writer: W,
-    bar: &'a ProgressBar,
-}
-
-
-impl<'a, W: Write> Write for ProgressWriter<'a, W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let result = self.writer.write(buf)?;
-        self.bar.inc(result as _);
-        Ok(result)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.flush()
-    }
-}
 
 
 
