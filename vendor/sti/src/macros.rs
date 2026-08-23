@@ -44,6 +44,18 @@ macro_rules! write {
 }
 
 #[macro_export]
+macro_rules! writeln {
+    ($dst:expr $(,)?) => {
+        $crate::writeln!($dst, "")
+    };
+
+    ($dst:expr, $($arg:tt)*) => {{
+        _ = ::core::fmt::Write::write_fmt($dst, ::core::format_args!($($arg)*));
+        _ = ::core::fmt::Write::write_fmt($dst, ::core::format_args!("\n"));
+    }};
+}
+
+#[macro_export]
 macro_rules! write_checked {
     ($dst:expr, $($arg:tt)*) => {
         ::core::fmt::Write::write_fmt($dst, ::core::format_args!($($arg)*))

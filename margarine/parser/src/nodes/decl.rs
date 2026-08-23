@@ -102,10 +102,6 @@ pub enum Decl<'a> {
         functions: &'a [ExternFunction<'a>],
     },
 
-    LinkFile {
-        url: StringIndex,
-        hash: Option<(StringIndex, SourceRange)>,
-    },
 
     Trait {
         visibility: Visibility,

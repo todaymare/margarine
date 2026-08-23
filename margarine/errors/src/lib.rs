@@ -1,8 +1,6 @@
 pub mod fmt;
  
-use std::fmt::Write;
-
-use common::{string_map::StringMap, source::FileData};
+use common::{string_map::StringMap, source::{FileData, SourceRange}};
 use fmt::ErrorFormatter;
 use sti::define_key;
 
@@ -30,14 +28,18 @@ impl From<SemaError> for ErrorId {
 }
 
 
-pub fn display<T>(e: &impl ErrorType<T>, string_map: &StringMap, file: &[FileData], data: &mut T) -> String {
+pub fn display<T>(
+    e: &impl ErrorType<T>,
+    string_map: &StringMap,
+    file: &[FileData],
+    data: &mut T,
+) -> (String, Option<SourceRange>) {
     let mut string = String::new();
-    if !string.is_empty() {
-        let _ = writeln!(string);
-    }
+    let primary_range = {
+        let mut fmt = ErrorFormatter::new(&mut string, string_map, file);
+        e.display(&mut fmt, data);
+        fmt.primary_range
+    };
 
-    let mut fmt = ErrorFormatter::new(&mut string, string_map, file);
-    e.display(&mut fmt, data);
-
-    string
+    (string, primary_range)
 }

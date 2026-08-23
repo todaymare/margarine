@@ -37,6 +37,11 @@ pub struct Arena {
 }
 
 unsafe impl Send for Arena {}
+impl core::fmt::Debug for Arena {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.stats())
+    }
+}
 
 struct BlockHeader {
     prev: NonNull<BlockHeader>,

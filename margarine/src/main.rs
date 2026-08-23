@@ -1,18 +1,14 @@
-mod library;
 mod update;
 
-use std::{ffi::CString, fmt::Write, io::{self, Write as _}, path::PathBuf, process::Command, time::Instant};
+use std::{ffi::CString, fmt::Write, io::{self, Write as _}, path::{Path, PathBuf}, process::Command, time::Instant};
 
 use clap::{Parser, Subcommand};
 use colourful::ColourBrush;
-use margarine::{CompilationSettings, CompilationTarget, Prelude};
+use margarine::{resource, CompilationSettings, CompilationTarget};
 use sti::{arena::Arena};
 
 use crate::update::cmd_update;
 
-const VERSION : &str = env!("CARGO_PKG_VERSION");
-const VERSION_INFO : &str = concat!("margarine ", env!("CARGO_PKG_VERSION"));
-const TARGET : &str = env!("MARGARINE_TARGET");
 
 pub const X_GLYPH : &str = "error:";
 pub const TICK_GLYPH : &str = "✓";
@@ -43,11 +39,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Library management
-    Lib {
-        #[command(subcommand)]
-        command: LibCommands,
-    },
 
     /// Compile a source file into an executable
     Build {
@@ -85,6 +76,10 @@ enum Commands {
         /// Cache directory
         #[arg(long)]
         cache: Option<String>,
+
+        /// Output path
+        #[arg(short, long)]
+        output: Option<String>,
 
         /// Reset the build cache before compiling
         #[arg(long)]
@@ -149,17 +144,6 @@ enum Commands {
 }
 
 
-#[derive(Subcommand)]
-enum LibCommands {
-    /// Initialize a library project
-    Init {
-        /// Project path
-        path: Option<String>,
-    },
-
-    /// Build the library
-    Build,
-}
 
 
 /// Process exit codes, complementing clap's own usage-error code (2).
@@ -171,12 +155,9 @@ pub const LINK_ERROR: i32 = 3;
 /// propagated when it fits the portable 0..=125 range.
 pub const PROGRAM_ERROR: i32 = 4;
 
-/// Prints a clap-styled error and terminates with `code`.
+/// Prints a clap-styled runtime error and terminates with `code`.
 pub fn fail(code: i32, message: impl std::fmt::Display) -> ! {
-    use clap::error::{Error, ErrorKind};
-
-    let mut cmd = <Cli as clap::CommandFactory>::command();
-    let error: Error = Error::raw(ErrorKind::Io, message).format(&mut cmd);
+    let error = runtime_error(message);
 
     // `Error::exit` hardcodes clap's usage code (2); render the styled
     // message ourselves and exit with the specific status.
@@ -184,43 +165,51 @@ pub fn fail(code: i32, message: impl std::fmt::Display) -> ! {
     std::process::exit(code);
 }
 
+fn runtime_error(message: impl std::fmt::Display) -> clap::error::Error {
+    use clap::error::{Error, ErrorKind};
+
+    let cmd = <Cli as clap::CommandFactory>::command();
+    Error::raw(ErrorKind::Io, message).with_cmd(&cmd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_error;
+
+    #[test]
+    fn runtime_errors_do_not_render_usage_guidance() {
+        let rendered = runtime_error("build script failed").to_string();
+
+        assert!(rendered.contains("error: build script failed"));
+        assert!(!rendered.contains("Usage:"));
+        assert!(!rendered.contains("For more information"));
+    }
+}
+
 fn main() {
     let Cli { command } = Cli::parse();
-
-    // `lib` manages its own project directory, not the shared artifacts cache.
     let _lock =
-        if matches!(command, Commands::Lib { .. }) { None }
-        else { Some(ArtifactsLock::acquire()) };
+        if matches!(&command, Commands::Update) {
+            None
+        } else {
+            Some(ArtifactsLock::acquire())
+        };
+
 
     match command {
-        Commands::Lib { command } => match command {
-            LibCommands::Init { path } => {
-                let cd = std::env::current_dir().unwrap();
-                let path = path.map(|s| cd.join(s)).unwrap_or(cd);
-
-                library::validate_prerequisites().unwrap();
-                library::init(path).unwrap();
-            }
-
-            LibCommands::Build => {
-                let path = std::env::current_dir().unwrap();
-                if let Err(error) = library::build(&path) {
-                    fail(LINK_ERROR, format!("cannot build library: {error}"));
-                }
-            }
-        }
 
         Commands::Build { path, target, output, cache, update } => {
             let cache = reset_cache_if(update, cache);
             compile_and_link(&path, target, output, Some(cache));
         }
 
-        Commands::Run { path, target, cache, update, program_args } => {
+        Commands::Run { path, target, output, cache, update, program_args } => {
             let cache = reset_cache_if(update, cache);
             let output =
-                compile_and_link(&path, target, Some(format!("{cache}/program")), Some(cache));
+                compile_and_link(&path, target, output, Some(cache));
 
             println!("running '{output}'");
+
             let status = Command::new(&output)
                 .args(program_args)
                 .stdin(std::process::Stdio::inherit())
@@ -228,6 +217,7 @@ fn main() {
                 .stderr(std::process::Stdio::inherit())
                 .status()
                 .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot run '{output}': {error}")));
+
             if !status.success() {
                 let code = status.code().unwrap_or(PROGRAM_ERROR);
                 std::process::exit(if (0..=125).contains(&code) {
@@ -246,36 +236,47 @@ fn main() {
             let file = margarine::FileData::open(
                 &path.display().to_string(),
                 &mut compiler.string_map,
-            ).unwrap();
+            ).unwrap_or_else(|error| fail(
+                LINK_ERROR,
+                format!("cannot open '{}': {error}", path.display()),
+            ));
             let entry = compiler.string_map.get(file.name()).into();
             compiler.files.register(file);
 
             let settings = CompilationSettings {
                 compilation_target: target,
-                preludes: parse_env_preludes(),
+                preludes: margarine::preludes_from_env(),
                 entry,
                 output: program.clone(),
-                cache: cache.clone(),
+                cache: cache.into(),
                 arena: &arena,
                 tests: true,
             };
 
-            let mut result = compiler.run(&settings);
+            let mut result = compiler.run(&settings)
+                .unwrap_or_else(|error| fail(LINK_ERROR, format!("compilation failed: {error}")));
             let errors = compiler.check(&mut result);
             compiler.codegen(&settings, &mut result, errors);
-            let link_files = result.link_files().to_vec();
+            let mut link_files = result.link_files().to_vec();
+            margarine::prepare_link_files(target, &mut link_files)
+                .unwrap_or_else(|error| fail(LINK_ERROR, error));
             let tests = result.tests().iter()
                 .map(|(sym, should_panic)| (
                     compiler.string_map.get(result.syms.sym(*sym).name()).to_string(),
                     *should_panic,
                 ))
                 .collect::<Vec<_>>();
-
             let dylib = format!("{program}.{}", target.shared_library_suffix());
+
+            let toolchain_libs = resource::toolchain_libs_path(target);
             let link_ok = match target {
                 CompilationTarget::Arm64AppleDarwin => {
                     let mut clang = Command::new("clang");
-                    clang.arg("-shared")
+                    clang.arg("-target")
+                        .arg(target.c_target_triple())
+                        .arg("-shared")
+                        .arg("-L")
+                        .arg(&toolchain_libs)
                         .arg(format!("{program}.o"))
                         .args(&link_files)
                         .arg("-lzstd")
@@ -289,7 +290,11 @@ fn main() {
                 CompilationTarget::X86_64UnknownLinuxGnu
                 | CompilationTarget::Aarch64UnknownLinuxGnu => {
                     let mut clang = Command::new("clang");
-                    clang.arg("-shared")
+                    clang.arg("-target")
+                        .arg(target.c_target_triple())
+                        .arg("-shared")
+                        .arg("-L")
+                        .arg(&toolchain_libs)
                         .arg(format!("{program}.o"))
                         .args(&link_files)
                         .arg("-lzstd")
@@ -318,21 +323,25 @@ fn main() {
             let file = margarine::FileData::open(
                 &path.display().to_string(),
                 &mut compiler.string_map,
-            ).unwrap();
+            ).unwrap_or_else(|error| fail(
+                LINK_ERROR,
+                format!("cannot open '{}': {error}", path.display()),
+            ));
             let entry = compiler.string_map.get(file.name()).into();
             compiler.files.register(file);
 
             let settings = CompilationSettings {
                 compilation_target: target,
-                preludes: parse_env_preludes(),
+                preludes: margarine::preludes_from_env(),
                 entry,
                 output: String::new(),
-                cache,
+                cache: cache.into(),
                 arena: &arena,
                 tests: false,
             };
 
-            let mut result = compiler.run(&settings);
+            let mut result = compiler.run(&settings)
+                .unwrap_or_else(|error| fail(LINK_ERROR, format!("compilation failed: {error}")));
             let errors = compiler.check(&mut result);
             let error_count = errors.iter().flatten().map(|file| file.len()).sum::<usize>();
 
@@ -353,7 +362,6 @@ fn main() {
     }
 }
 
-
 /// Compiles `path` with the Compiler + CompilationResult pipeline and links
 /// the result for `target`. Shared by `build` and `run`.
 fn compile_and_link(
@@ -364,95 +372,39 @@ fn compile_and_link(
 ) -> String {
     let cache = cache.unwrap_or("artifacts".to_string());
     let output = output
-        .map(|s| PathBuf::from(s))
+        .map(PathBuf::from)
         .unwrap_or({
             let path = path.with_extension("");
             let name = path.file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or("program".into());
-            let path = PathBuf::from(&cache);
-            let path = path.join(name);
-            let path = path.with_extension(target.output_suffix());
-            path
+            PathBuf::from(&cache)
+                .join(name)
+                .with_extension(target.output_suffix())
         });
-
-    let output = output.to_string_lossy();
-
-    let arena = Arena::new();
-    let mut compiler = margarine::Compiler::new(&arena);
-    let file = margarine::FileData::open(
-        &path.display().to_string(),
-        &mut compiler.string_map,
-    ).unwrap();
-    let entry = compiler.string_map.get(file.name()).into();
-    compiler.files.register(file);
-
-    let settings = CompilationSettings {
-        compilation_target: target,
-        preludes: parse_env_preludes(),
-        entry,
-        output: output.to_string(),
-        cache: cache.to_string(),
-        arena: &arena,
-        tests: false,
+    let output = if output.is_absolute() {
+        output
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot get current directory: {error}")))
+            .join(output)
+    };
+    let cache = if Path::new(&cache).is_absolute() {
+        PathBuf::from(&cache)
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|error| fail(LINK_ERROR, format!("cannot get current directory: {error}")))
+            .join(&cache)
     };
 
-    let mut result = compiler.run(&settings);
-    let errors = compiler.check(&mut result);
-    let error_count = errors.iter().flatten().map(|file| file.len()).sum::<usize>();
-
-    compiler.codegen(&settings, &mut result, errors);
-    let link_files = result.link_files().to_vec();
-
-    let link_ok = match target {
-        CompilationTarget::Arm64AppleDarwin => {
-            let c_target = target.c_target_triple();
-            let mut clang = Command::new("clang");
-            clang.arg("-target")
-                .arg(c_target)
-                .arg(format!("{output}.o"))
-                .args(&link_files)
-                .arg("-lzstd")
-                .arg("-lz")
-                .arg("-lc++")
-                .arg("-lc++abi")
-                .arg("-o")
-                .arg(&*output);
-            run_step("linking...", &mut clang)
-        }
-        CompilationTarget::X86_64UnknownLinuxGnu
-        | CompilationTarget::Aarch64UnknownLinuxGnu => {
-            let c_target = target.c_target_triple();
-            let mut clang = Command::new("clang");
-            clang.arg("-target")
-                .arg(c_target)
-                .arg(format!("{output}.o"))
-                .args(&link_files)
-                .arg("-lzstd")
-                .arg("-lz")
-                .arg("-lstdc++")
-                .arg("-o")
-                .arg(&*output);
-            run_step("linking...", &mut clang)
-        }
-        CompilationTarget::Wasm32UnknownUnknown => {
-            let mut linker = Command::new("wasm-ld");
-            linker.arg("--no-entry")
-                .arg("--export=main")
-                .arg("--export-memory")
-                .arg(format!("{output}.o"))
-                .args(&link_files)
-                .arg("-o")
-                .arg(&*output);
-            run_step("linking browser wasm...", &mut linker)
-        }
-    };
-
-    if !link_ok {
-        fail(LINK_ERROR, "linking failed");
-    }
-
-    output.into()
+    margarine::build(
+        path,
+        target,
+        &output,
+        &cache,
+        margarine::preludes_from_env(),
+    ).unwrap_or_else(|error| fail(LINK_ERROR, format!("build failed: {error}")));
+    output.to_string_lossy().into_owned()
 }
 
 
@@ -853,27 +805,6 @@ fn wtermsig(status: i32) -> i32 {
 }
 
 
-fn parse_env_preludes() -> Vec<Prelude> {
-    let preludes = 
-    std::env::var("MARGARINE_PRELUDE")
-        .iter()
-        .flat_map(|s| s.split(';'))
-        .filter_map(|s| s.split_once('='))
-        .map(|(alias, url)| Prelude { alias: alias.into(), url: url.into() })
-        .collect::<Vec<_>>();
-
-
-    if preludes.is_empty() {
-        let url = format!("https://cdn.daymare.net/margarine/{VERSION}/share");
-
-        vec![
-            Prelude { alias: "core".into(), url: format!("{url}/core") },
-            Prelude { alias: "std".into(), url: format!("{url}/std") },
-        ]
-    } else {
-        preludes
-    }
-}
 
 
 
@@ -954,4 +885,3 @@ fn page_if_tty(text: &str) {
     drop(child.stdin.take());
     let _ = child.wait();
 }
-

@@ -45,23 +45,6 @@ pub enum Error {
         path: StringIndex,
     },
 
-    HashMismatch {
-        source_hash: SourceRange,
-        source_extern: SourceRange,
-        expected: StringIndex,
-        actual: StringIndex,
-    },
-
-    InvalidHash {
-        source: SourceRange,
-    },
-
-    ExternalFileError {
-        source: SourceRange,
-        url: StringIndex,
-        operation: &'static str,
-        reason: StringIndex,
-    },
 
 
     RepoDoesntExist {
@@ -81,7 +64,6 @@ pub enum Error {
         name: StringIndex,
     },
 }
-
 
 impl ErrorType<()> for Error {
     fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, _: &mut ()) {
@@ -190,30 +172,6 @@ impl ErrorType<()> for Error {
                     .highlight_with_note(*source, &msg);
             }
 
-            Error::HashMismatch { source_hash, source_extern, actual, .. } => {
-                let note = format!(
-                    "but downloaded resource has '{}'",
-                    fmt.string(*actual),
-                );
-
-                let mut err = fmt.error("resource hash mismatch");
-                err
-                    .highlight_with_note(*source_hash, "expected this SHA-256 digest");
-                err
-                    .highlight_with_note(*source_extern, &note);
-            }
-
-            Error::InvalidHash { source } => {
-                fmt.error("invalid resource hash")
-                    .highlight_with_note(*source, "expected exactly 64 hexadecimal characters");
-            }
-
-            Error::ExternalFileError { source, url, operation, reason } => {
-                let msg = format!("unable to {operation} '{}'", fmt.string(*url));
-                let reason = fmt.string(*reason).to_string();
-                fmt.error(&msg)
-                    .highlight_with_note(*source, &reason);
-            }
         }
     }
 }

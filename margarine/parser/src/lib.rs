@@ -20,7 +20,7 @@ pub fn parse<'a>(
     string_map: &mut StringMap,
     ast: &mut AST<'a>,
     cfg_env: &HashMap<StringIndex, StringIndex>,
-) -> (Block<'a>, KVec<u32, DeclId>, KVec<u32, DeclId>, KVec<ParserError, Error>) {
+    ) -> (Block<'a>, KVec<u32, DeclId>, KVec<ParserError, Error>) {
 
     let mut parser = Parser {
         tokens: &*tokens,
@@ -33,8 +33,6 @@ pub fn parse<'a>(
         ast,
         cfg_env,
         imports: KVec::new(),
-        link_files: KVec::new(),
-        hash_attr: None,
     };
 
 
@@ -51,7 +49,7 @@ pub fn parse<'a>(
         },
     };
 
-    (result, parser.imports, parser.link_files, parser.errors)
+    (result, parser.imports, parser.errors)
 }
 
 
@@ -83,12 +81,10 @@ struct Parser<'me, 'ast, 'str> {
     cfg_env: &'me HashMap<StringIndex, StringIndex>,
 
     imports: Vec<DeclId>,
-    link_files: Vec<DeclId>,
 
     errors: KVec<ParserError, Error>,
     is_in_panic: bool,
 
-    hash_attr: Option<(StringIndex, SourceRange)>,
 }
 
 type StmtResult<'ta> = Result<StmtId, ErrorId>;
@@ -432,30 +428,6 @@ impl<'out> Parser<'_, 'out, '_> {
     }
 
 
-    fn validate_hash_attr(&self, attr: Attribute) -> Result<StringIndex, Error> {
-        let err = 
-        Error::InvalidCfg {
-            source: attr.range,
-            expected: "hash expects a 64-character SHA-256 digest as a string literal",
-        };
-
-        if attr.params.len() != 1 {
-            return Err(err);
-        }
-
-        let param = attr.params[0];
-        let AttributeValue::Literal(Literal::String(s)) = param.value
-        else {
-            return Err(err);
-        };
-
-        let str = self.string_map.get(s);
-        if str.len() != 64 || !str.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(err);
-        }
-
-        Ok(s)
-    }
 
 
     fn eval_cfg(&self, attr: Attribute) -> Result<bool, Error> {
@@ -920,34 +892,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 }
 
 
-                if matches!(attr.identifier(), Some(name) if self.string_map.get(name) == "hash") {
-                    let prev_hash = self.hash_attr.take();
-                    match self.validate_hash_attr(attr) {
-                        Ok(hash) => {
-                            self.hash_attr = Some((hash, attr.range));
-                        },
-                        Err(e) => {
-                            self.hash_attr = Some((StringMap::UNIT, attr.range));
-                            let e = self.errors.push(e);
-                            return Err(ErrorId::Parser((self.file, e)));
-                        },
-                    };
-
-                    let value = self.statement(settings)?;
-                    let curr = self.hash_attr;
-                    self.hash_attr = prev_hash;
-
-                    if curr.is_some() {
-                        let err = self.errors.push(Error::InvalidCfg {
-                            source: attr.range,
-                            expected: "hash attribute can't be used here",
-                        });
-
-                        return Err(ErrorId::Parser((self.file, err)));
-                    }
-
-                    return Ok(value)
-                }
 
                 let Some(stmt) = self.statement(settings)? 
                 else {
@@ -1338,16 +1282,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
         self.advance();
 
-        if let Some(path) = self.is_literal_str() {
-            self.advance();
-            self.expect(TokenKind::SemiColon)?;
-            let decl = self.ast.add_decl(
-                Decl::LinkFile { url: path, hash: self.hash_attr.take() },
-                SourceRange::new(start, self.current_range().end()),
-            );
-            self.link_files.push(decl);
-            return Ok(decl);
-        }
 
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
@@ -2651,7 +2585,7 @@ mod tests {
         let (tokens, _) = lex(&file, &mut sm, 0);
         let mut ast = AST::new(&arena);
         let cfg_env = std::collections::HashMap::new();
-        let (_, _, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
+        let (_, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
         assert!(errors.is_empty(), "parse errors: {errors:?}");
     }
 
@@ -2675,7 +2609,7 @@ mod tests {
         let (tokens, _) = lex(&file, &mut sm, 0);
         let mut ast = AST::new(&arena);
         let cfg_env = std::collections::HashMap::new();
-        let (_, _, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
+        let (_, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
         assert!(errors.is_empty(), "parse errors: {errors:?}");
     }
 
@@ -2687,7 +2621,6 @@ mod tests {
         let file_name = sm.insert("test");
         let file = FileData::new(
             "@cfg(env(\"DISABLED\", \"no\")) import \"missing\" as missing;\n\
-             @cfg(env(\"DISABLED\", \"no\")) extern \"missing.o\";\n\
              @cfg(env(\"DISABLED\", \"no\")) fn bad() { this is not valid; }\n\
              fn enabled() {}"
                 .to_string(),
@@ -2699,13 +2632,12 @@ mod tests {
         let mut cfg_env = std::collections::HashMap::new();
         cfg_env.insert(sm.insert("DISABLED"), sm.insert("yes"));
 
-        let (body, imports, links, errors) = parse(
+        let (body, imports, errors) = parse(
             tokens, 0, &arena, &mut sm, &mut ast, &cfg_env,
         );
 
         assert!(errors.is_empty(), "parse errors: {errors:?}");
         assert!(imports.is_empty());
-        assert!(links.is_empty());
         assert_eq!(body.len(), 1);
         assert!(matches!(ast.decl(match body[0] {
             NodeId::Decl(id) => id,
@@ -2714,25 +2646,17 @@ mod tests {
     }
 
     #[test]
-    fn hash_attribute_requires_64_hexadecimal_characters() {
-        for hash in [
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg",
-        ] {
-            let arena = Arena::new();
-            let mut sm = StringMap::new(&arena);
-            let file_name = sm.insert("test");
-            let file = FileData::new(
-                format!("@hash(\"{hash}\") extern \"missing.o\";"),
-                file_name,
-                Extension::None,
-            );
-            let (tokens, _) = lex(&file, &mut sm, 0);
-            let mut ast = AST::new(&arena);
-            let cfg_env = std::collections::HashMap::new();
-            let (_, _, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
+    fn string_extern_declaration_is_rejected() {
+        let arena = Arena::new();
+        let mut sm = StringMap::new(&arena);
+        let file_name = sm.insert("test");
+        let file = FileData::new("extern \"missing.o\";".to_string(), file_name, Extension::None);
+        let (tokens, _) = lex(&file, &mut sm, 0);
+        let mut ast = AST::new(&arena);
+        let cfg_env = std::collections::HashMap::new();
+        let (_, _, errors) = parse(tokens, 0, &arena, &mut sm, &mut ast, &cfg_env);
 
-            assert!(matches!(errors.first(), Some(Error::InvalidCfg { .. })));
-        }
+        assert!(!errors.is_empty(), "string extern should be rejected");
     }
+
 }

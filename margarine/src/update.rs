@@ -7,7 +7,8 @@ use sti::writeln;
 use colourful::ColourBrush;
 use tempfile::NamedTempFile;
 
-use crate::{fail, format_bytes, page_if_tty, render_markdown_line, LINK_ERROR, TARGET, TICK_GLYPH, VERSION, VERSION_INFO, X_GLYPH};
+use margarine::{TARGET, VERSION, VERSION_INFO};
+use crate::{fail, format_bytes, page_if_tty, render_markdown_line, LINK_ERROR, TICK_GLYPH, X_GLYPH};
 
 pub fn cmd_update() -> i32 {
     let api_url = 

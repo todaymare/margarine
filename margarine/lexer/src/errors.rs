@@ -24,7 +24,6 @@ pub enum Error {
     InvalidString(SourceRange),
 }
 
-
 impl ErrorType<()> for Error {
     fn display(&self, fmt: &mut errors::fmt::ErrorFormatter, _: &mut ()) {
         match self {

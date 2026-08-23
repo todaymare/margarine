@@ -1,5 +1,5 @@
 use core::str;
-use std::{collections::HashMap, fmt, hash::Hash, path::Path};
+use std::{collections::HashMap, fmt, hash::Hash, path::{Path, PathBuf}};
 
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
@@ -128,13 +128,13 @@ enum ExternAbi<'ctx> {
 }
 
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CompilationSettings<'out> {
     pub compilation_target: CompilationTarget,
     pub preludes: Vec<Prelude>,
     pub entry: String,
     pub output: String,
-    pub cache: String,
+    pub cache: PathBuf,
     pub arena: &'out Arena,
     pub tests: bool,
 }
@@ -162,7 +162,7 @@ impl fmt::Display for UnsupportedCompilationTarget {
 impl std::error::Error for UnsupportedCompilationTarget {}
 
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Prelude {
     pub alias: String,
     pub url: String,
@@ -4241,7 +4241,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             let field_ty = this.resolve(&[env.gens], self.syms);
                             let field = self.emit_copy(builder, field, field_ty);
                             self.emit_drop(env, builder, value, val);
-                            return Ok((field, this))
+                            return Ok((field, field_ty))
                         },
 
                         ContainerKind::Enum => {

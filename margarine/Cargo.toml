@@ -31,7 +31,6 @@ tracing = "*"
 libc = "0.2"
 sha2 = "0.10"
 
-toml_edit = "*"
 
 clap = { version = "4", features = ["derive"] }
 

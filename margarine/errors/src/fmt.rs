@@ -9,6 +9,7 @@ pub struct ErrorFormatter<'me> {
     string_map: &'me StringMap<'me>,
     files: &'me [FileData],
     max_padding: usize,
+    pub(crate) primary_range: Option<SourceRange>,
 }
 
 
@@ -27,6 +28,7 @@ impl<'me> ErrorFormatter<'me> {
             string_map,
             files,
             max_padding: num_size(padding + 1) as usize,
+            primary_range: None,
         }
     } 
 
@@ -81,6 +83,7 @@ impl<'me, 'fmt> CompilerError<'me, 'fmt> {
 
 
     fn inner_highlight(&mut self, source: SourceRange, note: Option<&str>) {
+        self.fmt.primary_range.get_or_insert(source);
         let (file, offset) = source.file(self.fmt.files);
         let source = SourceRange::new(source.start() - offset, source.end() - offset);
 
@@ -289,5 +292,3 @@ fn characters_between(data: &str, start: usize, end: usize) -> &str {
     if end == 0 { return "" }
     data.get(start..end).unwrap_or_else(|| characters_between(data, start, end-1))
 }
-
-

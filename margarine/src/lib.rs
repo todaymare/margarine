@@ -1,10 +1,17 @@
+pub mod resource;
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION_INFO: &str = concat!("margarine ", env!("CARGO_PKG_VERSION"));
+pub const TARGET: &str = env!("MARGARINE_TARGET");
+
+
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt;
 use std::fs;
-use std::fs::File;
-use std::io::Read;
-use std::io::Write;
+use std::io;
+use std::path::Path;
 use std::path::PathBuf;
+use std::process::{Command, ExitStatus};
 
 use colourful::ColourBrush;
 use common::string_map::StringIndex;
@@ -13,7 +20,6 @@ use errors::ParserError;
 use errors::SemaError;
 use git2::Repository;
 pub use lexer::lex;
-use parser::errors::Error;
 use parser::nodes::decl::Decl;
 use parser::nodes::decl::DeclId;
 use parser::nodes::decl::UseItem;
@@ -31,10 +37,9 @@ use semantic_analysis::llvm_codegen;
 use common::symbol_id::SymbolId;
 pub use semantic_analysis::llvm_codegen::{CompilationSettings, Prelude};
 pub use semantic_analysis::llvm_codegen::CompilationTarget;
+use sha2::Digest;
 pub use semantic_analysis::{TyChecker};
 pub use errors::display;
-use sha2::Digest;
-use sha2::Sha256;
 pub use sti::arena::Arena;
 use sti::format_in;
 use sti::vec::KVec;
@@ -48,7 +53,124 @@ pub struct Compiler<'me> {
     pub arena: &'me Arena,
     pub string_map: StringMap<'me>,
     pub silent: bool,
+    environment: HashMap<String, String>,
+    build_depth: Option<usize>,
 }
+
+
+#[derive(Debug)]
+pub enum CompilerError {
+    BuildScript(BuildScriptError),
+    PackageCopy {
+        path: PathBuf,
+        source: io::Error,
+    },
+    SourceOpen {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Io {
+        operation: &'static str,
+        path: PathBuf,
+        source: io::Error,
+    },
+    Link {
+        target: CompilationTarget,
+        status: Option<ExitStatus>,
+        output: String,
+    },
+}
+
+
+#[derive(Debug)]
+pub enum BuildScriptError {
+    Launch {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Compile {
+        path: PathBuf,
+        source: Box<CompilerError>,
+    },
+    Failed {
+        path: PathBuf,
+        status: ExitStatus,
+    },
+}
+
+
+impl fmt::Display for CompilerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BuildScript(error) => error.fmt(formatter),
+            Self::PackageCopy { path, source } => {
+                write!(formatter, "could not copy package to '{}': {source}", path.display())
+            }
+            Self::SourceOpen { path, source } => {
+                write!(formatter, "could not open source '{}': {source}", path.display())
+            }
+            Self::Io { operation, path, source } => {
+                write!(formatter, "could not {operation} '{}': {source}", path.display())
+            }
+            Self::Link { target, status, output } => {
+                write!(formatter, "linking for target '{}' failed", target.margarine_target_triple())?;
+                if let Some(status) = status {
+                    write!(formatter, " with {status}")?;
+                }
+                if !output.trim().is_empty() {
+                    write!(formatter, "\n{output}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for CompilerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::BuildScript(error) => Some(error),
+            Self::PackageCopy { source, .. }
+            | Self::SourceOpen { source, .. }
+            | Self::Io { source, .. } => Some(source),
+            Self::Link { .. } => None,
+        }
+    }
+}
+
+impl fmt::Display for BuildScriptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Launch { path, source } => {
+                write!(formatter, "could not run build script '{}': {source}", path.display())
+            }
+            Self::Compile { path, source } => {
+                write!(formatter, "could not compile build script '{}': {source}", path.display())
+            }
+            Self::Failed { path, status } => {
+                write!(formatter, "build script '{}' failed with {status}", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for BuildScriptError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Launch { source, .. } => Some(source),
+            Self::Compile { source, .. } => Some(source.as_ref()),
+            Self::Failed { .. } => None,
+        }
+    }
+}
+
+
+impl From<BuildScriptError> for CompilerError {
+    fn from(error: BuildScriptError) -> Self {
+        Self::BuildScript(error)
+    }
+}
+
 
 
 pub struct Files {
@@ -90,8 +212,15 @@ impl<'me> Compiler<'me> {
             arena,
             string_map: StringMap::new(arena),
             silent: false,
+            environment: {
+                let mut environment = current_environment();
+                environment.remove("MARGARINE_COMPILATION_TARGET");
+                environment
+            },
+            build_depth: None,
         }
     }
+
 
 
     pub fn check(&self, result: &mut CompilationResult<'me>) -> [Vec<Vec<String>>; 3] {
@@ -99,10 +228,12 @@ impl<'me> Compiler<'me> {
         for l in &result.errors.lexer_errors {
             let mut file = Vec::with_capacity(l.len());
             for e in l.iter() {
-                let report = display(e, &self.string_map, &self.files.files, &mut ());
+                let (report, primary_range) =
+                display(e, &self.string_map, &self.files.files, &mut ());
 
-                if !cfg!(feature="fuzzer") {
-                    println!("{report}");
+                if !cfg!(feature="fuzzer")
+                && !primary_range.is_some_and(|range| result.is_silent_range(range)) {
+                    eprintln!("{report}");
                 }
 
                 file.push(report);
@@ -114,10 +245,12 @@ impl<'me> Compiler<'me> {
         for l in &result.errors.parser_errors {
             let mut file = Vec::with_capacity(l.len());
             for e in l.iter() {
-                let report = display(e, &self.string_map, &self.files.files, &mut ());
+                let (report, primary_range) =
+                display(e, &self.string_map, &self.files.files, &mut ());
 
-                if !cfg!(feature="fuzzer") {
-                    println!("{report}");
+                if !cfg!(feature="fuzzer")
+                && !primary_range.is_some_and(|range| result.is_silent_range(range)) {
+                    eprintln!("{report}");
                 }
 
                 file.push(report);
@@ -127,11 +260,12 @@ impl<'me> Compiler<'me> {
 
         let mut sema_errors = Vec::with_capacity(result.errors.sema_errors.len());
         for (id, error) in &result.errors.sema_errors {
-            let report = display(error, &self.string_map, &self.files.files, &mut result.syms);
+            let (report, _) =
+            display(error, &self.string_map, &self.files.files, &mut result.syms);
 
             if !cfg!(feature="fuzzer")
             && !result.is_silent_error(result.errors.sema_error_nodes[id]) {
-                println!("{report}");
+                eprintln!("{report}");
             }
 
             sema_errors.push(report);
@@ -155,7 +289,7 @@ impl<'me> Compiler<'me> {
     pub fn run<'out>(
         &mut self, 
         settings: &CompilationSettings<'out>
-    ) -> CompilationResult<'out> {
+    ) -> Result<CompilationResult<'out>, CompilerError> {
         let arena = settings.arena;
         let entry = self.string_map.insert(&settings.entry);
         let root_name = std::path::Path::new(&settings.entry)
@@ -172,8 +306,6 @@ impl<'me> Compiler<'me> {
         let mut global = AST::new(&arena);
         let mut lex_errors = vec![];
         let mut parse_errors = vec![];
-        let mut build_lock = BuildLock::load();
-
 
         let root = 
         global.add_decl(Decl::Module { 
@@ -190,7 +322,7 @@ impl<'me> Compiler<'me> {
             alias: StringIndex,
             path: StringIndex,
             visibility: Visibility,
-            intercrate_depth: u32,
+            interpackage_depth: u32,
             is_included_by_prelude: bool,
         }
 
@@ -202,10 +334,16 @@ impl<'me> Compiler<'me> {
         let mut top_modules = HashSet::new();
 
         let mut file_offsets = vec![];
-        let mut package_urls: HashMap<String, String> = HashMap::new();
-        let mut link_file_paths = HashMap::new();
-        let mut cfg_env = std::env::vars()
-            .map(|(k, v)| (self.string_map.insert(&k), self.string_map.insert(&v)))
+
+        let mut state = CompilationState {
+            linker_files: Vec::new(),
+            packages: HashMap::new(),
+        };
+
+        let mut cfg_env = self
+            .environment
+            .iter()
+            .map(|(key, value)| (self.string_map.insert(key), self.string_map.insert(value)))
             .collect::<HashMap<_, _>>();
 
         stack.push(StackEntry {
@@ -213,46 +351,44 @@ impl<'me> Compiler<'me> {
             alias: root_name,
             path: entry,
             visibility: Visibility::Public,
-            intercrate_depth: 0,
+            interpackage_depth: 0,
             is_included_by_prelude: false,
         });
         
         let comp_target = self.string_map.insert("MARGARINE_COMPILATION_TARGET");
         let target_triple = self.string_map.insert(&settings.compilation_target.llvm_target_triple());
-        cfg_env.insert(comp_target, target_triple);
+        cfg_env.entry(comp_target).or_insert(target_triple);
+
+        let output_depth = self.build_depth.unwrap_or_else(build_output_depth);
 
         if !self.silent {
+            let prefix = build_output_prefix(output_depth);
             println!(
-                "{} {}",
+                "{}{} {}",
+                prefix,
                 "target:".green().bold(),
                 settings.compilation_target.margarine_target_triple(),
             );
         }
 
+
         while let Some(entry) = stack.pop() {
             let file_path = self.string_map.get(entry.path);
             let file = self.files.get(entry.path).unwrap();
-            let depth = entry.intercrate_depth as usize;
+            let depth = output_depth + entry.interpackage_depth as usize;
+
+            let display = display_compile_path(settings, file_path);
 
             if !self.silent {
-                let display = display_compile_path(settings, file_path, &package_urls);
-                if depth != 0 {
-                    println!(
-                        "{}{}{} {} {}",
-                        "|".dark_grey(),
-                        "-".repeat(depth).dark_grey(),
-                        ">".dark_grey(),
-                        "compiling:".green().bold(),
-                        display,
-                    );
-                } else {
-                    println!(
-                        "{} {}",
-                        "compiling:".green().bold(),
-                        display,
-                    );
-                }
+                let prefix = build_output_prefix(depth);
+                println!(
+                    "{}{} {}",
+                    prefix,
+                    "compiling:".green().bold(),
+                    display,
+                );
             }
+
 
 
 
@@ -261,7 +397,7 @@ impl<'me> Compiler<'me> {
                 tokens
             });
 
-            let (body, mut imports, link_files, mut pe) = 
+            let (body, mut imports, mut pe) =
             DropTimer::with_timer("parsing", || {
                 parse(tokens, counter, &arena, &mut self.string_map, &mut global, &cfg_env)
             });
@@ -285,122 +421,6 @@ impl<'me> Compiler<'me> {
                 Block::new(vec.leak(), body.range())
             };
 
-            for (_, link_file) in link_files {
-                let Decl::LinkFile { url, hash } = global.decl(link_file) 
-                else { unreachable!() };
-                let source = global.range(link_file);
-
-                let url_str = self.string_map.get(url);
-                let url = resolve_url(url_str);
-                let resource = resource_cache_entry(settings, &url);
-
-                let (tempfile, file_hash) = 
-                if resource.path.is_file() {
-                    let Ok(file) = std::fs::read(&resource.path)
-                    else {
-                        let reason = self.string_map.insert("unable to open cached resource file");
-                        let url = self.string_map.insert(&url);
-                        let err = pe.push(Error::ExternalFileError { source, url, operation: "check resource hash", reason });
-                        global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                        continue;
-                    };
-
-                    (None, Sha256::digest(file).try_into().unwrap())
-
-                } else {
-
-                    let Some(cache_dir) = resource.path.parent() 
-                    else {
-                        let reason = self.string_map.insert("unable to determine the resource cache directory");
-                        let url = self.string_map.insert(&url);
-                        let err = pe.push(Error::ExternalFileError { source, url, operation: "prepare resource cache", reason });
-                        global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                        continue;
-                    };
-
-                    let mut tempfile = 
-                    match tempfile::Builder::new().tempfile_in(cache_dir) {
-                        Ok(file) => file,
-                        Err(error) => {
-                            let reason = self.string_map.insert(&error.to_string());
-                            let url = self.string_map.insert(&url);
-                            let err = pe.push(Error::ExternalFileError { source, url, operation: "prepare resource cache", reason });
-                            global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                            continue;
-                        }
-                    };
-
-                    if !self.silent {
-                        println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
-                    }
-
-
-                    let hash = 
-                    match download_and_hash(&url, tempfile.as_file_mut()) {
-                        Ok(hash) => hash,
-                        Err(error) => {
-                            let reason = self.string_map.insert(&error.to_string());
-                            let url = self.string_map.insert(&url);
-                            let err = pe.push(Error::ExternalFileError { 
-                                source, 
-                                url, 
-                                operation: "download external file", 
-                                reason 
-                            });
-
-                            global.set_decl(
-                                link_file, 
-                                Decl::Error(errors::ErrorId::Parser((counter, err)))
-                            );
-                            continue;
-                        }
-                    };
-
-                    (Some(tempfile), hash)
-                };
-
-                if let Some((hash, source_hash)) = hash {
-                    let hash_str = self.string_map.get(hash);
-
-                    let Ok(expected_hash) = hex::decode(hash_str) 
-                    else {
-                        let err = pe.push(Error::InvalidHash { source: source_hash });
-                        global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                        continue;
-                    };
-
-                    if expected_hash != file_hash {
-                        let found_hash = hex::encode(file_hash);
-                        let found_hash = self.string_map.insert(&found_hash);
-                        let err = pe.push(Error::HashMismatch { 
-                            source_extern: source, 
-                            source_hash,
-                            expected: hash,
-                            actual: found_hash,
-                        });
-
-                        global.set_decl(
-                            link_file, 
-                            Decl::Error(errors::ErrorId::Parser((counter, err)))
-                        );
-                        continue
-                    }
-                }
-
-                if let Some(Err(error)) = tempfile.map(|t| t.persist(&resource.path)) {
-                    let reason = self.string_map.insert(&error.error.to_string());
-                    let url = self.string_map.insert(&url);
-                    let err = pe.push(Error::ExternalFileError { source, url, operation: "store external file", reason });
-                    global.set_decl(link_file, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                    continue;
-                }
-
-
-                link_file_paths.insert(
-                    link_file, 
-                    resource.path.to_string_lossy().into_owned()
-                );
-            }
 
 
             file_offsets.push((entry.path, source_offset));
@@ -436,7 +456,7 @@ impl<'me> Compiler<'me> {
                             alias: name,
                             visibility,
                             path: path_idx,
-                            intercrate_depth: entry.intercrate_depth+1,
+                            interpackage_depth: entry.interpackage_depth+1,
                             is_included_by_prelude: entry.is_included_by_prelude,
                         });
                     }
@@ -444,96 +464,35 @@ impl<'me> Compiler<'me> {
 
                     Decl::ImportRepo { alias, repo } => {
                         let repo_str = self.string_map.get(repo);
-                        let alias_str = self.string_map.get(alias);
-                        let url = resolve_url(repo_str);
 
-                        let resource = resource_cache_entry(settings, &url);
-
-                        package_urls.insert(
-                            resource.partial_string_hash.clone(), 
-                            url.clone()
+                        let package = load_package(
+                            settings,
+                            &mut state,
+                            depth,
+                            repo_str,
+                            &self.environment,
                         );
 
-                        let hash = self.string_map.insert(&resource.partial_string_hash);
 
-                        {
-                            let item = UseItem::new(
-                                hash, 
-                                UseItemKind::BringName(alias), 
-                                source
-                            );
+                        let package =
+                        match package {
+                            Ok(p) => p,
+                            Err(PackageError::RepoUnreachable) => {
+                                let err = pe.push(parser::errors::Error::RepoDoesntExist {
+                                    source,
+                                    path: repo,
+                                });
+                                global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
+                                continue;
+                            },
 
-                            global.set_decl(
-                                i, 
-                                Decl::Using { visibility: Visibility::Private, item }
-                            );
-                        }
-
-                        let cached_repository =
-                        if std::fs::exists(&resource.path).unwrap_or(false) {
-                            Repository::open(&resource.path).ok()
-                        } else {
-                            None
+                            Err(PackageError::Compiler(error)) => return Err(error),
                         };
-
-                        let repository =
-                        if let Some(repository) = cached_repository {
-                            repository
-                        } else {
-                            // Missing or corrupted cache entry (e.g. leftovers
-                            // from an interrupted build): drop whatever is there
-                            // and clone afresh instead of poisoning the build.
-                            let _ = fs::remove_dir_all(&resource.path);
-
-                            if !self.silent {
-                                println!("{}{}{} {} {}", "|".dark_grey(), "-".repeat(depth+1).dark_grey(), ">".dark_grey(), "downloading...".green().bold(), url);
-                            }
-
-                            match Repository::clone(&url, &resource.path) {
-                                Ok(repo) => repo,
-                                Err(_) => {
-                                    let err = pe.push(parser::errors::Error::RepoDoesntExist {
-                                        source,
-                                        path: repo,
-                                    });
-                                    global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                                    continue;
-                                }
-                            }
-                        };
-
-                        let target_commit = "HEAD";
-
-                        let Ok(object) = repository.revparse_single(&target_commit) else {
-                            let err = pe.push(parser::errors::Error::RepoDoesntExist {
-                                source,
-                                path: repo,
-                            });
-                            global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                            continue;
-                        };
-
-                        if repository.checkout_tree(&object, None).is_err()
-                        || repository.set_head_detached(object.id()).is_err()
-                        {
-                            let err = pe.push(parser::errors::Error::RepoDoesntExist {
-                                source,
-                                path: repo,
-                            });
-                            global.set_decl(i, Decl::Error(errors::ErrorId::Parser((counter, err))));
-                            continue;
-                        }
-
-                        let commit = object.id().to_string();
-                        build_lock.set(alias_str.to_string(), commit);
-
-                        // if the module is already in the top level, skip it
-                        if top_modules.contains(&hash) {
-                            continue;
-                        }
 
                         // Load lib.mar from the cloned repo
-                        let lib_path = resource.path.join("lib.mar");
+                        let lib_path = package.path.join("lib.mar");
+                        let hash = package.resource.partial_string_hash;
+                        let hash = self.string_map.insert(&hash);
                         let Ok(file) = FileData::open(&lib_path, &mut self.string_map)
                         else {
                             let lib_path_str = self.string_map.insert(&lib_path.to_string_lossy());
@@ -544,6 +503,23 @@ impl<'me> Compiler<'me> {
                         };
 
                         let name = file.name();
+                        let item = UseItem::new(
+                            hash,
+                            UseItemKind::BringName(alias),
+                            source,
+                        );
+                        global.set_decl(
+                            i,
+                            Decl::Using {
+                                visibility: Visibility::Private,
+                                item,
+                            },
+                        );
+
+                        if top_modules.contains(&hash) {
+                            continue;
+                        }
+
                         self.files.register(file);
 
                         let module = Decl::Module { 
@@ -564,7 +540,7 @@ impl<'me> Compiler<'me> {
                             alias: hash, 
                             path: name, 
                             visibility: Visibility::Private,
-                            intercrate_depth: 0, 
+                            interpackage_depth: 0,
                             is_included_by_prelude: is_prelude
                         });
 
@@ -584,7 +560,7 @@ impl<'me> Compiler<'me> {
                     name: entry.alias, 
                     header: offset, 
                     body, 
-                    is_root: entry.intercrate_depth == 0,
+                    is_root: entry.interpackage_depth == 0,
                 }
             );
             
@@ -596,7 +572,6 @@ impl<'me> Compiler<'me> {
 
         }
 
-        let _ = build_lock.save();
 
         self.files.sort_by(&file_offsets);
 
@@ -624,16 +599,8 @@ impl<'me> Compiler<'me> {
         }
 
 
-        let mut link_files = Vec::new();
-        let mut seen_link_files = HashSet::new();
-        for (_, link_file) in &sema.link_files {
-            let path = link_file_paths.get(link_file).unwrap();
-            if seen_link_files.insert(path.clone()) {
-                link_files.push(path.clone());
-            }
-        }
 
-        CompilationResult {
+        Ok(CompilationResult {
             file_offsets,
 
             errors: CompilationErrors {
@@ -649,14 +616,237 @@ impl<'me> Compiler<'me> {
             startups: sema.startups,
             ty_info: sema.type_info,
             scopes: sema.scopes,
-            link_files,
+            link_files: state.linker_files.into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
             namespaces: sema.namespaces,
             syms: sema.syms,
 
             ast: global,
+        })
+
+}
+}
+
+
+fn current_environment() -> HashMap<String, String> {
+    std::env::vars().collect()
+}
+
+pub fn preludes_from_env() -> Vec<Prelude> {
+    let preludes = std::env::var("MARGARINE_PRELUDE")
+        .iter()
+        .flat_map(|value| value.split(';'))
+        .filter_map(|value| value.split_once('='))
+        .map(|(alias, url)| Prelude {
+            alias: alias.into(),
+            url: url.into(),
+        })
+        .collect::<Vec<_>>();
+
+    if preludes.is_empty() {
+        let url = format!("https://cdn.daymare.net/margarine/{VERSION}/share");
+        vec![
+            Prelude { alias: "std".into(), url: format!("{url}/std") },
+        ]
+    } else {
+        preludes
+    }
+}
+
+/// Compile and link a source file for the requested target.
+pub fn build<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
+    path: P,
+    target: CompilationTarget,
+    output: O,
+    cache: C,
+    preludes: Vec<Prelude>,
+) -> Result<PathBuf, CompilerError> {
+    build_ex(path, target, output, cache, preludes, current_environment(), None)
+}
+
+fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
+    path: P,
+    target: CompilationTarget,
+    output: O,
+    cache: C,
+    preludes: Vec<Prelude>,
+    environment: HashMap<String, String>,
+    build_depth: Option<usize>,
+) -> Result<PathBuf, CompilerError> {
+    let path = path.as_ref();
+    let output = output.as_ref().to_path_buf();
+    let cache = cache.as_ref().to_path_buf();
+    let mut environment = environment;
+    if build_depth.is_none() {
+        environment.remove("MARGARINE_COMPILATION_TARGET");
+    }
+    fs::create_dir_all(&cache)
+        .map_err(|source| CompilerError::Io {
+            operation: "create cache directory",
+            path: cache.clone(),
+            source,
+        })?;
+
+    if let Some(parent) = output.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)
+            .map_err(|source| CompilerError::Io {
+                operation: "create output directory",
+                path: parent.to_path_buf(),
+                source,
+            })?;
+    }
+
+    let arena = Arena::new();
+    let mut compiler = Compiler::new(&arena);
+    compiler.environment = environment;
+    compiler.build_depth = build_depth;
+
+    let file = FileData::open(path, &mut compiler.string_map)
+        .map_err(|source| CompilerError::SourceOpen {
+            path: path.to_path_buf(),
+            source,
+        })?;
+
+    let entry = compiler.string_map.get(file.name()).into();
+    compiler.files.register(file);
+
+    let settings = CompilationSettings {
+        compilation_target: target,
+        preludes,
+        entry,
+        output: output.to_string_lossy().into_owned(),
+        cache,
+        arena: &arena,
+        tests: false,
+    };
+
+    let mut result = compiler.run(&settings)?;
+    let errors = compiler.check(&mut result);
+    compiler.codegen(&settings, &mut result, errors);
+    let mut link_files = result.link_files().to_vec();
+    prepare_link_files(target, &mut link_files)?;
+    link_compilation(
+        target,
+        &output,
+        &link_files,
+        build_depth.unwrap_or_else(build_output_depth),
+    )?;
+    Ok(output)
+}
+
+pub fn prepare_link_files(
+    target: CompilationTarget,
+    link_files: &mut Vec<String>,
+) -> Result<(), CompilerError> {
+    let libs = resource::toolchain_libs_path(target);
+    let files = resource::toolchain_link_files(target).map_err(|source| CompilerError::Io {
+        operation: "read toolchain libraries",
+        path: libs.clone(),
+        source,
+    })?;
+
+    for path in files {
+        let path = path.to_string_lossy().into_owned();
+        if !link_files.contains(&path) {
+            link_files.push(path);
         }
     }
 
+    if let Some(missing) = link_files.iter().find(|path| !Path::new(path.as_str()).is_file()) {
+        return Err(CompilerError::Link {
+            target,
+            status: None,
+            output: format!("missing link input '{missing}'"),
+        });
+    }
+
+    Ok(())
+}
+
+fn link_compilation(
+    target: CompilationTarget,
+    output: &Path,
+    link_files: &[String],
+    depth: usize,
+) -> Result<(), CompilerError> {
+    let toolchain_libs = resource::toolchain_libs_path(target);
+    let output_object = format!("{}.o", output.display());
+
+    let (label, mut linker) = match target {
+        CompilationTarget::Arm64AppleDarwin => {
+            let mut linker = Command::new("clang");
+            linker
+                .arg("-target")
+                .arg(target.c_target_triple())
+                .arg("-L")
+                .arg(&toolchain_libs)
+                .arg(&output_object)
+                .args(link_files)
+                .arg("-lzstd")
+                .arg("-lz")
+                .arg("-lc++")
+                .arg("-lc++abi")
+                .arg("-o")
+                .arg(output);
+            ("linking...", linker)
+        }
+        CompilationTarget::X86_64UnknownLinuxGnu
+        | CompilationTarget::Aarch64UnknownLinuxGnu => {
+            let mut linker = Command::new("clang");
+            linker
+                .arg("-target")
+                .arg(target.c_target_triple())
+                .arg("-L")
+                .arg(&toolchain_libs)
+                .arg(&output_object)
+                .args(link_files)
+                .arg("-lzstd")
+                .arg("-lz")
+                .arg("-lstdc++")
+                .arg("-o")
+                .arg(output);
+            ("linking...", linker)
+        }
+        CompilationTarget::Wasm32UnknownUnknown => {
+            let mut linker = Command::new("wasm-ld");
+            linker
+                .arg("--no-entry")
+                .arg("--export=main")
+                .arg("--export-memory")
+                .arg("-L")
+                .arg(&toolchain_libs)
+                .arg(&output_object)
+                .args(link_files)
+                .arg("-o")
+                .arg(output);
+            ("linking browser wasm...", linker)
+        }
+    };
+
+    println!("{}{}", build_output_prefix(depth), label.green().bold());
+    let result = linker.output().map_err(|source| CompilerError::Link {
+        target,
+        status: None,
+        output: format!("could not start linker: {source}"),
+    })?;
+    if result.status.success() {
+        return Ok(());
+    }
+
+    let mut output_text = String::from_utf8_lossy(&result.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    if !stderr.is_empty() {
+        if !output_text.is_empty() {
+            output_text.push('\n');
+        }
+        output_text.push_str(&stderr);
+    }
+    Err(CompilerError::Link {
+        target,
+        status: Some(result.status),
+        output: output_text,
+    })
 }
 
 
@@ -690,7 +880,11 @@ impl<'me> CompilationResult<'me> {
     pub fn tests(&self) -> &[(SymbolId, bool)] { &self.tests }
 
     fn is_silent_error(&self, node: NodeId) -> bool {
-        let (start, end) = self.ast.range(node).range();
+        self.is_silent_range(self.ast.range(node))
+    }
+
+    fn is_silent_range(&self, source: SourceRange) -> bool {
+        let (start, end) = source.range();
         let index = self.silent_ranges.partition_point(|range| range.range().0 <= start);
         index != 0 && end <= self.silent_ranges[index - 1].range().1
     }
@@ -728,320 +922,270 @@ impl Files {
 }
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_link_file_is_a_parser_error() {
-        let arena = Arena::new();
-        let mut compiler = Compiler::new(&arena);
-        let name = compiler.string_map.insert("test.mar");
-        compiler.files.register(FileData::new(
-            "extern \"missing-linker-input.o\";\n\
-             @cfg(env(\"PATH\", \"__margarine_cfg_disabled__\"))\n\
-             extern \"also-missing.o\";"
-                .to_string(),
-            name,
-            Extension::None,
-        ));
-
-        let result = compiler.run(&CompilationSettings {
-            compilation_target: CompilationTarget::Arm64AppleDarwin,
-            preludes: vec![],
-            entry: "test.mar".to_string(),
-            arena: &arena,
-            tests: false,
-            output: "program".to_string(),
-            cache: "artifacts".to_string(),
-        });
-        let errors: Vec<_> = result.errors.parser_errors.iter().flatten().collect();
-
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0].1, parser::errors::Error::ExternalFileError { .. }));
-    }
-
-    #[test]
-    fn conditional_trait_impl_requires_its_generic_bounds() {
-        let arena = Arena::new();
-        let mut compiler = Compiler::new(&arena);
-        let name = compiler.string_map.insert("test.mar");
-        compiler.files.register(FileData::new(
-            "trait Printable {}\n\
-             impl Printable for int {}\n\
-             impl<T0: Printable, T1: Printable> Printable for (T0, T1) {}\n\
-             struct Wrapper<T> { value: T }\n\
-             impl<T: Printable> Printable for Wrapper<T> {}\n\
-             fn requires_printable<T: Printable>(value: T) {}\n\
-             fn main() {\n\
-                 requires_printable((1, 2));\n\
-                 requires_printable(Wrapper { value: (1, false) });\n\
-             }"
-                .to_string(),
-            name,
-            Extension::None,
-        ));
-
-        let result = compiler.run(&CompilationSettings {
-            compilation_target: CompilationTarget::Arm64AppleDarwin,
-            preludes: vec![],
-            entry: "test.mar".to_string(),
-            arena: &arena,
-            tests: false,
-            output: "program".to_string(),
-            cache: "artifacts".to_string(),
-        });
-        let errors: Vec<_> = result.errors.sema_errors.iter().collect();
-
-        assert_eq!(errors.iter().filter(|error| matches!(
-            error,
-            semantic_analysis::errors::Error::TypeDoesntImplTrait { .. }
-        )).count(), 1);
-    }
-
-    fn compile_source(source: &str) -> CompilationResult<'_> {
-        let arena = Box::leak(Box::new(Arena::new()));
-        let mut compiler = Compiler::new(arena);
-        let name = compiler.string_map.insert("test.mar");
-        compiler.files.register(FileData::new(source.to_owned(), name, Extension::None));
-        compiler.run(&CompilationSettings {
-            compilation_target: CompilationTarget::Arm64AppleDarwin,
-            preludes: vec![],
-            entry: "test.mar".to_string(),
-            arena,
-            tests: false,
-            output: "program".to_string(),
-            cache: "artifacts".to_string(),
-        })
-    }
-
-    #[test]
-    fn expression_type_info_covers_propagated_errors() {
-        let result = compile_source("fn main() { var value = missing + 1; }");
-        assert!(result.errors.sema_errors.iter().any(|error| matches!(
-            error,
-            semantic_analysis::errors::Error::VariableNotFound { .. }
-        )));
-
-        assert!(
-            result.ty_info.exprs.iter().all(|info| info.is_some()),
-            "every parsed expression must receive type information"
-        );
-    }
-
-    #[test]
-    fn semantic_errors_do_not_panic_codegen() {
-        let result = compile_source(
-            "mod math { struct Vec3 { value: int } \
-             impl Vec3 { fn new(value: int): Self { Self { value } } } } \
-             type Color = math::Vec3; \
-             fn main() { var color = Color::new(1); }",
-        );
-
-        assert!(result.errors.sema_errors.iter().any(|error| matches!(
-            error,
-            semantic_analysis::errors::Error::PrivateSymbol { .. }
-        )));
-        assert!(
-            result.ty_info.exprs.iter().any(|info| info.is_some()),
-            "failed namespace expressions must be recorded"
-        );
-    }
-
-    #[test]
-    fn private_symbols_cannot_be_imported_by_a_sibling_module() {
-        let result = compile_source("mod a { fn secret() {} } mod b { use a::secret }");
-        assert!(result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::PrivateSymbol { .. })));
-    }
-
-    #[test]
-    fn public_symbols_can_be_imported_and_reexported() {
-        let result = compile_source("mod a { pub fn exposed() {} } mod b { pub use a::exposed } use b::exposed");
-        assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::PrivateSymbol { .. })));
-    }
-
-    #[test]
-    fn reimporting_the_same_symbol_is_idempotent() {
-        let result = compile_source("mod a { pub fn exposed() {} } use a::exposed use a::exposed");
-        assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::NameIsAlreadyDefined { .. })));
-    }
-
-    #[test]
-    fn ambiguous_trait_methods_are_reported() {
-        let result = compile_source(
-            "trait First { fn method(self) }\n\
-             trait Second { fn method(self) }\n\
-             struct Value {}\n\
-             impl First for Value { fn method(self) {} }\n\
-             impl Second for Value { fn method(self) {} }\n\
-             fn main() { Value {}.method() }",
-        );
-        assert!(result.errors.sema_errors.iter().any(|error| matches!(
-            error,
-            semantic_analysis::errors::Error::AmbiguousTraitMethod { .. }
-        )));
-    }
-    #[test]
-    fn captured_closure_values_cannot_be_mutated() {
-        let cases = [
-            (
-                "direct assignment",
-                "fn main() {\n\
-                     var captured = 1;\n\
-                     var closure = || { captured = 2; };\n\
-                 }",
-            ),
-            (
-                "compound assignment",
-                "fn main() {\n\
-                     var captured = 1;\n\
-                     var closure = || { captured += 1; };\n\
-                 }",
-            ),
-            (
-                "nested field assignment",
-                "struct Value { field: int }\n\
-                 struct Holder { value: Value }\n\
-                 fn main() {\n\
-                     var holder = Holder { value: Value { field: 1 } };\n\
-                     var closure = || { holder.value.field = 2; };\n\
-                 }",
-            ),
-            (
-                "mutation through &",
-                "fn increment(&value: int) { value += 1; }\n\
-                 fn main() {\n\
-                     var values = [1, 2];\n\
-                     var closure = || { increment(&values[0]); };\n\
-                 }",
-            ),
-            (
-                "unwrap assignment",
-                "struct Optional { value: Option<int> }\n\
-                 fn main() {\n\
-                     var optional = Optional { value: some(1) };\n\
-                     var closure = || { optional.value! = 2; };\n\
-                 }",
-            ),
-            (
-                "or-return assignment",
-                "struct Optional { value: Option<int> }\n\
-                 fn main() {\n\
-                     var optional = Optional { value: some(1) };\n\
-                     var closure = || { optional.value? = 2; };\n\
-                 }",
-            ),
-        ];
-
-        for (name, source) in cases {
-            let result = compile_source(source);
-            assert_eq!(
-                result.errors.sema_errors.iter().filter(|error| matches!(
-                    error,
-                    semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
-                )).count(),
-                1,
-                "{name}",
-            );
-        }
-    }
-
-    #[test]
-    fn captured_closure_unwrap_assignment_cannot_be_mutated() {
-        let result = compile_source(
-            "struct Optional { value: Option<int> }\n\
-             fn main() {\n\
-                 var optional = Optional { value: some(1) };\n\
-                 var closure = || { optional.value! = 2; };\n\
-             }",
-        );
-
-        assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
-            error,
-            semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
-        )).count(), 1);
-    }
-
-    #[test]
-    fn closure_local_values_remain_mutable_and_captures_remain_readable() {
-        let result = compile_source(
-            "fn main() {\n\
-                 var captured = 1;\n\
-                 var read = || { captured };\n\
-                 var local = || { var value = 1; value += 1; value };\n\
-             }",
-        );
-
-        assert!(!result.errors.sema_errors.iter().any(|error| matches!(
-            error,
-            semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
-        )));
-    }
+#[derive(Debug)]
+enum PackageError {
+    RepoUnreachable,
+    Compiler(CompilerError),
 }
 
 
-fn display_compile_path(settings: &CompilationSettings, file_path: &str, package_urls: &HashMap<String, String>) -> String {
-    let path = file_path.strip_prefix(&settings.cache).unwrap_or(file_path);
-    let path = path.strip_prefix("/").unwrap_or(file_path);
+const CACHE_DOWNLOAD_DIR : &str = "build";
+const CACHE_MATERIAL_DIR : &str = "deps";
 
-    let mut parts = path.split('/');
-    let Some(first) = parts.next() else {
-        return format!("{}.mar", file_path.replace("<>", "::"));
+
+struct CompilationState {
+    linker_files: Vec<PathBuf>,
+    packages: HashMap<String, Package>,
+}
+
+
+#[derive(Clone)]
+struct Package {
+    resource: Resource,
+    path: PathBuf,
+}
+
+
+fn load_package(
+    settings: &CompilationSettings,
+    state: &mut CompilationState,
+    depth: usize,
+    ident: &str,
+    environment: &HashMap<String, String>,
+) -> Result<Package, PackageError> {
+    let url = resolve_url(ident);
+    if let Some(package) = state.packages.get(&url) {
+        return Ok(package.clone());
+    }
+
+    let resource = resource_cache_entry(settings, &url)
+        .map_err(PackageError::Compiler)?;
+
+    if !load_repository(&resource.path, &url) {
+        return Err(PackageError::RepoUnreachable);
+    }
+
+    let path = {
+        let materialised_path = settings.cache.join(CACHE_MATERIAL_DIR);
+        let materialised_path = materialised_path.join(&resource.partial_string_hash);
+
+        if materialised_path.exists() {
+            std::fs::remove_dir_all(&materialised_path)
+                .map_err(|source| PackageError::Compiler(CompilerError::PackageCopy {
+                    path: materialised_path.clone(),
+                    source,
+                }))?;
+        }
+        copy_dir(&resource.path, &materialised_path)
+            .map_err(|source| PackageError::Compiler(CompilerError::PackageCopy {
+                path: materialised_path.clone(),
+                source,
+            }))?;
+
+        materialised_path
     };
 
-    if let Some(url) = package_urls.get(first) {
-        let rest: Vec<&str> = parts.collect();
-        if rest.is_empty() || rest == ["lib"] {
-            return url.clone();
+    let is_prelude = settings.preludes
+        .iter()
+        .any(|prelude| url == resolve_url(&prelude.url));
+
+    let build_path = path.join("build.mar");
+    if build_path.is_file() {
+        if is_prelude {
+            println!(
+                "{}warn: build script inside a prelude package. skipped",
+                build_output_prefix(depth + 1),
+            );
+        } else {
+            let links = run_build_script(build_path, settings, depth + 1, environment)
+                .map_err(|error| PackageError::Compiler(error.into()))?;
+            state.linker_files.extend(links);
         }
-        return format!("/{}.mar", rest.join("/"));
     }
+
+    let package = Package {
+        resource,
+        path,
+    };
+    state.packages.insert(url, package.clone());
+    Ok(package)
+}
+
+
+fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if entry.file_type()?.is_dir() {
+            copy_dir(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+
+fn load_repository(
+    path: impl AsRef<Path>,
+    url: &str
+) -> bool {
+    if Repository::open(&path).is_ok() {
+        return true;
+    }
+
+    // todo: add progress bar to download
+
+    // Missing or corrupted cache entry (e.g. leftovers
+    // from an interrupted build): drop whatever is there
+    // and clone afresh instead of poisoning the build.
+    let _ = fs::remove_dir_all(&path);
+    Repository::clone(&url, &path).is_ok()
+}
+
+fn parse_build_script_stdout(stdout: &str, package_root: &Path) -> (Vec<PathBuf>, String) {
+    let mut links = Vec::new();
+    let mut output = String::new();
+    for line in stdout.split_inclusive('\n') {
+        let content = line.trim_end_matches(|character| matches!(character, '\r' | '\n'));
+        if let Some(value) = content.strip_prefix("margarine:link=") {
+            links.push(package_root.join(value));
+        } else {
+            output.push_str(line);
+        }
+    }
+    (links, output)
+}
+
+
+fn run_build_script<P: AsRef<Path>>(
+    build_path: P,
+    settings: &CompilationSettings<'_>,
+    depth: usize,
+    environment: &HashMap<String, String>,
+) -> Result<Vec<PathBuf>, BuildScriptError> {
+    let build_path = build_path.as_ref();
+    let package_root = build_path.parent().unwrap_or_else(|| Path::new("."));
+    let package_root = fs::canonicalize(package_root)
+        .map_err(|source| BuildScriptError::Launch {
+            path: build_path.to_path_buf(),
+            source,
+        })?;
+    let workspace = tempfile::tempdir()
+        .map_err(|source| BuildScriptError::Launch {
+            path: build_path.to_path_buf(),
+            source,
+        })?;
+    let out_dir = package_root.join(".margarine-out");
+    let cache_dir = workspace.path().join("cache");
+    fs::create_dir_all(&out_dir)
+        .and_then(|_| fs::create_dir_all(&cache_dir))
+        .map_err(|source| BuildScriptError::Launch {
+            path: build_path.to_path_buf(),
+            source,
+        })?;
+
+    let output_path = workspace.path().join("build-script");
+    let prelude_env = settings
+        .preludes
+        .iter()
+        .map(|prelude| format!("{}={}", prelude.alias, prelude.url))
+        .collect::<Vec<_>>()
+        .join(";");
+    let requested_target = settings.compilation_target.margarine_target_triple().to_string();
+    let package_dir = package_root.to_string_lossy().into_owned();
+    let out_dir_string = out_dir.to_string_lossy().into_owned();
+    let mut build_env = environment.clone();
+    build_env.insert("MARGARINE_BUILD_SCRIPT".to_string(), "1".to_string());
+    build_env.insert("MARGARINE_BUILD_DEPTH".to_string(), depth.to_string());
+    build_env.insert("MARGARINE_PRELUDE".to_string(), prelude_env);
+    build_env.insert(
+        "MARGARINE_COMPILATION_TARGET".to_string(),
+        requested_target,
+    );
+    build_env.insert("MARGARINE_PACKAGE_DIR".to_string(), package_dir);
+    build_env.insert("MARGARINE_OUT_DIR".to_string(), out_dir_string);
+
+    build_ex(
+        build_path,
+        CompilationTarget::host(),
+        &output_path,
+        &cache_dir,
+        settings.preludes.clone(),
+        build_env.clone(),
+        Some(depth),
+    ).map_err(|source| BuildScriptError::Compile {
+        path: build_path.to_path_buf(),
+        source: Box::new(source),
+    })?;
+
+    println!("{}running '{}'", build_output_prefix(depth), output_path.display());
+    let output = Command::new(&output_path)
+        .current_dir(&package_root)
+        .env_clear()
+        .envs(&build_env)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|source| BuildScriptError::Launch {
+            path: build_path.to_path_buf(),
+            source,
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (links, visible_stdout) = parse_build_script_stdout(stdout.as_ref(), &package_root);
+    print!("{visible_stdout}");
+    if !output.status.success() {
+        return Err(BuildScriptError::Failed {
+            path: build_path.to_path_buf(),
+            status: output.status,
+        });
+    }
+
+    Ok(links)
+}
+
+
+#[cfg(test)]
+mod tests;
+
+
+
+fn build_output_depth() -> usize {
+    if std::env::var_os("MARGARINE_BUILD_SCRIPT").is_none() {
+        return 0;
+    }
+
+    std::env::var("MARGARINE_BUILD_DEPTH")
+        .ok()
+        .and_then(|depth| depth.parse().ok())
+        .unwrap_or(0)
+}
+
+fn build_output_prefix(depth: usize) -> String {
+    if depth == 0 {
+        String::new()
+    } else {
+        format!("{}{}> ", "|", "-".repeat(depth))
+    }
+}
+fn display_compile_path(settings: &CompilationSettings, file_path: &str) -> String {
+    let path = file_path.strip_prefix(&*settings.cache.to_string_lossy()).unwrap_or(file_path);
+    let path = path.strip_prefix("/").unwrap_or(path);
 
     format!("{}.mar", path.replace("<>", "::"))
 }
 
 
-struct BuildLock {
-    packages: HashMap<String, String>, // alias -> commit hash
-}
-
-
-impl BuildLock {
-    fn load() -> Self {
-        match fs::read_to_string("build.lock") {
-            Ok(content) => {
-                let mut lock = BuildLock { packages: HashMap::new() };
-
-                for line in content.lines() {
-                    let (name, commit) = line.split_once(",").unwrap();
-                    lock.packages.insert(name.to_string(), commit.to_string());
-                }
-
-                lock
-            }
-
-            Err(_) => BuildLock { packages: HashMap::new() },
-        }
-    }
-
-    fn save(&self) -> std::io::Result<()> {
-        let mut content = String::new();
-        for (alias, commit) in &self.packages {
-            sti::write!(&mut content, "{},{}\n", alias, commit);
-        }
-
-        fs::write("build.lock", content)
-    }
-
-    #[allow(unused)]
-    fn get(&self, alias: &str) -> Option<String> {
-        self.packages.get(alias).cloned()
-    }
-
-    fn set(&mut self, alias: String, commit: String) {
-        self.packages.insert(alias, commit);
-    }
-}
 
 
 fn resolve_url(package: &str) -> String {
@@ -1049,8 +1193,7 @@ fn resolve_url(package: &str) -> String {
         package.to_string()
     } else {
         let default_base = format!(
-            "https://cdn.daymare.net/margarine/{}/share",
-            env!("CARGO_PKG_VERSION")
+            "https://cdn.daymare.net/margarine/{VERSION}/share"
         );
         let configured_base = if !cfg!(feature = "fuzzer") {
             std::env::var("MARGARINE_DEFAULT_URL").ok()
@@ -1068,48 +1211,32 @@ fn resolve_url(package: &str) -> String {
 }
 
 
+#[derive(Debug, Clone)]
 struct Resource {
     partial_string_hash: String,
     path: PathBuf,
 }
 
 
-fn resource_cache_entry(settings: &CompilationSettings, ident: &str) -> Resource {
+fn resource_cache_entry(
+    settings: &CompilationSettings,
+    ident: &str,
+) -> Result<Resource, CompilerError> {
     let full_hash = sha2::Sha256::digest(ident.as_bytes());
-    // Eight bytes produce the first sixteen characters when hex-encoded.
+    // Sixteen bytes produce the first thirty-two characters when hex-encoded.
     let string_hash = hex::encode(&full_hash[..16]);
 
-    let artifacts_dir = PathBuf::from(&settings.cache);
-    std::fs::create_dir_all(&artifacts_dir).unwrap();
+    let downloads_dir = settings.cache.join(CACHE_DOWNLOAD_DIR);
+    std::fs::create_dir_all(&downloads_dir)
+        .map_err(|source| CompilerError::Io {
+            operation: "create package cache directory",
+            path: downloads_dir.clone(),
+            source,
+        })?;
 
-    let local_path = artifacts_dir.join(&string_hash);
-    Resource {
+    let local_path = downloads_dir.join(&string_hash);
+    Ok(Resource {
         partial_string_hash: string_hash,
         path: local_path,
-    }
-}
-
-
-fn download_and_hash(
-    url: &str,
-    file: &mut File,
-) -> Result<[u8; 32], Box<dyn std::error::Error>> {
-    let mut response = reqwest::blocking::get(url)?.error_for_status()?;
-    let mut hasher = Sha256::new();
-
-    let mut buf = [0u8; 64 * 1024];
-
-    loop {
-        let n = response.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-
-        let chunk = &buf[..n];
-
-        file.write_all(chunk)?;
-        hasher.update(chunk);
-    }
-
-    Ok(hasher.finalize().into())
+    })
 }

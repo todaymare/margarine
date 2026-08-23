@@ -48,7 +48,6 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub type_info   : TyInfo<'out>,
     pub startups: Vec<SymbolId>,
     pub tests   : Vec<(SymbolId, bool)>,
-    pub link_files: Vec<DeclId>,
     pub root_namespace: Option<NamespaceId>,
 
     pub errors     : SemaErrors,
@@ -163,7 +162,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             ast,
             startups: Vec::new(),
             tests: Vec::new(),
-            link_files: Vec::new(),
             root_namespace: None,
             temp,
             base_scope: ScopeId::MIN,

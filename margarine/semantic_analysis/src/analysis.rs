@@ -175,9 +175,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     self.collect_names(path, ns_id, &[decl.into()], gen_count);
                 },
 
-                Decl::LinkFile { .. } => {
-                    self.link_files.push(id);
-                },
 
                 _ => (),
             }
@@ -887,7 +884,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             Decl::Struct { .. } => (),
             Decl::Enum { .. } => (),
             Decl::Alias { .. } => (),
-            Decl::LinkFile { .. } => (),
             Decl::ImportFile { .. } => unreachable!(),
             Decl::ImportRepo { .. } => unreachable!(),
             Decl::Error(_) => unreachable!(),
@@ -2729,11 +2725,6 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 );
 
                 let sym = self.convert_symbol_get_result(id, namespace, namespace_source, sym);
-                if let SymbolKind::Alias(alias) = self.syms.sym(sym).kind()
-                && let Some(error) = alias.to_ty(&[], &mut self.syms).as_err(&mut self.syms) {
-                    return Err(error);
-                }
-
                 let gen_count = self.syms.sym_gens_size(sym);
                 let mut generics = Buffer::new(&*self.output, gen_count);
                 for index in 0..gen_count {
