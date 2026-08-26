@@ -1,0 +1,137 @@
+
+
+struct Iter<S, R> {
+    state: S,
+    next: fn(&S): Option<R>,
+}
+
+
+impl<S, R> Iter<S, R> {
+    fn new(state: S, next: fn(&S): Option<R>): Self {
+        Self {
+            state,
+            next,
+        }
+    }
+}
+
+
+pub struct Iter<T> {
+    next: fn(): Option<T>,
+}
+
+
+impl<T> Iter<T> {
+    fn __next__(&self): Option<T> {
+        (self.next)()
+    }
+
+
+    fn enumerate(self): Iter<(int, T)> {
+        var counter = Rc::new(0);
+        Iter {
+            next: || {
+                var result = (self.next)()?;
+                var num = counter.get();
+                counter.set(num+1);
+
+                some((num, result))
+            }
+        }
+    }
+
+
+    fn map<A>(self, f: fn(T): A): Iter<A> {
+        Iter {
+            next: || {
+                var result = (self.next)()?;
+                some(f(result))
+            }
+        }
+    }
+
+
+
+    fn filter(self, cond: fn(T): bool): Iter<T> {
+        var this = Rc::new(self);
+        Iter {
+            next: || {
+                loop {
+                    var iter = this.get();
+                    var value = iter.__next__()?;
+                    this.set(iter);
+
+                    if cond(value) {
+                        return some(value)
+                    }
+                }
+            }
+        }
+    }
+
+
+    fn for_each(self, f: fn(T)) {
+        for _ in self.map(f) {}
+    }
+
+
+    fn skip(self, n: int): Iter<T> {
+        for _ in 0..n { self.__next__(); }
+        self
+    }
+
+
+    fn count(self): int {
+        var cnt = 0;
+        for _ in self {
+            cnt += 1;
+        }
+        cnt
+    }
+
+
+    fn nth(self, n: int): Option<T> {
+        (self.skip(n).next)()
+    }
+
+
+    fn zip<A>(self, oth: Iter<A>): Iter<(T, A)> {
+        Iter {
+            next: || {
+                var a = (self.next)()?;
+                var b = (oth.next)()?;
+                some((a, b))
+            }
+        }
+    }
+
+
+    fn all(self, f: fn(T): bool): bool {
+        for value in self {
+            if !f(value) { return false }
+        }
+        
+        true
+    }
+
+
+    fn any(self, f: fn(T): bool): bool {
+        for value in self {
+            if f(value) { return true }
+        }
+        
+        false
+    }
+
+
+
+}
+
+
+impl Iter<int> {
+    fn sum(self): int {
+        var sum = 0;
+        for n in self { sum += n }
+        sum
+    }
+}

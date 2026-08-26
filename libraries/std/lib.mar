@@ -1,0 +1,348 @@
+pub mod iter;
+pub mod duration;
+pub mod stats;
+@cfg(not(env("MARGARINE_COMPILATION_TARGET", "wasm32-unknown-unknown")))
+pub mod io;
+@cfg(not(env("MARGARINE_COMPILATION_TARGET", "wasm32-unknown-unknown")))
+pub mod process;
+pub mod string;
+pub mod list;
+// mod hashmap;
+pub mod rand;
+pub mod prelude;
+@cfg(not(env("MARGARINE_COMPILATION_TARGET", "wasm32-unknown-unknown")))
+pub mod env;
+pub mod rc;
+pub mod math;
+pub mod mem;
+
+mod ffi {
+    extern {
+        fn print_byte(value: byte)
+        fn eprint_byte(value: byte)
+        fn "margarinePanic" panic(bytes: Ptr<byte>, len: int): !
+        fn int_to_str(val: int): str
+        fn float_to_str(val: float): str
+    }
+}
+
+
+use iter::(Iter, Iterator);
+
+
+struct AnyInner {
+    destroy_fn: fn(Ptr<()>),
+    buffer: Ptr<()>,
+}
+
+
+pub struct Any {
+    inner: Rc<AnyInner>,
+    ty: int,
+}
+
+
+impl Destroy for AnyInner {
+    fn destroy(self) {
+        (self.destroy_fn)(self.buffer);
+    }
+}
+
+
+impl Any {
+    fn new<T>(val: T): Any {
+        var buf = $ptr_alloc::<T>(1);
+        $ptr_write_uninit(buf, val);
+        var casted = $ptr_cast::<T, ()>(buf);
+        var inner_val = AnyInner {
+            destroy_fn: |ptr| {
+                var typed = $ptr_cast::<(), T>(ptr);
+                $ptr_drop(typed);
+                $ptr_free(typed, 1);
+            },
+            buffer: casted,
+        };
+        Any {
+            inner: $rc(inner_val),
+            ty: $type_id::<T>(),
+        }
+    }
+
+
+    fn downcast<T>(self): Option<T> {
+        if self.ty == $type_id::<T>() {
+            var inner = $rc_get(self.inner);
+            var ptr = $ptr_cast::<(), T>(inner.buffer);
+            some($ptr_read(ptr))
+        } else {
+            none()
+        }
+    }
+}
+
+
+pub fn print_byte(value: byte) {
+    ffi::print_byte(value);
+}
+
+
+pub fn print<T: root::string::ToStr>(val: T) {
+    var string = val.to_str();
+    for index in 0..string.len() {
+        print_byte(string.byte_at(index)!);
+    }
+}
+
+
+pub fn println<T: root::string::ToStr>(val: T) {
+    print(val);
+    print("\n");
+}
+
+
+pub fn eprint_byte(value: byte) {
+    ffi::eprint_byte(value);
+}
+
+
+pub fn eprint<T: root::string::ToStr>(val: T) {
+    var string = val.to_str();
+    for index in 0..string.len() {
+        eprint_byte(string.byte_at(index)!);
+    }
+}
+
+
+pub fn eprintln<T: root::string::ToStr>(val: T) {
+    eprint(val);
+    eprint("\n");
+}
+
+
+pub fn type_id_of<T>(val: T): int {
+    $type_id::<T>()
+}
+
+
+pub fn panic(msg: str) : ! {
+    var cstr = mem::CStr::from_str(msg);
+    ffi::panic(cstr.ptr(), cstr.len())
+}
+
+pub fn assert(value: bool, msg: str) {
+    if !value { panic(msg) }
+}
+
+
+impl Range {
+    fn __next__(&self): Option<int> {
+        if self.min < self.max {
+            self.min += 1;
+            some(self.min-1)
+        } else {
+            none()
+        }
+
+    }
+
+
+    fn iter(self): Iter<Self, int> {
+        Iter::new(
+            self,
+            |&state: Self| {
+                var result = state.__next__();
+                result
+            }
+        )
+    }
+
+
+    fn contains(self, num: int): bool {
+        self.min <= num && num < self.max
+    }
+
+
+    fn len(self): int {
+        self.max - self.min
+    }
+}
+
+
+pub struct Box<T> { value: T }
+
+
+impl<T> Box<T> {
+    fn new(value: T): Box<T> { Box { value } }
+}
+
+
+
+impl int {
+    fn abs(self): int {
+        var mask = self >> 63;
+        (self ^ mask) - mask
+    }
+
+
+    fn max(self, oth: int): int {
+        if self > oth { self }
+        else { oth }
+    }
+
+
+    fn min(self, oth: int): int {
+        if self < oth { self }
+        else { oth }
+    }
+
+
+    fn pow(self, exp: int): int {
+        var count = 1;
+        for _ in 0..exp {
+            count *= self;
+        }
+        count
+    }
+
+}
+
+
+impl root::string::ToStr for int {
+    fn to_str(self): str {
+        ffi::int_to_str(self)
+    }
+}
+
+
+impl root::string::FromStr for int {
+    fn from_str(input: str): Option<Self> {
+        if input.len() == 0 { return none() }
+
+        var index = 0;
+        var negative = false;
+        if input.byte_at(0)! == (45 as byte) {
+            negative = true;
+            index = 1;
+        }
+
+        if index == input.len() { return none() }
+
+        var value = 0;
+        for i in index..input.len() {
+            var byte = input.byte_at(i)!;
+            if byte < (48 as byte) || byte > (57 as byte) {
+                return none()
+            }
+
+            value = value * 10 + (byte as int) - 48;
+        }
+
+        if negative { return some(-value) }
+        some(value)
+    }
+}
+
+
+
+impl root::string::ToStr for float {
+    fn to_str(self): str {
+        ffi::float_to_str(self)
+    }
+}
+
+
+impl<T> Option<T> {
+    fn map<A>(self, f: fn(T): A): Option<A> {
+        match self {
+            some(val) => {
+                some(f(val))
+            },
+
+            none => {
+                none()
+            }
+        }
+    }
+
+
+    fn is_some(self): bool {
+        match self {
+            some => true,
+            none => false,
+        }
+    }
+}
+
+
+impl<T: root::string::ToStr> root::string::ToStr for Option<T> {
+    fn to_str(self): str {
+        match self {
+            some(val) => root::string::format("some({})", [val.to_str()]),
+            none => "none",
+        }
+    }
+}
+
+
+impl<T: root::string::ToStr, A: root::string::ToStr> root::string::ToStr for Result<T, A> {
+    fn to_str(self): str {
+        match self {
+            ok(val) => root::string::format("ok({})", [val.to_str()]),
+            err(val) => root::string::format("err({})", [val.to_str()]),
+        }
+    }
+}
+
+
+impl Eq for int {
+    fn eq(self, oth: Self): bool {
+        self == oth
+    }
+}
+
+impl Eq for float {
+    fn eq(self, oth: Self): bool {
+        self == oth
+    }
+}
+
+impl Eq for bool {
+    fn eq(self, oth: Self): bool {
+        self == oth
+    }
+}
+
+impl Eq for () {
+    fn eq(self, oth: Self): bool {
+        self == oth
+    }
+}
+
+
+impl<T0: root::string::ToStr> root::string::ToStr for (T0,) {
+    fn to_str(self): str {
+        root::string::format("({},)", [self.0.to_str()])
+    }
+}
+
+
+impl<T0: root::string::ToStr, T1: root::string::ToStr> root::string::ToStr for (T0, T1) {
+    fn to_str(self): str {
+        root::string::format("({}, {})", [self.0.to_str(), self.1.to_str()])
+    }
+}
+
+
+impl root::string::ToStr for () {
+    fn to_str(self): str { "()" }
+}
+
+
+impl root::string::ToStr for bool {
+    fn to_str(self): str {
+        match self {
+            true => "true",
+            false => "false",
+        }
+    }
+}

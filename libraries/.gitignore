@@ -1,0 +1,3 @@
+# Generated package output and build cache (see libraries/AGENTS.md).
+build/
+artifacts/

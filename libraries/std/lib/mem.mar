@@ -1,0 +1,42 @@
+pub struct CStr {
+    buffer: Ptr<byte>,
+    length: int,
+}
+
+impl CStr {
+    pub fn from_str(value: str): CStr {
+        CStr {
+            buffer: alloc(value.as_bytes()),
+            length: value.len(),
+        }
+    }
+
+    pub fn ptr(&self): Ptr<byte> {
+        self.buffer
+    }
+
+    pub fn len(&self): int {
+        self.length
+    }
+
+    pub fn free(self) {
+        $ptr_free(self.buffer, self.length);
+    }
+}
+
+pub fn alloc<T>(data: [T]): Ptr<T> {
+    var ptr = $ptr_alloc(data.len() * $sizeof::<T>());
+    unsafe_write_ptr(ptr, data);
+    ptr
+}
+
+
+
+fn unsafe_write_ptr<T>(buffer: Ptr<T>, data: [T]) {
+    for index, item in data.iter().enumerate() {
+        $ptr_write(
+            $ptr_offset(buffer, index),
+            item
+        );
+    }
+}

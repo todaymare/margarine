@@ -15,7 +15,7 @@ fn main() {
         env::var_os("CARGO_MANIFEST_DIR")
             .expect("cargo always sets CARGO_MANIFEST_DIR"),
     );
-    let libraries = manifest_dir.join("../../libraries");
+    let libraries = manifest_dir.join("../libraries");
 
     if env::var("PROFILE").as_deref() == Ok("debug") && libraries.is_dir() {
         println!(

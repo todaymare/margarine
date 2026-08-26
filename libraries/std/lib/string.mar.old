@@ -1,0 +1,144 @@
+use iter::Iter;
+
+mod ffi {
+    extern {
+    fn str_lines_iter(s: str): Lines
+    fn str_split_at(s: str, idx: int): (str, str)
+    fn str_len(s: str): int
+    fn str_split_once(s: str, delimiter: str): Option<(str, str)>
+    fn str_nth(s: str, n: int): str
+    fn str_lines_iter_next(s: Lines): Option<str>
+    fn str_cmp(a: str, b: str): bool
+    }
+}
+
+struct Lines {
+    data: str,
+    offset: int,
+
+}
+
+impl str {
+    fn lines(self): Iter<str> {
+        var lines = ffi::str_lines_iter(self);
+        Iter {
+            next: || lines.__next__(),
+        }
+    }
+
+
+    fn split_at(self, idx: int): (str, str) {
+        ffi::str_split_at(self, idx)
+    }
+
+
+    fn is_empty(self): bool {
+        self.len() == 0
+    }
+
+
+    fn len(self): int {
+        ffi::str_len(self)
+    }
+
+
+    fn split(self, delimiter: str): Iter<str> {
+        var state = SplitState {
+            base: some(self),
+            del : delimiter,
+        };
+
+
+        Iter {
+            next: || {
+                match state.base {
+                    some: base => {
+                        var split = state.base?.split_once(delimiter);
+                        if split.is_some() {
+                            var split = split!;
+                            state.base = some(split.1);
+                            some(split.0)
+                        } else {
+                            state.base = none();
+                            some(base)
+                        }
+                    },
+
+                    none => none(),
+                }
+
+            }
+        }
+    }
+
+
+    fn split_once(self, delimiter: str): Option<(str, str)> {
+        ffi::str_split_once(self, delimiter)
+    }
+
+
+    fn slice_at(self, idx: int): Option<(str, str)> {
+        $str_slice(self, idx)
+    }
+
+
+    fn slice(self, range: Range): str {
+        var _, rest = self.slice_at(range.min)!;
+        var result, _ = rest.slice_at(range.max - range.min)!;
+        result
+    }
+
+
+    fn nth(self, n: int): str {
+        ffi::str_nth(self, n)
+    }
+
+
+    fn chars(self): Iter<str> {
+        var chars = Chars { s: self };
+        Iter {
+            next: || {
+                if chars.s.is_empty() {
+                    return none()
+                }
+
+                if chars.s.len() == 1 {
+                    var s = chars.s;
+                    chars.s = "";
+                    return some(s);
+                }
+
+                var ch, rest = chars.s.split_at(1);
+                chars.s = rest;
+                some(ch)
+            }
+        }
+    }
+}
+
+
+impl Lines {
+    fn __next__(self): Option<str> {
+        ffi::str_lines_iter_next(self)
+    }
+}
+
+
+
+struct SplitState {
+    base: Option<str>,
+    del : str,
+
+}
+
+
+struct Chars {
+    s: str,
+}
+
+
+impl Eq for str {
+    fn eq(self, oth: Self): bool {
+        ffi::str_cmp(self, oth)
+    }
+}

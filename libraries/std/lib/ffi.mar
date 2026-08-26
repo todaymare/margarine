@@ -1,0 +1,8 @@
+fn unsafe_write_ptr<T>(buffer: Ptr<T>, data: [T]) {
+    for index, item in data.iter().enumerate() {
+        $ptr_write(
+            $ptr_offset(buffer, index),
+            item
+        );
+    }
+}

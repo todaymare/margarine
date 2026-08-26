@@ -1,0 +1,115 @@
+impl<T> [T] {
+    fn concat(&self, other: [T]): [T] {
+        $list_concat(self, other)
+    }
+
+    fn slice(self, idx: int): Option<([T], [T])> {
+        $list_slice(self, idx)
+    }
+
+    fn push(&self, value: T) {
+        self = self.concat([value]);
+    }
+
+
+    fn pop(&self): Option<T> {
+        var a, b = self.slice(self.len()-1)?;
+        self = a;
+        some(b[0])
+    }
+
+
+    fn len(self): int { $list_len(self) }
+
+
+    pub fn take(self, limit: int): [T] {
+        var result: [T] = [];
+        var count = limit;
+        if count < 0 { count = 0; }
+        if count > self.len() { count = self.len(); }
+        for index in 0..count {
+            result.push(self[index]);
+        }
+        result
+    }
+
+
+    pub fn reverse(self): [T] {
+        var result: [T] = [];
+        for offset in 0..self.len() {
+            result.push(self[self.len() - offset - 1]);
+        }
+        result
+    }
+
+
+    fn iter(self): Iter<ListIterator<T>, T> {
+        var val = ListIterator {
+            idx: 0,
+            list: self,
+        };
+
+        Iter::new(
+            val,
+            |&state: ListIterator<T>| {
+                state.__next__()
+            }
+        )
+    }
+}
+
+impl<T: Eq> [T] {
+    pub fn contains(self, target: T): bool {
+        for value in self.iter() {
+            if value == target { return true; }
+        }
+        false
+    }
+}
+
+
+impl [str] {
+    fn join(self, del: str): str {
+        var result = "";
+        for i, value in self.iter().enumerate() {
+            if i != 0 { result = result.concat(del) }
+            result = result.concat(value);
+        }
+        result
+    }
+}
+
+
+impl<T: root::string::ToStr> root::string::ToStr for [T] {
+    fn to_str(self): str {
+        var s = "[";
+
+        for i, value in self.iter().enumerate() {
+            if i != 0 { s = s.concat(", ") }
+
+            s = s.concat(value.to_str());
+
+        }
+
+        s.concat("]")
+    }
+}
+
+
+
+struct ListIterator<T> {
+    idx: int,
+    list: [T]
+}
+
+
+impl<T> ListIterator<T> {
+    fn __next__(&self): Option<T> {
+        if self.idx < self.list.len() {
+            self.idx += 1;
+            some(self.list[self.idx - 1])
+        } else {
+            none()
+        }
+    }
+}

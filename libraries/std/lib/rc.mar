@@ -1,0 +1,14 @@
+impl<T> Rc<T> {
+    fn new(value: T): Self {
+        $rc(value)
+    }
+
+
+    fn set(self, value: T) {
+        $rc_set(self, value)
+    }
+
+    fn get(self): T {
+        $rc_get(self)
+    }
+}

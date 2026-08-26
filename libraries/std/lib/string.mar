@@ -1,0 +1,328 @@
+
+mod ffi {
+    extern {
+        fn str_from_codepoint(value: int): Option<str>
+    }
+}
+
+
+pub trait ToStr {
+    fn to_str(self): str
+}
+
+
+pub trait FromStr {
+    fn from_str(value: str): Option<Self>
+}
+
+
+impl ToStr for str {
+    fn to_str(self): str { self }
+}
+
+
+pub struct Lines {
+    data: str,
+    idx: int,
+}
+
+impl str {
+    fn iter(self): Iter<Lines, str> {
+        var lines = Lines {
+            data: self,
+            idx: 0,
+        };
+
+        Iter::new(
+            lines,
+            |&state: Lines| state.__next__()
+        )
+    }
+
+
+    fn len(self): int {
+        self.value.len()
+    }
+
+
+    fn slice_at(self, idx: int): Option<(str, str)> {
+        var len = self.value.len();
+        if idx < 0 || idx > len {
+            return none()
+        }
+
+        if idx != 0 && idx != len {
+            var byte = self.value[idx];
+            if byte >= (0x80 as byte) && byte < (0xc0 as byte) {
+                return none()
+            }
+        }
+
+        match self.value.slice(idx) {
+            some(pair) => some((
+                str { value: pair.0 },
+                str { value: pair.1 },
+            )),
+            none => none(),
+        }
+    }
+
+
+    fn slice(self, range: Range): str {
+        var _, rest = self.slice_at(range.min)!;
+        var result, _ = rest.slice_at(range.max - range.min)!;
+        result
+    }
+
+
+    fn parse<T: FromStr>(self): Option<T> {
+        T::from_str(self)
+    }
+
+
+
+    fn byte_at(self, idx: int): Option<byte> {
+        if idx < 0 || idx >= self.value.len() {
+            return none()
+        }
+        some(self.value[idx])
+    }
+
+
+    fn as_bytes(self): [byte] { self.value }
+
+
+    fn concat(self, b: str): str {
+        str {
+            value: self.value.concat(b.value),
+        }
+    }
+}
+
+
+impl str {
+    fn split_once(self, del: str): Option<(str, str)> {
+        var idx = self.find(del)?;
+        var a = self.slice(0..idx);
+        var b = self.slice(idx+del.len()..self.len());
+        some((a, b))
+    }
+
+
+    fn contains(self, value: str): bool {
+        self.find(value).is_some()
+    }
+
+
+    fn replace(self, pat: str, value: str): str {
+        var out = "";
+        var rest = self;
+
+        loop {
+            match rest.find(pat) {
+                some(idx) => {
+                    var before = rest.slice(0..idx);
+                    var after = rest.slice(idx + pat.len()..rest.len());
+                    out = out.concat(before).concat(value);
+                    rest = after;
+                },
+                none => return out.concat(rest),
+            }
+        }
+    }
+
+
+    fn replace_once(self, pat: str, value: str): str {
+        match self.find(pat) {
+            some(idx) => {
+                var left = self.slice(0..idx);
+                var right = self.slice(idx + pat.len()..self.len());
+                left.concat(value).concat(right)
+            },
+            none => self,
+        }
+    }
+
+
+    fn find(self, pattern: str): Option<int> {
+        if self.len() < pattern.len() { return none() }
+
+        for i in 0..self.len() {
+            var matches = true;
+            if i + pattern.len() > self.len() {
+                return none();
+            }
+
+            for j in i..i + pattern.len() {
+                var str_byte = self.byte_at(j)!;
+                var pat_byte = pattern.byte_at(j - i)!;
+
+                if str_byte != pat_byte {
+                    matches = false;
+                    break
+                }
+            }
+
+
+            if matches {
+                return some(i);
+            }
+
+        }
+
+        none()
+    }
+}
+
+
+pub fn format(s: str, values: [str]): str {
+    for value in values.iter() {
+        s = s.replace_once("{}", value);
+    }
+
+    if s.find("{}").is_some() {
+        panic("unresolved brackets in format function");
+    }
+
+    s
+}
+
+
+pub fn from_codepoint(value: int): Option<str> {
+    ffi::str_from_codepoint(value)
+}
+
+
+pub fn from_ascii(value: int): Option<str> {
+    if value < 0 || value > 127 { return none() }
+    from_codepoint(value)
+}
+
+
+impl Eq for str {
+    fn eq(self, oth: str): bool {
+        if self.len() != oth.len() { return false }
+
+        for i in 0..self.len() {
+            if self.byte_at(i)! != oth.byte_at(i)! {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+
+pub struct Split {
+    s: str,
+    del: str,
+}
+
+
+impl Split {
+    fn __next__(&self): Option<str> {
+        var a, b = self.s.split_once(self.del)?;
+        self.s = b;
+        some(a)
+    }
+}
+
+
+impl Lines {
+    fn __next__(&self): Option<str> {
+        if self.idx >= self.data.len() { return none() }
+
+        var end = self.data.len();
+        for index in self.idx..self.data.len() {
+            if self.data.byte_at(index)! == (10 as byte) {
+                end = index;
+                break
+            }
+        }
+
+        var result = self.data.slice(self.idx..end);
+        self.idx = end + 1;
+        some(result)
+    }
+}
+
+
+@test
+fn test_replace() {
+    assert(
+        "hello, {}".replace("{}", "world") == "hello, world", 
+        "replace failed to replace template string"
+    );
+
+    assert(
+        "hello, {}, {}".replace("{}", "world") == "hello, world, world",
+        "replace did not replace all elements"
+    );
+}
+
+
+@test
+fn test_replace_once() {
+    assert(
+        "hello, {}".replace_once("{}", "world") == "hello, world", 
+        "replace once failed to replace template string"
+    );
+
+    assert(
+        "hello, {}, {}".replace_once("{}", "world") == "hello, world, {}",
+        "replace once replaced multiple elements"
+    );
+}
+
+
+@test
+fn test_from_codepoint() {
+    assert(from_codepoint(65)! == "A", "ASCII codepoint conversion failed");
+    assert(from_codepoint(0x1f600)! == "😀", "UTF-8 codepoint conversion failed");
+    match from_codepoint(0x110000) {
+        some(_) => assert(false, "invalid codepoint was accepted"),
+        none => (),
+    }
+}
+
+
+@test
+fn test_from_ascii() {
+    assert(from_ascii(65)! == "A", "ASCII conversion failed");
+    match from_ascii(128) {
+        some(_) => assert(false, "non-ASCII value was accepted"),
+        none => (),
+    }
+}
+
+
+@test
+fn test_byte_wrapper() {
+    assert("A".len() == 1, "ASCII string length is not measured in bytes");
+    assert("😀".len() == 4, "UTF-8 string length is not measured in bytes");
+    assert("A".byte_at(0)! == (65 as byte), "string byte access returned the wrong type or value");
+
+    match "A".byte_at(1) {
+        some(_) => assert(false, "out-of-bounds string byte access returned a value"),
+        none => (),
+    }
+}
+
+
+@test(should_panic)
+@silent
+fn test_slice_at_rejects_utf8_continuation() {
+    var value = "😀";
+    value.slice_at(1)!;
+}
+
+@test
+fn test_parse_int() {
+    assert("123".parse::<int>()! == 123, "positive integer parsing failed");
+    assert("-42".parse::<int>()! == -42, "negative integer parsing failed");
+    match "12x".parse::<int>() {
+        some(_) => assert(false, "invalid integer was accepted"),
+        none => (),
+    }
+}

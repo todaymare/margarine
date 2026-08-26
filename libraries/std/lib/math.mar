@@ -1,0 +1,52 @@
+pub mod vec;
+
+pub fn abs(value: int): int {
+    if value < 0 { -value } else { value }
+}
+
+pub fn abs_float(value: float): float {
+    if value < 0.0 { -value } else { value }
+}
+
+pub fn min(left: int, right: int): int {
+    if left < right { left } else { right }
+}
+
+pub fn max(left: int, right: int): int {
+    if left > right { left } else { right }
+}
+
+pub fn min_float(left: float, right: float): float {
+    if left < right { left } else { right }
+}
+
+pub fn max_float(left: float, right: float): float {
+    if left > right { left } else { right }
+}
+
+pub fn clamp(value: int, low: int, high: int): int {
+    max(low, min(value, high))
+}
+
+pub fn clamp_float(value: float, low: float, high: float): float {
+    max_float(low, min_float(value, high))
+}
+
+pub fn lerp(start: float, end: float, amount: float): float {
+    start + (end - start) * amount
+}
+
+
+impl float {
+    fn sqrt(self): float { $float_sqrt(self) }
+}
+
+
+
+impl int {
+    fn rotl(self, k: int): int {
+        (self << k) | (self >> (64 - k))
+    }
+}
+
+
