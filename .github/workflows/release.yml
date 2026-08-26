@@ -55,7 +55,7 @@ jobs:
         run: |
           mkdir -p staging/libs
           scripts/build-toolchains.sh ${{ matrix.host }} staging/libs
-          tar czf margarine-toolchain-${{ matrix.host }}.tar.gz -C staging .
+          tar czf margarine-toolchain-${{ matrix.host }}.tar.gz -C staging libs
           shasum -a 256 margarine-toolchain-${{ matrix.host }}.tar.gz | awk '{print $1}' \
             > margarine-toolchain-${{ matrix.host }}.tar.gz.sha256
 
@@ -65,7 +65,7 @@ jobs:
         run: |
           mkdir -p staging-wasm/libs
           scripts/build-toolchains.sh wasm32-unknown-unknown staging-wasm/libs
-          tar czf margarine-toolchain-wasm32-unknown-unknown.tar.gz -C staging-wasm .
+          tar czf margarine-toolchain-wasm32-unknown-unknown.tar.gz -C staging-wasm libs
           shasum -a 256 margarine-toolchain-wasm32-unknown-unknown.tar.gz | awk '{print $1}' \
             > margarine-toolchain-wasm32-unknown-unknown.tar.gz.sha256
 
