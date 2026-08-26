@@ -1,6 +1,0 @@
-target/
-dist/
-node_modules/
-*.vsix
-.DS_Store
-.vscode/
