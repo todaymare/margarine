@@ -1,0 +1,95 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            host: arm64-apple-darwin
+          - runner: ubuntu-24.04
+            host: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            host: aarch64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      # The compiler links system LLVM 18.1 via llvm-sys (181.0), and the
+      # runtime-archive step compiles lib.c with clang. Install both and tell
+      # llvm-sys where to find LLVM through LLVM_SYS_181_PREFIX.
+      - if: runner.os == 'Linux'
+        name: Install LLVM 18 and clang (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 llvm-18-dev clang-18
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
+
+      - if: runner.os == 'macOS'
+        name: Install LLVM 18 and clang (macOS)
+        run: |
+          brew install llvm@18
+          echo "LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
+
+      - name: Build compiler binary
+        run: cargo build --profile dist -p margarine
+
+      - name: Package host binary
+        run: |
+          tar czf margarine-${{ matrix.host }}.tar.gz -C target/dist margarine
+          shasum -a 256 margarine-${{ matrix.host }}.tar.gz | awk '{print $1}' \
+            > margarine-${{ matrix.host }}.tar.gz.sha256
+
+      - name: Build host toolchain
+        run: |
+          mkdir -p staging/libs
+          scripts/build-toolchains.sh ${{ matrix.host }} staging/libs
+          tar czf margarine-toolchain-${{ matrix.host }}.tar.gz -C staging .
+          shasum -a 256 margarine-toolchain-${{ matrix.host }}.tar.gz | awk '{print $1}' \
+            > margarine-toolchain-${{ matrix.host }}.tar.gz.sha256
+
+      # wasm32 has no host runner; it cross-compiles from anywhere.
+      - if: matrix.host == 'x86_64-unknown-linux-gnu'
+        name: Build wasm32 toolchain
+        run: |
+          mkdir -p staging-wasm/libs
+          scripts/build-toolchains.sh wasm32-unknown-unknown staging-wasm/libs
+          tar czf margarine-toolchain-wasm32-unknown-unknown.tar.gz -C staging-wasm .
+          shasum -a 256 margarine-toolchain-wasm32-unknown-unknown.tar.gz | awk '{print $1}' \
+            > margarine-toolchain-wasm32-unknown-unknown.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.host }}
+          path: |
+            margarine-*.tar.gz
+            margarine-*.tar.gz.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            assets/margarine-*.tar.gz assets/margarine-*.tar.gz.sha256
