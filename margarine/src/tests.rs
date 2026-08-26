@@ -222,7 +222,7 @@ fn prelude_environment_has_a_std_default_and_preserves_explicit_order() {
     let expected =
     resource::development_library_root()
         .map(|root| root.join("std").to_string_lossy().into_owned())
-        .unwrap_or_else(|| format!("https://cdn.daymare.net/margarine/{VERSION}/share/std"));
+        .unwrap_or_else(|| format!("https://cdn.daymare.net/margarine/{VERSION}/std"));
     assert_eq!(defaults[0].url, expected);
     std::env::set_var(
         "MARGARINE_PRELUDE",

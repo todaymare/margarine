@@ -634,7 +634,7 @@ pub fn preludes_from_env() -> Vec<Prelude> {
         let url =
         resource::development_library_root()
             .map(|root| root.join("std").to_string_lossy().into_owned())
-            .unwrap_or_else(|| format!("https://cdn.daymare.net/margarine/{VERSION}/share/std"));
+            .unwrap_or_else(|| format!("https://cdn.daymare.net/margarine/{VERSION}/std"));
         vec![
             Prelude { alias: "std".into(), url },
         ]
@@ -1253,7 +1253,7 @@ fn resolve_url(package: &str) -> String {
     resource::development_library_root()
         .map(|root| root.to_string_lossy().into_owned())
         .unwrap_or_else(|| format!(
-            "https://cdn.daymare.net/margarine/{VERSION}/share"
+            "https://cdn.daymare.net/margarine/{VERSION}"
         ));
     let configured_base = if !cfg!(feature = "fuzzer") {
         std::env::var("MARGARINE_DEFAULT_URL").ok()
