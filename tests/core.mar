@@ -8,5 +8,6 @@ mod enums;
 mod misc;
 mod panics;
 mod param_rc;
+mod type_alias;
 
 mod math;

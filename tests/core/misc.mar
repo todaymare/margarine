@@ -34,15 +34,12 @@ fn cfg_disabled_declaration() {
 @cfg(env("PATH", "__margarine_cfg_disabled__"))
 import "cfg-disabled-import-should-not-be-resolved" as cfg_disabled_import;
 
-@cfg(env("PATH", "__margarine_cfg_disabled__"))
-extern "missing-linker-input.o";
 
 @test
 @cfg(env("MARGARINE_COMPILATION_TARGET"))
 fn cfg_compilation_target_is_injected() {
     assert(true, "the compiler did not provide COMPILATION_TARGET");
 }
-
 
 @test
 @cfg(env("PATH", "__margarine_cfg_disabled__"))

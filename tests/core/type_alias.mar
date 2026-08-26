@@ -13,6 +13,14 @@ enum GenericAliasTarget<T> {
 }
 type GenericAlias<T> = GenericAliasTarget<T>;
 
+@silent
+type RecursiveAlias = RecursiveAlias;
+
+@test(should_panic)
+fn recursive_alias_is_rejected_at_its_definition() {
+    var value: RecursiveAlias = 1;
+}
+
 @test
 fn generic_aliases_resolve_namespaces() {
     var value = GenericAlias::make(11);

@@ -1,25 +1,32 @@
 import "pkg:std" as std;
 use std::*;
-
+use std::rand::*;
+use std::duration::*;
 
 fn main() {
-    loop { // !!
+    var seed = Duration::now().as_nanos();
+    var rng = Rng::new(Xoshiro256::from_seed((seed, 0, 0, 7)));
+    var secret = rng.random_range(0..10);
+    if secret < 0 { secret += 10; }
+
+    loop {
         println("Guess the number:");
         println("Please input your guess.");
 
         var guess = io::read_line()!;
+        var trimmed = guess.slice(0..guess.len() - 1);
+        var guess_num = trimmed.parse::<int>()!;
 
         print("You guessed: ");
-        println(guess);
+        println(guess_num);
 
-        var guess : int = guess.parse()!;
-        var computer_guess = rand::random_range(0..10);
-        if computer_guess < guess {
+        if secret < guess_num {
             println("You guessed too high!");
-        } else if computer_guess > guess {
+        } else if secret > guess_num {
             println("You guessed too low!");
         } else {
             println("Correct!");
+            break;
         }
     }
 }
