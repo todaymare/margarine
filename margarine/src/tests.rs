@@ -250,7 +250,7 @@ fn package_artifacts_are_grouped_by_hash_and_rebuilt_cleanly() {
     let mut index = repository.index().unwrap();
     index.add_path(Path::new("lib.mar")).unwrap();
     let tree = repository.find_tree(index.write_tree().unwrap()).unwrap();
-    let signature = git2::Signature::now("Margarine", "margarine@localhost").unwrap();
+    let signature = git2::Signature::now("margarine", "margarine@localhost").unwrap();
     repository.commit(
         Some("HEAD"),
         &signature,
@@ -321,7 +321,7 @@ fn build_scripts_share_repository_cache_and_keep_artifacts_together() {
     let mut index = repository.index().unwrap();
     index.add_path(Path::new("lib.mar")).unwrap();
     let tree = repository.find_tree(index.write_tree().unwrap()).unwrap();
-    let signature = git2::Signature::now("Margarine", "margarine@localhost").unwrap();
+    let signature = git2::Signature::now("margarine", "margarine@localhost").unwrap();
     repository.commit(
         Some("HEAD"),
         &signature,

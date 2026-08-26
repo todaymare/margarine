@@ -1873,7 +1873,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         external_fn.set_noreturn(self.ctx);
                     }
 
-                    // Margarine function values carry a trailing capture pointer. Keep that
+                    // margarine function values carry a trailing capture pointer. Keep that
                     // internal ABI behind a wrapper so runtime imports retain their C ABI.
                     let wrapper_name = format!("__margarine_extern_wrapper.{}", self.func_counter);
                     let wrapper_name = self.string_map.insert(&wrapper_name);

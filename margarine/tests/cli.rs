@@ -122,7 +122,7 @@ fn run_displays_the_source_path_instead_of_the_executable_path() {
     let mut index = repository.index().unwrap();
     index.add_path(Path::new("lib.mar")).unwrap();
     let tree = repository.find_tree(index.write_tree().unwrap()).unwrap();
-    let signature = git2::Signature::now("Margarine", "margarine@localhost").unwrap();
+    let signature = git2::Signature::now("margarine", "margarine@localhost").unwrap();
     repository.commit(
         Some("HEAD"),
         &signature,

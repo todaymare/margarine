@@ -1,10 +1,10 @@
-# Margarine Compiler Coverage Continuation
+# margarine Compiler Coverage Continuation
 
-Use this skill when asked to continue improving Margarine compiler coverage.
+Use this skill when asked to continue improving margarine compiler coverage.
 
 ## Objective
 
-Increase genuine compiler behavior exercised by ordinary Margarine programs and
+Increase genuine compiler behavior exercised by ordinary margarine programs and
 focused compiler-command scenarios. Coverage is a search signal, not the goal
 by itself. Never change compiler or runtime behavior solely to increase a
 percentage.
@@ -14,7 +14,7 @@ percentage.
 From the `compiler/` directory:
 
 ```sh
-./scripts/coverage.sh
+./scripts/coverage/coverage.sh
 ```
 
 Inspect:
@@ -47,7 +47,7 @@ not scrape the HTML.
    cargo run -p margarine -- test tests/core.mar
    ```
 
-7. Re-run `./scripts/coverage.sh` and confirm that the intended edge changed.
+7. Re-run `./scripts/coverage/coverage.sh` and confirm that the intended edge changed.
 8. Record no success unless the test still expresses meaningful language or
    compiler behavior and the complete suite passes.
 9. Repeat while targets remain actionable and testable.

@@ -38,7 +38,7 @@ let client: LanguageClient;
 
 export async function activate(context: ExtensionContext) {
 
-  const traceOutputChannel = window.createOutputChannel("Margarine Language Server trace");
+  const traceOutputChannel = window.createOutputChannel("margarine Language Server trace");
   
   // Try to find the LSP binary in the parent directory's target folder
   // The structure is: untitled compiler/lsp/src and untitled compiler/margarine-lsp/vscode-client
@@ -85,7 +85,7 @@ export async function activate(context: ExtensionContext) {
   // Otherwise the run options are used
   // Options to control the language client
   let clientOptions: LanguageClientOptions = {
-    // Register the server for Margarine documents
+    // Register the server for margarine documents
     documentSelector: [{ scheme: "file", language: "margarine" }],
     synchronize: {
       // Notify the server about file changes to '.clientrc files contained in the workspace
@@ -95,7 +95,7 @@ export async function activate(context: ExtensionContext) {
   };
 
   // Create the language client and start the client.
-  client = new LanguageClient("margarine-lsp", "Margarine language server", serverOptions, clientOptions);
+  client = new LanguageClient("margarine-lsp", "margarine language server", serverOptions, clientOptions);
   // activateInlayHints(context);
   client.start();
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn llvm-cov export JSON and LCOV branch edges into Margarine reports."""
+"""Turn llvm-cov export JSON and LCOV branch edges into margarine reports."""
 
 from __future__ import annotations
 
@@ -268,7 +268,7 @@ def render_text(report: dict[str, Any]) -> str:
     edge_percent = covered_edges * 100 / total_edges if total_edges else 100.0
     groups = summary["branch_groups"]
     lines = [
-        "Margarine compiler coverage",
+        "margarine compiler coverage",
         "",
         f"Branch edges: {covered_edges}/{total_edges} ({edge_percent:.2f}%)",
         f"Fully covered branch groups: {groups['fully_hit']}/{groups['total']}",

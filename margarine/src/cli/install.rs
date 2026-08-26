@@ -26,14 +26,14 @@ pub(super) fn execute(assume_yes: bool) -> CliResult<i32> {
     let home =
         env::var_os("HOME")
             .map(PathBuf::from)
-            .ok_or_else(|| CliError::link("cannot install Margarine because HOME is not set"))?;
+            .ok_or_else(|| CliError::link("cannot install margarine because HOME is not set"))?;
     let root = home.join(".margarine");
     let installation = Installation::acquire(root).map_err(CliError::link)?;
     installation.ensure_version_absent(VERSION).map_err(CliError::link)?;
     let active = installation.root().join("bin/margarine");
     match fs::symlink_metadata(&active) {
         Ok(_) => return Err(CliError::link(format!(
-            "a managed Margarine installation already exists at {}; run that binary's `update` command",
+            "a managed margarine installation already exists at {}; run that binary's `update` command",
             active.display(),
         ))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -48,7 +48,7 @@ pub(super) fn execute(assume_yes: bool) -> CliResult<i32> {
     super::toolchain::checked_toolchain_assets(&release, host)
         .map_err(CliError::link)?;
 
-    println!("Install Margarine {VERSION} and the {} toolchain into {}?", host.margarine_target_triple(), installation.root().display());
+    println!("Install margarine {VERSION} and the {} toolchain into {}?", host.margarine_target_triple(), installation.root().display());
     if !assume_yes {
         print!("Continue? [y/N] ");
         let _ = std::io::stdout().flush();
@@ -74,7 +74,7 @@ pub(super) fn execute(assume_yes: bool) -> CliResult<i32> {
     ).map_err(CliError::link)?;
 
     println!(
-        "{} Margarine {VERSION} installed at {}",
+        "{} margarine {VERSION} installed at {}",
         TICK_GLYPH.green().bold(),
         installation.version_path(VERSION).display(),
     );
@@ -84,7 +84,7 @@ pub(super) fn execute(assume_yes: bool) -> CliResult<i32> {
             .map(|path| env::split_paths(&path).any(|entry| entry == bin_dir))
             .unwrap_or(false);
     if !on_path {
-        println!("Add Margarine to PATH:");
+        println!("Add margarine to PATH:");
         println!("  export PATH=\"{}:$PATH\"", bin_dir.display());
     }
     Ok(0)

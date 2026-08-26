@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a self-contained interactive dashboard from Margarine coverage reports."""
+"""Build a self-contained interactive dashboard from margarine coverage reports."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Margarine coverage dashboard</title>
+<title>margarine coverage dashboard</title>
 <style>
 :root { color-scheme: dark; --bg:#111827; --panel:#1f2937; --muted:#9ca3af; --text:#f3f4f6; --accent:#60a5fa; --good:#34d399; --warn:#fbbf24; --bad:#f87171; }
 * { box-sizing:border-box; }
@@ -113,7 +113,7 @@ svg { width:100%; height:180px; overflow:visible; } .chart-line { fill:none; str
 </head>
 <body>
 <main>
-<h1>Margarine coverage dashboard</h1>
+<h1>margarine coverage dashboard</h1>
 <div class="subtitle">Generated <span id="generated"></span>. Branch edges are the coverage denominator; groups identify source-level conditionals.</div>
 <div class="grid" id="cards"></div>
 <section>
@@ -179,8 +179,8 @@ function renderFiles() {
 }
 function render() { renderCards(); renderTargets(); renderFiles(); }
 function copyText(text) { navigator.clipboard?.writeText(text).catch(() => window.prompt('Copy this text:', text)); }
-window.copyTarget = index => { const entry=entries()[index]; copyText(`Continue Margarine compiler coverage work. Investigate [${entry.scope}] ${entry.file}:${entry.line}. Status: ${entry.status}. Edge counts: ${entry.edges.map(edge=>edge.count).join(', ')}. Source context:\n${entry.context.join('\n')}\nAdd only a meaningful Margarine regression test; do not modify compiler behavior for coverage.`); };
-document.getElementById('copy-all').onclick = () => copyText(`Continue Margarine compiler coverage work. Read artifacts/coverage/dashboard.json and target the highest-value actionable branch. Add a meaningful Margarine regression test, run cargo run -p margarine -- test tests/core.mar, rerun ./scripts/coverage.sh, and compare the dashboard. Do not modify compiler/runtime implementation solely for coverage.`);
+window.copyTarget = index => { const entry=entries()[index]; copyText(`Continue margarine compiler coverage work. Investigate [${entry.scope}] ${entry.file}:${entry.line}. Status: ${entry.status}. Edge counts: ${entry.edges.map(edge=>edge.count).join(', ')}. Source context:\n${entry.context.join('\n')}\nAdd only a meaningful margarine regression test; do not modify compiler behavior for coverage.`); };
+document.getElementById('copy-all').onclick = () => copyText(`Continue margarine compiler coverage work. Read artifacts/coverage/dashboard.json and target the highest-value actionable branch. Add a meaningful margarine regression test, run cargo run -p margarine -- test tests/core.mar, rerun ./scripts/coverage/coverage.sh, and compare the dashboard. Do not modify compiler/runtime implementation solely for coverage.`);
 const scopes=['all', ...new Set(entries().map(entry=>entry.scope))]; document.getElementById('scope').innerHTML=scopes.map(scope=>`<option value="${esc(scope)}">${esc(scope)}</option>`).join('');
 document.getElementById('scope').onchange=e=>{state.scope=e.target.value;render();}; document.getElementById('status').onchange=e=>{state.status=e.target.value;render();}; document.getElementById('query').oninput=e=>{state.query=e.target.value;render();};
 document.getElementById('generated').textContent=DATA.generated_at; renderTrend(); render();

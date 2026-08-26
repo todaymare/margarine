@@ -1,6 +1,6 @@
-# Margarine LSP - Language Server Protocol Implementation
+# margarine LSP - Language Server Protocol Implementation
 
-This project contains the Margarine Language Server Protocol (LSP) implementation and VS Code extension.
+This project contains the margarine Language Server Protocol (LSP) implementation and VS Code extension.
 
 ## Project Structure
 
@@ -26,7 +26,7 @@ margarine-lsp/
 
 ### Prerequisites
 - Rust nightly toolchain
-- The Margarine compiler dependencies in the parent directory
+- The margarine compiler dependencies in the parent directory
 
 ### Build Steps
 
@@ -122,9 +122,9 @@ The current implementation supports:
 
 Add more features by extending the `Backend` implementation in `lsp/src/main.rs`.
 
-## Integration with Margarine Compiler
+## Integration with margarine Compiler
 
-The LSP server uses the following Margarine modules:
+The LSP server uses the following margarine modules:
 
 - `lexer` - Tokenization
 - `parser` - AST parsing
@@ -132,7 +132,7 @@ The LSP server uses the following Margarine modules:
 - `common` - Common utilities
 - `errors` - Error formatting
 
-These are imported via relative paths in `lsp/Cargo.toml`. Ensure the Margarine compiler is built and available in the parent directory.
+These are imported via relative paths in `lsp/Cargo.toml`. Ensure the margarine compiler is built and available in the parent directory.
 
 ## Troubleshooting
 
@@ -140,7 +140,7 @@ These are imported via relative paths in `lsp/Cargo.toml`. Ensure the Margarine 
 Make sure the LSP binary is in your PATH or set `SERVER_PATH` environment variable.
 
 ### Extension not loading
-Check the "Output" panel in VS Code for errors. Look for the "Margarine Language Server trace" channel.
+Check the "Output" panel in VS Code for errors. Look for the "margarine Language Server trace" channel.
 
 ### Build failures
 Ensure Rust nightly is installed: `rustup toolchain install nightly`

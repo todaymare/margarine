@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the Margarine native runtime archives (core + std) for one
+# Build the margarine native runtime archives (core + std) for one
 # compilation target.
 #
 # Usage: scripts/build-toolchains.sh <target-triple> <output-dir>

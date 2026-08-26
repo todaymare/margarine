@@ -1,6 +1,6 @@
 {
 	"name": "margarine-lsp",
-	"description": "Language server for the Margarine programming language",
+	"description": "Language server for the margarine programming language",
 	"license": "MIT",
 	"version": "0.1.0",
 	"categories": [],

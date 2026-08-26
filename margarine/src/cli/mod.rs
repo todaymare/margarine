@@ -23,7 +23,7 @@ pub const TICK_GLYPH : &str = "✓";
     name = "margarine",
     version,
     propagate_version = true,
-    about = "a unified development toolchain for the Margarine programming language",
+    about = "a unified development toolchain for the margarine programming language",
     after_help = format!(
         "{}\n  {} {} {}\n  {} {}\n\n{} {}",
         "Quick start:".bold().underline(),

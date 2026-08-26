@@ -50,7 +50,7 @@ pub(super) fn execute() -> CliResult<i32> {
                 "cannot compare installed version {current_version} with release version {latest}",
             )))?;
     if version_order.is_ge() {
-        println!("{} Margarine is up to date", TICK_GLYPH.green());
+        println!("{} margarine is up to date", TICK_GLYPH.green());
         println!("  Current version: {current_version}");
         return Ok(0);
     }
@@ -166,7 +166,7 @@ pub(super) fn execute() -> CliResult<i32> {
     ).map_err(CliError::link)?;
 
     println!(
-        "{} Margarine updated to {}",
+        "{} margarine updated to {}",
         TICK_GLYPH.green(),
         latest,
     );

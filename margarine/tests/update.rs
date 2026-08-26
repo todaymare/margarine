@@ -66,7 +66,7 @@ fn toolchain_server(
     let release_path = format!("/releases/tags/v{release_version}");
     let release = serde_json::json!({
         "tag_name": format!("v{release_version}"),
-        "name": format!("Margarine {release_version}"),
+        "name": format!("margarine {release_version}"),
         "html_url": "https://example.invalid/release",
         "assets": [
             {
@@ -189,7 +189,7 @@ fn release_server_for(
     }
     let release = serde_json::json!({
         "tag_name": format!("v{version}"),
-        "name": format!("Margarine {version}"),
+        "name": format!("margarine {version}"),
         "published_at": "2026-08-23T00:00:00Z",
         "body": "release",
         "html_url": "https://example.invalid/release",
@@ -584,7 +584,7 @@ fn updater_uses_the_managed_version_directory_as_the_current_version() {
         String::from_utf8_lossy(&output.stderr),
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Margarine is up to date"), "{stdout}");
+    assert!(stdout.contains("margarine is up to date"), "{stdout}");
     assert!(stdout.contains("Current version: 0.2.0"), "{stdout}");
 }
 

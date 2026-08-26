@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 COVERAGE_DIR=${MARGARINE_COVERAGE_DIR:-"$ROOT/artifacts/coverage"}
 TARGET_DIR=${CARGO_TARGET_DIR:-"$ROOT/target/coverage"}
 TEST_PATH=${MARGARINE_COVERAGE_TESTS:-tests/core.mar}
@@ -11,8 +11,8 @@ usage() {
     cat <<EOF
 Usage: $0 [--filter NAME] [--tests PATH]
 
-Builds an instrumented Margarine compiler in an isolated target directory,
-runs the Margarine test suite, merges LLVM profiles, and writes reports to:
+Builds an instrumented margarine compiler in an isolated target directory,
+runs the margarine test suite, merges LLVM profiles, and writes reports to:
   artifacts/coverage/coverage.json
   artifacts/coverage/coverage.lcov
   artifacts/coverage/report.txt
@@ -107,7 +107,7 @@ printf '%s\n' "building instrumented compiler..."
 PROFILE_PATTERN="$COVERAGE_DIR/margarine-%p-%m.profraw"
 BINARY="$TARGET_DIR/debug/margarine"
 
-printf '%s\n' "running Margarine tests..."
+printf '%s\n' "running margarine tests..."
 (
     cd "$ROOT"
     if [ -n "$FILTER" ]; then
@@ -135,7 +135,7 @@ printf '%s\n' "exporting coverage..."
     -instr-profile="$COVERAGE_DIR/margarine.profdata" \
     -format=lcov \
     > "$COVERAGE_DIR/coverage.lcov"
-python3 "$ROOT/scripts/coverage_analyze.py" \
+python3 "$ROOT/scripts/coverage/coverage_analyze.py" \
     "$COVERAGE_DIR/coverage.json" \
     --source-root "$ROOT" \
     --lcov "$COVERAGE_DIR/coverage.lcov" \
@@ -144,7 +144,7 @@ python3 "$ROOT/scripts/coverage_analyze.py" \
 
 STAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 cp "$COVERAGE_DIR/uncovered.json" "$COVERAGE_DIR/history/$STAMP.json"
-python3 "$ROOT/scripts/coverage_dashboard.py" \
+python3 "$ROOT/scripts/coverage/coverage_dashboard.py" \
     --coverage-dir "$COVERAGE_DIR" \
     --output-json "$COVERAGE_DIR/dashboard.json" \
     --output-html "$COVERAGE_DIR/dashboard/index.html"
