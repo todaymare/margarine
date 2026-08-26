@@ -52,7 +52,7 @@ enum Commands {
         #[arg(value_parser = existing_file_path)]
         path: PathBuf,
 
-        /// Compilation target
+        /// Compilation target: default (host), arm64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, or wasm32-unknown-unknown
         #[arg(long, default_value = "default")]
         target: CompilationTarget,
 
@@ -75,7 +75,7 @@ enum Commands {
         #[arg(value_parser = existing_file_path)]
         path: PathBuf,
 
-        /// Compilation target
+        /// Compilation target: default (host), arm64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, or wasm32-unknown-unknown
         #[arg(long, default_value = "default")]
         target: CompilationTarget,
 
@@ -102,7 +102,7 @@ enum Commands {
         #[arg(value_parser = existing_file_path)]
         path: PathBuf,
 
-        /// Compilation target
+        /// Compilation target: default (host), arm64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, or wasm32-unknown-unknown
         #[arg(long, default_value = "default")]
         target: CompilationTarget,
 
@@ -125,7 +125,7 @@ enum Commands {
         /// Test name filter
         filter: Option<String>,
 
-        /// Compilation target
+        /// Compilation target: default (host), arm64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, or wasm32-unknown-unknown
         #[arg(long, default_value = "default")]
         target: CompilationTarget,
 
@@ -145,7 +145,7 @@ enum Commands {
         yes: bool,
     },
 
-    /// Check GitHub for a newer release and show its notes
+    /// Check for a newer release and self-update
     Update,
 
     /// Manage compiler target toolchains
