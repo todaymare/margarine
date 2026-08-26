@@ -138,6 +138,8 @@ compatible test or mirror API.
   `target/coverage` build and writes reports and history under
   `artifacts/coverage/`. Do not change compiler behavior or exclusions merely
   to increase coverage.
+- The AFL harness lives in `scripts/fuzz/`; build it with `cargo afl build -p
+  fuzz` because plain Cargo does not link the AFL runtime.
 - Runnable examples belong in `examples/`; keep the repository root free of
   standalone example programs.
 
