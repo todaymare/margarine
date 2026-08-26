@@ -1,4 +1,11 @@
-use std::{fs::{self, OpenOptions}, path::Path, process::{Command, Stdio}, thread, time::Duration};
+use std::{
+    fs::{self, File, OpenOptions},
+    os::fd::FromRawFd as _,
+    path::Path,
+    process::{Command, Stdio},
+    thread,
+    time::Duration,
+};
 
 use fs2::FileExt;
 
@@ -16,6 +23,61 @@ fn runtime_errors_end_with_a_newline() {
     assert_eq!(output.stderr.last(), Some(&b'\n'));
     assert!(!output.stderr.ends_with(b"\n\n"));
 }
+
+
+#[test]
+fn bare_unmanaged_invocation_prints_help_without_installing() {
+    let home = tempfile::tempdir().unwrap();
+    let mut master_fd = -1;
+    let mut slave_fd = -1;
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &mut master_fd,
+                &mut slave_fd,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0,
+    );
+    let _master =
+        unsafe { File::from_raw_fd(master_fd) };
+    let slave =
+        unsafe { File::from_raw_fd(slave_fd) };
+    let stdout = slave.try_clone().unwrap();
+    let stderr = slave.try_clone().unwrap();
+
+    let status =
+        Command::new(env!("CARGO_BIN_EXE_margarine"))
+            .env("HOME", home.path())
+            .env("MARGARINE_RELEASES_API", "http://127.0.0.1:1/unreachable")
+            .stdin(Stdio::from(slave))
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
+            .status()
+            .unwrap();
+
+    assert_eq!(status.code(), Some(2));
+
+    assert!(!home.path().join(".margarine").exists());
+}
+
+
+
+#[test]
+fn toolchain_add_rejects_unsupported_target() {
+    let output = Command::new(env!("CARGO_BIN_EXE_margarine"))
+        .args(["toolchain", "add", "not-a-target"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.starts_with(b"error:"));
+}
+
+
 
 
 #[test]

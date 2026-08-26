@@ -219,8 +219,11 @@ fn prelude_environment_has_a_std_default_and_preserves_explicit_order() {
     let defaults = preludes_from_env();
     assert_eq!(defaults.len(), 1);
     assert_eq!(defaults[0].alias, "std");
-    assert!(defaults[0].url.ends_with("/share/std"));
-
+    let expected =
+    resource::development_library_root()
+        .map(|root| root.join("std").to_string_lossy().into_owned())
+        .unwrap_or_else(|| format!("https://cdn.daymare.net/margarine/{VERSION}/share/std"));
+    assert_eq!(defaults[0].url, expected);
     std::env::set_var(
         "MARGARINE_PRELUDE",
         "first=https://example.com/first;second=https://example.com/second",
@@ -279,11 +282,8 @@ fn package_artifacts_are_grouped_by_hash_and_rebuilt_cleanly() {
 
     let first = load_package(&settings, &cache, &mut state, 0, &url, &environment).unwrap();
     let hash = &first.resource.partial_string_hash;
-    assert_eq!(first.resource.path, cache.join(CACHE_REPOSITORY_DIR).join(hash));
-    assert_eq!(
-        first.path,
-        cache.join(CACHE_BUILD_DIR).join(hash).join(PACKAGE_SOURCE_DIR),
-    );
+    assert_eq!(first.resource.path, source);
+    assert_eq!(first.path, cache.join(CACHE_BUILD_DIR).join(hash).join(PACKAGE_SOURCE_DIR));
     assert!(!first.path.join(".git").exists());
     let marker = first.path.join("materialization-marker");
     fs::write(&marker, "kept").unwrap();

@@ -17,7 +17,7 @@ fn main() {
             preludes: vec![],
             entry: "fuzz.mar".to_owned(),
             output: "program".to_owned(),
-            cache: "artifacts".to_owned(),
+            cache: "artifacts".into(),
             arena: &arena,
             tests: false,
         });

@@ -1,7 +1,6 @@
 #![feature(backtrace_frames)]
 mod json;
-
-use std::{backtrace::Backtrace, cell::RefCell, collections::HashMap, fs::File, io::{Read, Write}, path::Path, str::FromStr, sync::{Mutex, RwLock}, time::{Duration, Instant}};
+use std::{backtrace::Backtrace, cell::RefCell, collections::HashMap, fs::File, io::{Read, Write}, path::{Path, PathBuf}, str::FromStr, sync::{Mutex, RwLock}, time::{Duration, Instant}};
 
 use chrono::Local;
 use color_eyre::owo_colors::colored;
@@ -183,7 +182,7 @@ impl Lsp {
             let target_triple = self.compiler.string_map.insert(&llvm_api::ctx::default_target_triple());
             cfg_env.insert(comp_target, target_triple);
 
-            let (_, modules, _, _) = margarine::parse(
+            let (_, modules, _) = margarine::parse(
                 tokens, 
                 0, 
                 &arena, 
@@ -230,8 +229,24 @@ impl Lsp {
         compiler.files.register(fd);
 
         let arena = Arena::new();
-        let mut result = compiler.run(&arena, file.root);
-
+        let settings = margarine::CompilationSettings {
+            compilation_target: margarine::CompilationTarget::host(),
+            preludes: vec![],
+            entry: compiler.string_map.get(file.root).into(),
+            output: String::new(),
+            cache: PathBuf::from("artifacts"),
+            arena: &arena,
+            tests: false,
+        };
+        let mut result =
+        match compiler.run(&settings) {
+            Ok(result) => result,
+            Err(error) => {
+                error!("margarine-lsp/on-change: compilation failed: {error}");
+                self.send_diagnostics(vec![]);
+                return;
+            },
+        };
         trace!("{:#?}", &result.errors);
 
         let mut diagnostics = vec![];
@@ -297,6 +312,9 @@ impl Lsp {
                     lexer::errors::Error::InvalidEscape { character, position } => {
                         (format!("Syntax Error: invalid escape '\\{character}'"),
                         SourceRange::new(position.start(), position.end()))
+                    },
+                    lexer::errors::Error::InvalidString(source_range) => {
+                        (format!("Syntax Error: invalid utf-8 string"), *source_range)
                     },
                 };
 
@@ -720,7 +738,7 @@ impl Lsp {
                     },
 
 
-                    semantic_analysis::errors::Error::FieldDoesntExist { source, field, typ } => {
+                    semantic_analysis::errors::Error::FieldDoesntExist { source, field, typ, .. } => {
                         (
                             format!(
                                 "'{}' doesn't have a field named '{}'",
@@ -977,7 +995,6 @@ impl Lsp {
                     },
 
 
-                    semantic_analysis::errors::Error::Bypass => return None,
                     _ => todo!(),
                 };
 

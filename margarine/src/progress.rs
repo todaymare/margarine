@@ -173,7 +173,6 @@ impl AdaptiveProgress {
     ) -> Self {
         let bar = ProgressBar::with_draw_target(total, draw_target);
         bar.set_style(spinner_style());
-        bar.enable_steady_tick(TICK_INTERVAL);
         Self {
             bar,
             expanded_style: RefCell::new(expanded_style),
@@ -221,7 +220,9 @@ pub fn byte_progress(total: Option<u64>) -> AdaptiveProgress {
             "{spinner:.green} {msg} {bar:40.cyan/blue} {bytes}/{total_bytes} ({eta})",
         )
     });
-    AdaptiveProgress::new(total, stderr_draw_target(true), expanded_style)
+    let progress = AdaptiveProgress::new(total, stderr_draw_target(true), expanded_style);
+    progress.bar.enable_steady_tick(TICK_INTERVAL);
+    progress
 }
 
 
@@ -251,7 +252,8 @@ impl<R: Read> Read for ProgressReader<'_, R> {
 mod tests {
     use super::*;
 
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
+    use parking_lot::Mutex;
 
     #[derive(Clone, Debug, Default)]
     struct CapturedTerm(Arc<Mutex<String>>);
@@ -283,7 +285,7 @@ mod tests {
         }
 
         fn write_str(&self, value: &str) -> io::Result<()> {
-            self.0.lock().unwrap().push_str(value);
+            self.0.lock().push_str(value);
             Ok(())
         }
 
@@ -336,8 +338,8 @@ mod tests {
             finished: None,
         }.finish("Linked");
 
-        let active_output = active_output.0.lock().unwrap();
-        let finished_output = finished_output.0.lock().unwrap();
+        let active_output = active_output.0.lock();
+        let finished_output = finished_output.0.lock();
         let active_column = visible_message_column(&active_output, "Linking");
         assert_eq!(active_column, 2);
         assert_eq!(
@@ -467,18 +469,17 @@ mod tests {
                 "{spinner:.green} {msg} {bar:40.cyan/blue} {pos}/{len} ({eta})",
             )),
         );
-        progress.bar.disable_steady_tick();
         progress.set_message("Removing 12 KiB");
         progress.inc(0);
-        let initial = output.0.lock().unwrap();
+        let initial = output.0.lock();
         assert!(initial.contains("Removing 12 KiB"));
         assert!(!initial.contains("0/3"));
         drop(initial);
         progress.started = Instant::now() - PROGRESS_BAR_DELAY;
         progress.inc(0);
-        assert!(!output.0.lock().unwrap().contains("0/3"));
+        assert!(!output.0.lock().contains("0/3"));
         progress.inc(1);
-        assert!(output.0.lock().unwrap().contains("1/3"));
+        assert!(output.0.lock().contains("1/3"));
         progress.finish();
     }
 

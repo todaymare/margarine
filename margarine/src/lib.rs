@@ -618,6 +618,7 @@ fn current_environment() -> HashMap<String, String> {
     std::env::vars().collect()
 }
 
+
 pub fn preludes_from_env() -> Vec<Prelude> {
     let preludes = std::env::var("MARGARINE_PRELUDE")
         .iter()
@@ -630,9 +631,12 @@ pub fn preludes_from_env() -> Vec<Prelude> {
         .collect::<Vec<_>>();
 
     if preludes.is_empty() {
-        let url = format!("https://cdn.daymare.net/margarine/{VERSION}/share");
+        let url =
+        resource::development_library_root()
+            .map(|root| root.join("std").to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("https://cdn.daymare.net/margarine/{VERSION}/share/std"));
         vec![
-            Prelude { alias: "std".into(), url: format!("{url}/std") },
+            Prelude { alias: "std".into(), url },
         ]
     } else {
         preludes
@@ -962,7 +966,7 @@ fn load_package(
     let resource = resource_cache_entry(repository_cache, &url)
         .map_err(PackageError::Compiler)?;
 
-    if !load_repository(&resource.path, &url) {
+    if !load_repository(&resource.path, &url, resource.local) {
         return Err(PackageError::RepoUnreachable);
     }
 
@@ -1044,8 +1048,12 @@ fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {
 
 fn load_repository(
     path: impl AsRef<Path>,
-    url: &str
+    url: &str,
+    local: bool,
 ) -> bool {
+    if local {
+        return path.as_ref().is_dir();
+    }
     if Repository::open(&path).is_ok() {
         return true;
     }
@@ -1238,24 +1246,27 @@ fn display_compile_path(settings: &CompilationSettings, file_path: &str) -> Stri
 
 fn resolve_url(package: &str) -> String {
     if !package.starts_with("pkg:") {
-        package.to_string()
-    } else {
-        let default_base = format!(
-            "https://cdn.daymare.net/margarine/{VERSION}/share"
-        );
-        let configured_base = if !cfg!(feature = "fuzzer") {
-            std::env::var("MARGARINE_DEFAULT_URL").ok()
-        } else {
-            None
-        };
-        let base = configured_base.as_deref().unwrap_or(&default_base);
-
-        let base = base.trim_end_matches('/');
-        let package = package["pkg:".len()..].trim_matches('/');
-
-        let resolved = format!("{base}/{package}");
-        resolved
+        return package.to_string();
     }
+
+    let default_base =
+    resource::development_library_root()
+        .map(|root| root.to_string_lossy().into_owned())
+        .unwrap_or_else(|| format!(
+            "https://cdn.daymare.net/margarine/{VERSION}/share"
+        ));
+    let configured_base = if !cfg!(feature = "fuzzer") {
+        std::env::var("MARGARINE_DEFAULT_URL").ok()
+    } else {
+        None
+    };
+    let base = configured_base.as_deref().unwrap_or(&default_base);
+
+    let base = base.trim_end_matches('/');
+    let package = package["pkg:".len()..].trim_matches('/');
+
+    let resolved = format!("{base}/{package}");
+    resolved
 }
 
 
@@ -1263,6 +1274,7 @@ fn resolve_url(package: &str) -> String {
 struct Resource {
     partial_string_hash: String,
     path: PathBuf,
+    local: bool,
 }
 
 
@@ -1274,17 +1286,24 @@ fn resource_cache_entry(
     // Sixteen bytes produce the first thirty-two characters when hex-encoded.
     let string_hash = hex::encode(&full_hash[..16]);
 
-    let downloads_dir = cache.join(CACHE_REPOSITORY_DIR);
-    std::fs::create_dir_all(&downloads_dir)
-        .map_err(|source| CompilerError::Io {
-            operation: "create package cache directory",
-            path: downloads_dir.clone(),
-            source,
-        })?;
-
-    let local_path = downloads_dir.join(&string_hash);
+    let local_source = Path::new(ident);
+    let local = local_source.is_dir();
+    let local_path =
+    if local {
+        local_source.to_path_buf()
+    } else {
+        let downloads_dir = cache.join(CACHE_REPOSITORY_DIR);
+        std::fs::create_dir_all(&downloads_dir)
+            .map_err(|source| CompilerError::Io {
+                operation: "create package cache directory",
+                path: downloads_dir.clone(),
+                source,
+            })?;
+        downloads_dir.join(&string_hash)
+    };
     Ok(Resource {
         partial_string_hash: string_hash,
         path: local_path,
+        local,
     })
 }
