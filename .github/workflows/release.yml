@@ -142,12 +142,11 @@ jobs:
 
     name: install and test (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
-    env:
-      MARGARINE_DEFAULT_URL: https://cdn.daymare.net/margarine/0.1.0/share
-      HOME: ${{ runner.temp }}/margarine-home
 
     steps:
       - uses: actions/checkout@v4
+      - name: Set isolated HOME
+        run: echo "HOME=$RUNNER_TEMP/margarine-home" >> "$GITHUB_ENV"
 
       - name: Install released Margarine
         env:
@@ -166,12 +165,11 @@ jobs:
     needs: release
     name: install and build (wasm32-unknown-unknown)
     runs-on: ubuntu-24.04
-    env:
-      MARGARINE_DEFAULT_URL: https://cdn.daymare.net/margarine/0.1.0/share
-      HOME: ${{ runner.temp }}/margarine-home
 
     steps:
       - uses: actions/checkout@v4
+      - name: Set isolated HOME
+        run: echo "HOME=$RUNNER_TEMP/margarine-home" >> "$GITHUB_ENV"
 
       - name: Install released Margarine
         env:
