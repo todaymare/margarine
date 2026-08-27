@@ -1,7 +1,6 @@
 mod artifacts;
 mod compile;
 mod distribution;
-mod install;
 mod installation;
 mod test;
 mod toolchain;
@@ -138,12 +137,6 @@ enum Commands {
         update: bool,
     },
 
-    /// Install this executable and its host toolchain
-    Install {
-        /// Install without prompting
-        #[arg(long)]
-        yes: bool,
-    },
 
     /// Check for a newer release and self-update
     Update,
@@ -239,7 +232,6 @@ fn execute(command: Commands) -> CliResult<i32> {
             let cache = artifacts::reset_cache_if(update, cache);
             compile::check(&path, target, cache)
         },
-        Commands::Install { yes } => install::execute(yes),
         Commands::Update => update::execute(),
         Commands::Toolchain { command: ToolchainCommands::Add { target } } => {
             toolchain::add(target)

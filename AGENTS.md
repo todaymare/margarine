@@ -33,8 +33,8 @@ that cannot run through the language test runner.
 
 - `margarine/src/cli/mod.rs` owns the clap command surface, dispatch, typed
   `CliError`, and exit-code rendering. `compile.rs`, `test.rs`,
-  `artifacts.rs`, `distribution.rs`, `installation.rs`, `install.rs`,
-  `update.rs`, and `toolchain.rs` own their named responsibilities.
+  `artifacts.rs`, `distribution.rs`, `installation.rs`, `update.rs`, and
+  `toolchain.rs` own their named responsibilities.
   `margarine/src/main.rs` is the process boundary and the only
   `std::process::exit` callsite.
 - Command implementations return `CliResult`. Exit codes are 0 for success,

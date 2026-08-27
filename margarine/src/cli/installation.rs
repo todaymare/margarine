@@ -14,13 +14,6 @@ use super::{
 };
 
 
-pub(super) enum CompilerSource<'a> {
-    Current(&'a Path),
-    Release {
-        archive: &'a Asset,
-        checksum: &'a Asset,
-    },
-}
 
 
 pub(super) struct Installation {
@@ -53,9 +46,6 @@ impl Installation {
         Ok(Self { root, _lock: lock })
     }
 
-    pub(super) fn root(&self) -> &Path {
-        &self.root
-    }
 
     pub(super) fn version_path(&self, version: &Version) -> PathBuf {
         self.root.join(version.to_string())
@@ -80,7 +70,8 @@ impl Installation {
         &self,
         version: &Version,
         release: &Release,
-        compiler: CompilerSource<'_>,
+        archive: &Asset,
+        checksum: &Asset,
         targets: &[CompilationTarget],
     ) -> Result<(), String> {
         let release_version =
@@ -110,21 +101,13 @@ impl Installation {
             .map_err(|error| format!("cannot create staged binary directory: {error}"))?;
         let staged_executable = staged_bin.join("margarine");
 
-        match compiler {
-            CompilerSource::Current(source) => {
-                fs::copy(source, &staged_executable)
-                    .map_err(|error| format!("cannot copy current executable: {error}"))?;
-            }
-            CompilerSource::Release { archive, checksum } => {
-                let mut archive_file = download_checked_assets(archive, checksum)?;
-                println!(
-                    "{} Downloaded compiler archive ({})",
-                    TICK_GLYPH.green().bold(),
-                    super::artifacts::format_bytes(archive.size),
-                );
-                extract_archive(archive_file.as_file_mut(), &staged_bin)?;
-            }
-        }
+        let mut archive_file = download_checked_assets(archive, checksum)?;
+        println!(
+            "{} Downloaded compiler archive ({})",
+            TICK_GLYPH.green().bold(),
+            super::artifacts::format_bytes(archive.size),
+        );
+        extract_archive(archive_file.as_file_mut(), &staged_bin)?;
 
         let checking = StatusLine::start("Verifying binary (1/2)");
         if let Err(error) = run_binary_check(&staged_executable) {

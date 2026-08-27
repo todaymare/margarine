@@ -9,7 +9,7 @@ use margarine::version::release_tag_version;
 use super::{
     artifacts::format_bytes,
     distribution::{checked_assets, release_api_url, Release},
-    installation::{CompilerSource, Installation},
+    installation::Installation,
     CliError, CliResult, TICK_GLYPH,
 };
 
@@ -160,10 +160,8 @@ pub(super) fn execute() -> CliResult<i32> {
     installation.install_release(
         &latest,
         &release,
-        CompilerSource::Release {
-            archive: asset,
-            checksum: checksum_asset,
-        },
+        asset,
+        checksum_asset,
         &targets,
     ).map_err(CliError::link)?;
 

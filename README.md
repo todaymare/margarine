@@ -35,6 +35,9 @@ On supported systems:
 curl -fsSL https://cdn.daymare.net/margarine/install.sh | sh
 ```
 
+The installer downloads the published compiler and host toolchain as one
+managed, versioned installation. Use `margarine update` for later releases.
+
 > [!NOTE]
 > Windows is not currently supported. The compiler presently relies on Unix-specific functionality in parts of the compiler and toolchain.
 
