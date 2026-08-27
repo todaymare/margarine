@@ -4,12 +4,12 @@
 #
 # Usage: scripts/build-toolchains.sh <target-triple> <output-dir>
 #
-# Compiles core/native/lib.c and std/native/lib.c with clang for the given
-# target triple and writes libcore.a + libstd.a into <output-dir>.
+# Compiles core/lib.c and std/lib.c with clang for the given target
+# triple and writes libcore.a + libstd.a into <output-dir>.
 #
-# The library source root is resolved like the compiler does: an explicit
-# MARGARINE_LIBRARY_DIR wins, then <repo>/libraries, then the sibling
-# <repo>/../libraries checkout.
+# The runtime C source root is selected explicitly via
+# MARGARINE_LIBRARY_DIR, then <repo>/margarine/runtime.
+
 
 set -eu
 
@@ -21,18 +21,16 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
 if [ -n "${MARGARINE_LIBRARY_DIR:-}" ]; then
     LIB_DIR=$MARGARINE_LIBRARY_DIR
-elif [ -d "$REPO_ROOT/libraries" ]; then
-    LIB_DIR=$REPO_ROOT/libraries
-elif [ -d "$REPO_ROOT/../libraries" ]; then
-    LIB_DIR=$(CDPATH= cd -- "$REPO_ROOT/../libraries" && pwd)
+elif [ -d "$REPO_ROOT/margarine/runtime" ]; then
+    LIB_DIR=$REPO_ROOT/margarine/runtime
 else
-    echo "error: cannot locate libraries/ (set MARGARINE_LIBRARY_DIR)" >&2
+    echo "error: cannot locate margarine/runtime/ (set MARGARINE_LIBRARY_DIR)" >&2
     exit 1
 fi
 
-CORE_C=$LIB_DIR/core/native/lib.c
-STD_C=$LIB_DIR/std/native/lib.c
-STD_INCLUDE=$LIB_DIR/std/native
+CORE_C=$LIB_DIR/core/lib.c
+STD_C=$LIB_DIR/std/lib.c
+STD_INCLUDE=$LIB_DIR/std
 
 for src in "$CORE_C" "$STD_C"; do
     [ -f "$src" ] || { echo "error: missing $src" >&2; exit 1; }

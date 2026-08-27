@@ -1,5 +1,0 @@
-pub mod prelude;
-
-@cfg(env("MARGARINE_COMPILATION_TARGET", "wasm32-unknown-unknown"))
-@hash("c57d083bbb8810f445956c6b971eb03eafc9e8e1de1f7c60cb781ba787b5eab9")
-extern "https://cdn.daymare.net/margarine/0.1.0/wasm32-unknown-unknown/dlmalloc.a";

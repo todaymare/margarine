@@ -57,13 +57,14 @@ libraries use `.so`. The compiler links system LLVM 18.1 through `llvm-sys`
 and runtime archives are built with `clang`. Native non-Wasm external ABIs
 use indirect returns for structs larger than 16 bytes.
 
-`core` and `std` provide target-specific runtime archives under
-`lib/<target>/`. Managed installations place them under the versioned
-`toolchains/<target>/libs/` directory; `MARGARINE_TOOLCHAIN_DIR` overrides the
+`core` and `std` runtime archives are built from the C sources under
+`margarine/runtime/core/` and `margarine/runtime/std/` by
+`scripts/build-toolchains.sh`. Release toolchains place the resulting archives
+under `toolchains/<target>/libs/`; `MARGARINE_TOOLCHAIN_DIR` overrides the
 root. Every native and Wasm link searches that directory and passes each
-regular file there as an explicit input. Debug builds from this checkout use
-`../libraries` as the default package/prelude source; `MARGARINE_LIBRARY_DIR`
-can override it.
+regular file there as an explicit input. Source packages are fetched from the
+published CDN `share/` tree by default; `MARGARINE_DEFAULT_URL` overrides the
+base for ordinary `pkg:` imports, and `MARGARINE_PRELUDE` overrides preludes.
 
 Ordinary compiler commands work from unmanaged or source-built binaries.
 `update` and `toolchain add` require a managed installation; `install` is

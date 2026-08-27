@@ -4,7 +4,6 @@ use std::{env, fs, io, path::{Path, PathBuf}};
 use crate::{CompilationTarget, VERSION};
 
 const TOOLCHAIN_DIR_ENV: &str = "MARGARINE_TOOLCHAIN_DIR";
-const DEV_LIBRARY_DIR_ENV: &str = "MARGARINE_LIBRARY_DIR";
 
 pub fn installation_from_executable(executable: &Path) -> Result<(PathBuf, String), String> {
     let unmanaged =
@@ -57,16 +56,6 @@ pub fn current_installation() -> Result<(PathBuf, String), String> {
 }
 
 
-/// Returns the source-library checkout used by an unmanaged debug build.
-pub(crate) fn development_library_root() -> Option<PathBuf> {
-    if let Some(path) = env::var_os(DEV_LIBRARY_DIR_ENV) {
-        return Some(PathBuf::from(path));
-    }
-    if !cfg!(debug_assertions) {
-        return None;
-    }
-    option_env!("MARGARINE_SOURCE_LIBRARY_DIR").map(PathBuf::from)
-}
 
 
 pub fn toolchain_version_dir() -> PathBuf {
