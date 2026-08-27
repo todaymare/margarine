@@ -87,11 +87,13 @@ prerelease and build metadata; update comparisons use SemVer precedence.
 `MARGARINE_RELEASES_API` may point at a compatible test or mirror API.
 
 The `.github/workflows/release.yml` workflow validates published installations
-on all three native hosts, runs `tests/core.mar` through the installed binary,
-and installs the wasm toolchain to build a wasm example. The test runner does
-not support executing tests for the `wasm32-unknown-unknown` target. Its macOS
-compiler build installs LLVM 18 and zstd, statically links zstd, resolves
-unwind through Apple's SDK, and rejects non-system dependencies before
+on all three native hosts, provides the native test linker (Linux installs
+`clang`), runs `tests/core.mar` through the installed binary, and installs the
+wasm toolchain to build a wasm example. Native test libraries use only the
+runtime archives and platform libraries; they do not require zstd. The test
+runner does not support executing tests for the `wasm32-unknown-unknown` target.
+Its macOS compiler build installs LLVM 18 and zstd, statically links zstd,
+resolves unwind through Apple's SDK, and rejects non-system dependencies before
 packaging the published compiler as a single executable.
 
 ## Caches, packages, and progress

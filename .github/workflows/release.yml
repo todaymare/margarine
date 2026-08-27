@@ -33,7 +33,7 @@ jobs:
         name: Install LLVM 18 and clang (Linux)
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-18 llvm-18-dev libpolly-18-dev clang-18
+          sudo apt-get install -y llvm-18 llvm-18-dev libpolly-18-dev clang-18 libzstd-dev
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
       - if: runner.os == 'macOS'
@@ -143,10 +143,17 @@ jobs:
     name: install and test (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
 
+    env:
+      MARGARINE_DEFAULT_URL: https://cdn.daymare.net/margarine/0.1.0/share
     steps:
       - uses: actions/checkout@v4
       - name: Set isolated HOME
         run: echo "HOME=$RUNNER_TEMP/margarine-home" >> "$GITHUB_ENV"
+      - if: runner.os == 'Linux'
+        name: Install test linker dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
 
       - name: Install released Margarine
         env:
@@ -166,6 +173,8 @@ jobs:
     name: install and build (wasm32-unknown-unknown)
     runs-on: ubuntu-24.04
 
+    env:
+      MARGARINE_DEFAULT_URL: https://cdn.daymare.net/margarine/0.1.0/share
     steps:
       - uses: actions/checkout@v4
       - name: Set isolated HOME
