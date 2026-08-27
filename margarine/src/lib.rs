@@ -633,11 +633,8 @@ pub fn preludes_from_env() -> Vec<Prelude> {
         .collect::<Vec<_>>();
 
     if preludes.is_empty() {
-        let url =
-            format!("https://cdn.daymare.net/margarine/{VERSION}/share/std");
-        vec![
-            Prelude { alias: "std".into(), url },
-        ]
+        let url = format!("pkg:std");
+        vec![Prelude { alias: "std".into(), url }]
     } else {
         preludes
     }

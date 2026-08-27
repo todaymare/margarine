@@ -256,10 +256,13 @@ fn install_binary(root: &Path, version: &str) -> PathBuf {
     physical
 }
 
-fn install_current_binary(root: &Path) -> PathBuf {
+fn install_managed_fixture(root: &Path) -> PathBuf {
     install_binary(root, CURRENT_VERSION);
     fs::create_dir_all(root.join(CURRENT_VERSION).join("toolchains").join(env!("MARGARINE_TARGET")),).unwrap();
     fs::create_dir_all(root.join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown"),).unwrap();
+    fs::create_dir_all(
+        root.join(CURRENT_VERSION).join("toolchains/not-a-target"),
+    ).unwrap();
     fs::create_dir_all(root.join("bin")).unwrap();
     unix_fs::symlink(
         format!("../{CURRENT_VERSION}/bin/margarine"),
@@ -294,7 +297,7 @@ fn run_update(
 #[test]
 fn toolchain_add_downloads_verifies_and_atomically_installs_runtime_libraries() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let target_dir =
         dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
     fs::remove_dir_all(&target_dir).unwrap();
@@ -369,7 +372,7 @@ fn toolchain_add_uses_the_managed_version_directory_for_staged_binaries() {
 #[test]
 fn toolchain_add_rejects_release_metadata_for_another_version() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let target_dir =
         dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
     fs::remove_dir_all(&target_dir).unwrap();
@@ -405,7 +408,7 @@ fn toolchain_add_rejects_release_metadata_for_another_version() {
 #[test]
 fn toolchain_add_rejects_a_bad_checksum_without_installing_any_files() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let target_dir =
         dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
     fs::remove_dir_all(&target_dir).unwrap();
@@ -432,7 +435,7 @@ fn toolchain_add_rejects_a_bad_checksum_without_installing_any_files() {
 #[test]
 fn toolchain_add_rejects_an_archive_without_runtime_libraries() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let target_dir =
         dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
     fs::remove_dir_all(&target_dir).unwrap();
@@ -488,7 +491,7 @@ fn updater_rejects_an_unmanaged_executable_before_contacting_the_release_api() {
 #[test]
 fn updater_treats_a_missing_latest_release_as_a_successful_check() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let (api, server) = api_response_server("404 Not Found", b"");
 
     let output =
@@ -517,7 +520,7 @@ fn updater_treats_a_missing_latest_release_as_a_successful_check() {
 #[test]
 fn updater_reports_release_api_failures_without_parsing_the_response() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let (api, server) = api_response_server("500 Internal Server Error", b"not release JSON");
 
     let output =
@@ -539,7 +542,7 @@ fn updater_reports_release_api_failures_without_parsing_the_response() {
 #[test]
 fn updater_rejects_a_release_tag_with_more_than_one_v_prefix() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let (api, server) =
         api_response_server(
             "200 OK",
@@ -568,6 +571,74 @@ fn updater_rejects_a_release_tag_with_more_than_one_v_prefix() {
         )),
         "{stderr}",
     );
+}
+
+#[test]
+fn updater_treats_a_stable_release_as_newer_than_a_prerelease() {
+    let dir = tempfile::tempdir().unwrap();
+    let active = install_managed_fixture(dir.path());
+    let (api, server) =
+        release_server_for(
+            "0.1.0",
+            versioned_archive("exit 8"),
+            &[],
+            &[],
+            None,
+            1,
+        );
+
+    let output =
+        run_update(
+            &active,
+            api,
+            server,
+            &dir.path().join("unused-log"),
+            b"n\n",
+        );
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&format!("{CURRENT_VERSION} -> 0.1.0")),
+        "{stdout}",
+    );
+    assert!(stdout.contains("Install update? [y/N]"), "{stdout}");
+    assert_eq!(
+        fs::read_link(dir.path().join("bin/margarine")).unwrap(),
+        Path::new(&format!("../{CURRENT_VERSION}/bin/margarine")),
+    );
+    assert!(!dir.path().join("0.1.0").exists());
+}
+
+
+#[test]
+fn updater_compares_version_components_numerically() {
+    let dir = tempfile::tempdir().unwrap();
+    let active = install_binary(dir.path(), "0.2.0");
+    let (api, server) =
+        release_server_for(
+            "0.10.0",
+            versioned_archive("exit 8"),
+            &[],
+            &[],
+            None,
+            1,
+        );
+
+    let output =
+        run_update(
+            &active,
+            api,
+            server,
+            &dir.path().join("unused-log"),
+            b"n\n",
+        );
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("0.2.0 -> 0.10.0"), "{stdout}");
+    assert!(stdout.contains("Install update? [y/N]"), "{stdout}");
+    assert!(!dir.path().join("0.10.0").exists());
 }
 
 
@@ -602,7 +673,7 @@ fn updater_uses_the_managed_version_directory_as_the_current_version() {
 #[test]
 fn updater_rejects_an_existing_version_before_downloading_assets() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     fs::create_dir(dir.path().join("0.2.0")).unwrap();
     let (api, server) =
         release_server(versioned_archive("exit 8"), &[], &[], None, 1);
@@ -635,7 +706,7 @@ fn updater_rejects_an_existing_version_before_downloading_assets() {
 #[test]
 fn updater_holds_the_installation_lock_before_offering_a_download() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let (api, server) =
         release_server(versioned_archive("exit 8"), &[], &[], None, 1);
     let mut child =
@@ -685,7 +756,7 @@ fn updater_holds_the_installation_lock_before_offering_a_download() {
 #[test]
 fn updater_rejects_a_malformed_checksum_before_downloading_the_archive() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let (api, server) =
         release_server(versioned_archive("exit 8"), &[], &[], Some("not-a-digest"), 2);
 
@@ -716,7 +787,7 @@ fn updater_rejects_a_malformed_checksum_before_downloading_the_archive() {
 #[test]
 fn updater_stages_toolchains_before_atomically_activating_the_version() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let script =
         "case \"$1\" in\n\
            --version) echo 'margarine 0.2.0' ;;\n\
@@ -782,7 +853,7 @@ fn updater_stages_toolchains_before_atomically_activating_the_version() {
 #[test]
 fn updater_prompts_for_each_missing_toolchain_and_continues_without_them() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let script =
         "case \"$1\" in\n\
            --version) echo 'margarine 0.2.0' ;;\n\
@@ -837,7 +908,7 @@ fn updater_prompts_for_each_missing_toolchain_and_continues_without_them() {
 #[test]
 fn updater_aborts_before_installation_when_a_missing_toolchain_is_declined() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let omitted = [env!("MARGARINE_TARGET"), "wasm32-unknown-unknown"];
     let (api, server) =
         release_server(versioned_archive("exit 8"), &omitted, &[], None, 1);
@@ -861,11 +932,39 @@ fn updater_aborts_before_installation_when_a_missing_toolchain_is_declined() {
     assert!(!dir.path().join("0.2.0").exists());
 }
 
+#[test]
+fn updater_treats_confirmation_with_extra_words_as_decline() {
+    let dir = tempfile::tempdir().unwrap();
+    let active = install_managed_fixture(dir.path());
+    let omitted = [env!("MARGARINE_TARGET"), "wasm32-unknown-unknown"];
+    let (api, server) =
+        release_server(versioned_archive("exit 8"), &omitted, &[], None, 1);
+
+    let output =
+        run_update(
+            &active,
+            api,
+            server,
+            &dir.path().join("unused-log"),
+            b"yes please\n",
+        );
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("Continue without").count(), 1, "{stdout}");
+    assert!(!stdout.contains("Install update?"), "{stdout}");
+    assert_eq!(
+        fs::read_link(dir.path().join("bin/margarine")).unwrap(),
+        Path::new(&format!("../{CURRENT_VERSION}/bin/margarine")),
+    );
+    assert!(!dir.path().join("0.2.0").exists());
+}
+
 
 #[test]
 fn updater_rejects_a_published_toolchain_without_its_checksum() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let checksumless = ["wasm32-unknown-unknown"];
     let (api, server) =
         release_server(versioned_archive("exit 8"), &[], &checksumless, None, 1);
@@ -897,7 +996,7 @@ fn updater_rejects_a_published_toolchain_without_its_checksum() {
 #[test]
 fn updater_keeps_the_installed_version_when_rollback_cannot_restore_the_link() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_current_binary(dir.path());
+    let active = install_managed_fixture(dir.path());
     let script =
         "case \"$1\" in\n\
            --version)\n\
@@ -965,6 +1064,16 @@ fn install_manages_the_current_binary_and_target_toolchains_atomically() {
         "stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("Install margarine"),
+        "stdout unexpectedly asked for confirmation:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("Continue? [y/N]"),
+        "stdout unexpectedly requested an answer:\n{}",
+        String::from_utf8_lossy(&output.stdout),
     );
     assert_eq!(
         fs::read_link(installation_root.join("bin/margarine")).unwrap(),
