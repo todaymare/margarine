@@ -4,6 +4,8 @@ use colourful::ColourBrush;
 use margarine::{progress::StatusLine, resource::current_installation, CompilationTarget, TARGET, VERSION_INFO};
 use sti::writeln;
 
+use margarine::version::release_tag_version;
+
 use super::{
     artifacts::format_bytes,
     distribution::{checked_assets, release_api_url, Release},
@@ -41,22 +43,22 @@ pub(super) fn execute() -> CliResult<i32> {
         serde_json::from_reader(response)
             .map_err(|error| CliError::link(format!("could not parse release info: {error}")))?;
 
-    let latest =
+    let release_version =
         release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
-
-    let version_order =
-        semver_cmp(&current_version, latest)
-            .ok_or_else(|| CliError::link(format!(
-                "cannot compare installed version {current_version} with release version {latest}",
+    let latest =
+        release_tag_version(&release.tag_name)
+            .map_err(|_| CliError::link(format!(
+                "cannot compare installed version {current_version} with release version {release_version}",
             )))?;
-    if version_order.is_ge() {
+
+    let version_order = current_version.cmp_precedence(&latest);
+    if version_order != Ordering::Less {
         println!("{} margarine is up to date", TICK_GLYPH.green());
         println!("  Current version: {current_version}");
         return Ok(0);
     }
 
-    installation.ensure_version_absent(latest).map_err(CliError::link)?;
-
+    installation.ensure_version_absent(&latest).map_err(CliError::link)?;
     let asset_name = format!("margarine-{TARGET}.tar.gz");
     let (asset, checksum_asset) =
         checked_assets(&release, &asset_name).map_err(CliError::link)?;
@@ -84,7 +86,7 @@ pub(super) fn execute() -> CliResult<i32> {
         "   margarine {} {} {}",
         current_version,
         "->",
-        latest.green().bold()
+        latest.to_string().green().bold()
     );
     println!();
 
@@ -156,7 +158,7 @@ pub(super) fn execute() -> CliResult<i32> {
     }
 
     installation.install_release(
-        latest,
+        &latest,
         &release,
         CompilerSource::Release {
             archive: asset,
@@ -298,35 +300,39 @@ fn page_if_tty(text: &str) {
     let _ = child.wait();
 }
 
-fn semver_cmp(left: &str, right: &str) -> Option<Ordering> {
-    let parse = |text: &str| -> Option<[u64; 3]> {
-        let mut parts = text.split('.');
-        let version = [
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
-        ];
-        if parts.next().is_some() {
-            return None;
-        }
-        Some(version)
-    };
-
-    Some(parse(left)?.cmp(&parse(right)?))
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use semver::Version;
 
     #[test]
-    fn release_versions_are_exactly_three_numeric_components() {
-        assert_eq!(semver_cmp("0.2.0", "0.10.0"), Some(Ordering::Less));
-        assert_eq!(semver_cmp("1.0.0", "0.99.99"), Some(Ordering::Greater));
-        assert_eq!(semver_cmp("1.2.3", "1.2.3"), Some(Ordering::Equal));
-        assert_eq!(semver_cmp("1.2", "1.2.0"), None);
-        assert_eq!(semver_cmp("1.2.3.4", "1.2.3"), None);
-        assert_eq!(semver_cmp("1.2/../../3", "1.2.3"), None);
+    fn release_versions_use_semver_precedence_and_stable_tags() {
+        let stable = Version::parse("1.0.0").unwrap();
+        let release_candidate = Version::parse("1.0.0-rc.1").unwrap();
+        assert_eq!(
+            release_candidate.cmp_precedence(&stable),
+            Ordering::Less,
+        );
+        assert_eq!(
+            Version::parse("0.10.0").unwrap().cmp_precedence(
+                &Version::parse("0.2.0").unwrap(),
+            ),
+            Ordering::Greater,
+        );
+        assert_eq!(
+            release_tag_version("v1.2.3").unwrap(),
+            Version::parse("1.2.3").unwrap(),
+        );
+        for tag in [
+            "v1.2",
+            "v1.2.3.4",
+            "v1.2/../../3",
+            "v1.2.3-rc.1",
+            "v1.2.3+build",
+        ] {
+            assert!(release_tag_version(tag).is_err(), "{tag}");
+        }
     }
 
     #[test]

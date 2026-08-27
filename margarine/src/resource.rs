@@ -1,11 +1,12 @@
 use std::{env, fs, io, path::{Path, PathBuf}};
 
+use semver::Version;
 
-use crate::{CompilationTarget, VERSION};
+use crate::{version::directory_version, CompilationTarget, VERSION};
 
 const TOOLCHAIN_DIR_ENV: &str = "MARGARINE_TOOLCHAIN_DIR";
 
-pub fn installation_from_executable(executable: &Path) -> Result<(PathBuf, String), String> {
+pub fn installation_from_executable(executable: &Path) -> Result<(PathBuf, Version), String> {
     let unmanaged =
         || format!(
             "this margarine executable is not managed by the self-updater\n  executable: {}\n\nUpdate margarine using the method that installed this executable.\nSelf-update requires a versioned installation under ~/.margarine.",
@@ -25,29 +26,17 @@ pub fn installation_from_executable(executable: &Path) -> Result<(PathBuf, Strin
         version_dir.file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(&unmanaged)?;
-    let mut components = version.split('.');
-    let valid_component =
-        |component: Option<&str>| {
-            component.is_some_and(|component| {
-                !component.is_empty()
-                    && component.bytes().all(|byte| byte.is_ascii_digit())
-            })
-        };
-    if !valid_component(components.next())
-        || !valid_component(components.next())
-        || !valid_component(components.next())
-        || components.next().is_some()
-    {
-        return Err(unmanaged());
-    }
+    let version =
+        directory_version(version)
+            .map_err(|_| unmanaged())?;
     let root =
         version_dir.parent()
             .ok_or_else(&unmanaged)?;
-    Ok((root.to_path_buf(), version.to_string()))
+    Ok((root.to_path_buf(), version))
 }
 
 
-pub fn current_installation() -> Result<(PathBuf, String), String> {
+pub fn current_installation() -> Result<(PathBuf, Version), String> {
     let executable =
         env::current_exe()
             .and_then(fs::canonicalize)
@@ -61,7 +50,7 @@ pub fn current_installation() -> Result<(PathBuf, String), String> {
 pub fn toolchain_version_dir() -> PathBuf {
     if env::var_os(TOOLCHAIN_DIR_ENV).is_none() {
         if let Ok((root, version)) = current_installation() {
-            return root.join(version);
+            return root.join(version.to_string());
         }
     }
     toolchain_root().join(VERSION)
@@ -116,13 +105,18 @@ mod tests {
         let managed = Path::new("/opt/margarine/0.1.0/bin/margarine");
         assert_eq!(
             installation_from_executable(managed).unwrap(),
-            (PathBuf::from("/opt/margarine"), "0.1.0".to_string()),
+            (
+                PathBuf::from("/opt/margarine"),
+                Version::parse("0.1.0").unwrap(),
+            ),
         );
 
         for unmanaged in [
             Path::new("/opt/margarine"),
             Path::new("/opt/margarine/bin/margarine"),
             Path::new("/opt/margarine/0.1.0/bin/not-margarine"),
+            Path::new("/opt/margarine/0.1.0-rc.1/bin/margarine"),
+            Path::new("/opt/margarine/0.1.0+build/bin/margarine"),
         ] {
             let error = installation_from_executable(unmanaged).unwrap_err();
             assert!(error.contains("not managed by the self-updater"));

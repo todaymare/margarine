@@ -3,8 +3,11 @@ use std::{fs::{self, File}, io::{Read, Seek, Write}, path::Path, process::Comman
 use colourful::ColourBrush;
 use flate2::read::GzDecoder;
 use margarine::progress::{byte_progress, ProgressReader, StatusLine};
+use semver::Version;
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
+
+use margarine::version::release_tag_version;
 
 use super::{artifacts::format_bytes, TICK_GLYPH};
 
@@ -18,7 +21,7 @@ pub(super) fn release_api_url(path: &str) -> String {
     format!("{}/{path}", base.trim_end_matches('/'))
 }
 
-pub(super) fn release_for_version(version: &str) -> Result<Release, String> {
+pub(super) fn release_for_version(version: &Version) -> Result<Release, String> {
     let checking = StatusLine::start("Checking release");
     let response =
         reqwest::blocking::Client::new()
@@ -35,8 +38,9 @@ pub(super) fn release_for_version(version: &str) -> Result<Release, String> {
         serde_json::from_reader(response)
             .map_err(|error| format!("invalid release metadata: {error}"))?;
     let release_version =
-        release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
-    if release_version != version {
+        release_tag_version(&release.tag_name)
+            .map_err(|error| format!("invalid release version {}: {error}", release.tag_name))?;
+    if &release_version != version {
         return Err(format!(
             "release metadata is for {}, but version {version} was requested",
             release.tag_name,

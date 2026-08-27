@@ -3,6 +3,9 @@ use std::{fs, os::unix::fs as unix_fs, path::{Path, PathBuf}};
 use colourful::ColourBrush;
 use fs2::FileExt as _;
 use margarine::{progress::StatusLine, CompilationTarget};
+use semver::Version;
+
+use margarine::version::release_tag_version;
 
 use super::{
     distribution::{download_checked_assets, extract_archive, run_binary_check, Asset, Release},
@@ -54,11 +57,11 @@ impl Installation {
         &self.root
     }
 
-    pub(super) fn version_path(&self, version: &str) -> PathBuf {
-        self.root.join(version)
+    pub(super) fn version_path(&self, version: &Version) -> PathBuf {
+        self.root.join(version.to_string())
     }
 
-    pub(super) fn ensure_version_absent(&self, version: &str) -> Result<(), String> {
+    pub(super) fn ensure_version_absent(&self, version: &Version) -> Result<(), String> {
         let destination = self.version_path(version);
         match fs::symlink_metadata(&destination) {
             Ok(_) => Err(format!(
@@ -75,14 +78,15 @@ impl Installation {
 
     pub(super) fn install_release(
         &self,
-        version: &str,
+        version: &Version,
         release: &Release,
         compiler: CompilerSource<'_>,
         targets: &[CompilationTarget],
     ) -> Result<(), String> {
         let release_version =
-            release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
-        if release_version != version {
+            release_tag_version(&release.tag_name)
+                .map_err(|error| format!("invalid release version {}: {error}", release.tag_name))?;
+        if &release_version != version {
             return Err(format!(
                 "release metadata is for {}, but version {version} was requested",
                 release.tag_name,
@@ -201,8 +205,7 @@ impl Installation {
             Err(error) => Err(format!("cannot inspect active executable: {error}")),
         }
     }
-
-    fn replace_active_target(&self, version: &str) -> Result<(), String> {
+    fn replace_active_target(&self, version: &Version) -> Result<(), String> {
         let bin_dir = self.root.join("bin");
         fs::create_dir_all(&bin_dir)
             .map_err(|error| format!("cannot create active binary directory: {error}"))?;
@@ -224,7 +227,7 @@ impl Installation {
     fn restore_active_target(
         &self,
         previous: Option<&Path>,
-        failed_version: &str,
+        failed_version: &Version,
     ) -> Result<(), String> {
         let active = self.root.join("bin/margarine");
         let expected = PathBuf::from(format!("../{failed_version}/bin/margarine"));
@@ -312,14 +315,19 @@ mod tests {
             .unwrap();
 
         let previous = installation.active_target().unwrap();
-        installation.replace_active_target("0.2.0").unwrap();
+        installation
+            .replace_active_target(&Version::parse("0.2.0").unwrap())
+            .unwrap();
         assert_eq!(
             fs::read_link(dir.path().join("bin/margarine")).unwrap(),
             Path::new("../0.2.0/bin/margarine"),
         );
 
         installation
-            .restore_active_target(previous.as_deref(), "0.2.0")
+            .restore_active_target(
+                previous.as_deref(),
+                &Version::parse("0.2.0").unwrap(),
+            )
             .unwrap();
         assert_eq!(
             fs::read_link(dir.path().join("bin/margarine")).unwrap(),
@@ -333,7 +341,9 @@ mod tests {
         let installation = Installation::acquire(dir.path().to_path_buf()).unwrap();
         fs::write(dir.path().join("0.2.0"), "occupied").unwrap();
 
-        let error = installation.ensure_version_absent("0.2.0").unwrap_err();
+        let error =
+            installation.ensure_version_absent(&Version::parse("0.2.0").unwrap())
+                .unwrap_err();
 
         assert!(error.contains("refusing to overwrite existing installation"));
     }

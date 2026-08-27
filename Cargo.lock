@@ -991,6 +991,7 @@ dependencies = [
  "rand",
  "reqwest",
  "semantic_analysis",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

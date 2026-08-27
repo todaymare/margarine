@@ -1,7 +1,8 @@
 use std::{env, fs, io::Write as _, path::PathBuf};
 
 use colourful::ColourBrush;
-use margarine::{resource::current_installation, CompilationTarget, VERSION};
+use margarine::{resource::current_installation, CompilationTarget};
+use margarine::version::package_version;
 
 use super::{
     distribution::release_for_version,
@@ -29,7 +30,8 @@ pub(super) fn execute(assume_yes: bool) -> CliResult<i32> {
             .ok_or_else(|| CliError::link("cannot install margarine because HOME is not set"))?;
     let root = home.join(".margarine");
     let installation = Installation::acquire(root).map_err(CliError::link)?;
-    installation.ensure_version_absent(VERSION).map_err(CliError::link)?;
+    let version = package_version();
+    installation.ensure_version_absent(&version).map_err(CliError::link)?;
     let active = installation.root().join("bin/margarine");
     match fs::symlink_metadata(&active) {
         Ok(_) => return Err(CliError::link(format!(
@@ -42,13 +44,12 @@ pub(super) fn execute(assume_yes: bool) -> CliResult<i32> {
             active.display(),
         ))),
     }
-
-    let release = release_for_version(VERSION).map_err(CliError::link)?;
+    let release = release_for_version(&version).map_err(CliError::link)?;
     let host = CompilationTarget::host();
     super::toolchain::checked_toolchain_assets(&release, host)
         .map_err(CliError::link)?;
 
-    println!("Install margarine {VERSION} and the {} toolchain into {}?", host.margarine_target_triple(), installation.root().display());
+    println!("Install margarine {version} and the {} toolchain into {}?", host.margarine_target_triple(), installation.root().display());
     if !assume_yes {
         print!("Continue? [y/N] ");
         let _ = std::io::stdout().flush();
@@ -67,16 +68,16 @@ pub(super) fn execute(assume_yes: bool) -> CliResult<i32> {
             .and_then(|path| path.canonicalize())
             .map_err(|error| CliError::link(format!("cannot resolve current executable: {error}")))?;
     installation.install_release(
-        VERSION,
+        &version,
         &release,
         CompilerSource::Current(&executable),
         &[host],
     ).map_err(CliError::link)?;
 
     println!(
-        "{} margarine {VERSION} installed at {}",
+        "{} margarine {version} installed at {}",
         TICK_GLYPH.green().bold(),
-        installation.version_path(VERSION).display(),
+        installation.version_path(&version).display(),
     );
     let bin_dir = installation.root().join("bin");
     let on_path =
