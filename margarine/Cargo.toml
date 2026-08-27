@@ -21,8 +21,8 @@ sti = { path = "vendor/sti" }
 colourful = { git = "https://github.com/rookieCookies/colourful" }
 
 rand = "*"
-git2 = "0.20.2"
-reqwest = { version = "0.12", features = ["blocking"] }
+git2 = { version = "0.20.2", features = ["vendored-libgit2", "vendored-openssl"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 tempfile = "3"
 hex = "*"
 

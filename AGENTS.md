@@ -58,8 +58,11 @@ Supported compilation targets are:
 
 Native Linux executables link with `clang` and `libstdc++`; native test
 libraries use `.so`. The compiler links system LLVM 18.1 through `llvm-sys`
-and runtime archives are built with `clang`. Native non-Wasm external ABIs
-use indirect returns for structs larger than 16 bytes.
+and vendors libgit2/OpenSSL while using Rustls for HTTP. Native non-Wasm
+external ABIs use indirect returns for structs larger than 16 bytes.
+macOS release compiler builds statically embed zstd, resolve unwind through
+Apple's SDK and `libSystem`, and reject every non-system dynamic dependency.
+Apple system libraries and frameworks remain dynamic.
 
 `core` and `std` runtime archives are built from the C sources under
 `margarine/runtime/core/` and `margarine/runtime/std/` by
@@ -71,19 +74,25 @@ published CDN `share/` tree by default; `MARGARINE_DEFAULT_URL` overrides the
 base for ordinary `pkg:` imports, and `MARGARINE_PRELUDE` overrides preludes.
 
 Ordinary compiler commands work from unmanaged or source-built binaries.
-`update` and `toolchain add` require a managed installation; `install` is
-always explicit and must stage the running binary plus its host toolchain.
-Release installation downloads checksummed archives, validates and safely
-extracts them, publishes a versioned directory atomically, activates the
-stable symlink, and rolls back on activation failure. Versioned installation
-directories and release tags use full SemVer, including prerelease and build
-metadata; update comparisons use SemVer precedence. `update` locks the
-installation before network access. `MARGARINE_RELEASES_API` may point at a
-compatible test or mirror API.
-The `--yes` install mode performs no confirmation prompt. The curl-piped
-installer attaches the managed binary's standard input to `/dev/tty` when
-stdout is interactive so `colourful` retains terminal styling despite the
-shell script itself being read from the download pipe.
+`update` and `toolchain add` require a managed installation. Initial release
+installation is owned exclusively by `scripts/install.sh`; there is no
+`margarine install` command. The script downloads and checksum-validates the
+complete compiler and host-toolchain archives, rejects unsafe archive entries,
+stages both under the versioned layout, verifies the compiler before and after
+activation, publishes atomically, and rolls back on failure. The updater uses
+the same versioned layout and complete compiler archives. Versioned
+installation directories and release tags use full SemVer, including
+prerelease and build metadata; update comparisons use SemVer precedence.
+`update` locks the installation before network access.
+`MARGARINE_RELEASES_API` may point at a compatible test or mirror API.
+
+The `.github/workflows/release.yml` workflow validates published installations
+on all three native hosts, runs `tests/core.mar` through the installed binary,
+and installs the wasm toolchain to build a wasm example. The test runner does
+not support executing tests for the `wasm32-unknown-unknown` target. Its macOS
+compiler build installs LLVM 18 and zstd, statically links zstd, resolves
+unwind through Apple's SDK, and rejects non-system dependencies before
+packaging the published compiler as a single executable.
 
 ## Caches, packages, and progress
 
