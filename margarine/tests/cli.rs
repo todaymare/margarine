@@ -149,3 +149,4 @@ fn run_displays_the_source_path_instead_of_the_executable_path() {
     );
     assert_eq!(output.stdout, "› Running program.mar\n".as_bytes());
 }
+

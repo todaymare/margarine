@@ -4,7 +4,7 @@ use colourful::ColourBrush;
 use margarine::{start_compilation_status, CompilationSettings, CompilationTarget};
 use sti::arena::Arena;
 
-use super::{CliError, CliResult, COMPILE_ERROR, PROGRAM_ERROR};
+use super::{CliError, CliResult, COMPILE_ERROR, PROGRAM_ERROR, TICK_GLYPH};
 
 /// Compiles `path` with the Compiler + CompilationResult pipeline and links
 /// the result for `target`. Shared by `build` and `run`.
@@ -115,7 +115,7 @@ pub(super) fn check(
     let error_count = errors.iter().flatten().map(|file| file.len()).sum::<usize>();
 
     if error_count == 0 {
-        println!("{}", "no errors found".green());
+        println!("{} no errors found", TICK_GLYPH.green());
         Ok(0)
     } else {
         Ok(COMPILE_ERROR)
