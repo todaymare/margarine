@@ -81,20 +81,23 @@ margarine toolchain add wasm32-unknown-unknown
 
 ## Building from source
 
-Building from source requires Rust nightly, LLVM 18, and `clang`.
+Building from source requires Rust nightly, LLVM 18, and `clang`. Building
+for WebAssembly also requires the LLVM 18 Wasm linker.
 
 On macOS:
 
 ```sh
 brew install llvm@18
 export LLVM_SYS_181_PREFIX="$(brew --prefix llvm@18)"
+export PATH="$LLVM_SYS_181_PREFIX/bin:$PATH"
 ```
 
 On Debian or Ubuntu:
 
 ```sh
-sudo apt-get install llvm-18 llvm-18-dev libpolly-18-dev clang-18
+sudo apt-get install llvm-18 llvm-18-dev libpolly-18-dev clang-18 lld-18
 export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
+export PATH="$LLVM_SYS_181_PREFIX/bin:$PATH"
 ```
 
 Then build and run the compiler from the repository root:
