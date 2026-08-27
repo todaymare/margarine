@@ -98,3 +98,67 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             assets/margarine-*.tar.gz assets/margarine-*.tar.gz.sha256
+
+  installed-tests:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: arm64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    name: install and test (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      MARGARINE_DEFAULT_URL: https://cdn.daymare.net/margarine/0.1.0/share
+      HOME: ${{ runner.temp }}/margarine-home
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install released Margarine
+        env:
+          MARGARINE_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          export MARGARINE_RELEASE_DOWNLOAD_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          sh scripts/install.sh
+
+      - name: Run core language suite
+        run: |
+          compiler="$HOME/.margarine/bin/margarine"
+          "$compiler" --version
+          "$compiler" test tests/core.mar
+
+  wasm-test:
+    needs: release
+    name: install and build (wasm32-unknown-unknown)
+    runs-on: ubuntu-24.04
+    env:
+      MARGARINE_DEFAULT_URL: https://cdn.daymare.net/margarine/0.1.0/share
+      HOME: ${{ runner.temp }}/margarine-home
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install released Margarine
+        env:
+          MARGARINE_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          export MARGARINE_RELEASE_DOWNLOAD_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          sh scripts/install.sh
+
+      - name: Install wasm toolchain
+        run: |
+          "$HOME/.margarine/bin/margarine" toolchain add wasm32-unknown-unknown
+
+      - name: Build wasm example
+        run: |
+          output="$RUNNER_TEMP/hello.wasm"
+          "$HOME/.margarine/bin/margarine" build examples/hello.mar \
+            --target wasm32-unknown-unknown --output "$output"
+          test -s "$output"
