@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
 def external_filename(path: Path, source_root: Path) -> str:
     """Return a stable, non-machine-specific display path for external Rust."""
     try:
-        relative = path.relative_to(source_root / "vendor")
+        relative = path.relative_to(source_root / "margarine" / "vendor")
     except ValueError:
         relative = None
     if relative is not None:
@@ -67,7 +67,7 @@ def source_info(filename: str, source_root: Path) -> tuple[str, str, Path] | Non
         relative = path.relative_to(root)
     except ValueError:
         return "third_party", external_filename(path, root), path
-    if relative.parts and relative.parts[0] == "vendor":
+    if relative.parts[:2] == ("margarine", "vendor"):
         return "third_party", external_filename(path, root), path
     return "first_party", relative.as_posix(), path
 

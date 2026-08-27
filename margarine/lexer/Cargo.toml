@@ -9,4 +9,4 @@ edition = "2021"
 common = { path = "../common" }
 errors = { path = "../errors" }
 
-sti = { path = "../../vendor/sti" }
+sti = { path = "../vendor/sti" }

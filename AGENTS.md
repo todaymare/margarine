@@ -88,6 +88,8 @@ compatible test or mirror API.
   target, receive the captured parent environment and margarine metadata, and
   emit `margarine:link=...` paths relative to `package/`. Build-script errors
   and materialization failures are typed compiler errors, not panics.
+- The vendored `sti` dependency lives under `margarine/vendor/sti`; Cargo
+  path dependencies resolve from that location.
 - All CLI status output is centralized in `margarine/src/progress.rs`.
   Use `StatusLine`, `byte_progress`/`ProgressReader`, and `item_progress`
   instead of command-local progress implementations. Hide progress on

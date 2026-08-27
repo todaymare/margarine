@@ -16,7 +16,7 @@ llvm-api = { path = "./llvm-api" }
 common = { path = "./common" }
 errors = { path = "./errors" }
 
-sti = { path = "../vendor/sti" }
+sti = { path = "vendor/sti" }
 
 colourful = { git = "https://github.com/rookieCookies/colourful" }
 
