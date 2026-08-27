@@ -77,4 +77,8 @@ if [ -z "${MARGARINE_RELEASES_API+x}" ]; then
     export MARGARINE_RELEASES_API="https://api.github.com/repos/$REPOSITORY/releases"
 fi
 
-"$binary" install --yes
+if [ -t 1 ] && [ -r /dev/tty ]; then
+    "$binary" install --yes </dev/tty
+else
+    "$binary" install --yes
+fi

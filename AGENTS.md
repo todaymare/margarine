@@ -24,6 +24,10 @@ attributing an existing failure to the change. Prefer `.mar` tests under
 `tests/` for observable language and compiler behavior; use Rust tests for
 parser/AST contracts, low-level contracts, and diagnostics or compile failures
 that cannot run through the language test runner.
+- Release, version, managed-layout, and updater behavior tests live under
+  `margarine/tests/`; test them through the public API or CLI instead of adding
+  source-embedded tests to those production modules. The updater integration
+  suite owns its fake release-server and managed-installation fixtures.
 
 ## Compiler and CLI architecture
 
@@ -76,6 +80,10 @@ directories and release tags use full SemVer, including prerelease and build
 metadata; update comparisons use SemVer precedence. `update` locks the
 installation before network access. `MARGARINE_RELEASES_API` may point at a
 compatible test or mirror API.
+The `--yes` install mode performs no confirmation prompt. The curl-piped
+installer attaches the managed binary's standard input to `/dev/tty` when
+stdout is interactive so `colourful` retains terminal styling despite the
+shell script itself being read from the download pipe.
 
 ## Caches, packages, and progress
 
