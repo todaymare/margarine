@@ -307,7 +307,7 @@ mod tests {
     use semver::Version;
 
     #[test]
-    fn release_versions_use_semver_precedence_and_stable_tags() {
+    fn release_versions_use_semver_precedence_and_semver_tags() {
         let stable = Version::parse("1.0.0").unwrap();
         let release_candidate = Version::parse("1.0.0-rc.1").unwrap();
         assert_eq!(
@@ -321,15 +321,15 @@ mod tests {
             Ordering::Greater,
         );
         assert_eq!(
-            release_tag_version("v1.2.3").unwrap(),
-            Version::parse("1.2.3").unwrap(),
+            release_tag_version("v1.2.3-rc.1+build.7").unwrap(),
+            Version::parse("1.2.3-rc.1+build.7").unwrap(),
         );
         for tag in [
             "v1.2",
             "v1.2.3.4",
             "v1.2/../../3",
-            "v1.2.3-rc.1",
-            "v1.2.3+build",
+            "v1.2.3-rc..1",
+            "v1.2.3+",
         ] {
             assert!(release_tag_version(tag).is_err(), "{tag}");
         }

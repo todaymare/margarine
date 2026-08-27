@@ -13,6 +13,8 @@ use fs2::FileExt as _;
 use sha2::{Digest, Sha256};
 
 
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn versioned_archive(script: &str) -> Vec<u8> {
     let mut compressed = Vec::new();
     {
@@ -255,11 +257,14 @@ fn install_binary(root: &Path, version: &str) -> PathBuf {
 }
 
 fn install_current_binary(root: &Path) -> PathBuf {
-    install_binary(root, "0.1.0");
-    fs::create_dir_all(root.join("0.1.0/toolchains").join(env!("MARGARINE_TARGET"))).unwrap();
-    fs::create_dir_all(root.join("0.1.0/toolchains/wasm32-unknown-unknown")).unwrap();
+    install_binary(root, CURRENT_VERSION);
+    fs::create_dir_all(root.join(CURRENT_VERSION).join("toolchains").join(env!("MARGARINE_TARGET")),).unwrap();
+    fs::create_dir_all(root.join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown"),).unwrap();
     fs::create_dir_all(root.join("bin")).unwrap();
-    unix_fs::symlink("../0.1.0/bin/margarine", root.join("bin/margarine")).unwrap();
+    unix_fs::symlink(
+        format!("../{CURRENT_VERSION}/bin/margarine"),
+        root.join("bin/margarine"),
+    ).unwrap();
     root.join("bin/margarine")
 }
 
@@ -290,14 +295,15 @@ fn run_update(
 fn toolchain_add_downloads_verifies_and_atomically_installs_runtime_libraries() {
     let dir = tempfile::tempdir().unwrap();
     let active = install_current_binary(dir.path());
-    let target_dir = dir.path().join("0.1.0/toolchains/wasm32-unknown-unknown");
+    let target_dir =
+        dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
     fs::remove_dir_all(&target_dir).unwrap();
     let archive = toolchain_archive(&[
         ("libs/libcore.a", b"core runtime"),
         ("libs/libstd.a", b"standard runtime"),
     ]);
     let checksum = hex::encode(Sha256::digest(&archive)).to_ascii_uppercase();
-    let (api, server) = toolchain_server(archive, checksum, "0.1.0");
+    let (api, server) = toolchain_server(archive, checksum, CURRENT_VERSION);
 
     let output = Command::new(&active)
         .args(["toolchain", "add", "wasm32-unknown-unknown"])
@@ -364,7 +370,8 @@ fn toolchain_add_uses_the_managed_version_directory_for_staged_binaries() {
 fn toolchain_add_rejects_release_metadata_for_another_version() {
     let dir = tempfile::tempdir().unwrap();
     let active = install_current_binary(dir.path());
-    let target_dir = dir.path().join("0.1.0/toolchains/wasm32-unknown-unknown");
+    let target_dir =
+        dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
     fs::remove_dir_all(&target_dir).unwrap();
     let release = serde_json::json!({
         "tag_name": "v0.2.0",
@@ -384,11 +391,12 @@ fn toolchain_add_rejects_release_metadata_for_another_version() {
     server.join().unwrap();
 
     assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("release metadata is for v0.2.0, but version 0.1.0 was requested"),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr),
+        stderr.contains(&format!(
+            "release metadata is for v0.2.0, but version {CURRENT_VERSION} was requested",
+        )),
+        "{stderr}",
     );
     assert!(!target_dir.exists());
 }
@@ -398,10 +406,11 @@ fn toolchain_add_rejects_release_metadata_for_another_version() {
 fn toolchain_add_rejects_a_bad_checksum_without_installing_any_files() {
     let dir = tempfile::tempdir().unwrap();
     let active = install_current_binary(dir.path());
-    let target_dir = dir.path().join("0.1.0/toolchains/wasm32-unknown-unknown");
+    let target_dir =
+        dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
     fs::remove_dir_all(&target_dir).unwrap();
     let archive = toolchain_archive(&[("libs/libstd.a", b"standard runtime")]);
-    let (api, server) = toolchain_server(archive, "0".repeat(64), "0.1.0");
+    let (api, server) = toolchain_server(archive, "0".repeat(64), CURRENT_VERSION);
 
     let output = Command::new(&active)
         .args(["toolchain", "add", "wasm32-unknown-unknown"])
@@ -424,11 +433,12 @@ fn toolchain_add_rejects_a_bad_checksum_without_installing_any_files() {
 fn toolchain_add_rejects_an_archive_without_runtime_libraries() {
     let dir = tempfile::tempdir().unwrap();
     let active = install_current_binary(dir.path());
-    let target_dir = dir.path().join("0.1.0/toolchains/wasm32-unknown-unknown");
+    let target_dir =
+        dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
     fs::remove_dir_all(&target_dir).unwrap();
     let archive = toolchain_archive(&[("README", b"not a runtime library")]);
     let checksum = hex::encode(Sha256::digest(&archive));
-    let (api, server) = toolchain_server(archive, checksum, "0.1.0");
+    let (api, server) = toolchain_server(archive, checksum, CURRENT_VERSION);
 
     let output = Command::new(&active)
         .args(["toolchain", "add", "wasm32-unknown-unknown"])
@@ -553,9 +563,9 @@ fn updater_rejects_a_release_tag_with_more_than_one_v_prefix() {
     assert_eq!(output.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains(
-            "cannot compare installed version 0.1.0 with release version v0.2.0",
-        ),
+        stderr.contains(&format!(
+            "cannot compare installed version {CURRENT_VERSION} with release version v0.2.0",
+        )),
         "{stderr}",
     );
 }
@@ -739,7 +749,7 @@ fn updater_stages_toolchains_before_atomically_activating_the_version() {
         fs::read_link(dir.path().join("bin/margarine")).unwrap(),
         Path::new("../0.2.0/bin/margarine"),
     );
-    assert!(dir.path().join("0.1.0/bin/margarine").exists());
+    assert!(dir.path().join(CURRENT_VERSION).join("bin/margarine").exists());
     assert!(dir.path().join("0.2.0/bin/margarine").exists());
     assert!(!fs::read_dir(dir.path()).unwrap().any(|entry| {
         entry.unwrap().file_name().to_string_lossy().starts_with(".staging-")
@@ -846,7 +856,7 @@ fn updater_aborts_before_installation_when_a_missing_toolchain_is_declined() {
     assert_eq!(stdout.matches("Continue without").count(), 2, "{stdout}");
     assert_eq!(
         fs::read_link(dir.path().join("bin/margarine")).unwrap(),
-        Path::new("../0.1.0/bin/margarine"),
+        Path::new(&format!("../{CURRENT_VERSION}/bin/margarine")),
     );
     assert!(!dir.path().join("0.2.0").exists());
 }
@@ -879,7 +889,7 @@ fn updater_rejects_a_published_toolchain_without_its_checksum() {
     );
     assert_eq!(
         fs::read_link(dir.path().join("bin/margarine")).unwrap(),
-        Path::new("../0.1.0/bin/margarine"),
+        Path::new(&format!("../{CURRENT_VERSION}/bin/margarine")),
     );
 }
 
@@ -932,7 +942,7 @@ fn install_manages_the_current_binary_and_target_toolchains_atomically() {
     // archive. The server must serve every expected request or `join` blocks.
     let (api, server) =
         release_server_for(
-            "0.1.0",
+            CURRENT_VERSION,
             versioned_archive("exit 8"),
             &[],
             &[],
@@ -958,9 +968,9 @@ fn install_manages_the_current_binary_and_target_toolchains_atomically() {
     );
     assert_eq!(
         fs::read_link(installation_root.join("bin/margarine")).unwrap(),
-        Path::new("../0.1.0/bin/margarine"),
+        Path::new(&format!("../{CURRENT_VERSION}/bin/margarine")),
     );
-    assert!(installation_root.join("0.1.0/bin/margarine").is_file());
+    assert!(installation_root.join(CURRENT_VERSION).join("bin/margarine").is_file());
 
     let mut installed_targets = vec![env!("MARGARINE_TARGET").to_string()];
     installed_targets.sort();
@@ -969,8 +979,9 @@ fn install_manages_the_current_binary_and_target_toolchains_atomically() {
         assert_eq!(
             fs::read(
                 installation_root
-                    .join("0.1.0/toolchains")
-                    .join(target)
+                    .join(CURRENT_VERSION)
+                    .join("toolchains")
+                    .join(&target)
                     .join("libs/runtime.a"),
             ).unwrap(),
             b"runtime",

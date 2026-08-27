@@ -71,7 +71,9 @@ Ordinary compiler commands work from unmanaged or source-built binaries.
 always explicit and must stage the running binary plus its host toolchain.
 Release installation downloads checksummed archives, validates and safely
 extracts them, publishes a versioned directory atomically, activates the
-stable symlink, and rolls back on activation failure. `update` locks the
+stable symlink, and rolls back on activation failure. Versioned installation
+directories and release tags use full SemVer, including prerelease and build
+metadata; update comparisons use SemVer precedence. `update` locks the
 installation before network access. `MARGARINE_RELEASES_API` may point at a
 compatible test or mirror API.
 
