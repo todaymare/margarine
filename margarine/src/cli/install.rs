@@ -49,8 +49,12 @@ pub(super) fn execute(assume_yes: bool) -> CliResult<i32> {
     super::toolchain::checked_toolchain_assets(&release, host)
         .map_err(CliError::link)?;
 
-    println!("Install margarine {version} and the {} toolchain into {}?", host.margarine_target_triple(), installation.root().display());
     if !assume_yes {
+        println!(
+            "Install margarine {version} and the {} toolchain into {}?",
+            host.margarine_target_triple(),
+            installation.root().display(),
+        );
         print!("Continue? [y/N] ");
         let _ = std::io::stdout().flush();
         let mut answer = String::new();
