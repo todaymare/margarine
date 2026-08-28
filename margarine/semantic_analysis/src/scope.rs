@@ -183,6 +183,31 @@ impl<'me> Scope<'me> {
     }
 
 
+    /// Collects every enclosing generic (innermost first, first occurrence
+    /// wins), stopping at a namespace fence like `find_gen` does.
+    pub fn collect_generics(
+        self,
+        scope_map: &ScopeMap<'me>,
+        out: &mut std::vec::Vec<(BoundedGeneric<'me>, Type)>,
+    ) {
+        self.over(scope_map, |scope| {
+            if let ScopeKind::NamespaceFence = scope.kind {
+                return Some(())
+            }
+
+            if let ScopeKind::Generics(generics_scope) = scope.kind {
+                for (name, ty) in generics_scope.generics.iter() {
+                    if !out.iter().any(|(n, _)| n.name() == name.name()) {
+                        out.push((*name, *ty));
+                    }
+                }
+            }
+
+            None
+        });
+    }
+
+
     pub fn find_var(
         self,
         name: StringIndex,

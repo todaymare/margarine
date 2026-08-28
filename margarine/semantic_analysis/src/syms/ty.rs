@@ -228,48 +228,40 @@ impl Type {
                 assert_eq!(map.sym(symidb).generics().len(), genb.len());
 
 
+                let syma = map.sym(symida);
+                let symb = map.sym(symidb);
+
+                if let (SymbolKind::Function(fa), SymbolKind::Function(fb)) =
+                    (syma.kind, symb.kind)
+                {
+                    if fa.args().len() != fb.args().len() { return false; }
+
+                    let reta = fa.ret().to_ty(gena, map);
+                    let retb = fb.ret().to_ty(genb, map);
+
+                    for (aa, ab) in fa.args().iter().zip(fb.args().iter()) {
+                        if aa.is_inout() != ab.is_inout() {
+                            return false;
+                        }
+
+                        let aa = aa.symbol().to_ty(gena, map);
+                        let ab = ab.symbol().to_ty(genb, map);
+
+                        if !aa.eq(map, ab) {
+                            return false;
+                        }
+                    }
+
+                    return reta.eq(map, retb);
+                }
+
                 if symida == symidb {
                     assert_eq!(gena.len(), genb.len());
 
                     return gena.iter().zip(genb.iter()).all(|(ta, tb)| ta.1.eq(map, tb.1));
                 }
 
-                let syma = map.sym(symida);
-                let symb = map.sym(symidb);
-
                 match (syma.kind, symb.kind) {
-                    (SymbolKind::Function(fa), SymbolKind::Function(fb)) => {
-                        if fa.args().len() != fb.args().len() { return false; }
-
-                        let reta = fa.ret().to_ty(gena, map);
-                        let retb = fb.ret().to_ty(genb, map);
-
-                        let mut failed = false;
-                        for (aa, ab) in fa.args().iter().zip(fb.args().iter()) {
-                            if aa.is_inout() != ab.is_inout() {
-                                failed = true;
-                            }
-
-                            let aa = aa.symbol().to_ty(gena, map);
-                            let ab = ab.symbol().to_ty(genb, map);
-
-                            if !aa.eq(map, ab) {
-                                failed = true;
-                            }
-                        }
-
-                        if !reta.eq(map, retb) {
-                            failed = true;
-                        }
-
-
-                        if failed {
-                            return false;
-                        }
-
-                    },
-
-
                     (SymbolKind::Container(ca), SymbolKind::Container(cb)) => {
                         // is a tuple
                         if ca.kind() != ContainerKind::Tuple
@@ -289,10 +281,6 @@ impl Type {
 
                     _ => return false,
                 }
-
-                // @info: um. was this a wrong assumption or am i fucked
-                //debug_assert_eq!(gena.len(), genb.len());
-                return true
             },
 
             (Type::Var(ida), Type::Var(idb)) => {
@@ -442,12 +430,12 @@ impl Type {
     }
 
 
-    pub fn hash(self, map: &SymbolMap) -> TypeHash {
+    pub fn hash(self, map: &mut SymbolMap) -> TypeHash {
         self.hash_fn(map, |_| ())
     }
 
 
-    pub fn hash_fn(self, map: &SymbolMap, f: impl Fn(&mut FxHasher32)) -> TypeHash {
+    pub fn hash_fn(self, map: &mut SymbolMap, f: impl Fn(&mut FxHasher32)) -> TypeHash {
         let mut hasher = FxHasher32::new();
         self.hash_ex(map, &mut hasher);
         f(&mut hasher);
@@ -455,10 +443,38 @@ impl Type {
     }
 
 
-    fn hash_ex(self, map: &SymbolMap, hasher: &mut impl Hasher) {
+    pub(crate) fn function_instance_hash(self, map: &mut SymbolMap) -> TypeHash {
+        let Type::Ty(symbol, gens) = self
+        else { unreachable!() };
+
+        let mut hasher = FxHasher32::new();
+        symbol.hash(&mut hasher);
+        for (generic, ty) in map.gens()[gens] {
+            generic.name().hash(&mut hasher);
+            ty.hash_ex(map, &mut hasher);
+        }
+        TypeHash(hasher.hash)
+    }
+
+
+    fn hash_ex(self, map: &mut SymbolMap, hasher: &mut impl Hasher) {
         match self {
             Type::Ty(v, g) => {
-                let is_tuple = matches!(map.sym(v).kind(), SymbolKind::Container(container) if container.kind() == ContainerKind::Tuple);
+                let symbol = map.sym(v);
+                let arr = map.gens()[g];
+
+                if let SymbolKind::Function(function) = symbol.kind() {
+                    (u32::MAX - 1).hash(hasher);
+                    function.args().len().hash(hasher);
+                    for arg in function.args() {
+                        arg.is_inout().hash(hasher);
+                        arg.symbol().to_ty(arr, map).hash_ex(map, hasher);
+                    }
+                    function.ret().to_ty(arr, map).hash_ex(map, hasher);
+                    return;
+                }
+
+                let is_tuple = matches!(symbol.kind(), SymbolKind::Container(container) if container.kind() == ContainerKind::Tuple);
                 if is_tuple {
                     // Tuples are structural types. Their compiler-generated symbol IDs
                     // and generic parameter names differ between equivalent tuples.
@@ -467,7 +483,6 @@ impl Type {
                     v.hash(hasher);
                 }
 
-                let arr = map.gens()[g];
                 for g in arr.iter() {
                     if !is_tuple {
                         g.0.name().hash(hasher);

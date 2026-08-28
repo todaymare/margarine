@@ -584,7 +584,8 @@ pub fn run<'a>(
         let builder = main_fn.builder(ctx.as_ctx_ref(), main_fn_ty);
 
         for sym_id in startups {
-            let hash = Type::Ty(*sym_id, GenListId::EMPTY).hash(&*conv.syms);
+            let hash = Type::Ty(*sym_id, GenListId::EMPTY)
+                .function_instance_hash(conv.syms);
             if let Some(func) = conv.funcs.get(&hash) {
                 let args: Vec<_> = func.func_ty.args().into_iter().map(|ty| builder.const_zero(ty)).collect();
                 builder.call(func.func_ptr, func.func_ty, &args);
@@ -1765,7 +1766,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let sym_id = ty.sym(self.syms).unwrap();
         let gens_id = ty.gens(self.syms);
 
-        let hash = ty.hash(&self.syms);
+        let hash = ty.function_instance_hash(self.syms);
 
         if let Some(func) = self.funcs.get(&hash) { 
             assert!(func.sym.eq(self.syms, ty));

@@ -428,6 +428,13 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             DataTypeKind::CustomType(name, generics) => {
                 if name == StringMap::SELF_TY
                 && let Some(sym) = scope.find_self(&self.scopes) {
+                    let mut self_gens = std::vec::Vec::new();
+                    sym.collect_generics(&mut self_gens);
+                    for self_gen in self_gens {
+                        if let Some(i) = gens.iter().position(|generic| generic.name() == self_gen.name()) {
+                            used_gens[i] = true;
+                        }
+                    }
                     return sym
                 }
 
@@ -537,10 +544,22 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
 
             DataTypeKind::Fn(args, ret) => {
+                // Collect the enclosing generics so references inside the
+                // function type become generic references. Without this, a
+                // generic name like `R` resolves to the bare generic
+                // container symbol, which nothing ever substitutes and
+                // codegen later panics on.
+                let mut scope_gens: std::vec::Vec<(BoundedGeneric, Type)> = std::vec::Vec::new();
+                self.scopes.get(scope_id).collect_generics(&self.scopes, &mut scope_gens);
+
+                let gens: std::vec::Vec<BoundedGeneric> = scope_gens.iter().map(|(g, _)| *g).collect();
+                let mut used_gens = sti::vec::Vec::from_value(gens.len(), false);
+                let scope = self.scopes.get(scope_id);
+
                 let fields = {
                     let mut fields = Buffer::new(&*self.output, args.len());
                     for (i, arg) in args.iter().enumerate() {
-                        let g = self.dt_to_gen(id, self.scopes.get(scope_id), arg.data_type(), &[]);
+                        let g = self.dt_to_gen_ex(id, scope, arg.data_type(), &gens, &mut used_gens);
                         let func = FunctionArgument::new_inout(self.string_map.num(i), g, arg.is_inout());
                         fields.push(func);
                     }
@@ -549,11 +568,22 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     fields.leak()
                 };
 
-                let ret = self.dt_to_gen(id, self.scopes.get(scope_id), *ret, &[]);
+                let ret = self.dt_to_gen_ex(id, scope, *ret, &gens, &mut used_gens);
+
+                let mut fg = Buffer::new(&*self.output, gens.len());
+                let mut inst = Buffer::new(self.output, gens.len());
+                for (i, used) in used_gens.iter().enumerate() {
+                    if *used {
+                        fg.push(gens[i]);
+                        inst.push((gens[i], scope_gens[i].1));
+                    }
+                }
 
                 let closure = self.syms.new_closure();
-                let sym = self.func_sym(closure, fields, ret, &[], &[]);
-                Type::Ty(sym, GenListId::EMPTY)
+                let fg = fg.leak();
+                let sym = self.func_sym(closure, fields, ret, fg, fg);
+                let gens = self.syms.add_gens(inst.leak());
+                Type::Ty(sym, gens)
             }
 
 
