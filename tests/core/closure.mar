@@ -117,3 +117,86 @@ fn closure_inout_parameter_is_preserved() {
     assert(result == 2, "inout closure parameter was not written back");
 }
 
+
+struct GenericCallbackHolder<T> {
+    callback: T,
+}
+
+fn generic_function_type_annotations<T>(value: T, callback: fn(T): T): T {
+    let direct: fn(T): T = callback;
+    let nested: fn(fn(T): T, T): T = |f: fn(T): T, value: T| f(value);
+    nested(direct, value)
+}
+
+@test
+fn function_type_annotations_resolve_enclosing_generics() {
+    let result = generic_function_type_annotations(21, |value| value * 2);
+    assert(result == 42, "generic function-type arguments or returns were not resolved");
+}
+
+fn generic_function_type_in_struct<T>(callback: fn(T): T, value: T): T {
+    let first: GenericCallbackHolder<fn(T): T> = GenericCallbackHolder { callback };
+    let second: GenericCallbackHolder<fn(T): T> = first;
+    (second.callback)(value)
+}
+
+@test
+fn equivalent_generic_function_types_share_struct_codegen_type() {
+    let result = generic_function_type_in_struct(|value: int| value + 1, 41);
+    assert(result == 42, "equivalent function types produced incompatible struct types");
+}
+
+fn generic_function_type_in_enum<T>(callback: fn(T): T, value: T): T {
+    let first: Option<fn(T): T> = some(callback);
+    let second: Option<fn(T): T> = first;
+    (second!)(value)
+}
+
+@test
+fn equivalent_generic_function_types_share_enum_codegen_type() {
+    let result = generic_function_type_in_enum(|value: int| value + 1, 41);
+    assert(result == 42, "equivalent function types produced incompatible enum types");
+}
+
+fn generic_inout_function_type<T>(value: T, callback: fn(&T)): T {
+    let saved: fn(&T) = callback;
+    saved(&value);
+    value
+}
+
+@test
+fn generic_function_type_preserves_inout_marker() {
+    let result = generic_inout_function_type(41, |&value| { value += 1; });
+    assert(result == 42, "generic function type lost its inout marker");
+}
+
+@silent
+fn assign_generic_callback_to_wrong_return<T>(callback: fn(T): T) {
+    let wrong: fn(T): bool = callback;
+}
+
+@test(should_panic)
+@silent
+fn generic_function_type_rejects_wrong_return_type() {
+    assign_generic_callback_to_wrong_return(|value: int| value);
+}
+
+
+struct GenericSelfCallback<T> {
+    value: T,
+}
+
+impl<T> GenericSelfCallback<T> {
+    fn apply(self, callback: fn(Self): Self): Self {
+        let saved: fn(Self): Self = callback;
+        saved(self)
+    }
+}
+
+@test
+fn function_type_annotations_resolve_generic_self() {
+    let value = GenericSelfCallback { value: 41 };
+    let result = value.apply(
+        |item: GenericSelfCallback<int>| GenericSelfCallback { value: item.value + 1 });
+    assert(result.value == 42, "generic Self in a function type was not resolved");
+}
