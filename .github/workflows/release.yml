@@ -230,6 +230,7 @@ jobs:
             sleep 1
           done
           export MARGARINE_RELEASE_DOWNLOAD_URL=http://127.0.0.1:8765
+          echo "MARGARINE_RELEASE_DIR=$release_dir" >> "$GITHUB_ENV"
           sh scripts/install.sh
 
       - name: Install Wasm linker
@@ -239,9 +240,20 @@ jobs:
           test -x /usr/lib/llvm-18/bin/wasm-ld
           echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
 
-      - name: Install wasm toolchain
+      - name: Install Wasm toolchain from draft assets
         run: |
-          "$HOME/.margarine/bin/margarine" toolchain add wasm32-unknown-unknown
+          archive="$MARGARINE_RELEASE_DIR/margarine-toolchain-wasm32-unknown-unknown.tar.gz"
+          checksum="$archive.sha256"
+          expected=$(awk 'NF { print $1; exit }' "$checksum")
+          actual=$(sha256sum "$archive" | awk '{ print $1 }')
+          [ "$expected" = "$actual" ] || {
+            echo "error: Wasm toolchain checksum mismatch" >&2
+            exit 1
+          }
+          version=$("$HOME/.margarine/bin/margarine" --version | awk '{ print $2 }')
+          target_dir="$HOME/.margarine/$version/toolchains/wasm32-unknown-unknown"
+          mkdir -p "$target_dir"
+          tar -xzf "$archive" -C "$target_dir"
 
       - name: Build wasm example
         run: |
