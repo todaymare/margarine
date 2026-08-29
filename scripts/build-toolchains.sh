@@ -31,10 +31,18 @@ fi
 CORE_C=$LIB_DIR/core/lib.c
 STD_C=$LIB_DIR/std/lib.c
 STD_INCLUDE=$LIB_DIR/std
+WASM_ALLOCATOR_C=$LIB_DIR/core/wasm_allocator.c
+DLMALLOC_C=$LIB_DIR/core/dlmalloc.c
 
 for src in "$CORE_C" "$STD_C"; do
     [ -f "$src" ] || { echo "error: missing $src" >&2; exit 1; }
 done
+
+if [ "$TARGET" = "wasm32-unknown-unknown" ]; then
+    for src in "$WASM_ALLOCATOR_C" "$DLMALLOC_C"; do
+        [ -f "$src" ] || { echo "error: missing $src" >&2; exit 1; }
+    done
+fi
 
 find_tool() {
     for candidate in "$@"; do
@@ -64,7 +72,14 @@ trap 'rm -rf "$TMP"' EXIT
 "$CLANG" --target="$TARGET" -c "$CORE_C" -o "$TMP/core.o"
 "$CLANG" --target="$TARGET" -I "$STD_INCLUDE" -c "$STD_C" -o "$TMP/std.o"
 
-"$ARCHIVER" rcs "$OUT/libcore.a" "$TMP/core.o"
+if [ "$TARGET" = "wasm32-unknown-unknown" ]; then
+    "$CLANG" --target="$TARGET" -I "$LIB_DIR/core" -O2 \
+        -c "$WASM_ALLOCATOR_C" -o "$TMP/wasm_allocator.o"
+    "$ARCHIVER" rcs "$OUT/libcore.a" "$TMP/core.o" "$TMP/wasm_allocator.o"
+else
+    "$ARCHIVER" rcs "$OUT/libcore.a" "$TMP/core.o"
+fi
+
 "$ARCHIVER" rcs "$OUT/libstd.a" "$TMP/std.o"
 
 printf '%s\n' "built $TARGET: libcore.a libstd.a"

@@ -5054,7 +5054,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             };
 
             let tagged_ptr = self.collection_tagged_ptr(builder, collection);
-            let (ptr, tag) = self.collection_split_tag(builder, tagged_ptr);
+            let (ptr, _) = self.collection_split_tag(builder, tagged_ptr);
             builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*ptr]).as_ptr();
 
             return value;
