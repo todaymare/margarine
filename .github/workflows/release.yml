@@ -173,6 +173,15 @@ jobs:
             > "$RUNNER_TEMP/margarine-release-server.log" 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
+          attempts=0
+          until curl --fail --silent http://127.0.0.1:8765/ >/dev/null; do
+            attempts=$((attempts + 1))
+            [ "$attempts" -lt 10 ] || {
+              cat "$RUNNER_TEMP/margarine-release-server.log" >&2
+              exit 1
+            }
+            sleep 1
+          done
           export MARGARINE_RELEASE_DOWNLOAD_URL=http://127.0.0.1:8765
           sh scripts/install.sh
 
@@ -211,6 +220,15 @@ jobs:
             > "$RUNNER_TEMP/margarine-release-server.log" 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
+          attempts=0
+          until curl --fail --silent http://127.0.0.1:8765/ >/dev/null; do
+            attempts=$((attempts + 1))
+            [ "$attempts" -lt 10 ] || {
+              cat "$RUNNER_TEMP/margarine-release-server.log" >&2
+              exit 1
+            }
+            sleep 1
+          done
           export MARGARINE_RELEASE_DOWNLOAD_URL=http://127.0.0.1:8765
           sh scripts/install.sh
 
