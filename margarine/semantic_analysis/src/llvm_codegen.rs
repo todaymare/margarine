@@ -352,8 +352,8 @@ pub fn run<'a>(
             let rc_ptr = builder.arg(0).unwrap();
             let rc_ptr = builder.local_get(rc_ptr).as_ptr();
 
-            let one = builder.const_int(usize_ty, 1, false);
             let refcount = builder.load_tbaa(rc_ptr, *usize_ty, tbaa_refcount).as_integer();
+            let one = builder.const_int(usize_ty, 1, false);
 
             let max = builder.const_all_ones(usize_ty);
             // we can assume this bcs its impossible to have 
@@ -381,10 +381,9 @@ pub fn run<'a>(
             let rc_ptr = builder.arg(0).unwrap();
             let rc_ptr = builder.local_get(rc_ptr).as_ptr();
 
+            let refcount = builder.load_tbaa(rc_ptr, *usize_ty, tbaa_refcount).as_integer();
             let one = builder.const_int(usize_ty, 1, false);
             let zero = builder.const_int(usize_ty, 0, false);
-
-            let refcount = builder.load_tbaa(rc_ptr, *usize_ty, tbaa_refcount).as_integer();
 
             // if this is false, then it'd lead to a double-free
             let is_ge_one = builder.cmp_int(refcount, one, IntCmp::UnsignedGe);
@@ -1272,9 +1271,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 builder.store(offset_slot, *builder.add_int_nuw(current_offset, parent_offset));
 
                 let grand_tagged = self.collection_tagged_ptr(builder, grandbase);
-                let (grand_ptr, _) = self.collection_split_tag(builder, grand_tagged);
-                builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*grand_ptr]);
-                builder.store(base_slot, *grandbase);
+                let (grand_ptr, grand_tag) = self.collection_split_tag(builder, grand_tagged);
+                let cloned = builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*grand_ptr]).as_ptr();
+                let retagged = self.collection_with_tag(builder, cloned, grand_tag);
+                let metadata = builder.field_load(grandbase, 1);
+                builder.store(base_slot, *builder.struct_instance(self.collection_ty, [*retagged, metadata]));
                 self.collection_drop(env, builder, base, elem_repr, elem_ty);
             });
 
@@ -3244,7 +3245,13 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let value = builder.load(slot, self.to_llvm_ty(iter_sym).repr);
                     self.emit_drop(env, builder, value, iter_sym);
                 }
-                self.emit_drop(env, builder, iter_value, iter_sym);
+                // A place expression (variable, field, index) still belongs to
+                // its owner, which drops it through the normal local protocol.
+                // Dropping it here too releases the same value twice; only a
+                // temporary iterator is owned by this loop.
+                if !self.is_inout_place(expr) {
+                    self.emit_drop(env, builder, iter_value, iter_sym);
+                }
 
                 Ok(())
             },
@@ -5036,10 +5043,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             return builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[value]);
         }
 
-        if sym_id == SymbolId::LIST 
+        if sym_id == SymbolId::LIST
         || sym_id == SymbolId::LIST_ITER {
 
-            let collection = 
+            let collection =
             if sym_id == SymbolId::LIST {
                 value.as_struct()
             } else {
@@ -5047,8 +5054,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
             };
 
             let tagged_ptr = self.collection_tagged_ptr(builder, collection);
-            let (ptr, _) = self.collection_split_tag(builder, tagged_ptr);
-            builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*ptr]);
+            let (ptr, tag) = self.collection_split_tag(builder, tagged_ptr);
+            builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*ptr]).as_ptr();
 
             return value;
         }
@@ -5064,11 +5071,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let func_ref = value.as_struct();
                 let capture_ptr = builder.field_load(func_ref, 1).as_ptr();
                 let is_closure = builder.bool_not(builder.ptr_is_null(capture_ptr));
+                let slot = builder.alloca_store(value);
                 builder.iff(is_closure,
                     |builder| {
-                        builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*capture_ptr]);
+                        let cloned = builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*capture_ptr]).as_ptr();
+                        let env_ptr = builder.field_ptr(slot, self.func_ref, 1);
+                        builder.store(env_ptr, *cloned);
                     });
-                return value;
+                return builder.load(slot, value.ty());
             }
             return value;
         };

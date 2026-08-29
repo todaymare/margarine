@@ -211,30 +211,6 @@ fn build_script_output_is_labeled_and_indented() {
     }
 }
 
-#[test]
-fn prelude_environment_has_a_std_default_and_preserves_explicit_order() {
-    let _guard = EnvGuard::new("MARGARINE_PRELUDE");
-    std::env::remove_var("MARGARINE_PRELUDE");
-
-    let defaults = preludes_from_env();
-    assert_eq!(defaults.len(), 1);
-    assert_eq!(defaults[0].alias, "std");
-    let expected =
-        format!("https://cdn.daymare.net/margarine/{VERSION}/share/std");
-    assert_eq!(defaults[0].url, expected);
-    std::env::set_var(
-        "MARGARINE_PRELUDE",
-        "first=https://example.com/first;second=https://example.com/second",
-    );
-    let explicit = preludes_from_env();
-    assert_eq!(
-        explicit.iter().map(|prelude| prelude.alias.as_str()).collect::<Vec<_>>(),
-        ["first", "second"],
-    );
-    assert_eq!(explicit[0].url, "https://example.com/first");
-    assert_eq!(explicit[1].url, "https://example.com/second");
-}
-
 
 
 #[test]

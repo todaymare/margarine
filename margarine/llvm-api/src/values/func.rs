@@ -48,6 +48,8 @@ impl<'ctx> FunctionPtr<'ctx> {
     }
 
 
+
+
     /// Marks the result as a fresh allocation that cannot alias existing pointers.
     pub fn set_noalias_return(self, ctx: ContextRef<'ctx>) {
         let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("noalias"), 7) };
