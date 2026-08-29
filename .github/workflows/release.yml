@@ -117,7 +117,7 @@ jobs:
           path: assets
           merge-multiple: true
 
-      - name: Publish GitHub release
+      - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -125,6 +125,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
+            --draft \
             assets/margarine-*.tar.gz assets/margarine-*.tar.gz.sha256
 
   installed-tests:
@@ -157,9 +158,22 @@ jobs:
 
       - name: Install released Margarine
         env:
+          GH_TOKEN: ${{ github.token }}
           MARGARINE_GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          export MARGARINE_RELEASE_DOWNLOAD_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          release_dir="$RUNNER_TEMP/margarine-release"
+          mkdir -p "$release_dir"
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "margarine-*.tar.gz" \
+            --pattern "margarine-*.tar.gz.sha256" \
+            --dir "$release_dir"
+          python3 -m http.server 8765 --bind 127.0.0.1 \
+            --directory "$release_dir" \
+            > "$RUNNER_TEMP/margarine-release-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          export MARGARINE_RELEASE_DOWNLOAD_URL=http://127.0.0.1:8765
           sh scripts/install.sh
 
       - name: Run core language suite
@@ -182,9 +196,22 @@ jobs:
 
       - name: Install released Margarine
         env:
+          GH_TOKEN: ${{ github.token }}
           MARGARINE_GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          export MARGARINE_RELEASE_DOWNLOAD_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          release_dir="$RUNNER_TEMP/margarine-release"
+          mkdir -p "$release_dir"
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "margarine-*.tar.gz" \
+            --pattern "margarine-*.tar.gz.sha256" \
+            --dir "$release_dir"
+          python3 -m http.server 8765 --bind 127.0.0.1 \
+            --directory "$release_dir" \
+            > "$RUNNER_TEMP/margarine-release-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          export MARGARINE_RELEASE_DOWNLOAD_URL=http://127.0.0.1:8765
           sh scripts/install.sh
 
       - name: Install Wasm linker
