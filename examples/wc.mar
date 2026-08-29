@@ -1,4 +1,4 @@
-use std::string::format;
+use std::string::(format, ToStr);
 
 fn main(): int {
     var args = std::env::args();

@@ -1,5 +1,4 @@
-use std::string::format;
-use std::string::from_ascii;
+use std::string::(format, from_ascii, ToStr);
 
 fn main(): int {
     var args = std::env::args();
@@ -88,7 +87,7 @@ fn main(): int {
                     if input.len() == 0 {
                         tape[ptr] = 0;
                     } else {
-                        tape[ptr] = input.byte_at(0)!;
+                        tape[ptr] = input.byte_at(0)! as int;
                     }
                 },
                 err(msg) => {

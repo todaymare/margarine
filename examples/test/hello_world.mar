@@ -1,8 +1,0 @@
-fn foo() {
-    312;
-}
-
-
-struct Foo {
-    bar: int,
-}

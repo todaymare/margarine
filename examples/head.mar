@@ -11,6 +11,7 @@ fn print_head(file: str, limit: int): int {
     0
 }
 
+
 fn main(): int {
     var args = std::env::args();
     var limit = 10;

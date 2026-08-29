@@ -1,3 +1,0 @@
-fn main() {
-    var x = $any(69);
-}
