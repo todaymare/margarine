@@ -263,6 +263,11 @@ pub enum Error {
 
     CallOnField { source: SourceRange, field_name: StringIndex, },
 
+    TraitMemberNotFunction {
+        source: SourceRange,
+        name: StringIndex,
+    },
+
     ImplTraitOnNonTrait(SourceRange),
 
     TypeDoesntImplTrait { source: SourceRange, ty: Type, tr: SymbolId },
@@ -835,6 +840,18 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
                     .highlight_with_note(*source, &msg)
 
             }
+
+            Error::TraitMemberNotFunction { source, name } => {
+                let name = fmt.string(*name).to_string();
+                fmt.error("trait member must be a function")
+                    .highlight_with_note(
+                        *source,
+                        &format!(
+                            "'{}' is declared as a non-function in this implementation",
+                            name,
+                        ),
+                    )
+            },
 
             Error::ImplTraitOnNonTrait(src) => {
                 fmt.error("can't impl a non-trait")

@@ -603,3 +603,19 @@ fn closure_local_values_remain_mutable_and_captures_remain_readable() {
         semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
     )));
 }
+
+
+#[test]
+fn trait_impl_rejects_non_function_member_without_panicking() {
+    let result = compile_source(
+        "trait T { fn f(self) }\n\
+         struct S {}\n\
+         impl T for S { struct f {} }\n\
+         fn main() {}",
+    );
+
+    assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
+        error,
+        semantic_analysis::errors::Error::TraitMemberNotFunction { .. }
+    )).count(), 1);
+}

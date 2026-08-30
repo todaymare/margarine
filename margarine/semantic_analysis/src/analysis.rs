@@ -1066,7 +1066,12 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                     let SymbolKind::Function(f) = sym.kind()
                     else {
-                        todo!();
+                        self.error(n, Error::TraitMemberNotFunction {
+                            source: header,
+                            name: *name,
+                        });
+                        ns = self.namespaces.get_ns_mut(ns_id);
+                        continue;
                     };
 
 
