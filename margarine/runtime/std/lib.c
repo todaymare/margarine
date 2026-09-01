@@ -1,4 +1,4 @@
-#include "margarine.h"
+#include "../margarine.h"
 
 #if !defined(__wasm__)
 #include <stdio.h>
@@ -7,11 +7,17 @@
 #include <errno.h>
 #include <sys/wait.h>
 #include <time.h>
+#endif
 
-#if defined(__APPLE__)
-#include <crt_externs.h>
-#endif
-#endif
+static int32_t margarine_argc;
+static char **margarine_argv;
+
+void margarineSetEnvArgs(int32_t argc, char **argv) {
+    if (argc < 0 || (argc != 0 && argv == NULL)) margarineAbort(1);
+    margarine_argc = argc;
+    margarine_argv = argv;
+}
+
 
 #if defined(__wasm__)
 __attribute__((import_module("env")))
@@ -42,26 +48,26 @@ int64_t host_now_nanos(void);
 #endif
 
 MARGARINE_DEFINE_OPTION(int64_t);
-MARGARINE_DEFINE_OPTION(MargarineStr);
+MARGARINE_DEFINE_OPTION(MargarineString);
 
-static MargarineStr string_from_bytes(const uint8_t *bytes, size_t len) {
+static MargarineString string_from_bytes(const uint8_t *bytes, size_t len) {
     return margarineStringFromUtf8(bytes, len);
 }
 
 #if !defined(__wasm__)
-static MargarineStr string_from_cstr(const char *value) {
+static MargarineString string_from_cstr(const char *value) {
     return string_from_bytes((const uint8_t *)value, strlen(value));
 }
 
-static MARGARINE_OPTION(MargarineStr) result_ok(MargarineStr value) {
-    return (MARGARINE_OPTION(MargarineStr)){
+static MARGARINE_OPTION(MargarineString) result_ok(MargarineString value) {
+    return (MARGARINE_OPTION(MargarineString)){
         .tag = MARGARINE_SOME,
         .data = value,
     };
 }
 
-static MARGARINE_OPTION(MargarineStr) result_err(const char *message) {
-    return (MARGARINE_OPTION(MargarineStr)){
+static MARGARINE_OPTION(MargarineString) result_err(const char *message) {
+    return (MARGARINE_OPTION(MargarineString)){
         .tag = MARGARINE_NONE,
         .data = string_from_cstr(message),
     };
@@ -86,7 +92,7 @@ void eprint_byte(uint8_t value) {
 #endif
 }
 
-MargarineStr int_to_str(int64_t value) {
+MargarineString int_to_str(int64_t value) {
     uint8_t bytes[20];
     size_t start = sizeof(bytes);
     uint64_t magnitude = value < 0 ? 0 - (uint64_t)value : (uint64_t)value;
@@ -101,7 +107,7 @@ MargarineStr int_to_str(int64_t value) {
 }
 
 #if defined(__wasm__)
-MargarineStr float_to_str(double value) {
+MargarineString float_to_str(double value) {
     uint8_t bytes[64];
     int32_t len = host_float_to_str(value, bytes, (int32_t)sizeof(bytes));
     if (len < 0 || (size_t)len > sizeof(bytes)) {
@@ -111,7 +117,7 @@ MargarineStr float_to_str(double value) {
     return string_from_bytes(bytes, (size_t)len);
 }
 #else
-MargarineStr float_to_str(double value) {
+MargarineString float_to_str(double value) {
     char bytes[64];
     int len = snprintf(bytes, sizeof(bytes), "%.17g", value);
     if (len < 0) return string_from_cstr("<float format error>");
@@ -145,7 +151,7 @@ int64_t margarineSpawn(const uint8_t *bytes, int64_t len) {
     return -1;
 }
 
-MARGARINE_OPTION(MargarineStr) margarineEnvVariable(
+MARGARINE_OPTION(MargarineString) margarineEnvVariable(
     const uint8_t *bytes,
     int64_t len
 ) {
@@ -157,29 +163,32 @@ MARGARINE_OPTION(MargarineStr) margarineEnvVariable(
 }
 
 MargarineCollection margarineEnvArgs(void) {
-    char **args;
-#if defined(__APPLE__)
-    args = *_NSGetArgv();
-#else
-    args = NULL;
-#endif
-    size_t len = 0;
-    while (args != NULL && args[len] != NULL) ++len;
+    size_t len = margarine_argc > 0 ? (size_t)margarine_argc : 0;
 
-    size_t total_size = sizeof(size_t) + len * sizeof(MargarineStr);
+    if (len > (SIZE_MAX - sizeof(size_t)) / sizeof(MargarineString)) {
+        margarineAbort(1);
+    }
+    if ((uint64_t)len > (uint64_t)INT64_MAX) {
+        margarineAbort(1);
+    }
+
+    size_t total_size = sizeof(size_t) + len * sizeof(MargarineString);
     uint8_t *allocation = margarineRcAlloc(total_size);
-    MargarineStr *values = (MargarineStr *)(allocation + sizeof(size_t));
+    MargarineString *values = (MargarineString *)(allocation + sizeof(size_t));
     for (size_t index = 0; index < len; ++index) {
-        values[index] = string_from_cstr(args[index]);
+        if (margarine_argv == NULL || margarine_argv[index] == NULL) {
+            margarineAbort(1);
+        }
+        values[index] = string_from_cstr(margarine_argv[index]);
     }
 
     return (MargarineCollection){
         .ptr = allocation,
-        .len = len,
+        .len = (int64_t)len,
     };
 }
 
-MARGARINE_OPTION(MargarineStr) io_read_file(
+MARGARINE_OPTION(MargarineString) io_read_file(
     const uint8_t *path_bytes,
     int64_t path_len
 ) {
@@ -210,19 +219,19 @@ MARGARINE_OPTION(MargarineStr) io_read_file(
     }
     fclose(file);
 
-    MargarineStr result = string_from_bytes(bytes, read);
+    MargarineString result = string_from_bytes(bytes, read);
     margarineDealloc(bytes, (size_t)size);
     return result_ok(result);
 }
 
-static MARGARINE_OPTION(MargarineStr) result_ok_unit(void) {
-    return (MARGARINE_OPTION(MargarineStr)){
+static MARGARINE_OPTION(MargarineString) result_ok_unit(void) {
+    return (MARGARINE_OPTION(MargarineString)){
         .tag = MARGARINE_SOME,
         .data = { .value = { .ptr = NULL, .len = 0 } },
     };
 }
 
-MARGARINE_OPTION(MargarineStr) io_write_file(
+MARGARINE_OPTION(MargarineString) io_write_file(
     const uint8_t *path_bytes,
     int64_t path_len,
     const uint8_t *bytes,
@@ -236,7 +245,7 @@ MARGARINE_OPTION(MargarineStr) io_write_file(
 
     if (write_len != 0 && fwrite(bytes, 1, write_len, file) != write_len) {
         const char *message = ferror(file) ? strerror(errno) : "short write";
-        MARGARINE_OPTION(MargarineStr) result = result_err(message);
+        MARGARINE_OPTION(MargarineString) result = result_err(message);
         fclose(file);
         return result;
     }
@@ -244,11 +253,11 @@ MARGARINE_OPTION(MargarineStr) io_write_file(
     return result_ok_unit();
 }
 
-MARGARINE_OPTION(MargarineStr) io_read_line(void) {
+MARGARINE_OPTION(MargarineString) io_read_line(void) {
     size_t capacity = 128;
     size_t len = 0;
     uint8_t *bytes = margarineAlloc(capacity);
-    int byte;
+    int byte = EOF;
 
     while ((byte = fgetc(stdin)) != EOF) {
         if (len == capacity) {
@@ -273,7 +282,7 @@ MARGARINE_OPTION(MargarineStr) io_read_line(void) {
         return result_err("EOF");
     }
 
-    MargarineStr result = string_from_bytes(bytes, len);
+    MargarineString result = string_from_bytes(bytes, len);
     margarineDealloc(bytes, capacity);
     return result_ok(result);
 }
@@ -325,13 +334,13 @@ int64_t now_nanos(void) {
 
 
 
-MARGARINE_OPTION(MargarineStr) str_from_codepoint(int64_t codepoint) {
+MARGARINE_OPTION(MargarineString) str_from_codepoint(int64_t codepoint) {
     uint8_t bytes[4];
     size_t len;
 
     if (codepoint < 0 || codepoint > 0x10ffff ||
         (codepoint >= 0xd800 && codepoint <= 0xdfff)) {
-        return (MARGARINE_OPTION(MargarineStr)){
+        return (MARGARINE_OPTION(MargarineString)){
             .tag = MARGARINE_NONE,
             .data = { .value = { .ptr = NULL, .len = 0 } },
         };
@@ -357,7 +366,7 @@ MARGARINE_OPTION(MargarineStr) str_from_codepoint(int64_t codepoint) {
         len = 4;
     }
 
-    return (MARGARINE_OPTION(MargarineStr)){
+    return (MARGARINE_OPTION(MargarineString)){
         .tag = MARGARINE_SOME,
         .data = margarineStringFromUtf8(bytes, len),
     };

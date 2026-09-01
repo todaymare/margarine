@@ -30,7 +30,6 @@ fi
 
 CORE_C=$LIB_DIR/core/lib.c
 STD_C=$LIB_DIR/std/lib.c
-STD_INCLUDE=$LIB_DIR/std
 WASM_ALLOCATOR_C=$LIB_DIR/core/wasm_allocator.c
 DLMALLOC_C=$LIB_DIR/core/dlmalloc.c
 
@@ -70,7 +69,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 "$CLANG" --target="$TARGET" -c "$CORE_C" -o "$TMP/core.o"
-"$CLANG" --target="$TARGET" -I "$STD_INCLUDE" -c "$STD_C" -o "$TMP/std.o"
+"$CLANG" --target="$TARGET" -c "$STD_C" -o "$TMP/std.o"
 
 if [ "$TARGET" = "wasm32-unknown-unknown" ]; then
     "$CLANG" --target="$TARGET" -I "$LIB_DIR/core" -O2 \

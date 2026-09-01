@@ -1,18 +1,19 @@
-#ifndef MARGARINE_STD_NATIVE_H
-#define MARGARINE_STD_NATIVE_H
+#ifndef MARGARINE_RUNTIME_H
+#define MARGARINE_RUNTIME_H
 
 #include <stddef.h>
 #include <stdint.h>
 
-/* Core runtime layouts used by native std functions. */
+/* Public aggregate layouts mirror the compiler's collectionType/strType
+ * definitions. Lengths stay fixed-width so the C ABI is target-independent. */
 typedef struct {
     uint8_t *ptr;
-    size_t len;
+    int64_t len;
 } MargarineCollection;
 
 typedef struct {
     MargarineCollection value;
-} MargarineStr;
+} MargarineString;
 
 /* Generates a concrete enum layout, allowing C to apply the correct payload
  * padding and alignment. */
@@ -34,13 +35,14 @@ typedef struct {
 #define MARGARINE_SOME 0u
 #define MARGARINE_NONE 1u
 
-/* Implemented by core's native layer. */
+/* Implemented by core. */
 _Noreturn void margarineAbort(int32_t code);
-
-MargarineStr margarineStringFromUtf8(const uint8_t *bytes, size_t len);
-/* Native string inputs use a borrowed byte pointer and explicit length. */
+MargarineString margarineStringFromUtf8(const uint8_t *bytes, size_t len);
 void *margarineAlloc(size_t size);
 uint8_t *margarineRcAlloc(size_t total_size);
 void margarineDealloc(uint8_t *ptr, size_t size);
+
+/* Implemented by std and called by generated native entry points. */
+void margarineSetEnvArgs(int32_t argc, char **argv);
 
 #endif

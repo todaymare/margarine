@@ -1,13 +1,40 @@
 use std::{
     fs::{self, File, OpenOptions},
     os::fd::FromRawFd as _,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::Duration,
 };
 
 use fs2::FileExt;
+
+
+fn prelude_fixture(root: &Path) -> PathBuf {
+    let prelude = root.join("prelude");
+    fs::create_dir_all(prelude.join("lib")).unwrap();
+    fs::write(prelude.join("lib.mar"), "pub mod prelude;").unwrap();
+    fs::write(prelude.join("lib/prelude.mar"), "").unwrap();
+
+    let repository = git2::Repository::init(&prelude).unwrap();
+    let mut index = repository.index().unwrap();
+    index.add_path(Path::new("lib.mar")).unwrap();
+    index.add_path(Path::new("lib/prelude.mar")).unwrap();
+    let tree = repository.find_tree(index.write_tree().unwrap()).unwrap();
+    let signature = git2::Signature::now("margarine", "margarine@localhost").unwrap();
+    repository.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        "fixture",
+        &tree,
+        &[],
+    ).unwrap();
+    drop(tree);
+    drop(repository);
+
+    prelude
+}
 
 
 #[test]
@@ -114,25 +141,7 @@ fn piped_lock_wait_is_transient() {
 #[test]
 fn run_displays_the_source_path_instead_of_the_executable_path() {
     let dir = tempfile::tempdir().unwrap();
-    let prelude = dir.path().join("prelude");
-    fs::create_dir(&prelude).unwrap();
-    fs::write(prelude.join("lib.mar"), "").unwrap();
-
-    let repository = git2::Repository::init(&prelude).unwrap();
-    let mut index = repository.index().unwrap();
-    index.add_path(Path::new("lib.mar")).unwrap();
-    let tree = repository.find_tree(index.write_tree().unwrap()).unwrap();
-    let signature = git2::Signature::now("margarine", "margarine@localhost").unwrap();
-    repository.commit(
-        Some("HEAD"),
-        &signature,
-        &signature,
-        "fixture",
-        &tree,
-        &[],
-    ).unwrap();
-    drop(tree);
-    drop(repository);
+    let prelude = prelude_fixture(dir.path());
 
     fs::write(dir.path().join("program.mar"), "fn main() {}").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_margarine"))
@@ -148,5 +157,45 @@ fn run_displays_the_source_path_instead_of_the_executable_path() {
         String::from_utf8_lossy(&output.stderr),
     );
     assert_eq!(output.stdout, "› Running program.mar\n".as_bytes());
+}
+
+
+#[test]
+fn run_forwards_native_process_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    let prelude = prelude_fixture(dir.path());
+    fs::write(
+        dir.path().join("program.mar"),
+        r#"extern {
+    fn margarineEnvArgs(): [str]
+}
+
+fn main(): int {
+    let args = margarineEnvArgs();
+    let second_argument = args[2];
+    0
+}
+"#,
+    ).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_margarine"))
+        .args([
+            "run",
+            "--cache",
+            "artifacts",
+            "program.mar",
+            "first",
+            "second",
+        ])
+        .current_dir(dir.path())
+        .env("MARGARINE_PRELUDE", format!("fixture={}", prelude.display()))
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 

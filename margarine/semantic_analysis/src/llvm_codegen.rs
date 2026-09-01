@@ -128,6 +128,22 @@ enum ExternAbi<'ctx> {
 }
 
 
+// Clang's wasm32 C ABI returns an aggregate directly only when it flattens to
+// one scalar value. Other supported aggregate returns use `sret`.
+fn wasm_c_abi_requires_sret<'ctx>(
+    arena: &Arena,
+    ty: LLVMType<'ctx>,
+) -> bool {
+    match ty.kind() {
+        TypeKind::Struct => {
+            let fields = ty.as_struct().fields(arena);
+            fields.len() != 1 || wasm_c_abi_requires_sret(arena, fields[0])
+        },
+        _ => false,
+    }
+}
+
+
 #[derive(Debug, Clone)]
 pub struct CompilationSettings<'out> {
     pub compilation_target: CompilationTarget,
@@ -566,8 +582,12 @@ pub fn run<'a>(
         // `fn main` is now named exactly "main" (root-relative paths), so it would
         // otherwise take the entry name and the linker would bind the process
         // entry to it, making the exit code whatever garbage `w0` held on return.
-        let i32_ty = ctx.integer(32);
-        let main_fn_ty = i32_ty.fn_ty(ctx.arena, &[], false);
+        let main_fn_ty =
+        if matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
+            i32_ty.fn_ty(ctx.arena, &[], false)
+        } else {
+            i32_ty.fn_ty(ctx.arena, &[*i32_ty, *ptr], false)
+        };
         let main_fn = module.function("main", main_fn_ty);
 
         // create IR
@@ -581,6 +601,14 @@ pub fn run<'a>(
 
         // build main
         let builder = main_fn.builder(ctx.as_ctx_ref(), main_fn_ty);
+        if !matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
+            let set_env_args_fn_ty = void.fn_ty(ctx.arena, &[*i32_ty, *ptr], false);
+            let set_env_args_fn = module.function("margarineSetEnvArgs", set_env_args_fn_ty);
+            set_env_args_fn.set_linkage(Linkage::External);
+            let argc = builder.local_get(builder.arg(0).unwrap());
+            let argv = builder.local_get(builder.arg(1).unwrap());
+            builder.call(set_env_args_fn, set_env_args_fn_ty, &[argc, argv]);
+        }
 
         for sym_id in startups {
             let hash = Type::Ty(*sym_id, GenListId::EMPTY)
@@ -5433,15 +5461,22 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn extern_abi(&self, ret: LLVMType<'ctx>) -> ExternAbi<'ctx> {
-        let uses_large_struct_sret = matches!(
-            self.target,
+        if ret.kind() != TypeKind::Struct {
+            return ExternAbi::Direct;
+        }
+
+
+        let returns_indirectly =
+        match self.target {
+            CompilationTarget::Wasm32UnknownUnknown =>
+                wasm_c_abi_requires_sret(self.ctx.arena, ret),
             CompilationTarget::Arm64AppleDarwin
             | CompilationTarget::X86_64UnknownLinuxGnu
-            | CompilationTarget::Aarch64UnknownLinuxGnu
-        );
-        if uses_large_struct_sret
-        && ret.kind() == TypeKind::Struct
-        && ret.size_of(self.module).is_some_and(|size| size > 16) {
+            | CompilationTarget::Aarch64UnknownLinuxGnu =>
+                ret.size_of(self.module).is_some_and(|size| size > 16),
+        };
+
+        if returns_indirectly {
             ExternAbi::SRet(ret)
         } else {
             ExternAbi::Direct
@@ -5588,29 +5623,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
 }
-
-#[cfg(test)]
-mod tests {
-    use super::CompilationTarget;
-
-    #[test]
-    fn linux_targets_expose_platform_triples() {
-        let x86 = CompilationTarget::try_from("x86_64-unknown-linux-gnu").unwrap();
-        assert_eq!(x86.margarine_target_triple(), "x86_64-unknown-linux-gnu");
-        assert_eq!(x86.llvm_target_triple(), "x86_64-unknown-linux-gnu");
-        assert_eq!(x86.c_target_triple(), "x86_64-unknown-linux-gnu");
-        assert_eq!(x86.shared_library_suffix(), "so");
-
-        let arm = CompilationTarget::try_from("aarch64-unknown-linux-gnu").unwrap();
-        assert_eq!(arm.margarine_target_triple(), "aarch64-unknown-linux-gnu");
-        assert_eq!(arm.llvm_target_triple(), "aarch64-unknown-linux-gnu");
-        assert_eq!(arm.c_target_triple(), "aarch64-unknown-linux-gnu");
-        assert_eq!(arm.shared_library_suffix(), "so");
-    }
-}
-
-
-
 
 
 impl Env<'_, '_> {

@@ -1,6 +1,5 @@
+#include "../margarine.h"
 #include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 #if !defined(__wasm__)
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,20 +37,11 @@ void margarineConsumeFuel(void) {
 
 #endif
 
-typedef struct {
-    uint8_t *ptr;
-    size_t len;
-} MargarineCollection;
-
-typedef struct {
-    MargarineCollection value;
-} MargarineStr;
 
 typedef struct {
     size_t ref_count;
 } MargarineStrHeader;
 
-_Noreturn void margarineAbort(int32_t code);
 void margarineAssertNotNull(uint8_t *ptr);
 
 static void write_bytes(const uint8_t *bytes, size_t len) {
@@ -62,7 +52,6 @@ static void write_bytes(const uint8_t *bytes, size_t len) {
     fflush(stdout);
 #endif
 }
-
 void *margarineAlloc(size_t size) {
     void *ptr = malloc(size == 0 ? 1 : size);
 
@@ -98,8 +87,11 @@ void margarineAssertNotNull(uint8_t *ptr) {
     }
 }
 
-MargarineStr margarineStringFromUtf8(const uint8_t *bytes, size_t len) {
+MargarineString margarineStringFromUtf8(const uint8_t *bytes, size_t len) {
     if (len > SIZE_MAX - sizeof(MargarineStrHeader)) {
+        margarineAbort(1);
+    }
+    if ((uint64_t)len > (uint64_t)INT64_MAX) {
         margarineAbort(1);
     }
     if (len != 0) {
@@ -111,10 +103,10 @@ MargarineStr margarineStringFromUtf8(const uint8_t *bytes, size_t len) {
         memcpy(buf + sizeof(MargarineStrHeader), bytes, len);
     }
 
-    return (MargarineStr){
+    return (MargarineString){
         .value = {
             .ptr = buf,
-            .len = len,
+            .len = (int64_t)len,
         },
     };
 }
