@@ -256,19 +256,23 @@ fn install_binary(root: &Path, version: &str) -> PathBuf {
     physical
 }
 
-fn install_managed_fixture(root: &Path) -> PathBuf {
-    install_binary(root, CURRENT_VERSION);
-    fs::create_dir_all(root.join(CURRENT_VERSION).join("toolchains").join(env!("MARGARINE_TARGET")),).unwrap();
-    fs::create_dir_all(root.join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown"),).unwrap();
+fn install_managed_fixture_with_version(root: &Path, version: &str) -> PathBuf {
+    install_binary(root, version);
+    fs::create_dir_all(root.join(version).join("toolchains").join(env!("MARGARINE_TARGET")),).unwrap();
+    fs::create_dir_all(root.join(version).join("toolchains/wasm32-unknown-unknown"),).unwrap();
     fs::create_dir_all(
-        root.join(CURRENT_VERSION).join("toolchains/not-a-target"),
+        root.join(version).join("toolchains/not-a-target"),
     ).unwrap();
     fs::create_dir_all(root.join("bin")).unwrap();
     unix_fs::symlink(
-        format!("../{CURRENT_VERSION}/bin/margarine"),
+        format!("../{version}/bin/margarine"),
         root.join("bin/margarine"),
     ).unwrap();
     root.join("bin/margarine")
+}
+
+fn install_managed_fixture(root: &Path) -> PathBuf {
+    install_managed_fixture_with_version(root, CURRENT_VERSION)
 }
 
 fn run_update(
@@ -576,7 +580,8 @@ fn updater_rejects_a_release_tag_with_more_than_one_v_prefix() {
 #[test]
 fn updater_treats_a_stable_release_as_newer_than_a_prerelease() {
     let dir = tempfile::tempdir().unwrap();
-    let active = install_managed_fixture(dir.path());
+    let current_version = "0.1.0-rc3";
+    let active = install_managed_fixture_with_version(dir.path(), current_version);
     let (api, server) =
         release_server_for(
             "0.1.0",
@@ -599,13 +604,13 @@ fn updater_treats_a_stable_release_as_newer_than_a_prerelease() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains(&format!("{CURRENT_VERSION} -> 0.1.0")),
+        stdout.contains(&format!("{current_version} -> 0.1.0")),
         "{stdout}",
     );
     assert!(stdout.contains("Install update? [y/N]"), "{stdout}");
     assert_eq!(
         fs::read_link(dir.path().join("bin/margarine")).unwrap(),
-        Path::new(&format!("../{CURRENT_VERSION}/bin/margarine")),
+        Path::new(&format!("../{current_version}/bin/margarine")),
     );
     assert!(!dir.path().join("0.1.0").exists());
 }
