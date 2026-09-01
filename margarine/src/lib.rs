@@ -4,7 +4,8 @@ pub mod progress;
 #[doc(hidden)]
 pub mod version;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const VERSION_INFO: &str = concat!("margarine ", env!("CARGO_PKG_VERSION"));
+pub const DISPLAY_VERSION: &str = env!("MARGARINE_DISPLAY_VERSION");
+pub const VERSION_INFO: &str = concat!("margarine ", env!("MARGARINE_DISPLAY_VERSION"));
 pub const TARGET: &str = env!("MARGARINE_TARGET");
 
 

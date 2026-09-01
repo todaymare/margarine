@@ -20,7 +20,7 @@ pub const TICK_GLYPH : &str = "✓";
 #[derive(Parser)]
 #[command(
     name = "margarine",
-    version,
+    version = margarine::DISPLAY_VERSION,
     propagate_version = true,
     about = "a unified development toolchain for the margarine programming language",
     after_help = format!(

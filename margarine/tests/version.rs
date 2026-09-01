@@ -21,3 +21,10 @@ fn release_tags_reject_malformed_versions() {
         assert!(release_tag_version(tag).is_err(), "{tag}");
     }
 }
+
+#[test]
+fn package_version_is_valid_semver() {
+    let version = margarine::version::package_version();
+    assert_eq!(version.to_string(), margarine::VERSION);
+}
+
