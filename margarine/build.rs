@@ -86,16 +86,11 @@ fn main() {
     if !dirty && tag.as_deref() == Some(&expected_tag) {
         package_version
     } else {
-        match hash {
-            Some(hash) if dirty => {
-                format!("{package_version} ({hash}-dirty)")
-            }
-            Some(hash) => {
-                format!("{package_version} ({hash})")
-            }
-            None => {
-                package_version
-            }
+        let hash = hash.as_deref().unwrap_or("unknown");
+        if dirty {
+            format!("{package_version} ({hash}-dirty)")
+        } else {
+            format!("{package_version} ({hash})")
         }
     };
 

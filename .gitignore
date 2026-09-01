@@ -6,3 +6,4 @@ artifacts.lock
 artifacts
 /dist
 libmargarine.a
+*.profraw
