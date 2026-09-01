@@ -66,12 +66,17 @@ Apple system libraries and frameworks remain dynamic.
 
 `core` and `std` runtime archives are built from the C sources under
 `margarine/runtime/core/` and `margarine/runtime/std/` by
-`scripts/build-toolchains.sh`. Release toolchains place the resulting archives
-under `toolchains/<target>/libs/`; `MARGARINE_TOOLCHAIN_DIR` overrides the
-root. Every native and Wasm link searches that directory and passes each
-regular file there as an explicit input. Source packages are fetched from the
-published CDN `share/` tree by default; `MARGARINE_DEFAULT_URL` overrides the
-base for ordinary `pkg:` imports, and `MARGARINE_PRELUDE` overrides preludes.
+`scripts/build-toolchains.sh`. The Wasm `libcore.a` also bundles the vendored
+dlmalloc implementation through its linear-memory growth adapter; it does not
+depend on WASI or a host-provided libc allocator. Release toolchains place the
+resulting archives under `toolchains/<target>/libs/`;
+`MARGARINE_TOOLCHAIN_DIR` overrides the root. Every native and Wasm link
+searches that directory and passes each regular file there as an explicit
+input. Source packages are fetched from the published CDN `share/` tree by
+default; `MARGARINE_DEFAULT_URL` overrides the base for ordinary `pkg:`
+imports, and `MARGARINE_PRELUDE` overrides preludes. The `git2` dependency
+must keep its `https` feature enabled because those package URLs are cloned
+over HTTPS; `reqwest` remains the Rustls-only HTTP client.
 
 Ordinary compiler commands work from unmanaged or source-built binaries.
 `update` and `toolchain add` require a managed installation. Initial release
@@ -83,19 +88,26 @@ activation, publishes atomically, and rolls back on failure. The updater uses
 the same versioned layout and complete compiler archives. Versioned
 installation directories and release tags use full SemVer, including
 prerelease and build metadata; update comparisons use SemVer precedence.
+
+Native generated entry points use the C `main(int, char **)` ABI and forward
+`argc`/`argv` to the standard-library runtime before startup functions run;
+Wasm entry points remain zero-argument exports.
 `update` locks the installation before network access.
 `MARGARINE_RELEASES_API` may point at a compatible test or mirror API.
 
-The `.github/workflows/release.yml` workflow validates published installations
-on all three native hosts, provides the native test linker (Linux installs
-`clang`), runs `tests/core.mar` through the installed binary, and installs
-`lld-18` plus the LLVM 18 `wasm-ld` path before building a Wasm example.
-Native test libraries use only the runtime archives and platform libraries; they
-do not require zstd. The test runner does not support executing tests for the
-`wasm32-unknown-unknown` target. Its macOS compiler build installs LLVM 18 and
-zstd, statically links zstd, resolves unwind through Apple's SDK, and rejects
-non-system dependencies before packaging the published compiler as a single
-executable.
+The `.github/workflows/release.yml` workflow creates a draft GitHub release,
+then validates its downloaded installation assets on all three native hosts.
+It provides the native test linker (Linux installs `clang`), runs
+`tests/core.mar` through the installed binary, and installs `lld-18` plus the
+LLVM 18 `wasm-ld` path before building a Wasm example. Native test libraries
+use only the runtime archives and platform libraries; they do not require zstd.
+The test runner does not support executing tests for the
+`wasm32-unknown-unknown` target. Draft assets are downloaded with authenticated
+`gh`, checksum-checked, and staged locally for the Wasm test because the
+installed compiler's ordinary release lookup cannot see draft releases. Its
+macOS compiler build installs LLVM 18 and zstd, statically links zstd, resolves
+unwind through Apple's SDK, and rejects non-system dependencies before
+packaging the draft compiler as a single executable.
 
 ## Caches, packages, and progress
 
@@ -137,10 +149,22 @@ executable.
   method generics. Validate generic bounds at declarations and preserve
   inout markers in function types, closures, and trait signatures. Missing
   method suggestions come only from traits implemented by the receiver type.
+- Trait implementations report a semantic diagnostic when a required method name
+  resolves to a non-function declaration; they must not panic during checking.
 - `let` is immutable and `var` is mutable. Parameters, loop bindings, match
   bindings, and closure parameters are mutable; closure captures are immutable.
   By-value parameters are owned copies; inout parameters and captures remain
   borrowed according to the existing lowering rules.
+- Collection and `str` copies rebuild the LLVM value from `margarineRcClone`'s
+  return pointer and restore collection tags. RC clone/drop helpers remain
+  eligible for LLVM optimization; ownership correctness must come from emitted
+  ownership paths, not from suppressing valid clone/drop elimination.
+- The `for-in` statement owns its iterator expression only when the
+  expression is a temporary; when it names a place (variable, field, index
+  chain), the value still belongs to its owner and the loop must not emit a
+  second `emit_drop` for it, or the owner's local-drop releases the same
+  value twice. The mutation copy for inout receivers is separate and always
+  dropped by the loop itself.
 - `ListIter<T>` is an inline aggregate with independent cursor state. Collection
   metadata packs length and rope depth; deep rope concatenation and slicing
   flatten beyond 16 levels. Native string consumers receive a byte pointer and
@@ -148,9 +172,21 @@ executable.
 - Numeric tuple access uses separate dot and integer tokens, including chains.
   The entry file is wrapped in a synthetic root module named after its stem,
   and the generated entry function must claim the LLVM symbol `main` first.
+- Function types inside annotations written in generic scopes must carry the
+  enclosing generics as their own generic parameters. Without this, a generic
+  name inside `fn(...)` resolves to the bare generic container symbol, which
+  nothing later substitutes and codegen panics on.
+- Function types are structurally equal and structurally hashed. Function
+  implementation caching uses a separate nominal instance hash.
 - Source-level external file/resource declarations are unsupported. Ordinary
   imported packages use `build.mar`; `extern { ... }` remains the function-ABI
   declaration form.
+- `margarine/runtime/margarine.h` is the single C runtime ABI declaration
+  surface shared by core and std. `MargarineCollection` and `MargarineString`
+  use `int64_t` length fields to match compiler IR on every target; keep
+  allocation and refcount internals in `size_t`. Supported Wasm aggregate
+  extern returns follow Clang's flattened C ABI: exactly one scalar value
+  returns directly; aggregates with multiple values use indirect `sret`.
 
 ## Documentation and coverage
 
