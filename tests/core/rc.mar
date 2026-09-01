@@ -106,3 +106,85 @@ fn rc_set_shared() {
     assert($rc_get(a[1]) == 10, "other Rc unchanged in original");
     assert($rc_get(b[1]) == 10, "other Rc unchanged in copy");
 }
+
+
+struct StrHolder {
+    value: str,
+}
+
+
+fn hold_str(s: str): StrHolder {
+    StrHolder { value: s }
+}
+
+
+fn wrap_list(values: [int]): [int] {
+    values
+}
+
+
+@test
+fn str_param_survives_struct_return() {
+    var s = "hello";
+    var h = hold_str(s);
+    assert(s == "hello", "caller str dropped by callee struct return");
+    assert(h.value == "hello", "returned str field invalid");
+}
+
+
+@test
+fn list_param_survives_return() {
+    var a = [1, 2, 3];
+    var b = wrap_list(a);
+    assert(a[0] == 1, "caller list dropped by callee return");
+    assert(b[2] == 3, "returned list invalid");
+}
+
+
+@test
+fn str_slice_keeps_original() {
+    var s = "hello";
+    var a = s.slice(0..2);
+    assert(s == "hello", "slice dropped original");
+    assert(a == "he", "slice contents");
+}
+
+
+struct RcIterState {
+    rc: Rc<int>,
+    idx: int,
+}
+
+
+impl RcIterState {
+    fn __next__(&self): Option<int> {
+        if self.idx >= 3 { return none() }
+
+        self.idx += 1;
+        some($rc_get(self.rc) + self.idx)
+    }
+}
+
+
+@test
+fn for_in_over_iterator_variable_drops_once() {
+    // `it` is a named local: the for-in statement must not release the
+    // iterator itself. Ownership stays with the binding, whose normal
+    // local-drop runs exactly once. The old double drop released the
+    // iterator's payload twice; with a slice-backed string the second
+    // release freed the shared buffer and the next round read freed
+    // memory.
+    var source = "a b c d e ";
+    var slice = source.slice(0..10);
+    var total = 0;
+    for round in 0..8 {
+        var it = slice.split(" ");
+        for word in it {
+            total += 1
+        };
+    };
+
+    assert(total == 40, "five words per round across eight rounds");
+    assert(slice == "a b c d e ", "slice corrupted by loop drops");
+    assert(source == "a b c d e ", "source corrupted by loop drops");
+}
