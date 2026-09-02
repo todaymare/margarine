@@ -1,13 +1,13 @@
-use std::{collections::HashMap, default};
+use std::collections::HashMap;
 
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
 use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{DeclGeneric, DeclId}, expr::ExprId, stmt::StmtId, NodeId, AST}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, define_key, ext::FromIn, key::Key, vec::{KVec, Vec}};
+use sti::{arena::Arena, ext::FromIn, vec::{KVec, Vec}};
 use syms::{ty::Type, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
-use namespace::{Namespace, NamespaceId, NamespaceMap};
+use namespace::{Namespace, NamespaceMap};
 
 use crate::{analysis::blocks::{BlockId, BlockKind, BlockState, Blocks}, namespace::SymbolGetResult, scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId, VarId}, Symbol, SymbolKind}};
 
