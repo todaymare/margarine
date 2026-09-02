@@ -1047,24 +1047,53 @@ fn load_repository(
     url: &str,
     local: bool,
 ) -> bool {
+    let path = path.as_ref();
     if local {
-        return path.as_ref().is_dir();
+        return path.is_dir();
     }
-    if Repository::open(&path).is_ok() {
+    if repository_is_usable(path) {
         return true;
     }
 
-    // Missing or corrupted cache entry (e.g. leftovers
-    // from an interrupted build): drop whatever is there
-    // and clone afresh instead of poisoning the build.
-    let _ = fs::remove_dir_all(&path);
-
+    let Some(parent) = path.parent()
+    else { return false };
+    let staging =
+        match tempfile::Builder::new()
+            .prefix(".margarine-clone-")
+            .tempdir_in(parent)
+        {
+            Ok(staging) => staging,
+            Err(_) => return false,
+        };
     let status = StatusLine::start("Cloning");
-    let cloned = Repository::clone(&url, &path).is_ok();
-    if cloned {
-        status.finish(format!("Cloned {}", url));
+    let cloned = match Repository::clone(url, staging.path()) {
+        Ok(_) => true,
+        Err(_) => repository_is_usable(staging.path()),
+    };
+    if !cloned {
+        return false;
     }
-    cloned
+    if repository_is_usable(path) {
+        return true;
+    }
+
+    let staged_path = staging.keep();
+    if let Err(error) = fs::remove_dir_all(path) {
+        if error.kind() != io::ErrorKind::NotFound {
+            let _ = fs::remove_dir_all(&staged_path);
+            return false;
+        }
+    }
+    if fs::rename(&staged_path, path).is_err() {
+        let _ = fs::remove_dir_all(&staged_path);
+        return false;
+    }
+    status.finish(format!("Cloned {}", url));
+    true
+}
+
+fn repository_is_usable(path: &Path) -> bool {
+    Repository::open(path).is_ok()
 }
 
 fn parse_build_script_stdout(stdout: &str, package_root: &Path) -> (Vec<PathBuf>, String) {
