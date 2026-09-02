@@ -38,7 +38,6 @@ pub(super) fn compile_and_link(
     } else {
         current_dir.join(&cache)
     };
-
     margarine::build(
         path,
         target,
@@ -46,6 +45,7 @@ pub(super) fn compile_and_link(
         &cache,
         margarine::preludes_from_env(),
     ).map_err(|error| CliError::link(format!("build failed: {error}")))?;
+
 
     Ok(output.to_string_lossy().into_owned())
 }
@@ -76,7 +76,6 @@ pub(super) fn run(
         Ok(if (0..=125).contains(&code) { code } else { PROGRAM_ERROR })
     }
 }
-
 pub(super) fn check(
     path: &Path,
     target: CompilationTarget,

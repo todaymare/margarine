@@ -38,6 +38,10 @@ pub const TICK_GLYPH : &str = "✓";
 )]
 
 struct Cli {
+    /// Print elapsed time for each compilation stage
+    #[arg(long, global = true)]
+    timings: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -186,7 +190,12 @@ impl CliError {
 }
 
 pub(crate) fn main() -> i32 {
-    let command = Cli::parse().command;
+    let cli = Cli::parse();
+    if cli.timings {
+        std::env::set_var("MARGARINE_TIMING", "1");
+    }
+
+    let command = cli.command;
     let _lock =
         if matches!(
             &command,

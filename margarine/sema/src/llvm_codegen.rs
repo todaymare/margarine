@@ -292,10 +292,19 @@ struct Env<'a, 'ctx> {
 }
 
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodegenStage {
+    Emitting,
+    Optimizing,
+    Backend,
+}
+
+
 pub fn run<'a>(
     string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
     ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], 
     _file_count: u32, startups: &[SymbolId], tests: &[SymbolId], settings: &CompilationSettings,
+    progress: impl Fn(CodegenStage),
 ) {
     let target = settings.compilation_target;
     let ctx = Context::new(ast.arena, &target.llvm_target_triple());
@@ -628,6 +637,7 @@ pub fn run<'a>(
 
     module.validate()
         .unwrap_or_else(|error| panic!("generated invalid LLVM module: {error}"));
+    progress(CodegenStage::Optimizing);
     module.optimize()
         .unwrap_or_else(|error| panic!("failed to optimize LLVM module: {error}"));
 
@@ -640,6 +650,8 @@ pub fn run<'a>(
         module.validate()
             .unwrap_or_else(|error| panic!("generated invalid LLVM module after fuel instrumentation: {error}"));
     }
+
+    progress(CodegenStage::Emitting);
 
     ctx.emit_bitcode(module, Path::new(&format!("{}.bc", settings.output)))
         .unwrap_or_else(|error| panic!("failed to emit bitcode: {error}"));
@@ -865,7 +877,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                     COLLECTION_FLAT_TAG => {
                                         let payload_ty =
                                             self.collection_flat_header_type(elem_repr);
-                                        let leaf_data =
+                    let leaf_data =
                                             builder.field_ptr(header_ptr, payload_ty, 1);
 
                                         builder.field_store(

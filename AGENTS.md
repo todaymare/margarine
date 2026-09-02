@@ -128,6 +128,11 @@ packaging the draft compiler as a single executable.
   Use `StatusLine`, `byte_progress`/`ProgressReader`, and `item_progress`
   instead of command-local progress implementations. Hide progress on
   non-TTY streams and always finish or clear the lifecycle object.
+- The compilation status advances through `Parsing`, `Checking`, `Compiling`,
+  `Optimizing`, `Backend`, and `Linking`; nested linker statuses restore the
+  compilation stage when they finish.
+- The global CLI `--timing` flag, or `MARGARINE_TIMING=1`, reports elapsed
+  durations when each compilation status stage completes.
 
 ## Semantic and code-generation invariants
 

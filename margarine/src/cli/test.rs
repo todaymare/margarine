@@ -73,7 +73,7 @@ pub(super) fn execute(
                 .arg("-lc++abi")
                 .arg("-o")
                 .arg(&dylib);
-            run_step("Linking test library", &mut clang)
+            run_step("Linking", &mut clang)
         },
         CompilationTarget::X86_64UnknownLinuxGnu
         | CompilationTarget::Aarch64UnknownLinuxGnu => {
@@ -89,7 +89,7 @@ pub(super) fn execute(
                 .arg("-lstdc++")
                 .arg("-o")
                 .arg(&dylib);
-            run_step("Linking test library", &mut clang)
+            run_step("Linking", &mut clang)
         },
         CompilationTarget::Wasm32UnknownUnknown => {
             compile_status.clear();

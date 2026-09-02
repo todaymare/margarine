@@ -121,7 +121,7 @@ impl<'ctx> Module<'ctx> {
 
     pub fn optimize(&self) -> Result<(), String> {
         let level = std::env::var("MARGARINE_OPT_LEVEL").unwrap_or_else(|_| "O3".to_string());
-        if !matches!(level.as_str(), "O0" | "O1" | "O2" | "O3") {
+        if !matches!(level.to_uppercase().as_str(), "O0" | "O1" | "O2" | "O3") {
             return Err(format!(
                 "invalid MARGARINE_OPT_LEVEL '{level}'; expected O0, O1, O2, or O3"
             ));

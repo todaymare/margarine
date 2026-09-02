@@ -291,6 +291,10 @@ impl<'me> Compiler<'me> {
         result: &mut CompilationResult<'me>,
         errors: [Vec<Vec<String>>; 3]
     ) {
+        StatusLine::set_compilation_message(format!(
+            "Compiling {}",
+            display_compile_path(settings, &settings.entry),
+        ));
         result.codegen(self, &settings, settings.tests, errors);
     }
 
@@ -563,6 +567,10 @@ impl<'me> Compiler<'me> {
 
         self.files.sort_by(&file_offsets);
 
+        StatusLine::set_compilation_message(format!(
+            "Checking {}",
+            display_compile_path(settings, &settings.entry),
+        ));
         let temp = Arena::new();
         let sema = {
             let _1 = DropTimer::new("semantic analysis");
@@ -858,6 +866,7 @@ impl<'me> CompilationResult<'me> {
         if tests { self.tests.iter().map(|s| s.0).collect() } 
         else { vec![] };
 
+        let entry = display_compile_path(settings, &settings.entry);
         llvm_codegen::run(
             &mut comp.string_map, &mut self.syms,
             &mut self.namespaces, &mut self.ast,
@@ -866,6 +875,14 @@ impl<'me> CompilationResult<'me> {
             &self.startups,
             &tests,
             settings,
+            |stage| {
+                let label = match stage {
+                    llvm_codegen::CodegenStage::Optimizing => "Optimizing",
+                    llvm_codegen::CodegenStage::Backend => "Backend",
+                    llvm_codegen::CodegenStage::Emitting => "Emitting",
+                };
+                StatusLine::set_compilation_message(format!("{label} {entry}"));
+            },
         );
 
     }
@@ -1255,7 +1272,7 @@ pub fn start_compilation_status(
     silent: bool,
 ) -> StatusLine {
     let entry = display_compile_path(settings, &settings.entry);
-    StatusLine::start_compilation(format!("Compiling {}", entry), !silent)
+    StatusLine::start_compilation(format!("Parsing {}", entry), !silent)
 }
 
 

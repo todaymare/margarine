@@ -8,6 +8,9 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 const TICK_INTERVAL: Duration = Duration::from_millis(80);
 const PROGRESS_BAR_DELAY: Duration = Duration::from_millis(100);
 const BAR_CHARS: &str = "█▓░";
+fn timing_enabled() -> bool {
+    std::env::var_os("MARGARINE_TIMING").is_some()
+}
 
 
 fn style(template: &'static str) -> ProgressStyle {
@@ -56,8 +59,28 @@ pub fn item_progress(total: u64, message: impl Into<String>) -> AdaptiveProgress
 }
 
 
+struct ActiveCompilation {
+    bar: ProgressBar,
+    stage_started: Instant,
+    timing: bool,
+}
+
 thread_local! {
-    static ACTIVE_COMPILE_BAR: RefCell<Option<ProgressBar>> = const { RefCell::new(None) };
+    static ACTIVE_COMPILE_BAR: RefCell<Option<ActiveCompilation>> = const { RefCell::new(None) };
+}
+impl ActiveCompilation {
+    fn finish_stage(&self) {
+        if !self.timing {
+            return;
+        }
+
+        let duration = self.stage_started.elapsed();
+        self.bar.println(format!(
+            "{} {} ({duration:?})",
+            "✓".green().bold(),
+            self.bar.message(),
+        ));
+    }
 }
 
 
@@ -65,7 +88,10 @@ thread_local! {
 enum StatusKind {
     CompileOwner,
     Independent,
-    Borrowed(String),
+    Borrowed {
+        previous: String,
+        stage_started: Instant,
+    },
 }
 
 
@@ -81,24 +107,27 @@ pub struct StatusLine {
 
 impl StatusLine {
     pub fn start(message: impl Into<String>) -> Self {
-        Self::begin(message.into(), false, true)
+        Self::begin(message.into(), false, true, false)
     }
 
     pub fn start_compilation(message: impl Into<String>, visible: bool) -> Self {
-        Self::begin(message.into(), true, visible)
+        Self::begin(message.into(), true, visible, timing_enabled())
     }
 
-    fn begin(message: String, compilation: bool, visible: bool) -> Self {
+    fn begin(message: String, compilation: bool, visible: bool, timing: bool) -> Self {
         ACTIVE_COMPILE_BAR.with(|active| {
             let mut active = active.borrow_mut();
-            if let Some(bar) = active.as_ref() {
-                let previous = bar.message().to_string();
+            if let Some(active_compilation) = active.as_mut() {
+                let previous = active_compilation.bar.message().to_string();
+                let stage_started = active_compilation.stage_started;
                 if !compilation {
-                    bar.set_message(message);
+                    active_compilation.finish_stage();
+                    active_compilation.bar.set_message(message);
+                    active_compilation.stage_started = Instant::now();
                 }
                 return Self {
-                    bar: bar.clone(),
-                    kind: StatusKind::Borrowed(previous),
+                    bar: active_compilation.bar.clone(),
+                    kind: StatusKind::Borrowed { previous, stage_started },
                     finished: None,
                 };
             }
@@ -109,7 +138,11 @@ impl StatusLine {
             bar.set_message(message);
             let kind =
             if compilation {
-                *active = Some(bar.clone());
+                *active = Some(ActiveCompilation {
+                    bar: bar.clone(),
+                    stage_started: Instant::now(),
+                    timing,
+                });
                 StatusKind::CompileOwner
             } else {
                 StatusKind::Independent
@@ -117,6 +150,22 @@ impl StatusLine {
             Self { bar, kind, finished: None }
         })
     }
+
+    pub(crate) fn set_compilation_message(message: impl Into<String>) {
+        let message = message.into();
+        ACTIVE_COMPILE_BAR.with(|active| {
+            let mut active_compilation = active.borrow_mut();
+            let Some(active_compilation) = active_compilation.as_mut()
+            else { return };
+            if active_compilation.bar.message() == message {
+                return;
+            }
+            active_compilation.finish_stage();
+            active_compilation.bar.set_message(message);
+            active_compilation.stage_started = Instant::now();
+        });
+    }
+
 
     pub fn suspend<T>(&self, operation: impl FnOnce() -> T) -> T {
         self.bar.suspend(operation)
@@ -136,7 +185,10 @@ impl Drop for StatusLine {
     fn drop(&mut self) {
         if self.kind == StatusKind::CompileOwner {
             ACTIVE_COMPILE_BAR.with(|active| {
-                active.borrow_mut().take();
+                let active_compilation = active.borrow_mut().take();
+                if let Some(active_compilation) = active_compilation {
+                    active_compilation.finish_stage();
+                }
             });
         }
         match &self.kind {
@@ -150,7 +202,16 @@ impl Drop for StatusLine {
                     self.bar.finish_and_clear();
                 }
             },
-            StatusKind::Borrowed(previous) => self.bar.set_message(previous.clone()),
+            StatusKind::Borrowed { previous, stage_started } => {
+                ACTIVE_COMPILE_BAR.with(|active| {
+                    let mut active_compilation = active.borrow_mut();
+                    let Some(active_compilation) = active_compilation.as_mut()
+                    else { return };
+                    active_compilation.finish_stage();
+                    active_compilation.bar.set_message(previous.clone());
+                    active_compilation.stage_started = *stage_started;
+                });
+            },
         }
     }
 }
@@ -369,7 +430,7 @@ mod tests {
         let inner = StatusLine::start_compilation("inner", true);
 
         assert_eq!(outer.kind, StatusKind::CompileOwner);
-        assert!(matches!(inner.kind, StatusKind::Borrowed(_)));
+        assert!(matches!(inner.kind, StatusKind::Borrowed { .. }));
         assert_eq!(outer.bar.message(), "outer");
 
         inner.finish("ignored");
@@ -385,7 +446,7 @@ mod tests {
         let compile = StatusLine::start_compilation("Compiling", true);
         let link = StatusLine::start("Linking");
 
-        assert!(matches!(link.kind, StatusKind::Borrowed(_)));
+        assert!(matches!(link.kind, StatusKind::Borrowed { .. }));
         assert_eq!(compile.bar.message(), "Linking");
         link.finish("Linked");
         assert_eq!(compile.bar.message(), "Compiling");
@@ -429,7 +490,7 @@ mod tests {
     fn compilation_settles_after_the_borrowed_link_phase() {
         let compile = StatusLine::start_compilation("Compiling", true);
         let link = StatusLine::start("Linking");
-        assert!(matches!(link.kind, StatusKind::Borrowed(_)));
+        assert!(matches!(link.kind, StatusKind::Borrowed { .. }));
 
         link.finish("Linked");
         assert_eq!(compile.bar.message(), "Compiling");
