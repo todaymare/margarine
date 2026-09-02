@@ -18,7 +18,7 @@ members = [
 [profile.release]
 debug = true
 lto = false
-opt-level = 2
+opt-level = 3
 codegen-units = 1
 split-debuginfo = "packed"
 
