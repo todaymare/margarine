@@ -1,4 +1,5 @@
 mod bindings;
+mod blocks;
 mod structs;
 mod traits;
 mod rc;

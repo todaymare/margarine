@@ -40,19 +40,19 @@ pub use parser::nodes;
 pub use common::source::{FileData, Extension};
 pub use common::string_map::StringMap;
 pub use common::{DropTimer, source::SourceRange};
-use semantic_analysis::llvm_codegen;
+use sema::llvm_codegen;
 use common::symbol_id::SymbolId;
-pub use semantic_analysis::llvm_codegen::{CompilationSettings, Prelude};
-pub use semantic_analysis::llvm_codegen::CompilationTarget;
+pub use sema::llvm_codegen::{CompilationSettings, Prelude};
+pub use sema::llvm_codegen::CompilationTarget;
 use sha2::Digest;
-pub use semantic_analysis::{TyChecker};
+pub use sema::{TyChecker};
 pub use errors::display;
 pub use sti::arena::Arena;
 use sti::format_in;
 use sti::vec::KVec;
 
 
-pub use semantic_analysis;
+pub use sema;
 
 
 pub struct Compiler<'me> {
@@ -194,10 +194,10 @@ pub struct CompilationResult<'a> {
     tests: Vec<(SymbolId, bool)>,
     ast: AST<'a>,
     startups: KVec<u32, SymbolId>,
-    ty_info: semantic_analysis::TyInfo<'a>,
-    pub syms: semantic_analysis::syms::sym_map::SymbolMap<'a>,
-    namespaces: semantic_analysis::namespace::NamespaceMap,
-    scopes: semantic_analysis::scope::ScopeMap<'a>,
+    ty_info: sema::TyInfo<'a>,
+    pub syms: sema::syms::sym_map::SymbolMap<'a>,
+    namespaces: sema::namespace::NamespaceMap,
+    scopes: sema::scope::ScopeMap<'a>,
     link_files: Vec<String>,
 }
 
@@ -206,7 +206,7 @@ pub struct CompilationResult<'a> {
 pub struct CompilationErrors {
     pub lexer_errors : Vec<KVec<LexerError , lexer::errors::Error>>,
     pub parser_errors: Vec<KVec<ParserError, parser::errors::Error>>,
-    pub sema_errors  : KVec<SemaError  , semantic_analysis::errors::Error>,
+    pub sema_errors  : KVec<SemaError  , sema::errors::Error>,
     pub sema_error_nodes: KVec<SemaError, NodeId>,
 }
 

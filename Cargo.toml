@@ -10,7 +10,7 @@ members = [
     "margarine/common/derive",
     "margarine/lexer",
     "margarine/parser",
-    "margarine/semantic_analysis",
+    "margarine/sema",
     "margarine/errors",
     "scripts/fuzz"
 ]

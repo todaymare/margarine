@@ -56,7 +56,7 @@ fn conditional_trait_impl_requires_its_generic_bounds() {
 
     assert_eq!(errors.iter().filter(|error| matches!(
         error,
-        semantic_analysis::errors::Error::TypeDoesntImplTrait { .. }
+        sema::errors::Error::TypeDoesntImplTrait { .. }
     )).count(), 1);
 }
 
@@ -446,7 +446,7 @@ fn expression_type_info_covers_propagated_errors() {
     let result = compile_source("fn main() { var value = missing + 1; }");
     assert!(result.errors.sema_errors.iter().any(|error| matches!(
         error,
-        semantic_analysis::errors::Error::VariableNotFound { .. }
+        sema::errors::Error::VariableNotFound { .. }
     )));
 
     assert!(
@@ -466,7 +466,7 @@ fn semantic_errors_do_not_panic_codegen() {
 
     assert!(result.errors.sema_errors.iter().any(|error| matches!(
         error,
-        semantic_analysis::errors::Error::PrivateSymbol { .. }
+        sema::errors::Error::PrivateSymbol { .. }
     )));
     assert!(
         result.ty_info.exprs.iter().any(|info| info.is_some()),
@@ -477,19 +477,19 @@ fn semantic_errors_do_not_panic_codegen() {
 #[test]
 fn private_symbols_cannot_be_imported_by_a_sibling_module() {
     let result = compile_source("mod a { fn secret() {} } mod b { use a::secret }");
-    assert!(result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::PrivateSymbol { .. })));
+    assert!(result.errors.sema_errors.iter().any(|error| matches!(error, sema::errors::Error::PrivateSymbol { .. })));
 }
 
 #[test]
 fn public_symbols_can_be_imported_and_reexported() {
     let result = compile_source("mod a { pub fn exposed() {} } mod b { pub use a::exposed } use b::exposed");
-    assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::PrivateSymbol { .. })));
+    assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, sema::errors::Error::PrivateSymbol { .. })));
 }
 
 #[test]
 fn reimporting_the_same_symbol_is_idempotent() {
     let result = compile_source("mod a { pub fn exposed() {} } use a::exposed use a::exposed");
-    assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, semantic_analysis::errors::Error::NameIsAlreadyDefined { .. })));
+    assert!(!result.errors.sema_errors.iter().any(|error| matches!(error, sema::errors::Error::NameIsAlreadyDefined { .. })));
 }
 
 #[test]
@@ -504,7 +504,7 @@ fn ambiguous_trait_methods_are_reported() {
     );
     assert!(result.errors.sema_errors.iter().any(|error| matches!(
         error,
-        semantic_analysis::errors::Error::AmbiguousTraitMethod { .. }
+        sema::errors::Error::AmbiguousTraitMethod { .. }
     )));
 }
 #[test]
@@ -564,7 +564,7 @@ fn captured_closure_values_cannot_be_mutated() {
         assert_eq!(
             result.errors.sema_errors.iter().filter(|error| matches!(
                 error,
-                semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
+                sema::errors::Error::CannotMutateCapturedValue { .. }
             )).count(),
             1,
             "{name}",
@@ -584,7 +584,7 @@ fn captured_closure_unwrap_assignment_cannot_be_mutated() {
 
     assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
         error,
-        semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
+        sema::errors::Error::CannotMutateCapturedValue { .. }
     )).count(), 1);
 }
 
@@ -600,7 +600,7 @@ fn closure_local_values_remain_mutable_and_captures_remain_readable() {
 
     assert!(!result.errors.sema_errors.iter().any(|error| matches!(
         error,
-        semantic_analysis::errors::Error::CannotMutateCapturedValue { .. }
+        sema::errors::Error::CannotMutateCapturedValue { .. }
     )));
 }
 
@@ -616,6 +616,6 @@ fn trait_impl_rejects_non_function_member_without_panicking() {
 
     assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
         error,
-        semantic_analysis::errors::Error::TraitMemberNotFunction { .. }
+        sema::errors::Error::TraitMemberNotFunction { .. }
     )).count(), 1);
 }

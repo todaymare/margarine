@@ -141,6 +141,10 @@ packaging the draft compiler as a single executable.
   Two-pass collection may see pending symbols and must use tolerant accessors.
   Resolution continues through error symbols so cascading diagnostics remain
   visible; codegen propagates the recorded diagnostic instead of panicking.
+- Block discovery and phase dependencies are internal invariants: malformed
+  block origins and phase cycles must fail loudly rather than return as if the
+  phase completed. Semantic lookup failures use explicit recovery namespaces
+  and scopes so later phases retain valid context and cascading diagnostics.
 - Error-typed values must not materialize invalid external ABIs. Struct and
   enum codegen may zero-fill only the selected error-typed field or payload;
   omitted non-error struct fields remain semantic errors. Match bindings must

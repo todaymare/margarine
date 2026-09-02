@@ -11,7 +11,7 @@ fuzzer = []
 [dependencies]
 lexer = { path = "./lexer" }
 parser = { path = "./parser" }
-semantic_analysis = { path = "./semantic_analysis" }
+sema = { path = "./sema" }
 llvm-api = { path = "./llvm-api" }
 common = { path = "./common" }
 errors = { path = "./errors" }

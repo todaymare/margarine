@@ -1,0 +1,67 @@
+mod support {
+    pub fn value(): int { 7 }
+}
+
+@test
+fn local_struct_declaration() {
+    struct Local { value: int }
+    let local = Local { value: 7 };
+    assert(local.value == 7, "local struct declaration failed");
+}
+
+@test
+fn local_function_declaration() {
+    fn helper(): int { 1 }
+    assert(helper() == 1, "local function declaration failed");
+}
+
+@test
+fn function_body_use() {
+    use support::value
+    assert(value() == 7, "function-body use failed");
+}
+
+fn generic_local_type<T>(value: T) {
+    struct Local { value: T }
+    let local = Local { value };
+}
+
+@test
+fn function_generic_visible_to_local_type() {
+    generic_local_type(7);
+}
+
+@test
+fn nested_expression_block() {
+    if true {
+        struct Inner { value: int }
+        let inner = Inner { value: 11 };
+        assert(inner.value == 11, "nested expression block failed");
+    }
+}
+
+@test
+fn outer_local_visible_inside_nested_block() {
+    let value = 123;
+    {
+        assert(value == 123, "outer local was not visible in nested block");
+    }
+}
+
+@test
+fn nested_block_after_multiple_locals() {
+    let first = 10;
+    let second = 20;
+    {
+        assert(first + second == 30, "nested block lost outer locals");
+    }
+}
+
+@test
+fn block_inside_cast() {
+    let value = ({
+        let nested = 7;
+        nested
+    }) as int;
+    assert(value == 7, "cast operand block was not analyzed");
+}
