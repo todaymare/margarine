@@ -52,9 +52,10 @@ impl NamespaceMap {
 
     pub fn get_double(&mut self, ns1: NamespaceId, ns2: NamespaceId) -> (&mut Namespace, &mut Namespace) {
         assert_ne!(ns1, ns2);
-        let arr = self.map.as_mut_slice().get_disjoint_mut([ns1.usize(), ns2.usize()]).unwrap();
-        let ptr = arr.as_ptr();
-        unsafe { (ptr.read(), ptr.add(1).read()) }
+        let [ns1, ns2] = self.map.as_mut_slice()
+            .get_disjoint_mut([ns1.usize(), ns2.usize()])
+            .unwrap();
+        (ns1, ns2)
     }
 
     pub fn get_ns_mut(&mut self, ns: NamespaceId) -> &mut Namespace { &mut self.map[ns] }

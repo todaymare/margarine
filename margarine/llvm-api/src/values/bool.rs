@@ -17,7 +17,10 @@ impl<'ctx> Bool<'ctx> {
         Self(val)
     }
 
-
+    pub fn from_value(val: Value<'ctx>) -> Self {
+        assert_eq!(val.ty().kind(), TypeKind::Integer);
+        Self(val)
+    }
     pub fn ty(self) -> BoolTy <'ctx> { unsafe { BoolTy::new(self.deref().ty()) } }
 }
 

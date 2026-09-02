@@ -48,6 +48,7 @@ pub(super) fn execute(
         compile_status.clear();
         return Err(CliError::link(error));
     }
+
     let tests = result.tests().iter()
         .map(|(sym, should_panic)| (
             compiler.string_map.get(result.syms.sym(*sym).name()).to_string(),

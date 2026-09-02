@@ -1,15 +1,15 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, default};
 
 use common::{buffer::Buffer, source::SourceRange, string_map::{StringIndex, StringMap}};
 use errors::Error;
 use ::errors::{ErrorId, SemaError};
 use parser::{dt::{DataType, DataTypeKind}, nodes::{decl::{DeclGeneric, DeclId}, expr::ExprId, stmt::StmtId, NodeId, AST}};
 use scope::{Scope, ScopeId, ScopeMap};
-use sti::{arena::Arena, ext::FromIn, key::Key, vec::{KVec, Vec}};
+use sti::{arena::Arena, define_key, ext::FromIn, key::Key, vec::{KVec, Vec}};
 use syms::{ty::Type, sym_map::{Generic, GenericKind, GenListId, SymbolId, SymbolMap}};
 use namespace::{Namespace, NamespaceId, NamespaceMap};
 
-use crate::{namespace::SymbolGetResult, scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId, VarId}, Symbol, SymbolKind}};
+use crate::{analysis::blocks::{BlockId, BlockKind, BlockState, Blocks}, namespace::SymbolGetResult, scope::ScopeKind, syms::{containers::Container, func::{FunctionArgument, FunctionTy}, sym_map::{BoundedGeneric, ClosureId, VarId}, Symbol, SymbolKind}};
 
 pub mod scope;
 pub mod namespace;
@@ -36,6 +36,7 @@ impl SemaErrors {
     }
 }
 
+
 pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     output      : &'out Arena,
     temp        : &'temp Arena,
@@ -46,15 +47,15 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub namespaces  : NamespaceMap,
     pub syms    : SymbolMap<'out>,
     pub type_info   : TyInfo<'out>,
+    pub blocks  : Blocks,
     pub startups: Vec<SymbolId>,
     pub tests   : Vec<(SymbolId, bool)>,
-    pub root_namespace: Option<NamespaceId>,
 
     pub errors     : SemaErrors,
     pub silent_ranges: std::vec::Vec<SourceRange>,
     control_flow: ControlFlowState,
     tuple_syms: std::vec::Vec<SymbolId>,
-    base_scope  : ScopeId,
+    root_nodes: &'out [NodeId],
 }
 
 
@@ -162,15 +163,18 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             ast,
             startups: Vec::new(),
             tests: Vec::new(),
-            root_namespace: None,
             temp,
-            base_scope: ScopeId::MIN,
+            blocks: Blocks::default(),
+            root_nodes: &[],
         };
 
         {
             analyzer.type_info.exprs.resize(analyzer.ast.exprs().len(), None);
             analyzer.type_info.stmts.resize(analyzer.ast.stmts().len(), None);
             analyzer.type_info.decls.resize(analyzer.ast.decls().len(), None);
+            analyzer.blocks.decls.resize(analyzer.ast.decls().len(), None);
+            analyzer.blocks.exprs.resize(analyzer.ast.exprs().len(), None);
+            analyzer.blocks.stmts.resize(analyzer.ast.stmts().len(), None);
         }
 
         let core_ns = {
@@ -231,12 +235,97 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             analyzer.namespaces.push(namespace, None)
         };
 
-        let scope = Scope::new(None, ScopeKind::ImplicitNamespace(core_ns));
-        let scope = analyzer.scopes.push(scope);
-        analyzer.base_scope = scope;
+        let base_scope = Scope::new(None, ScopeKind::ImplicitNamespace(core_ns));
+        let base_scope = analyzer.scopes.push(base_scope);
+        let root_nodes = Vec::from_slice_in(out, block).leak_slice();
+        analyzer.root_nodes = root_nodes;
 
         let empty = analyzer.string_map.insert("");
-        analyzer.block(empty, scope, block);
+        let root_ns = analyzer.namespaces.push(
+            Namespace::new(empty),
+            Some(core_ns),
+        );
+
+        let root_scope = analyzer.scopes.push(Scope::new(
+            Some(base_scope),
+            ScopeKind::ImplicitNamespace(root_ns),
+        ));
+
+        let root_id = analyzer.blocks.entries.push(
+            BlockState {
+                ns: Some(root_ns),
+                path: Some(analyzer.string_map.insert("")),
+                collect_scope: Some(root_scope),
+                ty_scope: Some(root_scope),
+                ..Default::default()
+            }
+        );
+
+        // discover blocks
+        {
+            let mut stack = vec![root_id];
+
+            while let Some(id) = stack.pop() {
+                let children =
+                analyzer.blocks.direct_child_blocks(id, analyzer.ast, analyzer.root_nodes);
+
+                for child in children {
+                    let child_id = 
+                    analyzer.blocks.entries.push(BlockState {
+                        origin: Some(child.node),
+                        parent: Some(id),
+                        kind: child.kind,
+                        ..Default::default()
+                    });
+
+                    match child.node {
+                        NodeId::Decl(id) => analyzer.blocks.decls[id] = Some(child_id),
+                        NodeId::Stmt(id) => analyzer.blocks.stmts[id] = Some(child_id),
+                        NodeId::Expr(id) => analyzer.blocks.exprs[id] = Some(child_id),
+                        NodeId::Err(_) => unreachable!(),
+                    }
+
+                    stack.push(child_id);
+                }
+            }
+        };
+
+        let phases: &[fn(&mut Self, BlockId)] = &[
+            |analyzer, id| {
+                if matches!(analyzer.blocks.block_state(id).kind, BlockKind::Ordinary)
+                    && !analyzer.blocks.has_method_ancestor(id)
+                {
+                    analyzer.ensure_names(id);
+                }
+            },
+            |analyzer, id| {
+                if matches!(analyzer.blocks.block_state(id).kind, BlockKind::Method { .. }) {
+                    analyzer.ensure_names(id);
+                }
+            },
+            |analyzer, id| {
+                if matches!(analyzer.blocks.block_state(id).kind, BlockKind::Ordinary)
+                    && analyzer.blocks.has_method_ancestor(id)
+                {
+                    analyzer.ensure_names(id);
+                }
+            },
+            Self::ensure_uses,
+            Self::ensure_impls,
+            Self::ensure_types,
+            Self::ensure_validate,
+        ];
+
+        let block_count = analyzer.blocks.entries.len();
+        for phase in phases {
+            for index in 0..block_count {
+                let id = analyzer.blocks.entries.check_idx(index).unwrap();
+                phase(&mut analyzer, id);
+            }
+        }
+
+        assert_eq!(analyzer.blocks.entries.len(), block_count);
+        analyzer.eval_block(root_id, base_scope);
 
         let vars = analyzer.syms.vars().len();
         for idx in 0..vars {

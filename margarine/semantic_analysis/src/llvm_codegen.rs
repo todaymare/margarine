@@ -677,7 +677,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         } else {
             builder.const_bool(false)
         };
-        let invalid = unsafe { Bool::new(*builder.or(negative.as_integer(), out_of_range.as_integer())) };
+        let invalid = Bool::from_value(*builder.or(negative.as_integer(), out_of_range.as_integer()));
         builder.iff(invalid, |builder| {
             self.emit_panic(builder, "integer does not fit the target address space");
         });
@@ -2787,7 +2787,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let zero_i64 = builder.const_int(self.i64, 0, false);
                 let negative = builder.cmp_int(index_i64, zero_i64, IntCmp::SignedLt);
                 let past_end = builder.cmp_int(index_i64, list_len, IntCmp::SignedGt);
-                let invalid = unsafe { Bool::new(*builder.or(negative.as_integer(), past_end.as_integer())) };
+                let invalid = Bool::from_value(*builder.or(negative.as_integer(), past_end.as_integer()));
                 let result = builder.alloca(llvm_ret.repr);
 
                 let ret_gens = ret.gens(self.syms);
@@ -5175,7 +5175,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     /// `ptr` must point to the start of an untagged reference-counted allocation.
     /// This only changes the count; it does not destroy or deallocate the allocation.
     fn emit_rc_decrement(&self, builder: &mut Builder<'ctx>, ptr: Ptr<'ctx>) -> Bool<'ctx> {
-        unsafe { Bool::new(builder.call(self.rc_drop_fn.0, self.rc_drop_fn.1, &[*ptr])) }
+        Bool::from_value(builder.call(self.rc_drop_fn.0, self.rc_drop_fn.1, &[*ptr]))
     }
 
     /// Releases one ownership reference and deallocates the allocation when it
