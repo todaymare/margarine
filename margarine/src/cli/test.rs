@@ -1,10 +1,10 @@
-use std::{ffi::CString, fmt::Write, path::Path, process::Command, time::Instant};
+use std::{ffi::CString, fmt::Write, path::Path, time::Instant};
 
 use colourful::ColourBrush;
-use margarine::{progress::{item_progress, StatusLine}, resource, start_compilation_status, CompilationSettings, CompilationTarget};
+use margarine::{progress::item_progress, start_compilation_status, BuildMode, CompilationSettings, CompilationTarget};
 use sti::arena::Arena;
 
-use super::{CliError, CliResult, COMPILE_ERROR, X_GLYPH};
+use super::{CliError, CliResult, COMPILE_ERROR};
 
 pub(super) fn execute(
     path: &Path,
@@ -30,6 +30,7 @@ pub(super) fn execute(
         cache: cache.into(),
         arena: &arena,
         tests: true,
+        shared: true,
     };
     let compile_status = start_compilation_status(&settings, compiler.silent);
 
@@ -56,86 +57,22 @@ pub(super) fn execute(
         ))
         .collect::<Vec<_>>();
     let dylib = format!("{program}.{}", target.shared_library_suffix());
-    let toolchain_libs = resource::toolchain_libs_path(target);
-
-    let link_ok = match target {
-        CompilationTarget::Arm64AppleDarwin => {
-            let mut clang = Command::new("clang");
-            clang.arg("-target")
-                .arg(target.c_target_triple())
-                .arg("-shared")
-                .arg("-L")
-                .arg(&toolchain_libs)
-                .arg(format!("{program}.o"))
-                .args(&link_files)
-                .arg("-lz")
-                .arg("-lc++")
-                .arg("-lc++abi")
-                .arg("-o")
-                .arg(&dylib);
-            run_step("Linking", &mut clang)
-        },
-        CompilationTarget::X86_64UnknownLinuxGnu
-        | CompilationTarget::Aarch64UnknownLinuxGnu => {
-            let mut clang = Command::new("clang");
-            clang.arg("-target")
-                .arg(target.c_target_triple())
-                .arg("-shared")
-                .arg("-L")
-                .arg(&toolchain_libs)
-                .arg(format!("{program}.o"))
-                .args(&link_files)
-                .arg("-lz")
-                .arg("-lstdc++")
-                .arg("-o")
-                .arg(&dylib);
-            run_step("Linking", &mut clang)
-        },
-        CompilationTarget::Wasm32UnknownUnknown => {
-            compile_status.clear();
-            return Err(CliError::link("tests do not support the wasm32-unknown-unknown target"));
-        },
-    };
-    if !link_ok {
+    if let Err(error) =
+    margarine::link_compilation(
+        target,
+        Path::new(&dylib),
+        Path::new(&program),
+        &link_files,
+        BuildMode::Shared,
+    ) {
         compile_status.clear();
-        return Err(CliError::link("linking failed"));
+        return Err(CliError::link(format!("linking failed: {error}")));
     }
     compile_status.finish(format!("Built {}", path.display()));
 
     Ok(if run_tests(&tests, filter, &dylib) { 0 } else { COMPILE_ERROR })
 }
 
-fn run_step(label: &str, cmd: &mut Command) -> bool {
-    let status = StatusLine::start(label);
-    match cmd.output() {
-        Ok(output) if output.status.success() => {
-            status.finish("Linked test library");
-            true
-        }
-        Ok(output) => {
-            status.suspend(|| {
-                eprintln!("{} {} failed with {}", X_GLYPH.red().bold(), label, output.status);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if !stdout.trim().is_empty() {
-                    eprintln!("{stdout}");
-                }
-                if !stderr.trim().is_empty() {
-                    eprintln!("{stderr}");
-                }
-            });
-            status.clear();
-            false
-        }
-        Err(err) => {
-            status.suspend(
-                || eprintln!("{} {} failed to start: {err}", X_GLYPH.red().bold(), label),
-            );
-            status.clear();
-            false
-        }
-    }
-}
 
 
 fn run_tests(tests: &[(String, bool)], filter: Option<String>, dylib: &str) -> bool {

@@ -44,8 +44,10 @@ that cannot run through the language test runner.
   `run`, and `test` still codegen after diagnostics. The public pipeline is
   `Compiler` + `CompilationResult`: register the entry with `FileData::open`,
   call `run`, then `check`, then `codegen` as appropriate.
-- `build` and `run` share `compile_and_link`; `run` executes the path returned
-  by that pipeline and reports the source path.
+- `build --shared` selects `BuildMode::Shared` through the single public
+  `build` API. It links native output as `.dylib` on macOS, `.so` on Linux,
+  or `.wasm` for Wasm, omits the executable entry wrapper, and shares the
+  native linker path with `test`.
 
 ## Targets, linking, and toolchains
 
@@ -56,10 +58,12 @@ Supported compilation targets are:
 - `aarch64-unknown-linux-gnu`
 - `wasm32-unknown-unknown`
 
-Native Linux executables link with `clang` and `libstdc++`; native test
-libraries use `.so`. The compiler links system LLVM 18.1 through `llvm-sys`
-and vendors libgit2/OpenSSL while using Rustls for HTTP. Native non-Wasm
-external ABIs use indirect returns for structs larger than 16 bytes.
+Native Linux executables link with `clang` and `libstdc++`; native shared
+libraries and test libraries use `.so`. Native macOS shared libraries use
+`.dylib`. Shared Wasm modules use `wasm-ld --shared` without an executable
+entry or exported linear memory. The compiler links system LLVM 18.1 through
+`llvm-sys` and vendors libgit2/OpenSSL while using Rustls for HTTP. Native
+non-Wasm external ABIs use indirect returns for structs larger than 16 bytes.
 macOS release compiler builds statically embed zstd, resolve unwind through
 Apple's SDK and `libSystem`, and reject every non-system dynamic dependency.
 Apple system libraries and frameworks remain dynamic.

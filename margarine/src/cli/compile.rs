@@ -1,7 +1,7 @@
 use std::{path::{Path, PathBuf}, process::{Command, Stdio}};
 
 use colourful::ColourBrush;
-use margarine::{start_compilation_status, CompilationSettings, CompilationTarget};
+use margarine::{start_compilation_status, BuildMode, CompilationSettings, CompilationTarget};
 use sti::arena::Arena;
 
 use super::{CliError, CliResult, COMPILE_ERROR, PROGRAM_ERROR, TICK_GLYPH};
@@ -11,9 +11,18 @@ use super::{CliError, CliResult, COMPILE_ERROR, PROGRAM_ERROR, TICK_GLYPH};
 pub(super) fn compile_and_link(
     path: &Path,
     target: CompilationTarget,
+    mode: BuildMode,
     output: Option<String>,
     cache: String,
 ) -> CliResult<String> {
+
+    let output_suffix =
+    if matches!(mode, BuildMode::Shared) {
+        target.shared_library_suffix().to_string()
+    } else {
+        target.output_suffix()
+    };
+
     let output = output
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -23,7 +32,7 @@ pub(super) fn compile_and_link(
                 .unwrap_or("program".into());
             PathBuf::from(&cache)
                 .join(name)
-                .with_extension(target.output_suffix())
+                .with_extension(output_suffix)
         });
     let current_dir =
         std::env::current_dir()
@@ -44,6 +53,7 @@ pub(super) fn compile_and_link(
         &output,
         &cache,
         margarine::preludes_from_env(),
+        mode,
     ).map_err(|error| CliError::link(format!("build failed: {error}")))?;
 
 
@@ -57,7 +67,7 @@ pub(super) fn run(
     cache: String,
     program_args: Vec<String>,
 ) -> CliResult<i32> {
-    let output = compile_and_link(path, target, output, cache)?;
+    let output = compile_and_link(path, target, BuildMode::Executable, output, cache)?;
 
     println!("{}", format!("› Running {}", path.display()).dim());
 
@@ -76,6 +86,7 @@ pub(super) fn run(
         Ok(if (0..=125).contains(&code) { code } else { PROGRAM_ERROR })
     }
 }
+
 pub(super) fn check(
     path: &Path,
     target: CompilationTarget,
@@ -98,6 +109,7 @@ pub(super) fn check(
         cache: cache.into(),
         arena: &arena,
         tests: false,
+        shared: false,
     };
     let compile_status = start_compilation_status(&settings, compiler.silent);
 

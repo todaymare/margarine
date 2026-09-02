@@ -14,7 +14,6 @@ use margarine::CompilationTarget;
 
 use artifacts::ArtifactsLock;
 
-pub const X_GLYPH : &str = "error:";
 pub const TICK_GLYPH : &str = "✓";
 
 #[derive(Parser)]
@@ -49,7 +48,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
 
-    /// Compile a source file into an executable
+    /// Compile a source file into an executable or shared library
     Build {
         /// Source path
         #[arg(value_parser = existing_file_path)]
@@ -58,6 +57,10 @@ enum Commands {
         /// Compilation target: default (host), arm64-apple-darwin, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, or wasm32-unknown-unknown
         #[arg(long, default_value = "default")]
         target: CompilationTarget,
+
+        /// Build a native shared library instead of an executable
+        #[arg(long)]
+        shared: bool,
 
         /// Output path
         #[arg(short, long)]
@@ -224,9 +227,16 @@ pub(crate) fn main() -> i32 {
 
 fn execute(command: Commands) -> CliResult<i32> {
     match command {
-        Commands::Build { path, target, output, cache, update } => {
+        Commands::Build { path, target, shared, output, cache, update } => {
             let cache = artifacts::reset_cache_if(update, cache);
-            compile::compile_and_link(&path, target, output, cache)?;
+            let mode = 
+            if shared {
+                margarine::BuildMode::Shared
+            } else {
+                margarine::BuildMode::Executable
+            };
+
+            compile::compile_and_link(&path, target, mode, output, cache)?;
             Ok(0)
         },
         Commands::Run { path, target, output, cache, update, program_args } => {

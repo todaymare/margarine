@@ -649,15 +649,23 @@ pub fn preludes_from_env() -> Vec<Prelude> {
     }
 }
 
-/// Compile and link a source file for the requested target.
+/// Selects whether compilation produces an executable or shared library.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildMode {
+    Executable,
+    Shared,
+}
+
+/// Compile and link a source file for the requested target and output mode.
 pub fn build<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
     path: P,
     target: CompilationTarget,
     output: O,
     cache: C,
     preludes: Vec<Prelude>,
+    mode: BuildMode,
 ) -> Result<PathBuf, CompilerError> {
-    build_ex(path, target, output, cache, preludes, current_environment(), None, None)
+    build_ex(path, target, output, cache, preludes, mode, current_environment(), None, None)
 }
 
 fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
@@ -666,10 +674,13 @@ fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
     output: O,
     cache: C,
     preludes: Vec<Prelude>,
+    mode: BuildMode,
     environment: HashMap<String, String>,
     build_depth: Option<usize>,
     repository_cache: Option<PathBuf>,
 ) -> Result<PathBuf, CompilerError> {
+
+
     let path = path.as_ref();
     let output = output.as_ref().to_path_buf();
     let cache = cache.as_ref().to_path_buf();
@@ -707,6 +718,7 @@ fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
 
     let entry = compiler.string_map.get(file.name()).into();
     compiler.files.register(file);
+    let shared = matches!(mode, BuildMode::Shared);
 
     let settings = CompilationSettings {
         compilation_target: target,
@@ -716,6 +728,7 @@ fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
         cache,
         arena: &arena,
         tests: false,
+        shared,
     };
     let compile_status =
     start_compilation_status(&settings, compiler.silent);
@@ -728,7 +741,7 @@ fn build_ex<P: AsRef<Path>, O: AsRef<Path>, C: AsRef<Path>>(
     let mut link_files = result.link_files().to_vec();
     prepare_link_files(target, &mut link_files)?;
 
-    link_compilation(target, &output, &link_files)?;
+    link_compilation(target, &output, &output, &link_files, mode)?;
     compile_status.finish(format!("Built {}", path.display()));
 
     Ok(output)
@@ -765,13 +778,18 @@ pub fn prepare_link_files(
 
 
 
-fn link_compilation(
+/// Link generated object code and runtime inputs for the requested output kind.
+pub fn link_compilation(
     target: CompilationTarget,
     output: &Path,
+    object_output: &Path,
     link_files: &[String],
+    mode: BuildMode,
 ) -> Result<(), CompilerError> {
+    let shared = matches!(mode, BuildMode::Shared);
+
     let toolchain_libs = resource::toolchain_libs_path(target);
-    let output_object = format!("{}.o", output.display());
+    let output_object = format!("{}.o", object_output.display());
 
     let mut linker = match target {
         CompilationTarget::Arm64AppleDarwin => {
@@ -808,10 +826,18 @@ fn link_compilation(
         }
         CompilationTarget::Wasm32UnknownUnknown => {
             let mut linker = Command::new("wasm-ld");
+            if shared {
+                linker
+                    .arg("--shared")
+                    .arg("--no-entry")
+                    .arg("--experimental-pic");
+            } else {
+                linker
+                    .arg("--no-entry")
+                    .arg("--export=main")
+                    .arg("--export-memory");
+            }
             linker
-                .arg("--no-entry")
-                .arg("--export=main")
-                .arg("--export-memory")
                 .arg("-L")
                 .arg(&toolchain_libs)
                 .arg(&output_object)
@@ -822,12 +848,12 @@ fn link_compilation(
         }
     };
 
-    let label =
-    match target {
-        CompilationTarget::Wasm32UnknownUnknown => "Linking browser Wasm",
-        _ => "Linking",
-    };
-    let status = StatusLine::start(label);
+    if shared 
+    && !matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
+        linker.arg("-shared");
+    }
+
+    let status = StatusLine::start("Linking");
     let result = linker.output().map_err(|source| CompilerError::Link {
         target,
         status: None,
@@ -1207,6 +1233,7 @@ fn run_build_script<P: AsRef<Path>>(
         &output_path,
         &cache_dir,
         settings.preludes.clone(),
+        BuildMode::Executable,
         build_env.clone(),
         Some(depth),
         Some(repository_cache.to_path_buf()),

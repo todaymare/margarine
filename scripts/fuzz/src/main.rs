@@ -20,6 +20,7 @@ fn main() {
             cache: "artifacts".into(),
             arena: &arena,
             tests: false,
+            shared: false,
         });
     });
 

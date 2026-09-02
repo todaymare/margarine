@@ -45,10 +45,10 @@ managed, versioned installation. Use `margarine update` for later releases.
 
 | Target | Output |
 | --- | --- |
-| `arm64-apple-darwin` | Native executable |
-| `x86_64-unknown-linux-gnu` | Native executable |
-| `aarch64-unknown-linux-gnu` | Native executable |
-| `wasm32-unknown-unknown` | WebAssembly module |
+| `arm64-apple-darwin` | Native executable or `.dylib` shared library with `--shared` |
+| `x86_64-unknown-linux-gnu` | Native executable or `.so` shared library with `--shared` |
+| `aarch64-unknown-linux-gnu` | Native executable or `.so` shared library with `--shared` |
+| `wasm32-unknown-unknown` | WebAssembly module (`.wasm`), including shared modules with `--shared` |
 
 ## Project status
 
@@ -72,6 +72,7 @@ fn main() {
 ```sh
 margarine run examples/hello.mar
 margarine build examples/hello.mar
+margarine build --shared examples/hello.mar
 margarine check examples/hello.mar
 margarine test tests/core.mar
 margarine update

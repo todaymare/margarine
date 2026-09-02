@@ -153,6 +153,7 @@ pub struct CompilationSettings<'out> {
     pub cache: PathBuf,
     pub arena: &'out Arena,
     pub tests: bool,
+    pub shared: bool,
 }
 
 
@@ -233,7 +234,7 @@ impl CompilationTarget {
 
     pub fn output_suffix(self) -> String {
         match self {
-            CompilationTarget::Arm64AppleDarwin
+              CompilationTarget::Arm64AppleDarwin
             | CompilationTarget::X86_64UnknownLinuxGnu
             | CompilationTarget::Aarch64UnknownLinuxGnu => "".into(),
             CompilationTarget::Wasm32UnknownUnknown => "wasm".into(),
@@ -243,7 +244,8 @@ impl CompilationTarget {
     pub fn shared_library_suffix(self) -> &'static str {
         match self {
             CompilationTarget::Arm64AppleDarwin => "dylib",
-            CompilationTarget::X86_64UnknownLinuxGnu
+
+              CompilationTarget::X86_64UnknownLinuxGnu
             | CompilationTarget::Aarch64UnknownLinuxGnu => "so",
             CompilationTarget::Wasm32UnknownUnknown => "wasm",
         }
@@ -585,51 +587,53 @@ pub fn run<'a>(
             register!(F64, ctx.f64());
             register!(UNIT, ctx.unit());
         }
-
-
-        // Claim the entry symbol before any user function is emitted. Root-level
-        // `fn main` is now named exactly "main" (root-relative paths), so it would
-        // otherwise take the entry name and the linker would bind the process
-        // entry to it, making the exit code whatever garbage `w0` held on return.
-        let main_fn_ty =
-        if matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
-            i32_ty.fn_ty(ctx.arena, &[], false)
-        } else {
-            i32_ty.fn_ty(ctx.arena, &[*i32_ty, *ptr], false)
-        };
-        let main_fn = module.function("main", main_fn_ty);
-
-        // create IR
-        for sym in startups.iter() {
-            let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
+        if !settings.shared {
+            for sym in startups.iter() {
+                let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
+            }
         }
 
         for sym in tests.iter() {
             let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
         }
 
-        // build main
-        let builder = main_fn.builder(ctx.as_ctx_ref(), main_fn_ty);
-        if !matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
-            let set_env_args_fn_ty = void.fn_ty(ctx.arena, &[*i32_ty, *ptr], false);
-            let set_env_args_fn = module.function("margarineSetEnvArgs", set_env_args_fn_ty);
-            set_env_args_fn.set_linkage(Linkage::External);
-            let argc = builder.local_get(builder.arg(0).unwrap());
-            let argv = builder.local_get(builder.arg(1).unwrap());
-            builder.call(set_env_args_fn, set_env_args_fn_ty, &[argc, argv]);
-        }
 
-        for sym_id in startups {
-            let hash = Type::Ty(*sym_id, GenListId::EMPTY)
-                .function_instance_hash(conv.syms);
-            if let Some(func) = conv.funcs.get(&hash) {
-                let args: Vec<_> = func.func_ty.args().into_iter().map(|ty| builder.const_zero(ty)).collect();
-                builder.call(func.func_ptr, func.func_ty, &args);
+        if !settings.shared {
+            // Claim the entry symbol before any user function is emitted. Root-level
+            // `fn main` is now named exactly "main" (root-relative paths), so it would
+            // otherwise take the entry name and the linker would bind the process
+            // entry to it, making the exit code whatever garbage `w0` held on return.
+            let main_fn_ty =
+            if matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
+                i32_ty.fn_ty(ctx.arena, &[], false)
+            } else {
+                i32_ty.fn_ty(ctx.arena, &[*i32_ty, *ptr], false)
+            };
+            let main_fn = module.function("main", main_fn_ty);
+
+            // build main
+            let builder = main_fn.builder(ctx.as_ctx_ref(), main_fn_ty);
+            if !matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
+                let set_env_args_fn_ty = void.fn_ty(ctx.arena, &[*i32_ty, *ptr], false);
+                let set_env_args_fn = module.function("margarineSetEnvArgs", set_env_args_fn_ty);
+                set_env_args_fn.set_linkage(Linkage::External);
+                let argc = builder.local_get(builder.arg(0).unwrap());
+                let argv = builder.local_get(builder.arg(1).unwrap());
+                builder.call(set_env_args_fn, set_env_args_fn_ty, &[argc, argv]);
             }
-        }
 
-        builder.call(abort_fn, abort_fn_ty, &[*ctx.const_int(i32_ty, 0, false)]);
-        builder.unreachable();
+            for sym_id in startups {
+                let hash = Type::Ty(*sym_id, GenListId::EMPTY)
+                    .function_instance_hash(conv.syms);
+                if let Some(func) = conv.funcs.get(&hash) {
+                    let args: Vec<_> = func.func_ty.args().into_iter().map(|ty| builder.const_zero(ty)).collect();
+                    builder.call(func.func_ptr, func.func_ty, &args);
+                }
+            }
+
+            builder.call(abort_fn, abort_fn_ty, &[*ctx.const_int(i32_ty, 0, false)]);
+            builder.unreachable();
+        }
 
         module = conv.module;
     }

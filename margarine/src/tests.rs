@@ -49,6 +49,7 @@ fn conditional_trait_impl_requires_its_generic_bounds() {
         entry: "test.mar".to_string(),
         arena: &arena,
         tests: false,
+        shared: false,
         output: "program".to_string(),
         cache: "artifacts".into(),
     }).unwrap();
@@ -71,6 +72,7 @@ fn compile_source(source: &str) -> CompilationResult<'_> {
         entry: "test.mar".to_string(),
         arena,
         tests: false,
+        shared: false,
         output: "program".to_string(),
         cache: "artifacts".into(),
     }).unwrap()
@@ -95,6 +97,7 @@ fn silent_attributes_cover_lexer_and_parser_diagnostics() {
         entry: "test.mar".to_string(),
         arena: &arena,
         tests: false,
+        shared: false,
         output: "program".to_string(),
         cache: "artifacts".into(),
     }).unwrap();
@@ -246,6 +249,7 @@ fn package_artifacts_are_grouped_by_hash_and_rebuilt_cleanly() {
         cache: cache.clone(),
         arena: &arena,
         tests: false,
+        shared: false,
     };
     let mut state = CompilationState {
         linker_files: Vec::new(),
@@ -337,6 +341,7 @@ fn main() {{
         cache: workspace.path().join("unused-cache"),
         arena: &arena,
         tests: false,
+        shared: false,
     };
     let repository_cache = workspace.path().join("shared-cache");
 
@@ -381,6 +386,7 @@ fn package_cache_creation_errors_are_typed() {
         cache,
         arena: &arena,
         tests: false,
+        shared: false,
     };
 
     let error = resource_cache_entry(&settings.cache, "fixture")
@@ -404,6 +410,7 @@ fn compile_paths_stay_relative_to_the_cache() {
         cache: "/tmp/cache".into(),
         arena: &arena,
         tests: false,
+        shared: false,
     };
 
     assert_eq!(
