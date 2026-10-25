@@ -1,4 +1,4 @@
-use std::{ffi::{CStr, CString}, ops::Deref, path::Path, ptr::{null_mut, NonNull}};
+use std::{ffi::{CStr, CString}, ops::Deref, path::Path, ptr::{null_mut, NonNull}, sync::Once};
 
 use llvm_sys::{bit_writer::LLVMWriteBitcodeToFile, core::{LLVMArrayType2, LLVMConstArray2, LLVMConstInt, LLVMConstNamedStruct, LLVMConstReal, LLVMConstStringInContext, LLVMContextCreate, LLVMContextDispose, LLVMDisposeMessage, LLVMDoubleTypeInContext, LLVMFloatTypeInContext, LLVMIntTypeInContext, LLVMMDNodeInContext2, LLVMMDStringInContext2, LLVMMetadataAsValue, LLVMModuleCreateWithNameInContext, LLVMPointerTypeInContext, LLVMSetTarget, LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMValueAsMetadata, LLVMVoidTypeInContext}, prelude::LLVMMetadataRef, target::{LLVMDisposeTargetData, LLVMSetModuleDataLayout, LLVM_InitializeAllAsmParsers, LLVM_InitializeAllAsmPrinters, LLVM_InitializeAllTargetInfos, LLVM_InitializeAllTargetMCs, LLVM_InitializeAllTargets}, target_machine::{LLVMCodeGenFileType, LLVMCreateTargetDataLayout, LLVMCreateTargetMachine, LLVMGetDefaultTargetTriple, LLVMGetTargetFromTriple, LLVMGetTargetMachineTriple, LLVMOpaqueTargetMachine, LLVMTargetMachineEmitToFile}, LLVMContext};
 use sti::{arena::Arena, format_in};
@@ -62,11 +62,14 @@ impl<'ctx> Context<'ctx> {
 
 impl<'me> ContextImpl<'me> {
     fn new(arena: &'me Arena, target_triple: &str) -> Self {
-        unsafe { LLVM_InitializeAllTargets() };
-        unsafe { LLVM_InitializeAllTargetInfos() };
-        unsafe { LLVM_InitializeAllTargetMCs() };
-        unsafe { LLVM_InitializeAllAsmParsers() };
-        unsafe { LLVM_InitializeAllAsmPrinters() };
+        static INITIALIZE: Once = Once::new();
+        INITIALIZE.call_once(|| unsafe {
+            LLVM_InitializeAllTargetInfos();
+            LLVM_InitializeAllTargets();
+            LLVM_InitializeAllTargetMCs();
+            LLVM_InitializeAllAsmParsers();
+            LLVM_InitializeAllAsmPrinters();
+        });
 
 
         let ptr = unsafe { LLVMContextCreate() };
