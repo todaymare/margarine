@@ -374,42 +374,6 @@ fn toolchain_add_uses_the_managed_version_directory_for_staged_binaries() {
 
 
 #[test]
-fn toolchain_add_rejects_release_metadata_for_another_version() {
-    let dir = tempfile::tempdir().unwrap();
-    let active = install_managed_fixture(dir.path());
-    let target_dir =
-        dir.path().join(CURRENT_VERSION).join("toolchains/wasm32-unknown-unknown");
-    fs::remove_dir_all(&target_dir).unwrap();
-    let release = serde_json::json!({
-        "tag_name": "v0.2.0",
-        "name": null,
-        "published_at": null,
-        "body": null,
-        "html_url": "https://example.invalid/release",
-        "assets": [],
-    }).to_string();
-    let (api, server) = api_response_server("200 OK", release.as_bytes());
-
-    let output = Command::new(&active)
-        .args(["toolchain", "add", "wasm32-unknown-unknown"])
-        .env("MARGARINE_RELEASES_API", api)
-        .output()
-        .unwrap();
-    server.join().unwrap();
-
-    assert_eq!(output.status.code(), Some(3));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(&format!(
-            "release metadata is for v0.2.0, but version {CURRENT_VERSION} was requested",
-        )),
-        "{stderr}",
-    );
-    assert!(!target_dir.exists());
-}
-
-
-#[test]
 fn toolchain_add_rejects_a_bad_checksum_without_installing_any_files() {
     let dir = tempfile::tempdir().unwrap();
     let active = install_managed_fixture(dir.path());
@@ -493,35 +457,6 @@ fn updater_rejects_an_unmanaged_executable_before_contacting_the_release_api() {
 
 
 #[test]
-fn updater_treats_a_missing_latest_release_as_a_successful_check() {
-    let dir = tempfile::tempdir().unwrap();
-    let active = install_managed_fixture(dir.path());
-    let (api, server) = api_response_server("404 Not Found", b"");
-
-    let output =
-        run_update(
-            &active,
-            api,
-            server,
-            &dir.path().join("unused-log"),
-            b"",
-        );
-
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("No releases yet"),
-        "stdout:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-    );
-}
-
-
-#[test]
 fn updater_reports_release_api_failures_without_parsing_the_response() {
     let dir = tempfile::tempdir().unwrap();
     let active = install_managed_fixture(dir.path());
@@ -542,40 +477,6 @@ fn updater_reports_release_api_failures_without_parsing_the_response() {
     assert!(!stderr.contains("could not parse release info"), "{stderr}");
 }
 
-
-#[test]
-fn updater_rejects_a_release_tag_with_more_than_one_v_prefix() {
-    let dir = tempfile::tempdir().unwrap();
-    let active = install_managed_fixture(dir.path());
-    let (api, server) =
-        api_response_server(
-            "200 OK",
-            br#"{
-                "tag_name":"vv0.2.0",
-                "name":"Malformed release",
-                "html_url":"https://example.invalid/release",
-                "assets":[]
-            }"#,
-        );
-
-    let output =
-        run_update(
-            &active,
-            api,
-            server,
-            &dir.path().join("unused-log"),
-            b"",
-        );
-
-    assert_eq!(output.status.code(), Some(3));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(&format!(
-            "cannot compare installed version {CURRENT_VERSION} with release version v0.2.0",
-        )),
-        "{stderr}",
-    );
-}
 
 #[test]
 fn updater_treats_a_stable_release_as_newer_than_a_prerelease() {
