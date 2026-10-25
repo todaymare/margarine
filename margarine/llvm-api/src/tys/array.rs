@@ -1,6 +1,6 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::core::LLVMGetElementType;
+use llvm_sys::core::{LLVMGetArrayLength2, LLVMGetElementType};
 
 use crate::{module::Module, tys::TypeKind};
 
@@ -25,13 +25,12 @@ impl<'ctx> ArrayTy<'ctx> {
         Type::new(NonNull::new(ty).unwrap())
     }
 
+    pub fn element_count(self) -> u64 {
+        unsafe { LLVMGetArrayLength2(self.llvm_ty().as_ptr()) }
+    }
 
-    pub fn len(self, module: Module<'ctx>) -> usize {
-        let arr_size = self.size_of(module).unwrap();
-        let elem_size = self.element_ty().size_of(module).unwrap();
-
-        let len = arr_size / elem_size;
-        len as usize
+    pub fn len(self, _module: Module<'ctx>) -> usize {
+        self.element_count() as usize
     }
 }
 

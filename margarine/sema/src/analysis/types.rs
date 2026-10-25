@@ -188,7 +188,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                 },
 
 
-                Decl::Function { sig, .. } => {
+                Decl::Function { visibility, sig, .. } => {
                     let declared_generics =
                     match self.resolve_generics(scope, (*id).into(), sig.generics) {
                         Ok(e) => e,
@@ -201,7 +201,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     };
                     let impl_generics = impl_block.map(|(_, gens, _)| gens).unwrap_or(&[]);
                     let generics = self.blocks.all_generics(self.output, &self.scopes, scope, declared_generics, impl_generics);
+                    let abi = self.validate_function_abi(*id, sig.abi);
 
+                    if abi == parser::dt::FunctionAbi::C && !generics.is_empty() {
+                        self.error(*id, Error::CFunctionCannotBeGeneric(sig.source));
+                    }
                     let mut args = Buffer::new(self.output, sig.arguments.len());
 
                     for a in sig.arguments {
@@ -248,14 +252,20 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                         sym_name = self.string_map.concat(self.syms.sym(impl_ty).name(), method_path);
                     }
 
-                    let func = FunctionTy::new(args.leak(), ret, FunctionKind::UserDefined, Some(*id), declared_generics);
+                    let func = FunctionTy::new_with_abi(
+                        args.leak(), ret, abi, FunctionKind::UserDefined, Some(*id), declared_generics);
                     let func = Symbol::new(sym_name, generics, SymbolKind::Function(func));
 
                     self.syms.add_sym(fid, func);
+                    if visibility == Visibility::Public
+                    && abi == parser::dt::FunctionAbi::C {
+                        self.extern_defs.push(fid);
+                    }
                 }
 
 
-                Decl::Extern { functions, .. } => {
+                Decl::Extern { abi: parsed_abi, functions, .. } => {
+                    let abi = self.validate_function_abi(*id, parsed_abi);
                     for f in functions {
                         let mut args = Buffer::new(self.output, f.args().len());
 
@@ -268,6 +278,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                             },
                         };
 
+                        if abi == parser::dt::FunctionAbi::C
+                        && !gens.is_empty() {
+                            self.error(*id, Error::CFunctionCannotBeGeneric(f.range()));
+                        }
+
                         for a in f.args() {
                             let sym = self.dt_to_gen(*id, self.scopes.get(scope), a.data_type(), gens);
                             let arg = FunctionArgument::new_inout(a.name(), sym, a.is_inout());
@@ -279,13 +294,17 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         let sym_name = self.string_map.concat(path, f.name());
 
-                        let func = FunctionTy::new(args.leak(), ret, FunctionKind::Extern(f.path()), Some(*id), gens);
+                        let func = FunctionTy::new_with_abi(
+                            args.leak(), ret, abi,
+                            FunctionKind::Extern(f.path()), Some(*id), gens
+                        );
+
                         let func = Symbol::new(sym_name, gens, SymbolKind::Function(func));
 
-                        let Ok(id) = self.namespaces.get_ns(ns).get_sym(f.name()).unwrap()
+                        let Ok(fid) = self.namespaces.get_ns(ns).get_sym(f.name()).unwrap()
                         else { continue };
 
-                        self.syms.add_sym(id, func);
+                        self.syms.add_sym(fid, func);
                     }
                 }
 
@@ -355,7 +374,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                         let ret = self.dt_to_gen(*id, self.scopes.get(scope), f.return_type, all_gens);
 
-                        funcs.push((f.name, FunctionTy::new(args.leak(), ret, FunctionKind::Trait, None, gens)));
+                        funcs.push((f.name, FunctionTy::new_with_abi(args.leak(), ret, f.abi, FunctionKind::Trait, None, gens)));
                     }
 
                     self.syms.add_sym(sym, Symbol::new(name, trait_gens, SymbolKind::Trait(Trait {

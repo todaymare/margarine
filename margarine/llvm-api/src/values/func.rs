@@ -1,10 +1,36 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddAttributeAtIndex, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute, LLVMCreateStringAttribute, LLVMCreateTypeAttribute, LLVMGetEnumAttributeKindForName, LLVMSetLinkage}, LLVMAttributeFunctionIndex, LLVMAttributeReturnIndex, LLVMLinkage};
+use llvm_sys::{
+    core::{
+        LLVMAddAttributeAtIndex, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute,
+        LLVMCreateStringAttribute, LLVMGetEnumAttributeKindForName, LLVMGlobalGetValueType,
+        LLVMIsDeclaration, LLVMSetFunctionCallConv, LLVMSetLinkage,
+    },
+    LLVMAttributeFunctionIndex, LLVMAttributeReturnIndex, LLVMCallConv, LLVMLinkage,
+};
 
-use crate::{builder::Builder, cstr, ctx::ContextRef, tys::{func::FunctionType, ptr::PtrTy, Type, TypeKind}};
+use crate::{
+    attributes::{AbiAttribute, AttributeLocation},
+    builder::Builder,
+    cstr,
+    ctx::ContextRef,
+    tys::{func::FunctionType, ptr::PtrTy, Type, TypeKind},
+};
 
 use super::Value;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CallingConvention {
+    C,
+}
+
+impl CallingConvention {
+    pub(crate) fn llvm_value(self) -> u32 {
+        match self {
+            Self::C => LLVMCallConv::LLVMCCallConv as u32,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct FunctionPtr<'ctx>(Value<'ctx>);
@@ -29,8 +55,52 @@ impl<'ctx> FunctionPtr<'ctx> {
     pub fn ty(self) -> PtrTy<'ctx> { unsafe { PtrTy::new(self.deref().ty()) } }
 
 
+    pub fn function_type(self) -> FunctionType<'ctx> {
+        let ty = unsafe { LLVMGlobalGetValueType(self.llvm_val().as_ptr()) };
+        unsafe { FunctionType::new(Type::new(NonNull::new(ty).unwrap())) }
+    }
+
+
+    pub fn is_declaration(self) -> bool {
+        unsafe { LLVMIsDeclaration(self.llvm_val().as_ptr()) != 0 }
+    }
+
+
     pub fn set_linkage(self, linkage: Linkage) {
         unsafe { LLVMSetLinkage(self.llvm_val().as_ptr(), linkage.llvm_linkage()); }
+    }
+    /// Applies one ABI attribute to this function at its declared location.
+    ///
+    /// Attribute names are compiler-owned constants and must be recognized by
+    /// the linked LLVM version.
+    pub fn set_abi_attribute(self, ctx: ContextRef<'ctx>, attribute: AbiAttribute<'ctx>) {
+        let llvm_attribute = attribute.to_llvm_attribute(ctx);
+        unsafe {
+            LLVMAddAttributeAtIndex(
+                self.llvm_val().as_ptr(),
+                attribute.location.to_llvm_index(),
+                llvm_attribute.as_ptr(),
+            );
+        }
+    }
+
+
+    pub fn set_abi_attributes(self, ctx: ContextRef<'ctx>, attributes: &[AbiAttribute<'ctx>]) {
+        for &attribute in attributes {
+            self.set_abi_attribute(ctx, attribute);
+        }
+    }
+
+
+    pub fn set_calling_convention(self, convention: CallingConvention) {
+        unsafe {
+            LLVMSetFunctionCallConv(self.llvm_val().as_ptr(), convention.llvm_value());
+        }
+    }
+
+
+    pub fn set_c_calling_convention(self) {
+        self.set_calling_convention(CallingConvention::C);
     }
 
 
@@ -92,9 +162,13 @@ impl<'ctx> FunctionPtr<'ctx> {
 
 
     pub fn set_sret(self, ctx: ContextRef<'ctx>, ty: Type<'ctx>) {
-        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("sret"), 4) };
-        let attr = unsafe { LLVMCreateTypeAttribute(ctx.ptr.as_ptr(), attr_kind, ty.llvm_ty().as_ptr()) };
-        unsafe { LLVMAddAttributeAtIndex(self.llvm_val().as_ptr(), 1, attr) };
+        self.set_abi_attribute(
+            ctx,
+            AbiAttribute::new(
+                AttributeLocation::Parameter(0),
+                crate::attributes::AttributeKind::Type { name: "sret", ty },
+            ),
+        );
     }
 }
 

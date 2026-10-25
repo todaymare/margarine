@@ -4,7 +4,7 @@ pub mod dt;
 
 use std::collections::HashMap;
 use common::{source::SourceRange, string_map::{StringIndex, StringMap}};
-use dt::{DataType, DataTypeKind, FunctionTypeArgument};
+use dt::{DataType, DataTypeKind, FunctionAbi, FunctionTypeArgument};
 use errors::Error;
 use ::errors::{ParserError, ErrorId};
 use lexer::{Token, TokenKind, TokenList, Keyword, Literal};
@@ -183,6 +183,24 @@ impl<'out> Parser<'_, 'out, '_> {
     }
 
 
+
+    fn expect_abi_string(&mut self) -> Result<FunctionAbi, ErrorId> {
+        let source = self.current_range();
+        let Some(name) = self.is_literal_str() else {
+            return Err(ErrorId::Parser((self.file, self.errors.push(Error::ExpectedLiteralString {
+                source,
+                token: self.current_kind(),
+            }))))
+        };
+
+        let abi = match self.string_map.get(name) {
+            "C" => FunctionAbi::C,
+            _ => FunctionAbi::Unknown { name, source },
+        };
+        self.advance();
+        Ok(abi)
+    }
+
     fn expect_type(&mut self) -> Result<DataType<'out>, ErrorId> {
         let start = self.current_range().start();
         let result = if self.current_is(TokenKind::Bang) {
@@ -199,8 +217,20 @@ impl<'out> Parser<'_, 'out, '_> {
 
             self.expect(TokenKind::RightSquare)?;
             DataType::new(SourceRange::new(start, self.current_range().end()), DataTypeKind::List(self.arena.alloc_new(ty)))
-        } else if self.current_is(TokenKind::Keyword(Keyword::Fn)) {
-            self.advance();
+        } else if self.current_is(TokenKind::Keyword(Keyword::Fn))
+        || self.current_is(TokenKind::Keyword(Keyword::Extern)) {
+            let abi = if self.current_is(TokenKind::Keyword(Keyword::Extern)) {
+                self.advance();
+                self.expect_abi_string()?
+            } else {
+                FunctionAbi::Margarine
+            };
+            if abi == FunctionAbi::Margarine {
+                self.advance();
+            } else {
+                self.expect(TokenKind::Keyword(Keyword::Fn))?;
+                self.advance();
+            }
 
             self.expect(TokenKind::LeftParenthesis)?;
             self.advance();
@@ -223,11 +253,10 @@ impl<'out> Parser<'_, 'out, '_> {
             } else {
                 DataType::new(SourceRange::new(start, self.current_range().end()), DataTypeKind::Unit)
             };
-            
 
             DataType::new(
                 SourceRange::new(start, self.current_range().end()),
-                DataTypeKind::Fn(list, self.arena.alloc_new(ret))
+                DataTypeKind::Fn(abi, list, self.arena.alloc_new(ret))
             )
 
         } else if self.current_is(TokenKind::LeftParenthesis) { 
@@ -891,12 +920,11 @@ impl<'ta> Parser<'_, 'ta, '_> {
                     }
                 }
 
-
-
-                let Some(stmt) = self.statement(settings)? 
+                let Some(stmt) = self.statement(settings)?
                 else {
                     return Ok(None);
                 };
+
 
                 match stmt {
                     NodeId::Decl(decl) => self.ast.add_decl(
@@ -920,7 +948,10 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn parse_decl(&mut self, settings: &ParserSettings, visibility: Visibility) -> Option<DeclResult<'ta>> {
         Some(match self.current_kind() {
             TokenKind::Keyword(Keyword::Struct) => self.struct_declaration(visibility),
-            TokenKind::Keyword(Keyword::Fn) => self.function_declaration(settings, visibility),
+            TokenKind::Keyword(Keyword::Fn) => {
+                let start = self.current_range().start();
+                self.function_declaration(settings, visibility, FunctionAbi::Margarine, start)
+            },
             TokenKind::Keyword(Keyword::Trait) => self.trait_declaration(visibility),
             TokenKind::Keyword(Keyword::Mod) => self.mod_declaration(visibility),
             TokenKind::Keyword(Keyword::Extern) => self.extern_declaration(settings, visibility),
@@ -1000,8 +1031,9 @@ impl<'ta> Parser<'_, 'ta, '_> {
     fn function_sig(
         &mut self,
         settings: &ParserSettings,
+        abi: FunctionAbi,
+        start: u32,
     ) -> Result<FunctionSignature<'ta>, ErrorId> {
-        let start = self.current_range().start();
         self.expect(TokenKind::Keyword(Keyword::Fn))?;
         self.advance();
 
@@ -1070,23 +1102,25 @@ impl<'ta> Parser<'_, 'ta, '_> {
         
         let header = SourceRange::new(start, return_type.range().end());
 
-        Ok(FunctionSignature::new(
-             name, 
+        Ok(FunctionSignature::new_with_abi(
+             name,
              header,
              arguments,
              generics,
              return_type,
+             abi,
         ))
     }
 
 
     fn function_declaration(
-        &mut self, 
+        &mut self,
         settings: &ParserSettings,
         visibility: Visibility,
+        abi: FunctionAbi,
+        start: u32,
     ) -> DeclResult<'ta> {
-        let start = self.current_range().start();
-        let sig = self.function_sig(settings)?;
+        let sig = self.function_sig(settings, abi, start)?;
         self.advance();
 
         self.expect(TokenKind::LeftBracket)?;
@@ -1128,7 +1162,8 @@ impl<'ta> Parser<'_, 'ta, '_> {
             TokenKind::RightBracket,
             None,
             |parser, _| {
-                parser.function_sig(&set)
+                let start = parser.current_range().start();
+                parser.function_sig(&set, FunctionAbi::Margarine, start)
             }
         )?;
 
@@ -1275,13 +1310,24 @@ impl<'ta> Parser<'_, 'ta, '_> {
 
     fn extern_declaration(&mut self, settings: &ParserSettings, visibility: Visibility) -> DeclResult<'ta> {
         let start = self.current_range().start();
-        if visibility == Visibility::Public {
-            let err = self.errors.push(Error::UnexpectedToken(self.current_range()));
-            return Err(ErrorId::Parser((self.file, err)));
-        }
         self.expect(TokenKind::Keyword(Keyword::Extern))?;
         self.advance();
 
+        let abi =
+        if self.is_literal_str().is_some() {
+            self.expect_abi_string()?
+        } else {
+            FunctionAbi::C
+        };
+
+        if self.current_is(TokenKind::Keyword(Keyword::Fn)) {
+            return self.function_declaration(settings, visibility, abi, start);
+        }
+
+        if visibility == Visibility::Public {
+            let err = self.errors.push(Error::UnexpectedToken(SourceRange::new(start, self.current_range().end())));
+            return Err(ErrorId::Parser((self.file, err)));
+        }
 
         self.expect(TokenKind::LeftBracket)?;
         self.advance();
@@ -1371,8 +1417,6 @@ impl<'ta> Parser<'_, 'ta, '_> {
                         DataTypeKind::Unit
                     ) 
                 };
-
-
             Ok(ExternFunction::new(
                 function_visibility,
                 name,
@@ -1380,7 +1424,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
                 gens,
                 arguments,
                 return_type,
-                SourceRange::new(start, end)
+                SourceRange::new(start, end),
             ))
         });
         let functions = functions?;
@@ -1389,7 +1433,7 @@ impl<'ta> Parser<'_, 'ta, '_> {
         let end = self.current_range().end();
 
         Ok(self.ast.add_decl(
-            Decl::Extern { visibility, functions },
+            Decl::Extern { visibility, abi, functions },
             SourceRange::new(start, end)
         ))
     }

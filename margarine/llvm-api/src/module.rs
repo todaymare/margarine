@@ -1,6 +1,6 @@
 use std::{ffi::{CStr, CString}, ptr::{null_mut, NonNull}};
 
-use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMBuildCall2, LLVMCreateBuilderInContext, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetFirstBasicBlock, LLVMGetFirstFunction, LLVMGetNextBasicBlock, LLVMGetNextFunction, LLVMPositionBuilderBefore, LLVMPrintModuleToString}, error::{LLVMDisposeErrorMessage, LLVMGetErrorMessage}, target::{LLVMGetModuleDataLayout, LLVMPointerSize}, target_machine::LLVMOpaqueTargetMachine, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMPassBuilderOptionsSetLoopUnrolling, LLVMPassBuilderOptionsSetVerifyEach, LLVMRunPasses}, LLVMModule};
+use llvm_sys::{analysis::{LLVMVerifierFailureAction, LLVMVerifyModule}, core::{LLVMAddFunction, LLVMAddGlobal, LLVMBuildCall2, LLVMCreateBuilderInContext, LLVMDisposeBuilder, LLVMGetBasicBlockTerminator, LLVMGetFirstBasicBlock, LLVMGetFirstFunction, LLVMGetNamedFunction, LLVMGetNextBasicBlock, LLVMGetNextFunction, LLVMPositionBuilderBefore, LLVMPrintModuleToString}, error::{LLVMDisposeErrorMessage, LLVMGetErrorMessage}, target::{LLVMGetModuleDataLayout, LLVMPointerSize}, target_machine::LLVMOpaqueTargetMachine, transforms::pass_builder::{LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions, LLVMPassBuilderOptionsSetLoopUnrolling, LLVMPassBuilderOptionsSetVerifyEach, LLVMRunPasses}, LLVMModule};
 use sti::arena::Arena;
 
 use crate::{cstr, info::Message, tys::{func::FunctionType, Type}, values::{func::FunctionPtr, global::GlobalPtr, Value}};
@@ -35,6 +35,27 @@ impl<'ctx> Module<'ctx> {
         let func = NonNull::new(func).expect("failed to create a function");
 
         unsafe { FunctionPtr::new(Value::new(func)) }
+    }
+
+
+    /// Reuses a matching declaration for a definition, otherwise creates a new function.
+    pub fn function_definition(&self, name: &str, ty: FunctionType<'ctx>) -> FunctionPtr<'ctx> {
+        if let Some(function) = self.get_function(name) {
+            if function.is_declaration() && *function.function_type() == *ty {
+                return function;
+            }
+        }
+        self.function(name, ty)
+    }
+
+
+    pub fn get_function(&self, name: &str) -> Option<FunctionPtr<'ctx>> {
+        assert!(!name.contains('\0'), "the function name can't contain null bytes");
+
+        let name = sti::format_in!(&*self.arena, "{name}\0");
+        let func = unsafe { LLVMGetNamedFunction(self.ptr.as_ptr(), name.as_ptr().cast()) };
+        NonNull::new(func)
+            .map(|func| unsafe { FunctionPtr::new(Value::new(func)) })
     }
 
 

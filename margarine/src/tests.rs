@@ -626,3 +626,80 @@ fn trait_impl_rejects_non_function_member_without_panicking() {
         sema::errors::Error::TraitMemberNotFunction { .. }
     )).count(), 1);
 }
+
+
+#[test]
+fn unknown_function_abi_is_a_semantic_error() {
+    let result = compile_source(
+        "type Callback = extern \"wat\" fn();\n\
+         extern \"wat\" {}\n\
+         extern \"wat\" fn defined() {}",
+    );
+
+    assert!(result.errors.parser_errors.iter().all(|errors| errors.is_empty()));
+    assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
+        error,
+        sema::errors::Error::UnknownFunctionAbi { .. }
+    )).count(), 3);
+}
+
+
+#[test]
+fn c_abi_functions_cannot_be_generic() {
+    let result = compile_source(
+        "extern \"C\" { fn imported<T>(value: T): T }\n\
+         extern \"C\" fn defined<T>(value: T): T { value }",
+    );
+
+    assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
+        error,
+        sema::errors::Error::CFunctionCannotBeGeneric(_)
+    )).count(), 2);
+}
+
+
+#[test]
+fn trait_implementations_reject_extern_methods() {
+    for method in [
+        "extern \"C\" fn f(self): int { self }",
+        "extern fn f(self): int { self }",
+        "extern { fn f(self): int }",
+    ] {
+        let source = format!(
+            "trait T {{ fn f(self): int }}\n\
+             impl T for int {{ {method} }}\n\
+             fn apply(callback: fn(int): int): int {{ callback(1) }}\n\
+             fn main() {{ apply((1).f); }}",
+        );
+        let result = compile_source(&source);
+
+        assert_eq!(result.errors.sema_errors.iter().filter(|error| matches!(
+            error,
+            sema::errors::Error::ExternInTraitImplementation(_)
+        )).count(), 1, "{method}");
+    }
+}
+
+
+#[test]
+fn public_c_definitions_share_a_symbol_namespace() {
+    let result = compile_source(
+        "mod first { pub extern \"C\" fn exported(): int { 11 } }\n\
+         mod second { pub extern \"C\" fn exported(): int { 22 } }\n\
+         mod third { pub extern \"C\" fn exported(): int { 33 } }",
+    );
+    let duplicates = result.errors.sema_errors.iter().filter_map(|error| {
+        match error {
+            sema::errors::Error::DuplicateCDefinition { name, declared_at, error_point } => {
+                Some((*name, *declared_at, *error_point))
+            },
+            _ => None,
+        }
+    }).collect::<Vec<_>>();
+
+    assert_eq!(duplicates.len(), 2);
+    assert_eq!(duplicates[0].0, duplicates[1].0);
+    assert_eq!(duplicates[0].1, duplicates[1].1);
+    assert_ne!(duplicates[0].1, duplicates[0].2);
+    assert_ne!(duplicates[0].2, duplicates[1].2);
+}

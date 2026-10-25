@@ -1,0 +1,64 @@
+struct Pair {
+    a: int,
+    b: int,
+}
+
+struct Mixed {
+    a: int,
+    b: float,
+}
+
+struct HFA2 {
+    a: float,
+    b: float,
+}
+
+struct Large {
+    a: int,
+    b: int,
+    c: int,
+}
+
+extern {
+    fn oracle_add_integers(a: int, b: int): int
+    fn oracle_flip_bool(b: bool): bool
+    fn oracle_pair_sum(p: Pair): int
+    fn oracle_mixed_eval(m: Mixed): float
+    fn oracle_hfa_sum(h: HFA2): float
+    fn oracle_large_eval(l: Large): Large
+    fn oracle_mutate_inout(&val: int)
+}
+
+// Ordinary Margarine function to verify uniform internal convention
+fn ordinary_margarine_fn(x: int): int {
+    x * 2
+}
+
+pub extern "C" fn export_add_integers(a: int, b: int): int {
+    let intermediate = ordinary_margarine_fn(a);
+    oracle_add_integers(intermediate, b)
+}
+
+pub extern "C" fn export_flip_bool(b: bool): bool {
+    oracle_flip_bool(b)
+}
+
+pub extern "C" fn export_pair_sum(p: Pair): int {
+    oracle_pair_sum(p)
+}
+
+pub extern "C" fn export_mixed_eval(m: Mixed): float {
+    oracle_mixed_eval(m)
+}
+
+pub extern "C" fn export_hfa_sum(h: HFA2): float {
+    oracle_hfa_sum(h)
+}
+
+pub extern "C" fn export_large_eval(l: Large): Large {
+    oracle_large_eval(l)
+}
+
+pub extern "C" fn export_mutate_inout(&val: int) {
+    oracle_mutate_inout(&val)
+}

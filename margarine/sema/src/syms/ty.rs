@@ -132,8 +132,11 @@ impl Type {
 
                 }
                 else if let SymbolKind::Function(func) = sym.kind
-                        && matches!(func.kind(), FunctionKind::Closure(_)) {
-
+                        && (matches!(func.kind(), FunctionKind::Closure(_))
+                            || func.abi() == parser::dt::FunctionAbi::C) {
+                    if func.abi() == parser::dt::FunctionAbi::C {
+                        str.push("extern \"C\" ");
+                    }
                     str.push("fn");
                     if !gens.is_empty() {
                         str.push_char('<');
@@ -234,8 +237,8 @@ impl Type {
                 if let (SymbolKind::Function(fa), SymbolKind::Function(fb)) =
                     (syma.kind, symb.kind)
                 {
+                    if fa.abi() != fb.abi() { return false; }
                     if fa.args().len() != fb.args().len() { return false; }
-
                     let reta = fa.ret().to_ty(gena, map);
                     let retb = fb.ret().to_ty(genb, map);
 
@@ -448,6 +451,9 @@ impl Type {
         else { unreachable!() };
 
         let mut hasher = FxHasher32::new();
+        if let SymbolKind::Function(function) = map.sym(symbol).kind() {
+            function.abi().hash(&mut hasher);
+        }
         symbol.hash(&mut hasher);
         for (generic, ty) in map.gens()[gens] {
             generic.name().hash(&mut hasher);
@@ -465,7 +471,7 @@ impl Type {
 
                 if let SymbolKind::Function(function) = symbol.kind() {
                     (u32::MAX - 1).hash(hasher);
-                    function.args().len().hash(hasher);
+                    function.abi().hash(hasher);
                     for arg in function.args() {
                         arg.is_inout().hash(hasher);
                         arg.symbol().to_ty(arr, map).hash_ex(map, hasher);

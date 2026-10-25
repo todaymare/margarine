@@ -1,5 +1,5 @@
 use common::{string_map::StringIndex, ImmutableData};
-use parser::nodes::decl::DeclId;
+use parser::{dt::FunctionAbi, nodes::decl::DeclId};
 
 use crate::syms::sym_map::ClosureId;
 
@@ -10,7 +10,7 @@ pub struct FunctionTy<'me> {
     args: &'me [FunctionArgument<'me>],
     ret : Generic<'me>,
     declared_generics: &'me [BoundedGeneric<'me>],
-
+    abi: FunctionAbi,
 
     kind: FunctionKind,
     decl: Option<DeclId>,
@@ -75,7 +75,18 @@ impl<'me> FunctionTy<'me> {
         decl: Option<DeclId>,
         declared_generics: &'me [BoundedGeneric<'me>],
     ) -> Self {
-        Self { args, ret, declared_generics, kind, decl, cached: false }
+        Self::new_with_abi(args, ret, FunctionAbi::Margarine, kind, decl, declared_generics)
+    }
+
+    pub fn new_with_abi(
+        args: &'me [FunctionArgument<'me>],
+        ret: Generic<'me>,
+        abi: FunctionAbi,
+        kind: FunctionKind,
+        decl: Option<DeclId>,
+        declared_generics: &'me [BoundedGeneric<'me>],
+    ) -> Self {
+        Self { args, ret, declared_generics, abi, kind, decl, cached: false }
     }
 }
 

@@ -1,9 +1,24 @@
 use std::{collections::HashSet, marker::PhantomData, ops::Deref, ptr::NonNull};
 
-use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCallWithOperandBundles, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFPToUI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMul, LLVMBuildNUWAdd, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstAllOnes, LLVMConstNull, LLVMCreateOperandBundle, LLVMCreateTypeAttribute, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMDisposeOperandBundle, LLVMGetBasicBlockTerminator, LLVMGetEnumAttributeKindForName, LLVMGetFirstBasicBlock, LLVMGetGlobalParent, LLVMGetInsertBlock, LLVMGetIntrinsicDeclaration, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIntrinsicGetType, LLVMIsATerminatorInst, LLVMLookupIntrinsicID, LLVMPositionBuilderAtEnd}, prelude::{LLVMBasicBlockRef, LLVMOperandBundleRef}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMModule, LLVMRealPredicate, LLVMValue};
+use llvm_sys::{core::{LLVMAddCallSiteAttribute, LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAShr, LLVMBuildAdd, LLVMBuildAlloca, LLVMBuildAnd, LLVMBuildBitCast, LLVMBuildBr, LLVMBuildCall2, LLVMBuildCallWithOperandBundles, LLVMBuildCondBr, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv, LLVMBuildFMul, LLVMBuildFPCast, LLVMBuildFPToSI, LLVMBuildFPToUI, LLVMBuildFRem, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildInBoundsGEP2, LLVMBuildIntCast2, LLVMBuildIntToPtr, LLVMBuildIsNull, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildMemCpy, LLVMBuildMul, LLVMBuildNUWAdd, LLVMBuildNot, LLVMBuildOr, LLVMBuildPtrToInt, LLVMBuildRet, LLVMBuildRetVoid, LLVMBuildSDiv, LLVMBuildSIToFP, LLVMBuildSRem, LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2, LLVMBuildSub, LLVMBuildSwitch, LLVMBuildUDiv, LLVMBuildUIToFP, LLVMBuildURem, LLVMBuildUnreachable, LLVMBuildXor, LLVMConstAllOnes, LLVMConstNull, LLVMCreateOperandBundle, LLVMDeleteBasicBlock, LLVMDisposeBuilder, LLVMDisposeOperandBundle, LLVMGetBasicBlockTerminator, LLVMGetFirstBasicBlock, LLVMGetGlobalParent, LLVMGetInsertBlock, LLVMGetIntrinsicDeclaration, LLVMGetLastInstruction, LLVMGetNextBasicBlock, LLVMGetNumSuccessors, LLVMGetParam, LLVMGetSuccessor, LLVMIntrinsicGetType, LLVMIsATerminatorInst, LLVMLookupIntrinsicID, LLVMPositionBuilderAtEnd, LLVMSetInstructionCallConv}, prelude::{LLVMBasicBlockRef, LLVMOperandBundleRef}, LLVMBasicBlock, LLVMBuilder, LLVMIntPredicate, LLVMModule, LLVMRealPredicate, LLVMValue};
 use sti::{arena::Arena, define_key, vec::KVec};
-
-use crate::{cstr, ctx::ContextRef, tys::{func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, Type, TypeKind}, values::{array::Array, bool::Bool, fp::FP, func::FunctionPtr, int::Integer, ptr::Ptr, strct::Struct, unit::Unit, Value}};
+use crate::{
+    attributes::AbiAttribute,
+    cstr,
+    ctx::ContextRef,
+    tys::{func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, Type, TypeKind},
+    values::{
+        array::Array,
+        bool::Bool,
+        func::{CallingConvention, FunctionPtr},
+        fp::FP,
+        int::Integer,
+        ptr::Ptr,
+        strct::Struct,
+        unit::Unit,
+        Value,
+    },
+};
 
 
 define_key!(pub Local(u32));
@@ -293,6 +308,23 @@ impl<'ctx> Builder<'ctx> {
 
     pub fn store(&self, ptr: Ptr<'ctx>, val: Value<'ctx>) {
         unsafe { LLVMBuildStore(self.ptr.as_ptr(), val.llvm_val().as_ptr(), ptr.llvm_val().as_ptr()) };
+    }
+    /// Copies `size` bytes from `src` to `dst`.
+    ///
+    /// Alignment is left unknown (zero), allowing callers that only know the
+    /// ABI byte layout to preserve padding without inventing an alignment.
+    pub fn copy_bytes(&self, dst: Ptr<'ctx>, src: Ptr<'ctx>, size: u64) {
+        let size = self.const_int(self.ctx.integer(64), size as i64, false);
+        unsafe {
+            LLVMBuildMemCpy(
+                self.ptr.as_ptr(),
+                dst.llvm_val().as_ptr(),
+                0,
+                src.llvm_val().as_ptr(),
+                0,
+                size.llvm_val().as_ptr(),
+            );
+        }
     }
 
     pub fn store_tbaa(&self, ptr: Ptr<'ctx>, val: Value<'ctx>, tag: Value<'ctx>) {
@@ -1070,13 +1102,64 @@ impl<'ctx> Builder<'ctx> {
     }
 
 
-    pub fn call_sret(&self, func: FunctionPtr<'ctx>, func_ty: FunctionType<'ctx>, ret_ty: Type<'ctx>, args: &[Value<'ctx>]) -> Value<'ctx> {
+    pub fn call_with_attributes(
+        &self,
+        func: FunctionPtr<'ctx>,
+        func_ty: FunctionType<'ctx>,
+        args: &[Value<'ctx>],
+        attributes: &[AbiAttribute<'ctx>],
+    ) -> Value<'ctx> {
         let call = self.call(func, func_ty, args);
-        let attr_kind = unsafe { LLVMGetEnumAttributeKindForName(cstr!("sret"), 4) };
-        let attr = unsafe { LLVMCreateTypeAttribute(self.ctx.ptr.as_ptr(), attr_kind, ret_ty.llvm_ty().as_ptr()) };
-        unsafe { LLVMAddCallSiteAttribute(call.llvm_val().as_ptr(), 1, attr) };
+        self.set_callsite_attributes(call, attributes);
         call
     }
+
+
+    pub fn call_with_calling_convention(
+        &self,
+        func: FunctionPtr<'ctx>,
+        func_ty: FunctionType<'ctx>,
+        args: &[Value<'ctx>],
+        convention: CallingConvention,
+        attributes: &[AbiAttribute<'ctx>],
+    ) -> Value<'ctx> {
+        let call = self.call_with_attributes(func, func_ty, args, attributes);
+        unsafe {
+            LLVMSetInstructionCallConv(call.llvm_val().as_ptr(), convention.llvm_value());
+        }
+        call
+    }
+
+
+    pub fn call_c_with_attributes(
+        &self,
+        func: FunctionPtr<'ctx>,
+        func_ty: FunctionType<'ctx>,
+        args: &[Value<'ctx>],
+        attributes: &[AbiAttribute<'ctx>],
+    ) -> Value<'ctx> {
+        self.call_with_calling_convention(func, func_ty, args, CallingConvention::C, attributes)
+    }
+
+
+    pub fn call_c(&self, func: FunctionPtr<'ctx>, func_ty: FunctionType<'ctx>, args: &[Value<'ctx>]) -> Value<'ctx> {
+        self.call_c_with_attributes(func, func_ty, args, &[])
+    }
+
+
+    fn set_callsite_attributes(&self, call: Value<'ctx>, attributes: &[AbiAttribute<'ctx>]) {
+        for &attribute in attributes {
+            let llvm_attribute = attribute.to_llvm_attribute(self.ctx);
+            unsafe {
+                LLVMAddCallSiteAttribute(
+                    call.llvm_val().as_ptr(),
+                    attribute.location.to_llvm_index(),
+                    llvm_attribute.as_ptr(),
+                );
+            }
+        }
+    }
+
 }
 
 

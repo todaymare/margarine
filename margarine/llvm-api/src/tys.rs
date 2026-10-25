@@ -9,6 +9,7 @@ pub mod void;
 pub mod union;
 pub mod array;
 pub mod string;
+pub mod vector;
 
 use std::{marker::PhantomData, ptr::NonNull};
 
@@ -17,7 +18,7 @@ use sti::{arena::Arena, ext::FromIn};
 
 use crate::{info::Message, module::Module};
 
-use self::{array::ArrayTy, bool::BoolTy, fp::FPTy, func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void};
+use self::{array::ArrayTy, bool::BoolTy, fp::FPTy, func::FunctionType, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, vector::VectorTy};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -47,6 +48,7 @@ impl<'ctx> Type<'ctx> {
             LLVMPointerTypeKind  => TypeKind::Ptr,
             LLVMStructTypeKind   => TypeKind::Struct,
             LLVMArrayTypeKind    => TypeKind::Array,
+            LLVMVectorTypeKind   => TypeKind::Vector,
 
             _ => unimplemented!(),
         }
@@ -131,6 +133,11 @@ impl<'ctx> Type<'ctx> {
         unsafe { PtrTy::new(self) }
     }
 
+    pub fn as_vector(self) -> VectorTy<'ctx> {
+        assert_eq!(self.kind(), TypeKind::Vector);
+        unsafe { VectorTy::new(self) }
+    }
+
 
     pub fn as_struct(self) -> StructTy<'ctx> {
         assert_eq!(self.kind(), TypeKind::Struct);
@@ -174,6 +181,7 @@ pub enum TypeKind {
     Ptr,
     Struct,
     Array,
+    Vector,
 }
 
 

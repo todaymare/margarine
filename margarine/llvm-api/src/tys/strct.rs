@@ -1,9 +1,9 @@
 use std::{ops::Deref, ptr::NonNull};
 
-use llvm_sys::core::{LLVMCountStructElementTypes, LLVMGetStructElementTypes, LLVMIsOpaqueStruct, LLVMStructSetBody};
+use llvm_sys::core::{LLVMCountStructElementTypes, LLVMGetStructElementTypes, LLVMIsOpaqueStruct, LLVMStructGetTypeAtIndex, LLVMStructSetBody};
 use sti::arena::Arena;
 
-use crate::tys::TypeKind;
+use crate::{module::Module, tys::TypeKind};
 
 use super::Type;
 
@@ -42,6 +42,33 @@ impl<'ctx> StructTy<'ctx> {
 
     pub fn fields_count(self) -> usize {
         unsafe { LLVMCountStructElementTypes(self.llvm_ty().as_ptr()) as usize }
+    }
+    pub fn field_at(self, index: usize) -> Option<Type<'ctx>> {
+        if index >= self.fields_count() {
+            return None;
+        }
+        let ty = unsafe { LLVMStructGetTypeAtIndex(self.llvm_ty().as_ptr(), index as u32) };
+        NonNull::new(ty).map(Type::new)
+    }
+
+    /// Returns the target-layout byte offset of a structure field.
+    pub fn offset_of_element(self, module: Module<'ctx>, index: usize) -> Option<u64> {
+        if index >= self.fields_count() {
+            return None;
+        }
+        let data_layout = unsafe {
+            llvm_sys::target::LLVMGetModuleDataLayout(module.ptr.as_ptr())
+        };
+        if data_layout.is_null() {
+            return None;
+        }
+        Some(unsafe {
+            llvm_sys::target::LLVMOffsetOfElement(
+                data_layout,
+                self.llvm_ty().as_ptr(),
+                index as u32,
+            )
+        })
     }
 
 

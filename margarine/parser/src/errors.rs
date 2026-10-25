@@ -100,6 +100,7 @@ impl ErrorType<()> for Error {
                     .highlight(*source)
             },
 
+
             
             Error::ExpectedXFoundY { source, found, expected } => {
                 fmt.error("expected a different token")

@@ -207,6 +207,20 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 for node in body.iter() {
                     self.node(path, &mut scope, ns_id, *node);
+                    if let NodeId::Decl(mut member) = *node {
+                        while let Decl::Attribute { decl, .. } = self.ast.decl(member) {
+                            member = decl;
+                        }
+                        let source = match self.ast.decl(member) {
+                            Decl::Function { sig, .. }
+                            if sig.abi != parser::dt::FunctionAbi::Margarine => Some(sig.source),
+                            Decl::Extern { .. } => Some(self.ast.range(member)),
+                            _ => None,
+                        };
+                        if let Some(source) = source {
+                            self.error(member, Error::ExternInTraitImplementation(source));
+                        }
+                    }
                 }
 
                 let mut ns = self.namespaces.get_ns_mut(ns_id);
@@ -828,6 +842,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             ret,
             all_generics,
             method_generics,
+            func.abi(),
         );
 
         (symbol, all_generics)
@@ -1143,7 +1158,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                                             func.args(),
                                             func.ret(),
                                             sym.generics(),
-                                            func.declared_generics()
+                                            func.declared_generics(),
+                                            func.abi(),
                                         );
                                         AnalysisResult::new(Type::Ty(sym, gens))
                                     }
@@ -1231,7 +1247,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                     fargs.leak(),
                     ret,
                     gen_list,
-                    gen_list
+                    gen_list,
+                    parser::dt::FunctionAbi::Margarine,
                 );
 
                 let gens = self.syms.add_gens(gens.leak());
@@ -1712,7 +1729,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
                                 func.args(),
                                 func.ret(),
                                 sym.generics(),
-                                func.declared_generics()
+                                func.declared_generics(),
+                                func.abi(),
                             );
 
                             AnalysisResult::new(Type::Ty(sym, gens))

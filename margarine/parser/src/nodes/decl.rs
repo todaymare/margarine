@@ -3,7 +3,7 @@ use errors::ErrorId;
 use lexer::Literal;
 use sti::define_key;
 
-use crate::{nodes::NodeId, Block, DataType};
+use crate::{dt::FunctionAbi, nodes::NodeId, Block, DataType};
 
 define_key!(pub DeclId(u32));
 
@@ -99,6 +99,7 @@ pub enum Decl<'a> {
 
     Extern {
         visibility: Visibility,
+        abi: FunctionAbi,
         functions: &'a [ExternFunction<'a>],
     },
 
@@ -135,6 +136,7 @@ pub struct FunctionSignature<'a> {
     pub arguments  : &'a [FunctionArgument<'a>],
     pub generics   : &'a [DeclGeneric<'a>],
     pub return_type: DataType<'a>,
+    pub abi        : FunctionAbi,
 }
 
 
@@ -150,8 +152,19 @@ impl<'a> FunctionSignature<'a> {
     pub fn new(
         name: StringIndex, 
         source: SourceRange, arguments: &'a [FunctionArgument<'a>], 
-        generics: &'a [DeclGeneric<'a>], return_type: DataType<'a>) -> Self { 
-        Self { name, source, arguments, return_type, generics }
+        generics: &'a [DeclGeneric<'a>], return_type: DataType<'a>) -> Self {
+        Self::new_with_abi(name, source, arguments, generics, return_type, FunctionAbi::Margarine)
+    }
+
+    pub fn new_with_abi(
+        name: StringIndex,
+        source: SourceRange,
+        arguments: &'a [FunctionArgument<'a>],
+        generics: &'a [DeclGeneric<'a>],
+        return_type: DataType<'a>,
+        abi: FunctionAbi,
+    ) -> Self {
+        Self { name, source, arguments, return_type, generics, abi }
     }
 }
 
@@ -178,8 +191,9 @@ pub struct ExternFunction<'a> {
 }
 
 impl<'a> ExternFunction<'a> {
-    pub(crate) fn new(visibility: Visibility, name: StringIndex, path: StringIndex, gens: &'a [DeclGeneric<'a>], args: &'a [FunctionArgument<'a>], return_type: DataType<'a>, source_range: SourceRange) -> Self { 
-        Self { visibility, name, gens, args, return_type, source_range, path } 
+
+    pub(crate) fn new(visibility: Visibility, name: StringIndex, path: StringIndex, gens: &'a [DeclGeneric<'a>], args: &'a [FunctionArgument<'a>], return_type: DataType<'a>, source_range: SourceRange) -> Self {
+        Self { visibility, name, gens, args, return_type, source_range, path }
     }
 
 

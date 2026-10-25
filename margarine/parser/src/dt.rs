@@ -1,5 +1,19 @@
 use common::{source::SourceRange, string_map::{StringIndex}, ImmutableData};
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum FunctionAbi {
+    Margarine,
+    C,
+    Unknown {
+        name: StringIndex,
+        source: SourceRange,
+    },
+}
+
+impl Default for FunctionAbi {
+    fn default() -> Self { Self::Margarine }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, ImmutableData)]
 pub struct DataType<'a> {
     range: SourceRange,
@@ -38,7 +52,7 @@ pub enum DataTypeKind<'a> {
     List(&'a DataType<'a>),
     Within(StringIndex, &'a DataType<'a>),
     CustomType(StringIndex, &'a [DataType<'a>]),
-    Fn(&'a [FunctionTypeArgument<'a>], &'a DataType<'a>),
+    Fn(FunctionAbi, &'a [FunctionTypeArgument<'a>], &'a DataType<'a>),
 }
 
 
@@ -84,8 +98,9 @@ impl std::hash::Hash for DataTypeKind<'_> {
             },
 
 
-            DataTypeKind::Fn(args, ret) => {
+            DataTypeKind::Fn(abi, args, ret) => {
                 207.hash(state);
+                abi.hash(state);
                 for a in args.iter() {
                     a.is_inout().hash(state);
                     a.data_type().kind().hash(state);

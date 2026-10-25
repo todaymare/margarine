@@ -48,6 +48,13 @@ that cannot run through the language test runner.
   `build` API. It links native output as `.dylib` on macOS, `.so` on Linux,
   or `.wasm` for Wasm, omits the executable entry wrapper, and shares the
   native linker path with `test`.
+- Semantic ABI lowering is routed through `margarine/sema/src/abi/mod.rs`;
+  `margarine.rs`, `c.rs`, and `entry.rs` own internal, C, and program-entry
+  conventions respectively.
+- `margarine/sema/src/llvm_codegen.rs` is ABI-agnostic and must not know
+  anything about ABI-specific representations, physical signatures, calling
+  conventions, attributes, or marshaling; route all ABI decisions through
+  `margarine/sema/src/abi/`.
 
 ## Targets, linking, and toolchains
 
@@ -154,10 +161,13 @@ packaging the draft compiler as a single executable.
   block origins and phase cycles must fail loudly rather than return as if the
   phase completed. Semantic lookup failures use explicit recovery namespaces
   and scopes so later phases retain valid context and cascading diagnostics.
-- Error-typed values must not materialize invalid external ABIs. Struct and
-  enum codegen may zero-fill only the selected error-typed field or payload;
-  omitted non-error struct fields remain semantic errors. Match bindings must
-  be popped on every branch path, including codegen errors.
+- Error-typed values may use compiler recovery representations while
+  diagnostics continue; this is not a runtime trap or a current whole-program
+  code-generation guard. Future `repr(C)` validation will pre-validate
+  representations intended for external use; without `repr(C)`, no external
+  representation is promised. Omitted non-error struct fields remain semantic
+  errors. Match bindings must be popped on every branch path, including
+  codegen errors.
 - Trait declarations and implementations retain receiver, implementation, and
   method generics. Validate generic bounds at declarations and preserve
   inout markers in function types, closures, and trait signatures. Missing
@@ -192,8 +202,19 @@ packaging the draft compiler as a single executable.
 - Function types are structurally equal and structurally hashed. Function
   implementation caching uses a separate nominal instance hash.
 - Source-level external file/resource declarations are unsupported. Ordinary
-  imported packages use `build.mar`; `extern { ... }` remains the function-ABI
-  declaration form.
+  imported packages use `build.mar`. Bare `extern { ... }` and explicit
+  `extern "C" { ... }` blocks declare C imports; `pub extern "C" fn` defines an
+  exported C symbol with the source function name. The parser preserves unknown
+  ABI names in the AST; semantic analysis diagnoses unsupported ABIs and
+  recovers through the C ABI. Public C definitions are retained as codegen
+  roots so unused exports are emitted; non-shared builds reserve the generated
+  `main` symbol before lowering those roots.
+- C ABI function types remain distinct from Margarine function types and C ABI
+  functions cannot be generic. C callbacks cross the boundary as raw function
+  pointers, including through inout pointer slots.
+- ABI-specific physical signatures, carriers, attributes, and marshaling live
+  behind `sema/src/abi`; `llvm_codegen` supplies logical values and delegates
+  calls, definitions, function-type mappings, and the generated entrypoint.
 - `margarine/runtime/margarine.h` is the single C runtime ABI declaration
   surface shared by core and std. `MargarineCollection` and `MargarineString`
   use `int64_t` length fields to match compiler IR on every target; keep
@@ -216,5 +237,9 @@ packaging the draft compiler as a single executable.
   fuzz` because plain Cargo does not link the AFL runtime.
 - Runnable examples belong in `examples/`; keep the repository root free of
   standalone example programs.
+- Native C ABI interoperability fixtures live under `tests/native/`;
+  `margarine/tests/cli.rs` emits C ABI objects for every supported target, then
+  builds the host shared library through the public CLI and links/runs the C
+  driver with host `clang`.
 
 The repository is licensed under MIT; `LICENSE` is authoritative.

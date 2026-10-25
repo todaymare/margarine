@@ -17,6 +17,7 @@ pub mod errors;
 pub mod analysis;
 pub mod syms;
 pub mod llvm_codegen;
+pub mod abi;
 
 pub struct SemaErrors {
     pub errors: KVec<SemaError, Error>,
@@ -50,6 +51,7 @@ pub struct TyChecker<'me, 'out, 'temp, 'ast, 'str> {
     pub blocks  : Blocks,
     pub startups: Vec<SymbolId>,
     pub tests   : Vec<(SymbolId, bool)>,
+    pub extern_defs: Vec<SymbolId>,
 
     pub errors     : SemaErrors,
     pub silent_ranges: std::vec::Vec<SourceRange>,
@@ -163,6 +165,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             ast,
             startups: Vec::new(),
             tests: Vec::new(),
+            extern_defs: Vec::new(),
             temp,
             blocks: Blocks::default(),
             root_nodes: &[],
@@ -325,6 +328,30 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         }
 
         assert_eq!(analyzer.blocks.entries.len(), block_count);
+
+        // Public C definitions share a compilation-wide symbol namespace.
+        let mut extern_names = HashMap::new();
+        for index in 0..analyzer.extern_defs.len() as u32 {
+            let symbol = analyzer.syms.sym(analyzer.extern_defs[index]);
+            let SymbolKind::Function(function) = symbol.kind()
+            else { unreachable!() };
+            let decl = function.decl().unwrap();
+            let parser::nodes::decl::Decl::Function { sig, .. } = analyzer.ast.decl(decl)
+            else { unreachable!() };
+
+            match extern_names.entry(sig.name) {
+                std::collections::hash_map::Entry::Occupied(previous) => {
+                    analyzer.error(decl, Error::DuplicateCDefinition {
+                        name: sig.name,
+                        declared_at: *previous.get(),
+                        error_point: sig.source,
+                    });
+                },
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(sig.source);
+                },
+            }
+        }
         analyzer.eval_block(root_id, base_scope);
 
         let vars = analyzer.syms.vars().len();
@@ -395,6 +422,21 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
     }
     
 
+    fn validate_function_abi(
+        &mut self,
+        node: impl Into<NodeId>,
+        abi: parser::dt::FunctionAbi,
+    ) -> parser::dt::FunctionAbi {
+        match abi {
+            parser::dt::FunctionAbi::Unknown { name, source } => {
+                self.error(node, Error::UnknownFunctionAbi { source, name });
+                parser::dt::FunctionAbi::C
+            },
+            abi => abi,
+        }
+    }
+
+
     fn dt_to_gen(
         &mut self, node: impl Into<NodeId> + Copy, scope: Scope<'out>,
         dt: DataType, gens: &[BoundedGeneric<'out>]
@@ -442,7 +484,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
             DataTypeKind::Never => Generic::new(dt.range(), GenericKind::Sym(SymbolId::NEVER, &[])),
 
-            DataTypeKind::Fn(args, ret) => {
+            DataTypeKind::Fn(abi, args, ret) => {
+                let abi = self.validate_function_abi(node, abi);
                 let mut func_used_gens = sti::vec::Vec::from_value(gens.len(), false);
                 let fields = {
                     let mut fields = Buffer::new(&*self.output, args.len());
@@ -475,9 +518,10 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let closure = self.syms.new_closure();
                 let fg = fg.leak();
-                let sym = self.func_sym(closure, fields, ret, fg, fg);
+                let sym = self.func_sym(closure, fields, ret, fg, fg, abi);
                 Generic::new(dt.range(), GenericKind::Sym(sym, gs.leak()))
-            }
+            },
+
 
             DataTypeKind::Tuple(tys) => {
                 let pool = self.output;
@@ -632,8 +676,8 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
             },
 
 
-            DataTypeKind::Fn(args, ret) => {
-                // Collect the enclosing generics so references inside the
+            DataTypeKind::Fn(abi, args, ret) => {
+                let abi = self.validate_function_abi(id, abi);
                 // function type become generic references. Without this, a
                 // generic name like `R` resolves to the bare generic
                 // container symbol, which nothing ever substitutes and
@@ -670,7 +714,7 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
 
                 let closure = self.syms.new_closure();
                 let fg = fg.leak();
-                let sym = self.func_sym(closure, fields, ret, fg, fg);
+                let sym = self.func_sym(closure, fields, ret, fg, fg, abi);
                 let gens = self.syms.add_gens(inst.leak());
                 Type::Ty(sym, gens)
             }
@@ -784,10 +828,11 @@ impl<'me, 'out, 'temp, 'ast: 'out, 'str> TyChecker<'me, 'out, 'temp, 'ast, 'str>
         ret: Generic<'out>,
         symbol_gens: &'out [BoundedGeneric<'out>],
         declared_gens: &'out [BoundedGeneric<'out>],
+        abi: parser::dt::FunctionAbi,
     ) -> SymbolId {
 
-        let func = FunctionTy::new(
-            fields, ret, syms::func::FunctionKind::Closure(closure), None, declared_gens);
+        let func = FunctionTy::new_with_abi(
+            fields, ret, abi, syms::func::FunctionKind::Closure(closure), None, declared_gens);
         let sym = Symbol::new(StringMap::CLOSURE, symbol_gens, syms::SymbolKind::Function(func));
         let id = self.syms.pending(&mut self.namespaces, None, StringMap::CLOSURE, symbol_gens.len());
         self.syms.add_sym(id, sym);

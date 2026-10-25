@@ -4,10 +4,10 @@ use std::{collections::HashMap, fmt, hash::Hash, path::{Path, PathBuf}};
 use common::{string_map::{StringIndex, StringMap}, Swap};
 use errors::ErrorId;
 use llvm_api::{builder::{Builder, FPCmp, IntCmp, Local, Loop}, ctx::{Context, ContextRef}, module::Module, tys::{func::FunctionType, integer::IntegerTy, strct::StructTy, Type as LLVMType, TypeKind}, values::{bool::Bool, func::{AllocKind, FunctionPtr, Linkage}, int::Integer, ptr::Ptr, strct::Struct, Value}};
-use parser::nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST};
-use sti::{arena::Arena, ext::FromIn, hash::fxhash::FxHasher64};
+use parser::{nodes::{decl::Decl, expr::{BinaryOperator, Expr, ExprId, UnaryOperator}, stmt::StmtId, NodeId, Pattern, PatternKind, AST}};
+use sti::{arena::Arena, hash::fxhash::FxHasher64};
 
-use crate::{namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, Generic, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind}, TyInfo};
+use crate::{abi, namespace::NamespaceMap, syms::{self, containers::ContainerKind, sym_map::{BoundedGeneric, GenListId, Generic, SymbolId, SymbolMap}, ty::{Type, TypeHash}, SymbolKind}, TyInfo};
 
 pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     string_map: &'me mut StringMap<'str>,
@@ -18,9 +18,8 @@ pub struct Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
     ty_info: &'me TyInfo<'out>,
     ty_mappings: HashMap<TypeHash, TypeMapping<'ctx>>,
+    pub(crate) abi_types: abi::TypeMappings<'ctx>,
     errors: [Vec<Vec<String>>; 3],
-
-    externs: HashMap<StringIndex, (FunctionType<'ctx>, FunctionPtr<'ctx>, ExternAbi<'ctx>)>,
     funcs: HashMap<TypeHash, Function<'ctx>>,
 
     func_counter: u32,
@@ -103,12 +102,9 @@ struct TypeMapping<'ctx> {
 #[allow(unused)]
 struct Function<'ctx> {
     sym: Type,
-
     name: StringIndex,
-
     kind: FunctionKind,
     error: Option<ErrorId>,
-
     func_ty: FunctionType<'ctx>,
     func_ptr: FunctionPtr<'ctx>,
 }
@@ -121,27 +117,6 @@ enum FunctionKind {
 }
 
 
-#[derive(Debug, Clone, Copy)]
-enum ExternAbi<'ctx> {
-    Direct,
-    SRet(LLVMType<'ctx>),
-}
-
-
-// Clang's wasm32 C ABI returns an aggregate directly only when it flattens to
-// one scalar value. Other supported aggregate returns use `sret`.
-fn wasm_c_abi_requires_sret<'ctx>(
-    arena: &Arena,
-    ty: LLVMType<'ctx>,
-) -> bool {
-    match ty.kind() {
-        TypeKind::Struct => {
-            let fields = ty.as_struct().fields(arena);
-            fields.len() != 1 || wasm_c_abi_requires_sret(arena, fields[0])
-        },
-        _ => false,
-    }
-}
 
 
 #[derive(Debug, Clone)]
@@ -284,13 +259,14 @@ impl CompilationTarget {
 
 
 #[derive(Default)]
-struct Env<'a, 'ctx> {
+pub(crate) struct Env<'a, 'ctx> {
     vars: Vec<(StringIndex, Local, Type, bool)>,
-    inouts: Vec<(Local, Local)>,
+    inouts: Vec<(Local, Local, Type)>,
     loop_id: Option<(Loop, usize)>,
     gens: &'a [(BoundedGeneric<'a>, Type)],
     info: HashMap<ExprId, Value<'ctx>>,
     ret_llvm_ty: Option<TypeMapping<'ctx>>,
+    return_abi: Option<(abi::Callable<'ctx>, abi::DefinitionBinding<'ctx>)>,
 }
 
 
@@ -305,7 +281,8 @@ pub enum CodegenStage {
 pub fn run<'a>(
     string_map: &mut StringMap, syms: &mut SymbolMap<'a>, nss: &mut NamespaceMap,
     ast: &mut AST<'a>, ty_info: &mut TyInfo<'a>, errors: [Vec<Vec<String>>; 3], 
-    _file_count: u32, startups: &[SymbolId], tests: &[SymbolId], settings: &CompilationSettings,
+    _file_count: u32, startups: &[SymbolId], tests: &[SymbolId], extern_defs: &[SymbolId],
+    settings: &CompilationSettings,
     progress: impl Fn(CodegenStage),
 ) {
     let target = settings.compilation_target;
@@ -532,8 +509,8 @@ pub fn run<'a>(
             ty_info,
             errors,
             funcs: HashMap::new(),
-            externs: HashMap::new(),
             ty_mappings: HashMap::new(),
+            abi_types: abi::TypeMappings::default(),
             func_counter: 0,
             current_function_name: None,
             panic_fn: (panic_fn, panic_fn_ty),
@@ -568,8 +545,6 @@ pub fn run<'a>(
         };
 
 
-        conv.externs.insert(conv.string_map.insert("margarineAlloc"), (alloc_fn_ty, alloc_fn, ExternAbi::Direct));
-        conv.externs.insert(conv.string_map.insert("margarinePanic"), (panic_fn_ty, panic_fn, ExternAbi::Direct));
 
 
         // register primitives
@@ -587,6 +562,8 @@ pub fn run<'a>(
             register!(F64, ctx.f64());
             register!(UNIT, ctx.unit());
         }
+        let entry = abi::declare_program_entry(&conv, settings.shared, i32_ty);
+
         if !settings.shared {
             for sym in startups.iter() {
                 let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
@@ -596,43 +573,12 @@ pub fn run<'a>(
         for sym in tests.iter() {
             let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
         }
+        for sym in extern_defs {
+            let _ = conv.get_func(Type::Ty(*sym, GenListId::EMPTY));
+        }
 
-
-        if !settings.shared {
-            // Claim the entry symbol before any user function is emitted. Root-level
-            // `fn main` is now named exactly "main" (root-relative paths), so it would
-            // otherwise take the entry name and the linker would bind the process
-            // entry to it, making the exit code whatever garbage `w0` held on return.
-            let main_fn_ty =
-            if matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
-                i32_ty.fn_ty(ctx.arena, &[], false)
-            } else {
-                i32_ty.fn_ty(ctx.arena, &[*i32_ty, *ptr], false)
-            };
-            let main_fn = module.function("main", main_fn_ty);
-
-            // build main
-            let builder = main_fn.builder(ctx.as_ctx_ref(), main_fn_ty);
-            if !matches!(target, CompilationTarget::Wasm32UnknownUnknown) {
-                let set_env_args_fn_ty = void.fn_ty(ctx.arena, &[*i32_ty, *ptr], false);
-                let set_env_args_fn = module.function("margarineSetEnvArgs", set_env_args_fn_ty);
-                set_env_args_fn.set_linkage(Linkage::External);
-                let argc = builder.local_get(builder.arg(0).unwrap());
-                let argv = builder.local_get(builder.arg(1).unwrap());
-                builder.call(set_env_args_fn, set_env_args_fn_ty, &[argc, argv]);
-            }
-
-            for sym_id in startups {
-                let hash = Type::Ty(*sym_id, GenListId::EMPTY)
-                    .function_instance_hash(conv.syms);
-                if let Some(func) = conv.funcs.get(&hash) {
-                    let args: Vec<_> = func.func_ty.args().into_iter().map(|ty| builder.const_zero(ty)).collect();
-                    builder.call(func.func_ptr, func.func_ty, &args);
-                }
-            }
-
-            builder.call(abort_fn, abort_fn_ty, &[*ctx.const_int(i32_ty, 0, false)]);
-            builder.unreachable();
+        if let Some(entry) = entry {
+            abi::emit_program_entry(&mut conv, entry, startups, abort_fn, abort_fn_ty);
         }
 
         module = conv.module;
@@ -1782,7 +1728,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     fields.push(field.to_ty(gens, self.syms));
                 }
                 fields
-            },
+            }
 
             SymbolKind::Function(func) => {
                 let gens = self.syms.get_gens(gens);
@@ -1792,15 +1738,108 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 }
                 fields.push(func.ret().to_ty(gens, self.syms));
                 fields
-            },
+            }
 
             _ => Vec::new(),
         };
 
-        let error = nested.into_iter()
+        let error = nested
+            .into_iter()
             .find_map(|nested| self.extern_type_error(nested, active));
         active.pop();
         error
+    }
+
+    pub(crate) fn llvm_context(&self) -> ContextRef<'ctx> {
+        self.ctx
+    }
+
+    pub(crate) fn llvm_module(&self) -> Module<'ctx> {
+        self.module
+    }
+
+    pub(crate) fn target(&self) -> CompilationTarget {
+        self.target
+    }
+
+    pub(crate) fn function_ref_type(&self) -> StructTy<'ctx> {
+        self.func_ref
+    }
+
+    pub(crate) fn usize_type(&self) -> IntegerTy<'ctx> {
+        self.usize
+    }
+
+    pub(crate) fn clone_capture(
+        &self,
+        builder: &Builder<'ctx>,
+        capture: Ptr<'ctx>,
+    ) -> Ptr<'ctx> {
+        builder
+            .call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*capture])
+            .as_ptr()
+    }
+
+    pub(crate) fn semantic_symbols(&mut self) -> &mut SymbolMap<'out> {
+        self.syms
+    }
+
+    pub(crate) fn logical_llvm_type(&mut self, ty: Type) -> LLVMType<'ctx> {
+        self.to_llvm_ty(ty).repr
+    }
+
+    pub(crate) fn function_definition(
+        &mut self,
+        ty: Type,
+    ) -> Option<syms::func::FunctionTy<'out>> {
+        let ty = ty.resolve(&[], self.syms);
+        let Ok(sym) = ty.sym(self.syms)
+        else { return None };
+        match self.syms.sym(sym).kind() {
+            SymbolKind::Function(function) => Some(function),
+            _ => None,
+        }
+    }
+    pub(crate) fn resolved_function_signature(
+        &mut self,
+        ty: Type,
+    ) -> Option<(syms::func::FunctionTy<'out>, Type, std::vec::Vec<Type>)> {
+        let ty = ty.resolve(&[], self.syms);
+        let sym_id = ty.sym(self.syms).ok()?;
+        let symbol = self.syms.sym(sym_id);
+        let SymbolKind::Function(function) = symbol.kind()
+        else { return None };
+        let gens_id = ty.gens(self.syms);
+        let gens = self.syms.gens()[gens_id];
+        let ret = function.ret().to_ty(gens, self.syms).resolve(&[gens], self.syms);
+        let args = function
+            .args()
+            .iter()
+            .map(|arg| arg.symbol().to_ty(gens, self.syms).resolve(&[gens], self.syms))
+            .collect();
+        Some((function, ret, args))
+    }
+
+    pub(crate) fn public_function_name(&self, decl_id: parser::nodes::decl::DeclId) -> Option<StringIndex> {
+        match self.ast.decl(decl_id) {
+            Decl::Function {
+                visibility: parser::nodes::decl::Visibility::Public,
+                sig,
+                ..
+            } => Some(sig.name),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn compiled_function(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<(FunctionPtr<'ctx>, FunctionType<'ctx>)> {
+        let hash = Type::Ty(sym_id, GenListId::EMPTY)
+            .function_instance_hash(self.syms);
+        self.funcs
+            .get(&hash)
+            .map(|function| (function.func_ptr, function.func_ty))
     }
 
 
@@ -1861,18 +1900,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         }
 
         let llvm_ret = self.to_llvm_ty(ret);
-
-        let external_abi = self.extern_abi(llvm_ret.repr);
+        let arg_modes = sym_func
+            .args()
+            .iter()
+            .zip(&args)
+            .map(|(arg, ty)| (*ty, arg.is_inout()))
+            .collect::<Vec<_>>();
+        let callable = abi::lower_callable(self, sym_func, ret, &arg_modes);
         let llvm_args = {
-            let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, sym_func.args().len());
+            let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, sym_func.args().len() + 1);
             for (arg, ty) in sym_func.args().iter().zip(&args) {
-                if arg.is_inout() {
-                    vec.push(*self.ctx.ptr());
-                } else {
-                    vec.push(self.to_llvm_ty(*ty).repr);
-                }
+                vec.push(if arg.is_inout() { *self.ctx.ptr() } else { self.to_llvm_ty(*ty).repr });
             }
-
             vec.push(*self.ctx.ptr());
             vec.leak()
         };
@@ -1883,125 +1922,35 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         match sym_func.kind() {
 
             syms::func::FunctionKind::Extern(path) => {
-                let (func_ty, func_ptr) =
-                if let Some((func_ty, func_ptr, _)) = self.externs.get(&path) { (*func_ty, *func_ptr) }
-                else {
-                    let external_ret =
-                    match external_abi {
-                        ExternAbi::Direct => llvm_ret.repr,
-                        ExternAbi::SRet(_) => *self.ctx.void(),
-                    };
-
-                    let mut external_args = Vec::with_capacity(sym_func.args().len() + 1);
-                    if matches!(external_abi, ExternAbi::SRet(_)) {
-                        external_args.push(*self.ctx.ptr());
-                    }
-
-                    for (arg, ty) in sym_func.args().iter().zip(&args) {
-                        if arg.is_inout() {
-                            external_args.push(*self.ctx.ptr());
-                        } else {
-                            external_args.push(self.to_llvm_ty(*ty).repr);
-                        }
-                    }
-
-                    let external_fn_ty = external_ret.fn_ty(
-                        self.ctx.arena,
-                        &external_args,
-                        false,
-                    );
-                    let external_fn = self.module.function(self.string_map.get(path), external_fn_ty);
-                    external_fn.set_linkage(Linkage::External);
-                    if let ExternAbi::SRet(ret) = external_abi {
-                        external_fn.set_sret(self.ctx, ret);
-                    }
-                    if is_never {
-                        external_fn.set_noreturn(self.ctx);
-                    }
-
-                    // margarine function values carry a trailing capture pointer. Keep that
-                    // internal ABI behind a wrapper so runtime imports retain their C ABI.
-                    let wrapper_name = format!("__margarine_extern_wrapper.{}", self.func_counter);
-                    let wrapper_name = self.string_map.insert(&wrapper_name);
-                    self.func_counter += 1;
-                    let func_ty = llvm_ret.repr.fn_ty(self.ctx.arena, llvm_args.as_slice(), false);
-                    let func_ptr = self.module.function(self.string_map.get(wrapper_name), func_ty);
-                    if is_never {
-                        func_ptr.set_noreturn(self.ctx);
-                    }
-
-                    let builder = func_ptr.builder(self.ctx, func_ty);
-                    let mut call_args = Vec::with_capacity(args.len());
-                    for i in 0..args.len() {
-                        call_args.push(builder.local_get(builder.arg(i).unwrap()));
-                    }
-
-                    let result =
-                    match external_abi {
-                        ExternAbi::Direct => {
-                            builder.call(external_fn, external_fn_ty, &call_args)
-                        }
-                        ExternAbi::SRet(ret) => {
-                            let result = builder.alloca(ret);
-                            let mut external_call_args = Vec::with_capacity(call_args.len() + 1);
-                            external_call_args.push(*result);
-                            external_call_args.extend_from_slice(&call_args);
-                            builder.call_sret(external_fn, external_fn_ty, ret, &external_call_args);
-                            builder.load(result, ret)
-                        }
-                    };
-
-                    if is_never {
-                        builder.unreachable();
-                    } else {
-                        builder.ret(result);
-                    }
-
-
-                    self.externs.insert(path, (func_ty, func_ptr, external_abi));
-                    (func_ty, func_ptr)
-                };
-
+                let func_ty = callable.function_type();
+                let func_ptr = callable.declare_extern(self.module, self.string_map.get(path));
+                func_ptr.set_linkage(Linkage::External);
+                callable.configure(self.ctx, func_ptr, is_never);
                 let func = Function {
                     sym: ty,
                     name: self.string_map.insert(self.string_map.get(path)),
                     kind: FunctionKind::Extern,
                     error: self.ty_info.decl(sym_func.decl().unwrap()),
-
                     func_ty,
                     func_ptr,
                 };
-
                 assert!(self.funcs.insert(hash, func).is_none());
                 return Ok(&self.funcs[&hash]);
             },
-
-
             syms::func::FunctionKind::UserDefined => {
-                let func_ty = llvm_ret.repr.fn_ty(
-                    self.ctx.arena, 
-                    llvm_args.as_slice(),
-                    false,
-                );
-
-
-                let func_ptr = self.module.function(name, func_ty);
-
-                if is_never {
-                    func_ptr.set_noreturn(self.ctx);
-                }
-
-
+                let decl_id = sym_func.decl().unwrap();
+                let fn_name = callable.definition_name(self, name_idx, decl_id);
+                let func_ty = callable.function_type();
+                let func_ptr = callable.define(self.module, self.string_map.get(fn_name));
+                callable.configure(self.ctx, func_ptr, is_never);
                 let func = Function {
                     sym: ty,
-                    name: name_idx,
+                    name: fn_name,
                     kind: FunctionKind::Code,
-                    error: self.ty_info.decl(sym_func.decl().unwrap()),
-
+                    error: self.ty_info.decl(decl_id),
                     func_ty,
                     func_ptr,
                 };
-
                 assert!(self.funcs.insert(hash, func).is_none());
 
                 let previous_function_name = self.current_function_name.replace(name_idx);
@@ -2014,34 +1963,21 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     gens: self.syms.get_gens(gens_id),
                     info: HashMap::new(),
                     ret_llvm_ty: Some(llvm_ret),
+                    return_abi: None,
                 };
 
                 let Decl::Function { body, .. } = self.ast.decl(sym_func.decl().unwrap())
                 else { unreachable!() };
 
-                for (i, arg) in sym_func.args().iter().enumerate() {
-                    let arg_ty = arg.symbol().to_ty(gens, self.syms);
-                    let arg_ty = arg_ty.resolve(&[], self.syms);
-                    let param = builder.arg(i).unwrap();
-                    if arg.is_inout() {
-                        let llvm_ty = self.to_llvm_ty(arg_ty);
-                        let local = builder.local(llvm_ty.repr);
-                        let value = builder.load(builder.local_get(param).as_ptr(), llvm_ty.repr);
-                        builder.local_set(local, value);
-                        env.alloc_var(arg.name(), local, arg_ty, true);
-                        env.inouts.push((param, local));
-                    } else {
-                        // Own every by-value parameter: the caller keeps its own reference and
-                        // releases it after the call, so the callee must hold its own copy to
-                        // make every intra-body drop (assignment overwrites, exit cleanup)
-                        // target an owned value. The pair is local to this function, so LLVM
-                        // can fold it when the body never touches the refcount.
-                        let value = builder.local_get(param);
-                        let owned = self.emit_copy(&mut builder, value, arg_ty);
-                        builder.local_set(param, owned);
-                        env.alloc_var(arg.name(), param, arg_ty, false);
-                    }
-                }
+                let binding = abi::bind_definition(
+                    self,
+                    &mut env,
+                    &mut builder,
+                    &callable,
+                    sym_func.args(),
+                    &args,
+                );
+                env.return_abi = Some((callable.clone(), binding));
 
 
                 let result = self.block(&mut env, &mut builder, &*body);
@@ -2055,13 +1991,17 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             if !is_never && !body_ty.is_never(self.syms) {
                                 self.update_inouts(&env, &mut builder);
                                 self.drop_all_locals(&mut env, &mut builder);
-                                builder.ret(v);
-
+                                abi::emit_definition_return(
+                                    self,
+                                    &builder,
+                                    &callable,
+                                    &binding,
+                                    v,
+                                );
                             } else {
                                 builder.unreachable();
                             }
                         },
-
 
                         Err(e) => {
                             self.error(&mut env, &mut builder, e);
@@ -2991,30 +2931,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
         match sym.kind() {
             SymbolKind::Function(function_ty) => {
-                let mapping = TypeMapping { repr: *self.func_ref, strct: *self.ctx.void() };
-                self.ty_mappings.insert(hash, mapping);
-
-                let ret = function_ty.ret().to_ty(gens, self.syms);
-
-                let ret = self.to_llvm_ty(ret).repr;
-                let llvm_args = {
-                    let mut vec = sti::vec::Vec::with_cap_in(&*self.ctx.arena, function_ty.args().len());
-                    for i in function_ty.args().iter() {
-                        let arg = i.symbol().to_ty(gens, self.syms);
-                        if i.is_inout() {
-                            vec.push(*self.ctx.ptr());
-                        } else {
-                            vec.push(self.to_llvm_ty(arg).repr);
-                        }
-                    }
-
-                    vec.push(*self.ctx.ptr());
-                    vec.leak()
-                };
-
-                let strct = ret.fn_ty(self.ctx.arena, llvm_args, false);
-                let mapping = TypeMapping { repr: *self.func_ref, strct: *strct };
-                self.ty_mappings.insert(hash, mapping);
+                let repr = abi::function_value_type(self, function_ty.abi());
+                self.ty_mappings.insert(hash, TypeMapping { repr, strct: repr });
             },
 
 
@@ -3213,7 +3131,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let iter_value = self.expr(env, builder, expr)?;
                 let iter_sym = self.ty_info.expr(expr).resolve(&[env.gens], self.syms);
 
-                let (iter_fn_ret_ty, iter_fn_is_inout, func_ptr, func_ty) = {
+                let (iter_fn_ret_ty, iter_fn_is_inout, callee, callable) = {
                     let sym = iter_sym.sym(self.syms).unwrap();
                     let ns = self.syms.sym_ns(sym);
                     let ns = self.ns.get_ns(ns);
@@ -3221,20 +3139,26 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     let Ok(sym) = ns.get_sym(StringMap::ITER_NEXT_FUNC).unwrap()
                     else { unreachable!() };
 
-                    let func = Type::Ty(sym, iter_sym.gens(self.syms));
-                    let func = func.resolve(&[], self.syms);
-
-                    let ret_ty = self.syms.sym(sym);
-                    let SymbolKind::Function(ret_ty) = ret_ty.kind()
+                    let callable_ty = Type::Ty(sym, iter_sym.gens(self.syms))
+                        .resolve(&[], self.syms);
+                    let symbol = self.syms.sym(sym);
+                    let SymbolKind::Function(function_ty) = symbol.kind()
                     else { unreachable!() };
-                    let iter_fn_is_inout = ret_ty.args().first().is_some_and(|arg| arg.is_inout());
+                    let function_ty = function_ty;
+                    let iter_fn_is_inout =
+                        function_ty.args().first().is_some_and(|arg| arg.is_inout());
 
                     let gens = iter_sym.gens(self.syms);
                     let gens = self.syms.get_gens(gens);
-                    let ret_ty = ret_ty.ret().to_ty(gens, self.syms);
+                    let ret_ty = function_ty.ret().to_ty(gens, self.syms);
 
-                    let func = self.get_func(func)?;
-                    (ret_ty, iter_fn_is_inout, func.func_ptr, func.func_ty)
+                    let func = self.get_func(callable_ty)?;
+                    let func_sym = func.sym;
+                    let func_ptr = func.func_ptr;
+                    let callee = abi::function_value(self, builder, func_sym, func_ptr);
+                    let callable =
+                        abi::lower_callable(self, function_ty, ret_ty, &[(iter_sym, iter_fn_is_inout)]);
+                    (ret_ty, iter_fn_is_inout, callee, callable)
                 };
 
                 // Iterator advancement mutates the iterator through its in-out receiver.
@@ -3253,8 +3177,18 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let iter_fn_binding_value_ty_llvm = self.to_llvm_ty(iter_fn_binding_value_ty_sym);
 
                 builder.loop_indefinitely(|builder, l| {
-                    let null = builder.ptr_null();
-                    let call_ret_value = builder.call(func_ptr, func_ty, &[iter_expr, *null]).as_struct();
+                    let call_ret_value =
+                    abi::emit_call(
+                        self,
+                        builder,
+                        &callable,
+                        callee,
+                        &[(
+                            iter_expr,
+                            iter_sym,
+                            if iter_fn_is_inout { Some(expr) } else { None },
+                        )],
+                    ).as_struct();
 
                     let lo = env.loop_id.swap(Some((l, env.vars.len())));
 
@@ -3671,9 +3605,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                 let none_tag = builder.const_int(self.i32, 1, false);
                                 let none_value = *builder.const_unit();
                                 let ret_val = self.create_enum_from_llvm(builder, *none_tag, none_value, ret_ty);
-                                builder.ret(ret_val);
+                                self.emit_return(env, builder, ret_val);
                             } else {
-                                builder.ret(*enum_struct);
+                                self.emit_return(env, builder, *enum_struct);
                             }
                         }, 
                         );
@@ -3731,9 +3665,9 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                         let none_tag = builder.const_int(self.i32, 1, false);
                                         let none_value = *builder.const_unit();
                                         let ret_val = self.create_enum_from_llvm(builder, *none_tag, none_value, ret_ty);
-                                        builder.ret(ret_val);
+                                        self.emit_return(env, builder, ret_val);
                                     } else {
-                                        builder.ret(*enum_struct);
+                                        self.emit_return(env, builder, *enum_struct);
                                     }
                                 }, 
                                 );
@@ -3765,7 +3699,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                                     let none_value = *builder.const_unit();
                                     let ret_ty = ret_llvm_ty.unwrap_or(val_llvm_ty);
                                     let ret_enum = self.create_enum_from_llvm(builder, *none_tag, none_value, ret_ty);
-                                    builder.ret(ret_enum);
+                                    self.emit_return(env, builder, ret_enum);
                                 }, 
                                 );
 
@@ -3796,6 +3730,20 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             _ => unreachable!("{:?}", self.ast.expr(expr)),
+        }
+    }
+
+    fn emit_return(
+        &mut self,
+        env: &Env<'_, 'ctx>,
+        builder: &Builder<'ctx>,
+        value: Value<'ctx>,
+    ) {
+        match env.return_abi.as_ref() {
+            Some((callable, binding)) => {
+                abi::emit_definition_return(self, builder, callable, binding, value);
+            },
+            None => builder.ret(value),
         }
     }
 
@@ -3888,21 +3836,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 // it's a function
                 if let Some(sym) = func {
-                    let func_ref_ty = self.func_ref;
                     let func = self.get_func(sym)?;
+                    let func_sym = func.sym;
+                    let func_ptr = func.func_ptr;
+                    let func_ref = abi::function_value(self, builder, func_sym, func_ptr);
 
-                    // create func ref
-                    // we want a null ptr as the environment pointer
-                    // since named-funcs have no captures we don't 
-                    // need to allocate anything
-                    let null = builder.ptr_null();
-                    let ptr = func.func_ptr;
-                    let func_ref = builder.struct_instance(
-                        func_ref_ty,
-                        [*ptr, *null],
-                    );
-
-                    return Ok((*func_ref, sym))
+                    return Ok((func_ref, sym))
                 }
 
 
@@ -4356,16 +4295,12 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         field_name,
                         &[env.gens, val_gens],
                     ).expect("trait implementation registered for accessor");
-                    let func_ref_ty = self.func_ref;
                     let func = self.get_func(sym)?;
+                    let func_sym = func.sym;
+                    let func_ptr = func.func_ptr;
+                    let func_ref = abi::function_value(self, builder, func_sym, func_ptr);
 
-                    let null = builder.ptr_null();
-                    let func_ref = builder.struct_instance(
-                        func_ref_ty,
-                        [*func.func_ptr, *null],
-                    );
-
-                    return Ok((*func_ref, sym))
+                    return Ok((func_ref, sym))
                 }
 
 
@@ -4382,20 +4317,11 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     assert!(sym.is_resolved(self.syms));
 
                     let func = self.get_func(sym)?;
+                    let func_sym = func.sym;
+                    let func_ptr = func.func_ptr;
+                    let func_ref = abi::function_value(self, builder, func_sym, func_ptr);
 
-                    // create func ref
-                    // we want a null ptr as the environment pointer
-                    // since named-funcs have no captures we don't 
-                    // need to allocate anything
-                    let null = builder.ptr_null();
-                    let ptr = func.func_ptr;
-                    let ty = self.func_ref;
-                    let func_ref = builder.struct_instance(
-                        ty,
-                        [*ptr, *null],
-                    );
-
-                    return Ok((*func_ref, sym))
+                    return Ok((func_ref, sym))
                 }
 
                 unreachable!()
@@ -4455,21 +4381,14 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 assert!(callable_ty.is_resolved(self.syms));
 
-                let func_ty = self.to_llvm_ty(callable_ty);
-
-                let func_ref = func.as_struct();
-                let func_ptr = builder.field_load(func_ref, 0).as_func();
-                let func_env = builder.field_load(func_ref, 1).as_ptr();
                 let result =
                 self.call_function(
+                    callable_ty,
                     env,
                     builder,
-                    (func_ptr, func_env),
-                    func_ty.strct.as_func(),
+                    func,
                     &*value_args,
                 );
-
-                self.emit_drop(env, builder, func, callable_ty);
 
                 result
             },
@@ -4490,7 +4409,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let ty = ty.resolve(&[outer_gens], self.syms);
                 let closure_type_gens = ty.gens(self.syms);
                 let closure_gens = self.syms.get_gens(closure_type_gens);
-                let llvm_ty = self.to_llvm_ty(ty);
 
                 let mut combined_gens = sti::vec::Vec::with_cap_in(self.syms.arena(), closure_gens.len() + outer_gens.len());
                 combined_gens.extend_from_slice(closure_gens);
@@ -4599,7 +4517,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 let closure_name = self.string_map.insert(&closure_name);
 
                 let func = {
-                    let llvm_func_ty = llvm_ty.strct.as_func();
+                    let closure_ret = func_ty.ret().to_ty(combined_gens, self.syms).resolve(&[], self.syms);
+                    let arg_modes = func_ty.args().iter().map(|arg| {
+                        (
+                            arg.symbol().to_ty(combined_gens, self.syms).resolve(&[], self.syms),
+                            arg.is_inout(),
+                        )
+                    }).collect::<Vec<_>>();
+                    let callable = abi::lower_callable(self, func_ty, closure_ret, &arg_modes);
+                    let llvm_func_ty = callable.function_type();
                     let func_ptr = self.module.function(self.string_map.get(closure_name), llvm_func_ty);
 
                     let func = Function {
@@ -4615,7 +4541,6 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     assert!(self.funcs.insert(hash, func).is_none());
 
                     let mut builder = func_ptr.builder(self.ctx, llvm_func_ty);
-                    let closure_ret = func_ty.ret().to_ty(combined_gens, self.syms).resolve(&[], self.syms);
                     let closure_ret = self.to_llvm_ty(closure_ret);
 
                     let mut env = Env {
@@ -4625,6 +4550,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         gens: combined_gens,
                         info: HashMap::new(),
                         ret_llvm_ty: Some(closure_ret),
+                        return_abi: None,
                     };
 
 
@@ -4653,7 +4579,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                             let value = builder.load(builder.local_get(param).as_ptr(), llvm_ty.repr);
                             builder.local_set(local, value);
                             env.alloc_var(arg.name(), local, arg_ty, true);
-                            env.inouts.push((param, local));
+                            env.add_inout(param, local, arg_ty);
                         } else {
                             // Own every by-value parameter: the caller keeps its own reference and
                             // releases it after the call, so the callee must hold its own copy to
@@ -4682,8 +4608,8 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 };
 
 
-                let func_ref = builder.struct_instance(self.func_ref, [*func.func_ptr, *buf]);
-                *func_ref
+                let func_ptr = func.func_ptr;
+                abi::function_value_with_env(self, builder, ty, func_ptr, buf)
             },
 
 
@@ -4722,7 +4648,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
                 self.update_inouts(env, builder);
                 self.drop_all_locals(env, builder);
-                builder.ret(val);
+                self.emit_return(env, builder, val);
                 builder.unreachable();
                 *builder.const_unit()
             },
@@ -4885,7 +4811,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                         let none_tag = builder.const_int(self.i32, 1, false);
                         let none_value = *builder.const_unit();
                         let ret_val = self.create_enum_from_llvm(builder, *none_tag, none_value, ret_ty);
-                        builder.ret(ret_val);
+                        self.emit_return(env, builder, ret_val);
                     } else {
                         builder.unreachable();
                     }
@@ -5077,7 +5003,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
     }
 
 
-    fn emit_copy(&mut self, builder: &mut Builder<'ctx>, value: Value<'ctx>, ty: Type) -> Value<'ctx> {
+    pub(crate) fn emit_copy(&mut self, builder: &mut Builder<'ctx>, value: Value<'ctx>, ty: Type) -> Value<'ctx> {
         let Ok(sym_id) = ty.sym(self.syms)
         else {
             return value;
@@ -5112,17 +5038,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let SymbolKind::Container(cont) = sym_data.kind()
         else {
             if matches!(sym_data.kind(), SymbolKind::Function(_)) {
-                let func_ref = value.as_struct();
-                let capture_ptr = builder.field_load(func_ref, 1).as_ptr();
-                let is_closure = builder.bool_not(builder.ptr_is_null(capture_ptr));
-                let slot = builder.alloca_store(value);
-                builder.iff(is_closure,
-                    |builder| {
-                        let cloned = builder.call(self.rc_clone_fn.0, self.rc_clone_fn.1, &[*capture_ptr]).as_ptr();
-                        let env_ptr = builder.field_ptr(slot, self.func_ref, 1);
-                        builder.store(env_ptr, *cloned);
-                    });
-                return builder.load(slot, value.ty());
+                return abi::copy_function_value(self, builder, ty, value);
             }
             return value;
         };
@@ -5255,14 +5171,15 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                     elem_ty,
                     SymbolId::DESTROY_TRAIT,
                     StringMap::DESTROY_FUNC,
-                ).map(|func| (func.func_ptr, func.func_ty));
-                if let Some((func_ptr, func_ty)) = trait_func {
+                ).map(|func| (func.sym, func.func_ptr));
+                if let Some((func_sym, func_ptr)) = trait_func {
                     let data_copy = slf.emit_copy(builder, data, elem_ty);
+                    let callee = abi::function_value(slf, builder, func_sym, func_ptr);
                     slf.call_function(
+                        func_sym,
                         env,
                         builder,
-                        (func_ptr, builder.ptr_null()),
-                        func_ty,
+                        callee,
                         &[(data_copy, elem_ty, None)]
                     );
                 }
@@ -5301,19 +5218,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
         let SymbolKind::Container(cont) = sym_data.kind()
         else {
             if matches!(sym_data.kind(), SymbolKind::Function(_)) {
-                let func_ref = value.as_struct();
-                let capture_ptr = builder.field_load(func_ref, 1).as_ptr();
-                let is_closure = builder.bool_not(builder.ptr_is_null(capture_ptr));
-                builder.iff(is_closure,
-                    |builder| {
-                        let capture_header = self.ctx.literal_struct(&[*self.usize, *self.ctx.ptr()], false);
-                        let drop_fn_ptr = builder.field_ptr(capture_ptr, capture_header, 1);
-                        let drop_fn_val = builder.load(drop_fn_ptr, *self.ctx.ptr());
-                        let drop_fn_ptr = drop_fn_val.as_func();
-                        let void = self.ctx.void();
-                        let drop_fn_ty = void.fn_ty(self.ctx.arena, &[*self.ctx.ptr()], false);
-                        builder.call(drop_fn_ptr, drop_fn_ty, &[*capture_ptr]);
-                    });
+                abi::drop_function_value(self, builder, ty, value);
                 return;
             }
             return;
@@ -5439,65 +5344,42 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
     fn call_function<'env>(
         &mut self,
+        callable_ty: Type,
         env: &mut Env<'env, 'ctx>,
         builder: &mut Builder<'ctx>,
-        (func_ptr, func_env): (FunctionPtr<'ctx>, Ptr<'ctx>),
-        func_ty: FunctionType<'ctx>,
+        callee: Value<'ctx>,
         values: &[(Value<'ctx>, Type, Option<ExprId>)]
     ) -> Value<'ctx> {
-        let llvm_args = sti::vec::Vec::from_in(
-            self.ctx.arena,
-            values.iter()
-                .map(|s| s.0)
-                .chain(core::iter::once(*func_env))
-        );
-
-        let result = builder.call(
-            func_ptr,
-            func_ty,
-            &llvm_args
-        );
-
+        let func_sym = callable_ty.resolve(&[env.gens], self.syms).sym(self.syms).unwrap();
+        let SymbolKind::Function(function) = self.syms.sym(func_sym).kind() else {
+            unreachable!()
+        };
+        let function = function;
+        let callable_gens = callable_ty.gens(self.syms);
+        let callable_gens = self.syms.get_gens(callable_gens);
+        let semantic_ret_ty = function.ret().to_ty(callable_gens, self.syms);
+        let arg_modes = values
+            .iter()
+            .enumerate()
+            .map(|(index, (_, ty, _))| (*ty, function.args()[index].is_inout()))
+            .collect::<Vec<_>>();
+        let callable = abi::lower_callable(self, function, semantic_ret_ty, &arg_modes);
+        let result = abi::emit_call(self, builder, &callable, callee, values);
+        self.emit_drop(env, builder, callee, callable_ty);
         for (value, ty, inout_expr) in values {
-
-            let value =
-            if inout_expr.is_some() { builder.load(value.as_ptr(), self.to_llvm_ty(*ty).repr) }
-            else { *value };
-
-            if let Some(expr) = *inout_expr
-            && self.is_inout_place(expr) {
+            let value = if inout_expr.is_some() {
+                builder.load(value.as_ptr(), self.to_llvm_ty(*ty).repr)
+            } else { *value };
+            if let Some(expr) = *inout_expr && self.is_inout_place(expr) {
                 self.assign(env, builder, expr, value);
             } else {
                 self.emit_drop(env, builder, value, *ty);
             }
         }
-
         result
     }
 
 
-    fn extern_abi(&self, ret: LLVMType<'ctx>) -> ExternAbi<'ctx> {
-        if ret.kind() != TypeKind::Struct {
-            return ExternAbi::Direct;
-        }
-
-
-        let returns_indirectly =
-        match self.target {
-            CompilationTarget::Wasm32UnknownUnknown =>
-                wasm_c_abi_requires_sret(self.ctx.arena, ret),
-            CompilationTarget::Arm64AppleDarwin
-            | CompilationTarget::X86_64UnknownLinuxGnu
-            | CompilationTarget::Aarch64UnknownLinuxGnu =>
-                ret.size_of(self.module).is_some_and(|size| size > 16),
-        };
-
-        if returns_indirectly {
-            ExternAbi::SRet(ret)
-        } else {
-            ExternAbi::Direct
-        }
-    }
 
 
     fn drop_locals(&mut self, env: &mut Env<'_, 'ctx>, builder: &mut Builder<'ctx>, start: usize) {
@@ -5522,9 +5404,16 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
     fn update_inouts(&mut self, env: &Env<'_, 'ctx>, builder: &mut Builder<'ctx>) {
-        for (param, local) in &env.inouts {
+        for (param, local, ty) in &env.inouts {
             let value = builder.local_get(*local);
-            builder.store(builder.local_get(*param).as_ptr(), value);
+            abi::emit_inout_writeback(
+                self,
+                builder,
+                env.return_abi.as_ref().map(|(callable, _)| callable),
+                *ty,
+                builder.local_get(*param).as_ptr(),
+                value,
+            );
         }
     }
 
@@ -5598,24 +5487,21 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 
 
             _ => {
-                let b = self.resolve_trait_method(
-                    ty, 
-                    SymbolId::EQ_TRAIT, 
-                    StringMap::EQ_FUNC,
-                );
-
-
-                let b = b.expect("semantic analysis must ensure eq doesn't process");
-
-                let func_ptr = b.func_ptr;
-                let func_ty = b.func_ty;
-
-                let b =
-                self.call_function(
-                    env, 
-                    builder, 
-                    (func_ptr, builder.ptr_null()), 
-                    func_ty, 
+                let (callable_ty, func_sym, func_ptr) = {
+                    let function = self.resolve_trait_method(
+                        ty,
+                        SymbolId::EQ_TRAIT,
+                        StringMap::EQ_FUNC,
+                    );
+                    let function = function.expect("semantic analysis must ensure eq doesn't process");
+                    (function.sym, function.sym, function.func_ptr)
+                };
+                let callee = abi::function_value(self, builder, func_sym, func_ptr);
+                let result = self.call_function(
+                    callable_ty,
+                    env,
+                    builder,
+                    callee,
                     &[
                         (lhs, ty, None),
                         (rhs, ty, None),
@@ -5623,7 +5509,7 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
                 );
 
 
-                let b = b.as_struct();
+                let b = result.as_struct();
                 let b = builder.field_load(b, 0).as_integer();
                 let b = builder.int_cast(b, *self.ctx.bool(), false).as_bool();
 
@@ -5644,6 +5530,10 @@ impl<'me, 'out, 'ast, 'str, 'ctx> Conversion<'me, 'out, 'ast, 'str, 'ctx> {
 impl Env<'_, '_> {
     pub fn alloc_var(&mut self, name: StringIndex, local: Local, ty: Type, borrowed: bool) {
         self.vars.push((name, local, ty, borrowed));
+    }
+
+    pub(crate) fn add_inout(&mut self, param: Local, local: Local, ty: Type) {
+        self.inouts.push((param, local, ty));
     }
 
 

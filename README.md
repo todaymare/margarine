@@ -67,6 +67,33 @@ fn main() {
 
 *For more examples, see the [examples folder](examples).*
 
+## C interoperability
+
+Use an explicit C ABI on imported declarations and exported definitions:
+
+```rs
+extern "C" {
+    fn c_add(a: int, b: int): int
+}
+
+pub extern "C" fn add(a: int, b: int): int {
+    c_add(a, b)
+}
+```
+
+Bare `extern { ... }` blocks remain shorthand for C imports. The compiler uses
+the selected target's Clang C ABI for scalar values, fixed-layout structs, and
+inout pointer parameters. C ABI function types are distinct from ordinary
+Margarine function types, and C ABI functions cannot be generic.
+Trait method definitions use the Margarine calling convention.
+
+Margarine `bool` maps to C `_Bool` (`bool` with `<stdbool.h>`), including
+struct fields and inout parameters. C callbacks use raw function pointers;
+their signatures can reference the structs that contain them. Imported
+declarations and exported definitions can share a C symbol in one compilation.
+Public C definitions export their source names into a compilation-wide namespace;
+each C symbol must have a single definition, including across modules.
+
 ## CLI quick reference
 
 ```sh

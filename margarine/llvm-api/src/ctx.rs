@@ -4,6 +4,8 @@ use llvm_sys::{bit_writer::LLVMWriteBitcodeToFile, core::{LLVMArrayType2, LLVMCo
 use sti::{arena::Arena, format_in};
 
 use crate::{module::Module, tys::{array::ArrayTy, bool::BoolTy, fp::FPTy, integer::IntegerTy, ptr::PtrTy, strct::StructTy, union::UnionTy, unit::UnitTy, void::Void, Type}, values::{array::Array, bool::Bool, fp::FP, int::Integer, strct::Struct, string::StringValue, unit::Unit, Value}};
+use llvm_sys::core::LLVMVectorType;
+use crate::tys::vector::VectorTy;
 
 pub struct Context<'ctx>(ContextRef<'ctx>);
 
@@ -199,6 +201,12 @@ impl<'me> ContextImpl<'me> {
         let ty = Type::new(ptr);
 
         unsafe { IntegerTy::new(ty) }
+    }
+    pub fn vector(&self, ty: Type<'me>, size: u32) -> VectorTy<'me> {
+        assert!(size > 0, "LLVM vector types require at least one element");
+        let ptr = unsafe { LLVMVectorType(ty.llvm_ty().as_ptr(), size) };
+        let ptr = NonNull::new(ptr).expect("failed to create a vector type");
+        unsafe { VectorTy::new(Type::new(ptr)) }
     }
 
 

@@ -192,6 +192,7 @@ pub struct CompilationResult<'a> {
     pub errors: CompilationErrors,
     silent_ranges: Vec<SourceRange>,
     tests: Vec<(SymbolId, bool)>,
+    extern_defs: Vec<SymbolId>,
     ast: AST<'a>,
     startups: KVec<u32, SymbolId>,
     ty_info: sema::TyInfo<'a>,
@@ -579,6 +580,7 @@ impl<'me> Compiler<'me> {
 
 
         let tests: Vec<(SymbolId, bool)> = sema.tests.iter().copied().collect();
+        let extern_defs: Vec<SymbolId> = sema.extern_defs.iter().copied().collect();
         let mut silent_ranges = sema.silent_ranges;
         silent_ranges.sort_unstable_by_key(|range| range.range());
         let mut merged_silent_ranges: Vec<SourceRange> = Vec::with_capacity(silent_ranges.len());
@@ -609,6 +611,7 @@ impl<'me> Compiler<'me> {
             silent_ranges: merged_silent_ranges,
 
             tests,
+            extern_defs,
             startups: sema.startups,
             ty_info: sema.type_info,
             scopes: sema.scopes,
@@ -900,6 +903,7 @@ impl<'me> CompilationResult<'me> {
             self.file_offsets.len() as u32,
             &self.startups,
             &tests,
+            &self.extern_defs,
             settings,
             |stage| {
                 let label = match stage {

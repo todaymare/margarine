@@ -10,7 +10,17 @@ use crate::syms::{sym_map::{GenListId, SymbolId, SymbolMap}, ty::Type};
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Error {
     IteratorFunctionInvalidSig(SourceRange),
-
+    CFunctionCannotBeGeneric(SourceRange),
+    ExternInTraitImplementation(SourceRange),
+    DuplicateCDefinition {
+        name: StringIndex,
+        declared_at: SourceRange,
+        error_point: SourceRange,
+    },
+    UnknownFunctionAbi {
+        source: SourceRange,
+        name: StringIndex,
+    },
     InvalidCast {
         range: SourceRange,
         from_ty: Type,
@@ -779,6 +789,29 @@ impl<'a> ErrorType<SymbolMap<'_>> for Error {
 
                 fmt.error("expression isn't an iterator")
                     .highlight_with_note(*range, &msg);
+            },
+
+            Error::CFunctionCannotBeGeneric(source) => {
+                fmt.error("C ABI functions cannot be generic")
+                    .highlight(*source);
+            },
+            Error::ExternInTraitImplementation(source) => {
+                fmt.error("trait implementation methods must use the Margarine ABI")
+                    .highlight(*source);
+            },
+            Error::DuplicateCDefinition { name, declared_at, error_point } => {
+                let name = fmt.string(*name).to_string();
+                let mut error = fmt.error("duplicate C symbol definition");
+                error.highlight_with_note(*declared_at, &format!("C symbol '{name}' is first defined here"));
+                error.highlight_with_note(*error_point, "..but it's redefined here");
+            },
+
+
+
+            Error::UnknownFunctionAbi { source, name } => {
+                let name = fmt.string(*name).to_string();
+                fmt.error("unknown function ABI")
+                    .highlight_with_note(*source, &format!("unsupported ABI '{name}'"));
             },
 
             Error::IteratorFunctionInvalidSig(v) => {

@@ -1,0 +1,232 @@
+struct Tiny {
+    value: int,
+}
+
+struct Pair {
+    a: int,
+    b: int,
+}
+
+struct Mixed {
+    a: int,
+    b: float,
+}
+
+struct HFA2 {
+    a: float,
+    b: float,
+}
+struct CallbackBox {
+    callback: extern "C" fn(int, int): int,
+}
+
+struct Flags {
+    a: bool,
+    b: bool,
+}
+
+struct FlagsEnvelope<T> {
+    prefix: byte,
+    flags: T,
+    suffix: byte,
+}
+
+struct LargeFlags {
+    first: int,
+    nested: FlagsEnvelope<Flags>,
+    last: int,
+}
+
+struct RecursiveCallback {
+    callback: extern "C" fn(RecursiveCallback): int,
+}
+
+
+struct Large {
+    a: int,
+    b: int,
+    c: int,
+}
+
+struct Bytes12 {
+    a: byte,
+    b: byte,
+    c: byte,
+    d: byte,
+    e: byte,
+    f: byte,
+    g: byte,
+    h: byte,
+    i: byte,
+    j: byte,
+    k: byte,
+    l: byte,
+}
+
+extern {
+    fn c_helper_add_integers(a: int, b: int): int
+    fn "c_helper_add_integers" c_helper_add_integers_again(a: int, b: int): int
+    fn "mar_test_defined_symbol" imported_defined_symbol(a: int, b: int): int
+    fn c_helper_call_binary(
+        callback: extern "C" fn(int, int): int,
+        a: int,
+        b: int,
+    ): int
+    fn c_helper_identity_binary(
+        callback: extern "C" fn(int, int): int,
+    ): extern "C" fn(int, int): int
+    fn c_helper_replace_binary(
+        &callback: extern "C" fn(int, int): int,
+    )
+    fn c_helper_call_box(
+        callbacks: CallbackBox,
+        a: int,
+        b: int,
+    ): int
+    fn c_helper_make_box(
+        callback: extern "C" fn(int, int): int,
+    ): CallbackBox
+    fn c_helper_replace_box(&callbacks: CallbackBox)
+    fn c_helper_scale_float(value: float): float
+    fn c_helper_increment_byte(value: byte): byte
+    fn c_helper_tiny_value(t: Tiny): int
+    fn c_helper_flip_bool(b: bool): bool
+    fn c_helper_pair_sum(p: Pair): int
+    fn c_helper_pair_shift(p: Pair): Pair
+    fn c_helper_mixed_eval(m: Mixed): float
+    fn c_helper_hfa_sum(h: HFA2): float
+    fn c_helper_large_eval(l: Large): Large
+    fn c_helper_mutate_inout(&val: int)
+    fn c_helper_bytes12_increment(value: Bytes12): Bytes12
+    fn c_helper_mutate_bool(&value: bool)
+    fn c_helper_flags(value: Flags): Flags
+    fn c_helper_flags_inout(&value: Flags)
+    fn c_helper_large_flags(value: LargeFlags): LargeFlags
+}
+
+
+fn call_c_binary(
+    callback: extern "C" fn(int, int): int,
+    a: int,
+    b: int,
+): int {
+    callback(a, b)
+}
+
+pub extern "C" fn mar_test_imported_definition(a: int, b: int): int {
+    imported_defined_symbol(a, b)
+}
+
+
+pub extern "C" fn mar_test_scalar(a: int, b: int): int {
+    c_helper_add_integers(a, b)
+}
+
+pub extern "C" fn mar_test_duplicate_import(a: int, b: int): int {
+    c_helper_add_integers(a, b) + c_helper_add_integers_again(a, b)
+}
+
+pub extern "C" fn mar_test_indirect_call(a: int, b: int): int {
+    call_c_binary(c_helper_add_integers, a, b)
+}
+
+pub extern "C" fn mar_test_c_callback(a: int, b: int): int {
+    let callback = c_helper_identity_binary(c_helper_add_integers);
+    c_helper_call_binary(callback, a, b)
+}
+
+pub extern "C" fn mar_test_c_callback_inout(a: int, b: int): int {
+    var callback = c_helper_add_integers;
+    c_helper_replace_binary(&callback);
+    callback(a, b)
+}
+
+pub extern "C" fn mar_test_nested_c_callback(a: int, b: int): int {
+    var callbacks = c_helper_make_box(c_helper_add_integers);
+    let initial = c_helper_call_box(callbacks, a, b);
+    c_helper_replace_box(&callbacks);
+    initial + c_helper_call_box(callbacks, a, b)
+}
+
+pub extern "C" fn mar_test_float(value: float): float {
+    c_helper_scale_float(value)
+}
+
+pub extern "C" fn mar_test_bool(b: bool): bool {
+    c_helper_flip_bool(b)
+}
+
+pub extern "C" fn mar_test_byte(value: byte): byte {
+    c_helper_increment_byte(value)
+}
+
+pub extern "C" fn mar_test_tiny(t: Tiny): int {
+    c_helper_tiny_value(t)
+}
+
+pub extern "C" fn mar_test_pair(p: Pair): int {
+    c_helper_pair_sum(p)
+}
+
+pub extern "C" fn mar_test_pair_return(p: Pair): Pair {
+    c_helper_pair_shift(p)
+}
+
+pub extern "C" fn mar_test_mixed(m: Mixed): float {
+    c_helper_mixed_eval(m)
+}
+
+pub extern "C" fn mar_test_hfa(h: HFA2): float {
+    c_helper_hfa_sum(h)
+}
+
+pub extern "C" fn mar_test_large(l: Large): Large {
+    c_helper_large_eval(l)
+}
+
+pub extern "C" fn mar_test_large_explicit_return(l: Large): Large {
+    return l
+}
+
+pub extern "C" fn mar_test_bytes12(value: Bytes12): Bytes12 {
+    c_helper_bytes12_increment(value)
+}
+
+pub extern "C" fn mar_test_inout(&val: int) {
+    c_helper_mutate_inout(&val)
+}
+
+pub extern "C" fn mar_test_defined_symbol(a: int, b: int): int {
+    a * 2 + b
+}
+
+pub extern "C" fn mar_test_bool_inout(&value: bool) {
+    value = !value;
+}
+
+pub extern "C" fn mar_test_bool_inout_import(value: bool): bool {
+    var result = value;
+    c_helper_mutate_bool(&result);
+    result
+}
+
+pub extern "C" fn mar_test_flags(value: Flags): Flags {
+    c_helper_flags(value)
+}
+
+pub extern "C" fn mar_test_flags_inout(&value: Flags) {
+    value.a = !value.a;
+    c_helper_flags_inout(&value);
+}
+
+pub extern "C" fn mar_test_bool_tuple(value: (bool, bool)): (bool, bool) {
+    (!value.0, !value.1)
+}
+
+pub extern "C" fn mar_test_large_flags(value: LargeFlags): LargeFlags {
+    c_helper_large_flags(value)
+}
+
+pub extern "C" fn mar_test_recursive_callback(value: RecursiveCallback): int {
+    (value.callback)(value)
+}
